@@ -1,6 +1,6 @@
 # ESG News Classifier for Sportswear Brands
 
-A multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for major sportswear brands including Nike, Adidas, Puma, Under Armour, Lululemon, and Patagonia.
+A multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for major sportswear brands including Nike, Adidas, Puma, Under Armour, Lululemon, Patagonia, Columbia Sportswear, New Balance, ASICS, and Reebok.
 
 ## Project Structure
 
@@ -13,15 +13,20 @@ sportswear-esg-news-classifier/
 ├── logs/                       # Application logs
 ├── scripts/
 │   └── collect_news.py         # CLI script for data collection
-└── src/
-    └── data_collection/
-        ├── __init__.py
-        ├── config.py           # Settings, brands, keywords, API configuration
-        ├── api_client.py       # NewsData.io API wrapper with query generation
-        ├── scraper.py          # Full article text extraction (newspaper4k)
-        ├── database.py         # PostgreSQL operations with SQLAlchemy
-        ├── models.py           # SQLAlchemy models (Article, CollectionRun)
-        └── collector.py        # Orchestrates API collection + scraping phases
+├── src/
+│   └── data_collection/
+│       ├── __init__.py
+│       ├── config.py           # Settings, brands, keywords, API configuration
+│       ├── api_client.py       # NewsData.io API wrapper with query generation
+│       ├── scraper.py          # Full article text extraction (newspaper4k)
+│       ├── database.py         # PostgreSQL operations with SQLAlchemy
+│       ├── models.py           # SQLAlchemy models (Article, CollectionRun)
+│       └── collector.py        # Orchestrates API collection + scraping phases
+└── tests/
+    ├── conftest.py             # Shared pytest fixtures
+    ├── test_api_client.py      # API client unit tests
+    ├── test_collector.py       # Collector unit tests
+    └── test_database.py        # Database integration tests
 ```
 
 ## Quick Start
@@ -42,6 +47,9 @@ cd sportswear-esg-news-classifier
 
 # Install dependencies with uv
 uv sync
+
+# Install dev dependencies (for testing)
+uv sync --extra dev
 
 # Create environment file from template
 cp .env.example .env
@@ -186,6 +194,35 @@ The classifier will categorize articles into these ESG categories:
 - `ethical_sourcing` - Supply chain ethics, transparency
 - `transparency` - Corporate disclosure, reporting
 - `board_structure` - Corporate governance, leadership
+
+## Testing
+
+The project includes a comprehensive test suite with 43 tests covering the data collection pipeline.
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run with coverage report
+uv run pytest --cov=src
+
+# Run specific test file
+uv run pytest tests/test_api_client.py
+
+# Run database tests (requires PostgreSQL running)
+RUN_DB_TESTS=1 uv run pytest tests/test_database.py
+```
+
+**Test Coverage:**
+
+| Test File | Tests | Description |
+|-----------|-------|-------------|
+| `test_api_client.py` | 21 | Brand extraction, article parsing, query generation |
+| `test_collector.py` | 10 | Deduplication, dry run mode, API limits |
+| `test_database.py` | 12 | Upsert operations, queries (requires PostgreSQL) |
 
 ## Troubleshooting
 
