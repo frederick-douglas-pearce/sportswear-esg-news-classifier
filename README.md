@@ -198,6 +198,73 @@ Stores article metadata from API + full scraped content + future embeddings:
 
 Logs each daily collection run with statistics for monitoring.
 
+## Querying the Database
+
+Use these commands to check collection progress and database statistics.
+
+### Quick Stats
+
+```bash
+# Total articles collected
+docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT COUNT(*) as total_articles FROM articles;"
+
+# Articles by scrape status
+docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT scrape_status, COUNT(*) FROM articles GROUP BY scrape_status;"
+
+# Articles pending scrape
+docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT COUNT(*) as pending FROM articles WHERE scrape_status = 'pending';"
+
+# Successfully scraped articles (have full text)
+docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT COUNT(*) as scraped FROM articles WHERE scrape_status = 'success';"
+```
+
+### Detailed Queries
+
+```bash
+# Recent collection runs with statistics
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT
+    started_at::date as date,
+    status,
+    api_calls_made,
+    articles_fetched,
+    articles_duplicates,
+    articles_scraped,
+    articles_scrape_failed
+FROM collection_runs
+ORDER BY started_at DESC
+LIMIT 10;"
+
+# Articles per brand (approximate - checks brands_mentioned array)
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT unnest(brands_mentioned) as brand, COUNT(*)
+FROM articles
+WHERE brands_mentioned IS NOT NULL
+GROUP BY brand
+ORDER BY count DESC;"
+
+# Articles collected per day
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT created_at::date as date, COUNT(*) as articles
+FROM articles
+GROUP BY created_at::date
+ORDER BY date DESC;"
+
+# Sample of recent articles
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT LEFT(title, 60) as title, source_name, scrape_status, created_at::date
+FROM articles
+ORDER BY created_at DESC
+LIMIT 10;"
+```
+
+### Interactive Database Access
+
+```bash
+# Open psql shell for interactive queries
+docker exec -it esg_news_db psql -U postgres -d esg_news
+```
+
 ## ESG Category Structure
 
 The classifier will categorize articles into these ESG categories:
