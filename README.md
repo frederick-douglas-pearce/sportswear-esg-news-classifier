@@ -302,6 +302,7 @@ uv run pytest --cov=src
 uv run pytest tests/test_api_client.py
 
 # Run database tests (requires PostgreSQL running)
+# Note: Tests use a separate 'esg_news_test' database to protect production data
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 ```
 

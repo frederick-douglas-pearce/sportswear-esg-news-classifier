@@ -2,10 +2,11 @@
 
 These tests require PostgreSQL with pgvector extension.
 They are skipped by default and can be run with:
-    pytest tests/test_database.py --run-db-tests
+    RUN_DB_TESTS=1 pytest tests/test_database.py
 
-Or run against the Docker PostgreSQL:
-    DATABASE_URL=postgresql://postgres:postgres@localhost:5434/esg_news pytest tests/test_database.py --run-db-tests
+IMPORTANT: Tests always use a separate test database (esg_news_test) to avoid
+wiping production data. To use a different test database:
+    TEST_DATABASE_URL=postgresql://... RUN_DB_TESTS=1 pytest tests/test_database.py
 """
 
 import os
@@ -27,14 +28,13 @@ def pytest_configure(config):
 # Check if we should run database tests
 def should_run_db_tests():
     """Check if database tests should run."""
-    # Check for explicit flag or DATABASE_URL environment variable
-    return os.environ.get("RUN_DB_TESTS") == "1" or os.environ.get("DATABASE_URL")
+    return os.environ.get("RUN_DB_TESTS") == "1"
 
 
 # Skip marker for database tests
 requires_postgres = pytest.mark.skipif(
     not should_run_db_tests(),
-    reason="Database tests require PostgreSQL. Set RUN_DB_TESTS=1 or DATABASE_URL to run."
+    reason="Database tests require PostgreSQL. Set RUN_DB_TESTS=1 to run."
 )
 
 
@@ -42,10 +42,12 @@ requires_postgres = pytest.mark.skipif(
 def test_db():
     """Create a test database connection.
 
-    Uses the DATABASE_URL environment variable or defaults to the Docker PostgreSQL.
+    Always uses a separate test database to avoid wiping production data.
+    Set TEST_DATABASE_URL to override the default test database.
     """
+    # IMPORTANT: Never use DATABASE_URL here - it might point to production!
     database_url = os.environ.get(
-        "DATABASE_URL",
+        "TEST_DATABASE_URL",
         "postgresql://postgres:postgres@localhost:5434/esg_news_test"
     )
 
