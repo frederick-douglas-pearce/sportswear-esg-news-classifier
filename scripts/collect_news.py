@@ -117,6 +117,7 @@ def main() -> int:
         logger.info(f"  API calls made: {stats.api_calls}")
         logger.info(f"  New articles: {stats.articles_fetched}")
         logger.info(f"  Duplicates skipped: {stats.articles_duplicates}")
+        logger.info(f"  Filtered (no brand): {stats.articles_no_brand}")
         logger.info(f"  Articles scraped: {stats.articles_scraped}")
         logger.info(f"  Scrape failures: {stats.articles_scrape_failed}")
 

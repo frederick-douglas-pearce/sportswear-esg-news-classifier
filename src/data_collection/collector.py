@@ -19,6 +19,7 @@ class CollectionStats:
     api_calls: int = 0
     articles_fetched: int = 0
     articles_duplicates: int = 0
+    articles_no_brand: int = 0  # Filtered out - no tracked brand mentioned
     articles_scraped: int = 0
     articles_scrape_failed: int = 0
     errors: list[str] = field(default_factory=list)
@@ -86,14 +87,26 @@ class NewsCollector:
                     seen_article_ids.add(article.article_id)
                     new_articles.append(article)
 
+            # Filter out articles that don't mention any tracked brand
+            branded_articles = []
+            for article in new_articles:
+                if article.brands_mentioned:
+                    branded_articles.append(article)
+                else:
+                    stats.articles_no_brand += 1
+
             if dry_run:
-                stats.articles_fetched += len(new_articles)
-                if new_articles:
-                    logger.info(f"[DRY RUN] Would save {len(new_articles)} articles ({len(articles) - len(new_articles)} duplicates skipped)")
+                stats.articles_fetched += len(branded_articles)
+                if branded_articles or new_articles:
+                    logger.info(
+                        f"[DRY RUN] Would save {len(branded_articles)} articles "
+                        f"({len(articles) - len(new_articles)} duplicates, "
+                        f"{len(new_articles) - len(branded_articles)} no brand)"
+                    )
                 continue
 
             with self.db.get_session() as session:
-                for article_data in new_articles:
+                for article_data in branded_articles:
                     try:
                         _, is_new = self.db.upsert_article(session, article_data)
                         if is_new:
@@ -108,7 +121,8 @@ class NewsCollector:
 
         logger.info(
             f"API collection complete: {stats.api_calls} calls, "
-            f"{stats.articles_fetched} new, {stats.articles_duplicates} duplicates"
+            f"{stats.articles_fetched} new, {stats.articles_duplicates} duplicates, "
+            f"{stats.articles_no_brand} filtered (no brand)"
         )
         return stats
 
@@ -198,6 +212,7 @@ class NewsCollector:
                 api_calls=api_stats.api_calls,
                 articles_fetched=api_stats.articles_fetched,
                 articles_duplicates=api_stats.articles_duplicates,
+                articles_no_brand=api_stats.articles_no_brand,
                 articles_scraped=scrape_stats.articles_scraped,
                 articles_scrape_failed=scrape_stats.articles_scrape_failed,
                 errors=api_stats.errors + scrape_stats.errors,

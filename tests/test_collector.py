@@ -17,6 +17,7 @@ class TestCollectionStats:
         assert stats.api_calls == 0
         assert stats.articles_fetched == 0
         assert stats.articles_duplicates == 0
+        assert stats.articles_no_brand == 0
         assert stats.articles_scraped == 0
         assert stats.articles_scrape_failed == 0
         assert stats.errors == []
@@ -44,12 +45,12 @@ class TestInMemoryDeduplication:
 
         # Configure mock API to return articles with duplicates
         articles_batch1 = [
-            ArticleData(article_id="article_1", title="Article 1", url="http://example.com/1"),
-            ArticleData(article_id="article_2", title="Article 2", url="http://example.com/2"),
+            ArticleData(article_id="article_1", title="Article 1", url="http://example.com/1", brands_mentioned=["Nike"]),
+            ArticleData(article_id="article_2", title="Article 2", url="http://example.com/2", brands_mentioned=["Adidas"]),
         ]
         articles_batch2 = [
-            ArticleData(article_id="article_2", title="Article 2", url="http://example.com/2"),  # Duplicate
-            ArticleData(article_id="article_3", title="Article 3", url="http://example.com/3"),
+            ArticleData(article_id="article_2", title="Article 2", url="http://example.com/2", brands_mentioned=["Adidas"]),  # Duplicate
+            ArticleData(article_id="article_3", title="Article 3", url="http://example.com/3", brands_mentioned=["Nike"]),
         ]
 
         mock_api.generate_search_queries.return_value = [
@@ -87,7 +88,7 @@ class TestInMemoryDeduplication:
         mock_scraper = MagicMock()
 
         articles = [
-            ArticleData(article_id="article_1", title="Article 1", url="http://example.com/1"),
+            ArticleData(article_id="article_1", title="Article 1", url="http://example.com/1", brands_mentioned=["Nike"]),
         ]
 
         mock_api.search_news.return_value = (articles, None)
@@ -114,6 +115,46 @@ class TestInMemoryDeduplication:
         # Database upsert should not be called in dry run
         mock_db.upsert_article.assert_not_called()
         assert stats.articles_fetched == 1
+
+
+class TestBrandFiltering:
+    """Tests for brand filtering functionality."""
+
+    def test_articles_without_brands_are_filtered(self):
+        """Should filter out articles that don't mention any tracked brand."""
+        mock_db = MagicMock()
+        mock_api = MagicMock()
+        mock_scraper = MagicMock()
+
+        # Mix of articles with and without brands
+        articles = [
+            ArticleData(article_id="article_1", title="Nike News", url="http://example.com/1", brands_mentioned=["Nike"]),
+            ArticleData(article_id="article_2", title="Generic News", url="http://example.com/2", brands_mentioned=[]),
+            ArticleData(article_id="article_3", title="Adidas News", url="http://example.com/3", brands_mentioned=["Adidas"]),
+        ]
+
+        mock_api.generate_search_queries.return_value = [("query", None)]
+
+        call_count = [0]
+
+        def search_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            return (articles, None)
+
+        mock_api.search_news.side_effect = search_side_effect
+        type(mock_api).api_calls_made = property(lambda self: call_count[0])
+
+        collector = NewsCollector(
+            database=mock_db,
+            api_client=mock_api,
+            scraper=mock_scraper,
+        )
+
+        stats = collector.collect_from_api(max_calls=1, dry_run=True)
+
+        # Should have 2 articles with brands, 1 filtered out
+        assert stats.articles_fetched == 2
+        assert stats.articles_no_brand == 1
 
 
 class TestCollectFromApi:
@@ -187,7 +228,7 @@ class TestCollectFromApi:
         mock_scraper = MagicMock()
 
         articles = [
-            ArticleData(article_id="article_1", title="Article 1", url="http://example.com/1"),
+            ArticleData(article_id="article_1", title="Article 1", url="http://example.com/1", brands_mentioned=["Nike"]),
         ]
 
         mock_api.generate_search_queries.return_value = [("query", None)]
@@ -226,7 +267,7 @@ class TestCollectFromApi:
         mock_scraper = MagicMock()
 
         articles = [
-            ArticleData(article_id="existing_article", title="Existing", url="http://example.com/1"),
+            ArticleData(article_id="existing_article", title="Existing", url="http://example.com/1", brands_mentioned=["Nike"]),
         ]
 
         mock_api.generate_search_queries.return_value = [("query", None)]
