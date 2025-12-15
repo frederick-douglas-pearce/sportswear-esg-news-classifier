@@ -2,6 +2,32 @@
 
 A multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for major sportswear brands including Nike, Adidas, Puma, Under Armour, Lululemon, Patagonia, Columbia Sportswear, New Balance, ASICS, and Reebok.
 
+## Table of Contents
+
+- [Project Structure](#project-structure)
+- [Quick Start](#quick-start)
+  - [1. Prerequisites](#1-prerequisites)
+  - [2. Installation](#2-installation)
+  - [3. Start the Database](#3-start-the-database)
+- [Running the News Collection Script](#running-the-news-collection-script)
+  - [Testing (Dry Run Mode)](#testing-dry-run-mode)
+  - [Production Collection](#production-collection)
+  - [Scheduled Collection (Cron)](#scheduled-collection-cron)
+  - [Scrape-Only Mode](#scrape-only-mode)
+  - [Command-Line Options](#command-line-options)
+- [Environment Variables](#environment-variables)
+- [Database Schema](#database-schema)
+  - [Articles Table](#articles-table)
+  - [Collection Runs Table](#collection-runs-table)
+- [Querying the Database](#querying-the-database)
+  - [Quick Stats](#quick-stats)
+  - [Detailed Queries](#detailed-queries)
+  - [Interactive Database Access](#interactive-database-access)
+- [ESG Category Structure](#esg-category-structure)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [Project Roadmap](#project-roadmap)
+
 ## Project Structure
 
 ```
