@@ -1,0 +1,241 @@
+"""Main collection orchestrator for ESG news data."""
+
+import logging
+import random
+from dataclasses import dataclass, field
+
+from .api_client import NewsDataClient
+from .config import settings
+from .database import Database, db
+from .scraper import ArticleScraper
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CollectionStats:
+    """Statistics from a collection run."""
+
+    api_calls: int = 0
+    articles_fetched: int = 0
+    articles_duplicates: int = 0
+    articles_scraped: int = 0
+    articles_scrape_failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+
+class NewsCollector:
+    """Orchestrates the news collection and scraping process."""
+
+    def __init__(
+        self,
+        database: Database | None = None,
+        api_client: NewsDataClient | None = None,
+        scraper: ArticleScraper | None = None,
+    ):
+        self.db = database or db
+        self.api_client = api_client or NewsDataClient()
+        self.scraper = scraper or ArticleScraper()
+
+    def collect_from_api(
+        self,
+        max_calls: int | None = None,
+        dry_run: bool = False,
+    ) -> CollectionStats:
+        """
+        Phase 1: Collect article metadata from NewsData.io API.
+
+        Args:
+            max_calls: Maximum API calls to make (default: from settings)
+            dry_run: If True, don't save to database
+
+        Returns:
+            CollectionStats with results
+        """
+        max_calls = max_calls or settings.max_api_calls_per_day
+        stats = CollectionStats()
+
+        # In-memory deduplication to track articles seen this run
+        seen_article_ids: set[str] = set()
+
+        queries = self.api_client.generate_search_queries()
+        random.shuffle(queries)
+
+        logger.info(f"Starting API collection with {len(queries)} queries, max {max_calls} calls")
+
+        for query, category in queries:
+            if self.api_client.api_calls_made >= max_calls:
+                logger.info(f"Reached max API calls ({max_calls})")
+                break
+
+            cat_info = f" (category: {category})" if category else ""
+            logger.debug(f"Searching: {query}{cat_info}")
+
+            articles, next_page = self.api_client.search_news(query, category=category)
+            stats.api_calls = self.api_client.api_calls_made
+
+            if not articles:
+                continue
+
+            # Filter out articles already seen this run
+            new_articles = []
+            for article in articles:
+                if article.article_id in seen_article_ids:
+                    stats.articles_duplicates += 1
+                else:
+                    seen_article_ids.add(article.article_id)
+                    new_articles.append(article)
+
+            if dry_run:
+                stats.articles_fetched += len(new_articles)
+                if new_articles:
+                    logger.info(f"[DRY RUN] Would save {len(new_articles)} articles ({len(articles) - len(new_articles)} duplicates skipped)")
+                continue
+
+            with self.db.get_session() as session:
+                for article_data in new_articles:
+                    try:
+                        _, is_new = self.db.upsert_article(session, article_data)
+                        if is_new:
+                            stats.articles_fetched += 1
+                        else:
+                            # Already in database from previous run
+                            stats.articles_duplicates += 1
+                    except Exception as e:
+                        error_msg = f"Failed to save article {article_data.article_id}: {e}"
+                        logger.warning(error_msg)
+                        stats.errors.append(error_msg)
+
+        logger.info(
+            f"API collection complete: {stats.api_calls} calls, "
+            f"{stats.articles_fetched} new, {stats.articles_duplicates} duplicates"
+        )
+        return stats
+
+    def scrape_pending_articles(
+        self,
+        limit: int = 100,
+        dry_run: bool = False,
+    ) -> CollectionStats:
+        """
+        Phase 2: Scrape full content for pending articles.
+
+        Args:
+            limit: Maximum articles to scrape
+            dry_run: If True, don't save to database
+
+        Returns:
+            CollectionStats with results
+        """
+        stats = CollectionStats()
+
+        with self.db.get_session() as session:
+            pending = self.db.get_articles_pending_scrape(session, limit=limit)
+            logger.info(f"Found {len(pending)} articles pending scrape")
+
+            for article in pending:
+                logger.debug(f"Scraping: {article.url}")
+
+                if dry_run:
+                    logger.info(f"[DRY RUN] Would scrape: {article.url}")
+                    stats.articles_scraped += 1
+                    continue
+
+                result = self.scraper.scrape_with_delay(article.url)
+
+                if result.success:
+                    self.db.update_article_content(
+                        session,
+                        article.article_id,
+                        result.content,
+                        "success",
+                    )
+                    stats.articles_scraped += 1
+                else:
+                    self.db.update_article_content(
+                        session,
+                        article.article_id,
+                        None,
+                        result.status,
+                        result.error,
+                    )
+                    stats.articles_scrape_failed += 1
+
+        logger.info(
+            f"Scraping complete: {stats.articles_scraped} success, "
+            f"{stats.articles_scrape_failed} failed"
+        )
+        return stats
+
+    def collect_daily_news(
+        self,
+        max_calls: int | None = None,
+        scrape_limit: int = 100,
+        dry_run: bool = False,
+    ) -> CollectionStats:
+        """
+        Run full daily collection: API fetch + scraping.
+
+        Args:
+            max_calls: Maximum API calls
+            scrape_limit: Maximum articles to scrape
+            dry_run: If True, don't save to database
+
+        Returns:
+            Combined CollectionStats
+        """
+        self.db.init_db()
+
+        with self.db.get_session() as session:
+            run = self.db.create_collection_run(session)
+            run_id = run.id
+
+        try:
+            api_stats = self.collect_from_api(max_calls=max_calls, dry_run=dry_run)
+            scrape_stats = self.scrape_pending_articles(limit=scrape_limit, dry_run=dry_run)
+
+            combined = CollectionStats(
+                api_calls=api_stats.api_calls,
+                articles_fetched=api_stats.articles_fetched,
+                articles_duplicates=api_stats.articles_duplicates,
+                articles_scraped=scrape_stats.articles_scraped,
+                articles_scrape_failed=scrape_stats.articles_scrape_failed,
+                errors=api_stats.errors + scrape_stats.errors,
+            )
+
+            status = "success" if not combined.errors else "partial"
+
+            with self.db.get_session() as session:
+                run = session.query(type(run)).get(run_id)
+                if run:
+                    self.db.complete_collection_run(
+                        session,
+                        run,
+                        combined.api_calls,
+                        combined.articles_fetched,
+                        combined.articles_duplicates,
+                        combined.articles_scraped,
+                        combined.articles_scrape_failed,
+                        status=status,
+                    )
+
+            logger.info(f"Daily collection complete: {combined}")
+            return combined
+
+        except Exception as e:
+            logger.error(f"Collection failed: {e}")
+            with self.db.get_session() as session:
+                run = session.query(type(run)).get(run_id)
+                if run:
+                    self.db.complete_collection_run(
+                        session,
+                        run,
+                        self.api_client.api_calls_made,
+                        0,
+                        0,
+                        0,
+                        0,
+                        status="failed",
+                        error_message=str(e),
+                    )
+            raise
