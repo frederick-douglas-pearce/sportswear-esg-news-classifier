@@ -3,9 +3,15 @@
 import logging
 import random
 import time
+import warnings
 from dataclasses import dataclass
 
+from dateutil.parser import UnknownTimezoneWarning
 from newspaper import Article as NewspaperArticle
+
+# Suppress timezone warnings from dateutil (used by newspaper internally)
+# We already have publication dates from the API, so we don't need parsed dates from scraping
+warnings.filterwarnings("ignore", category=UnknownTimezoneWarning)
 from newspaper import ArticleException
 
 from .config import settings
