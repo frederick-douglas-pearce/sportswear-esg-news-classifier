@@ -9,9 +9,11 @@ from sqlalchemy import (
     JSON,
     Column,
     DateTime,
+    Index,
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase
@@ -27,6 +29,10 @@ class Article(Base):
     """News article from NewsData.io API."""
 
     __tablename__ = "articles"
+    __table_args__ = (
+        # Case-insensitive unique constraint on title to prevent duplicate articles
+        Index("ix_articles_title_lower", text("lower(title)"), unique=True),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     article_id = Column(String(255), unique=True, nullable=False, index=True)

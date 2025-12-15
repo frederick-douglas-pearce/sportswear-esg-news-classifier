@@ -45,17 +45,29 @@ class Database:
         finally:
             session.close()
 
-    def upsert_article(self, session: Session, article_data: ArticleData) -> tuple[Article, bool]:
+    def upsert_article(self, session: Session, article_data: ArticleData) -> tuple[Article | None, str]:
         """
         Insert or update an article.
 
         Returns:
-            Tuple of (Article object, is_new boolean)
+            Tuple of (Article object or None, status string)
+            Status is one of: "new", "duplicate_id", "duplicate_title"
         """
+        # Check for existing article by ID
         existing = session.query(Article).filter_by(article_id=article_data.article_id).first()
-
         if existing:
-            return existing, False
+            return existing, "duplicate_id"
+
+        # Check for existing article by title (case-insensitive)
+        if article_data.title:
+            from sqlalchemy import func
+            existing_title = (
+                session.query(Article)
+                .filter(func.lower(Article.title) == article_data.title.lower().strip())
+                .first()
+            )
+            if existing_title:
+                return None, "duplicate_title"
 
         article = Article(
             article_id=article_data.article_id,
@@ -76,7 +88,7 @@ class Database:
         )
         session.add(article)
         session.flush()
-        return article, True
+        return article, "new"
 
     def get_articles_pending_scrape(self, session: Session, limit: int = 100) -> list[Article]:
         """Get articles that need to be scraped."""

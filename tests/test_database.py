@@ -89,26 +89,26 @@ class TestUpsertArticle:
     """Tests for article upsert operations."""
 
     def test_insert_new_article(self, test_db, sample_article_data):
-        """Should insert a new article and return is_new=True."""
+        """Should insert a new article and return status='new'."""
         with test_db.get_session() as session:
-            article, is_new = test_db.upsert_article(session, sample_article_data)
+            article, status = test_db.upsert_article(session, sample_article_data)
 
-            assert is_new is True
+            assert status == "new"
             assert article.article_id == "test_123"
             assert article.title == "Test Article Title"
             assert article.scrape_status == "pending"
 
     def test_duplicate_returns_existing(self, test_db, sample_article_data):
-        """Should return existing article with is_new=False for duplicates."""
+        """Should return existing article with status='duplicate_id' for ID duplicates."""
         with test_db.get_session() as session:
             # Insert first time
-            article1, is_new1 = test_db.upsert_article(session, sample_article_data)
+            article1, status1 = test_db.upsert_article(session, sample_article_data)
 
             # Insert same article again
-            article2, is_new2 = test_db.upsert_article(session, sample_article_data)
+            article2, status2 = test_db.upsert_article(session, sample_article_data)
 
-            assert is_new1 is True
-            assert is_new2 is False
+            assert status1 == "new"
+            assert status2 == "duplicate_id"
             assert article1.id == article2.id
 
     def test_article_fields_populated(self, test_db, sample_article_data):

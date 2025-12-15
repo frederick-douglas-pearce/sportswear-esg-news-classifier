@@ -12,6 +12,13 @@ from .scraper import ArticleScraper
 logger = logging.getLogger(__name__)
 
 
+def normalize_title(title: str | None) -> str:
+    """Normalize title for deduplication comparison."""
+    if not title:
+        return ""
+    return title.lower().strip()
+
+
 @dataclass
 class CollectionStats:
     """Statistics from a collection run."""
@@ -19,6 +26,7 @@ class CollectionStats:
     api_calls: int = 0
     articles_fetched: int = 0
     articles_duplicates: int = 0
+    articles_duplicate_title: int = 0  # Same title from different sources
     articles_no_brand: int = 0  # Filtered out - no tracked brand mentioned
     articles_scraped: int = 0
     articles_scrape_failed: int = 0
@@ -58,6 +66,7 @@ class NewsCollector:
 
         # In-memory deduplication to track articles seen this run
         seen_article_ids: set[str] = set()
+        seen_titles: set[str] = set()
 
         queries = self.api_client.generate_search_queries()
         random.shuffle(queries)
@@ -78,7 +87,7 @@ class NewsCollector:
             if not articles:
                 continue
 
-            # Filter out articles already seen this run
+            # Filter out articles already seen this run (by ID)
             new_articles = []
             for article in articles:
                 if article.article_id in seen_article_ids:
@@ -87,9 +96,20 @@ class NewsCollector:
                     seen_article_ids.add(article.article_id)
                     new_articles.append(article)
 
+            # Filter out duplicate titles (same article from different sources)
+            unique_articles = []
+            for article in new_articles:
+                normalized = normalize_title(article.title)
+                if normalized and normalized in seen_titles:
+                    stats.articles_duplicate_title += 1
+                else:
+                    if normalized:
+                        seen_titles.add(normalized)
+                    unique_articles.append(article)
+
             # Filter out articles that don't mention any tracked brand
             branded_articles = []
-            for article in new_articles:
+            for article in unique_articles:
                 if article.brands_mentioned:
                     branded_articles.append(article)
                 else:
@@ -97,23 +117,26 @@ class NewsCollector:
 
             if dry_run:
                 stats.articles_fetched += len(branded_articles)
-                if branded_articles or new_articles:
+                if branded_articles or unique_articles:
+                    dup_id = len(articles) - len(new_articles)
+                    dup_title = len(new_articles) - len(unique_articles)
+                    no_brand = len(unique_articles) - len(branded_articles)
                     logger.info(
                         f"[DRY RUN] Would save {len(branded_articles)} articles "
-                        f"({len(articles) - len(new_articles)} duplicates, "
-                        f"{len(new_articles) - len(branded_articles)} no brand)"
+                        f"({dup_id} dup ID, {dup_title} dup title, {no_brand} no brand)"
                     )
                 continue
 
             with self.db.get_session() as session:
                 for article_data in branded_articles:
                     try:
-                        _, is_new = self.db.upsert_article(session, article_data)
-                        if is_new:
+                        _, status = self.db.upsert_article(session, article_data)
+                        if status == "new":
                             stats.articles_fetched += 1
-                        else:
-                            # Already in database from previous run
+                        elif status == "duplicate_id":
                             stats.articles_duplicates += 1
+                        elif status == "duplicate_title":
+                            stats.articles_duplicate_title += 1
                     except Exception as e:
                         error_msg = f"Failed to save article {article_data.article_id}: {e}"
                         logger.warning(error_msg)
@@ -121,8 +144,8 @@ class NewsCollector:
 
         logger.info(
             f"API collection complete: {stats.api_calls} calls, "
-            f"{stats.articles_fetched} new, {stats.articles_duplicates} duplicates, "
-            f"{stats.articles_no_brand} filtered (no brand)"
+            f"{stats.articles_fetched} new, {stats.articles_duplicates} dup ID, "
+            f"{stats.articles_duplicate_title} dup title, {stats.articles_no_brand} no brand"
         )
         return stats
 
@@ -212,6 +235,7 @@ class NewsCollector:
                 api_calls=api_stats.api_calls,
                 articles_fetched=api_stats.articles_fetched,
                 articles_duplicates=api_stats.articles_duplicates,
+                articles_duplicate_title=api_stats.articles_duplicate_title,
                 articles_no_brand=api_stats.articles_no_brand,
                 articles_scraped=scrape_stats.articles_scraped,
                 articles_scrape_failed=scrape_stats.articles_scrape_failed,

@@ -81,6 +81,78 @@ class TestInMemoryDeduplication:
         assert stats.articles_fetched == 3
         assert stats.articles_duplicates == 1
 
+    def test_duplicate_titles_filtered(self):
+        """Should filter out articles with duplicate titles from different sources."""
+        mock_db = MagicMock()
+        mock_api = MagicMock()
+        mock_scraper = MagicMock()
+
+        # Same title from different sources (different article_id)
+        articles = [
+            ArticleData(article_id="article_1", title="Nike Reports Record Sales", url="http://source1.com/1", brands_mentioned=["Nike"]),
+            ArticleData(article_id="article_2", title="Nike Reports Record Sales", url="http://source2.com/1", brands_mentioned=["Nike"]),  # Dup title
+            ArticleData(article_id="article_3", title="Adidas Launches New Line", url="http://source1.com/2", brands_mentioned=["Adidas"]),
+        ]
+
+        mock_api.generate_search_queries.return_value = [("query", None)]
+
+        call_count = [0]
+
+        def search_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            return (articles, None)
+
+        mock_api.search_news.side_effect = search_side_effect
+        type(mock_api).api_calls_made = property(lambda self: call_count[0])
+
+        collector = NewsCollector(
+            database=mock_db,
+            api_client=mock_api,
+            scraper=mock_scraper,
+        )
+
+        stats = collector.collect_from_api(max_calls=1, dry_run=True)
+
+        # Should have 2 unique articles (by title), 1 duplicate title
+        assert stats.articles_fetched == 2
+        assert stats.articles_duplicate_title == 1
+        assert stats.articles_duplicates == 0  # No ID duplicates
+
+    def test_title_dedup_case_insensitive(self):
+        """Should treat titles with different casing as duplicates."""
+        mock_db = MagicMock()
+        mock_api = MagicMock()
+        mock_scraper = MagicMock()
+
+        articles = [
+            ArticleData(article_id="article_1", title="Nike News Today", url="http://source1.com/1", brands_mentioned=["Nike"]),
+            ArticleData(article_id="article_2", title="NIKE NEWS TODAY", url="http://source2.com/1", brands_mentioned=["Nike"]),  # Same title, diff case
+            ArticleData(article_id="article_3", title="  Nike News Today  ", url="http://source3.com/1", brands_mentioned=["Nike"]),  # With whitespace
+        ]
+
+        mock_api.generate_search_queries.return_value = [("query", None)]
+
+        call_count = [0]
+
+        def search_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            return (articles, None)
+
+        mock_api.search_news.side_effect = search_side_effect
+        type(mock_api).api_calls_made = property(lambda self: call_count[0])
+
+        collector = NewsCollector(
+            database=mock_db,
+            api_client=mock_api,
+            scraper=mock_scraper,
+        )
+
+        stats = collector.collect_from_api(max_calls=1, dry_run=True)
+
+        # Should have 1 unique article, 2 duplicate titles
+        assert stats.articles_fetched == 1
+        assert stats.articles_duplicate_title == 2
+
     def test_dry_run_does_not_save_to_database(self):
         """Dry run should not call database methods."""
         mock_db = MagicMock()
@@ -246,7 +318,7 @@ class TestCollectFromApi:
         mock_session = MagicMock()
         mock_db.get_session.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_db.get_session.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.upsert_article.return_value = (MagicMock(), True)  # (article, is_new)
+        mock_db.upsert_article.return_value = (MagicMock(), "new")  # (article, status)
 
         collector = NewsCollector(
             database=mock_db,
@@ -284,7 +356,7 @@ class TestCollectFromApi:
         mock_session = MagicMock()
         mock_db.get_session.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_db.get_session.return_value.__exit__ = MagicMock(return_value=False)
-        mock_db.upsert_article.return_value = (MagicMock(), False)  # is_new=False means duplicate
+        mock_db.upsert_article.return_value = (MagicMock(), "duplicate_id")  # ID duplicate
 
         collector = NewsCollector(
             database=mock_db,
