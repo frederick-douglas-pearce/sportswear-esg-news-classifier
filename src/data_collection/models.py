@@ -1,7 +1,7 @@
 """SQLAlchemy models for ESG news database."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -46,7 +46,7 @@ class Article(Base):
     raw_response = Column(JSON)
     scrape_status = Column(String(20), default="pending")
     scrape_error = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     scraped_at = Column(DateTime)
     embedding = Column(Vector(1536))
 
@@ -60,7 +60,7 @@ class CollectionRun(Base):
     __tablename__ = "collection_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    started_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime)
     api_calls_made = Column(Integer, default=0)
     articles_fetched = Column(Integer, default=0)

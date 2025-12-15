@@ -233,7 +233,7 @@ class TestCollectionRun:
             run_id = run.id
 
         with test_db.get_session() as session:
-            run = session.query(CollectionRun).get(run_id)
+            run = session.get(CollectionRun, run_id)
             test_db.complete_collection_run(
                 session,
                 run,
@@ -246,7 +246,7 @@ class TestCollectionRun:
             )
 
         with test_db.get_session() as session:
-            run = session.query(CollectionRun).get(run_id)
+            run = session.get(CollectionRun, run_id)
 
             assert run.api_calls_made == 10
             assert run.articles_fetched == 50

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 load_dotenv()
 
@@ -28,8 +28,7 @@ class Settings(BaseModel):
         default_factory=lambda: Path(__file__).parent.parent.parent
     )
 
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
 
 BRANDS: list[str] = [

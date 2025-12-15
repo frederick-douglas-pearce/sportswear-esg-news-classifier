@@ -2,7 +2,7 @@
 
 import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Generator
 
 from sqlalchemy import create_engine, text
@@ -102,11 +102,11 @@ class Database:
             article.full_content = content
             article.scrape_status = status
             article.scrape_error = error
-            article.scraped_at = datetime.utcnow()
+            article.scraped_at = datetime.now(timezone.utc)
 
     def create_collection_run(self, session: Session) -> CollectionRun:
         """Create a new collection run record."""
-        run = CollectionRun(started_at=datetime.utcnow(), status="running")
+        run = CollectionRun(started_at=datetime.now(timezone.utc), status="running")
         session.add(run)
         session.flush()
         return run
@@ -124,7 +124,7 @@ class Database:
         error_message: str | None = None,
     ) -> None:
         """Update collection run with final statistics."""
-        run.completed_at = datetime.utcnow()
+        run.completed_at = datetime.now(timezone.utc)
         run.api_calls_made = api_calls
         run.articles_fetched = articles_fetched
         run.articles_duplicates = articles_duplicates
