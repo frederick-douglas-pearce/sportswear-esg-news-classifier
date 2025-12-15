@@ -28,10 +28,12 @@ uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
 
 # Scheduled Collection (cron)
-./scripts/setup_cron.sh install            # Set up cron job (4x daily)
+./scripts/setup_cron.sh install            # Set up both cron jobs
 ./scripts/setup_cron.sh status             # Check cron status
-./scripts/setup_cron.sh remove             # Remove cron job
-tail -f logs/collection_$(date +%Y%m%d).log  # View today's logs
+./scripts/setup_cron.sh remove             # Remove both cron jobs
+./scripts/setup_cron.sh install-scrape     # Add scrape-only job
+tail -f logs/collection_$(date +%Y%m%d).log  # View collection logs
+tail -f logs/scrape_$(date +%Y%m%d).log      # View scrape logs
 ```
 
 ## Architecture
@@ -45,7 +47,8 @@ tail -f logs/collection_$(date +%Y%m%d).log  # View today's logs
 - `collector.py` - Orchestrates API collection + scraping with in-memory deduplication
 
 ### Cron Scripts (`scripts/`)
-- `cron_collect.sh` - Wrapper script for cron with daily log rotation
+- `cron_collect.sh` - API collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
+- `cron_scrape.sh` - Scrape-only for clearing backlog (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `setup_cron.sh` - Install/remove/status commands for cron management
 
 ### Test Suite (`tests/`)

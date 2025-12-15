@@ -13,7 +13,8 @@ sportswear-esg-news-classifier/
 ├── logs/                       # Application logs
 ├── scripts/
 │   ├── collect_news.py         # CLI script for data collection
-│   ├── cron_collect.sh         # Cron wrapper with logging
+│   ├── cron_collect.sh         # Cron wrapper for API collection + scraping
+│   ├── cron_scrape.sh          # Cron wrapper for scrape-only jobs
 │   └── setup_cron.sh           # User-friendly cron management
 ├── src/
 │   └── data_collection/
@@ -122,23 +123,36 @@ uv run python scripts/collect_news.py -v
 
 ### Scheduled Collection (Cron)
 
-Set up automatic collection to run 4 times daily (midnight, 6am, noon, 6pm):
+Set up automatic collection with two cron jobs:
+- **Collection job**: Fetches from API + scrapes (4x daily)
+- **Scrape-only job**: Clears pending scrape backlog (4x daily, offset)
 
 ```bash
-# Install the cron job
+# Install both cron jobs
 ./scripts/setup_cron.sh install
 
 # Check status
 ./scripts/setup_cron.sh status
 
-# Remove the cron job
+# Remove both cron jobs
 ./scripts/setup_cron.sh remove
 
-# View today's collection logs
+# Install/remove individual jobs
+./scripts/setup_cron.sh install-collect   # Collection only
+./scripts/setup_cron.sh install-scrape    # Scrape-only
+./scripts/setup_cron.sh remove-collect
+./scripts/setup_cron.sh remove-scrape
+
+# View logs
 tail -f logs/collection_$(date +%Y%m%d).log
+tail -f logs/scrape_$(date +%Y%m%d).log
 ```
 
-The scheduled collection uses 50 API calls per run (200/day total) and scrapes up to 100 articles per run.
+**Schedule:**
+| Time | Job | Description |
+|------|-----|-------------|
+| 12am, 6am, 12pm, 6pm | Collection | API fetch (50 calls) + scrape (100 articles) |
+| 3am, 9am, 3pm, 9pm | Scrape-only | Scrape pending articles (150 articles) |
 
 ### Scrape-Only Mode
 
