@@ -12,7 +12,9 @@ sportswear-esg-news-classifier/
 ├── .env                        # Local environment variables (not committed)
 ├── logs/                       # Application logs
 ├── scripts/
-│   └── collect_news.py         # CLI script for data collection
+│   ├── collect_news.py         # CLI script for data collection
+│   ├── cron_collect.sh         # Cron wrapper with logging
+│   └── setup_cron.sh           # User-friendly cron management
 ├── src/
 │   └── data_collection/
 │       ├── __init__.py
@@ -117,6 +119,26 @@ uv run python scripts/collect_news.py --max-calls 100 --scrape-limit 50
 # Verbose mode for monitoring
 uv run python scripts/collect_news.py -v
 ```
+
+### Scheduled Collection (Cron)
+
+Set up automatic collection to run 4 times daily (midnight, 6am, noon, 6pm):
+
+```bash
+# Install the cron job
+./scripts/setup_cron.sh install
+
+# Check status
+./scripts/setup_cron.sh status
+
+# Remove the cron job
+./scripts/setup_cron.sh remove
+
+# View today's collection logs
+tail -f logs/collection_$(date +%Y%m%d).log
+```
+
+The scheduled collection uses 50 API calls per run (200/day total) and scrapes up to 100 articles per run.
 
 ### Scrape-Only Mode
 
@@ -263,6 +285,7 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 - [x] NewsData.io API integration
 - [x] Article scraping with newspaper4k
 - [x] PostgreSQL + pgvector storage
+- [x] Automated cron scheduling (4x daily)
 - [ ] Target: 1,000-2,000 articles over 10-14 days
 
 ### Phase 2: Data Labeling & Preprocessing

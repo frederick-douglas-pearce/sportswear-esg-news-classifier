@@ -26,6 +26,12 @@ uv run pytest                              # Run all tests (43 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
+
+# Scheduled Collection (cron)
+./scripts/setup_cron.sh install            # Set up cron job (4x daily)
+./scripts/setup_cron.sh status             # Check cron status
+./scripts/setup_cron.sh remove             # Remove cron job
+tail -f logs/collection_$(date +%Y%m%d).log  # View today's logs
 ```
 
 ## Architecture
@@ -37,6 +43,10 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requi
 - `database.py` - PostgreSQL operations with SQLAlchemy
 - `models.py` - SQLAlchemy models (Article, CollectionRun)
 - `collector.py` - Orchestrates API collection + scraping with in-memory deduplication
+
+### Cron Scripts (`scripts/`)
+- `cron_collect.sh` - Wrapper script for cron with daily log rotation
+- `setup_cron.sh` - Install/remove/status commands for cron management
 
 ### Test Suite (`tests/`)
 - `conftest.py` - Shared pytest fixtures
