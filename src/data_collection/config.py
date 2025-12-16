@@ -24,6 +24,12 @@ class Settings(BaseModel):
     scrape_delay_seconds: float = Field(
         default_factory=lambda: float(os.getenv("SCRAPE_DELAY_SECONDS", "2"))
     )
+    gdelt_timespan: str = Field(
+        default_factory=lambda: os.getenv("GDELT_TIMESPAN", "3m")  # 3 months default
+    )
+    gdelt_max_records: int = Field(
+        default_factory=lambda: int(os.getenv("GDELT_MAX_RECORDS", "250"))
+    )
     project_root: Path = Field(
         default_factory=lambda: Path(__file__).parent.parent.parent
     )

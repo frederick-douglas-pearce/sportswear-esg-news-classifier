@@ -6,6 +6,7 @@ Usage:
     python scripts/collect_news.py [OPTIONS]
 
 Options:
+    --source SOURCE     API source: 'newsdata' or 'gdelt' (default: newsdata)
     --dry-run           Don't save to database, just show what would be done
     --max-calls N       Maximum API calls to make (default: 200)
     --scrape-only       Only scrape pending articles, skip API collection
@@ -14,13 +15,16 @@ Options:
     --verbose, -v       Enable verbose logging
 
 Examples:
-    # Run full daily collection (brand-only queries by default)
+    # Run full daily collection using NewsData.io (default)
     python scripts/collect_news.py
 
-    # Test without saving (dry run)
-    python scripts/collect_news.py --dry-run --max-calls 5
+    # Collect from GDELT (free, no API key needed, 3 months history)
+    python scripts/collect_news.py --source gdelt
 
-    # Use keyword-filtered queries (old behavior)
+    # Test GDELT without saving (dry run)
+    python scripts/collect_news.py --source gdelt --dry-run --max-calls 3
+
+    # Use keyword-filtered queries
     python scripts/collect_news.py --with-keywords
 
     # Only scrape pending articles
@@ -57,6 +61,12 @@ def parse_args() -> argparse.Namespace:
         description="Collect ESG news articles for sportswear brands",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
+    )
+    parser.add_argument(
+        "--source",
+        choices=["newsdata", "gdelt"],
+        default="newsdata",
+        help="API source: 'newsdata' (requires API key) or 'gdelt' (free, 3 months history)",
     )
     parser.add_argument(
         "--dry-run",
@@ -102,12 +112,14 @@ def main() -> int:
     logger = logging.getLogger(__name__)
     logger.info("Starting ESG News Collection")
 
-    if not settings.newsdata_api_key and not args.scrape_only:
+    # Check for API key only when using NewsData.io
+    if args.source == "newsdata" and not settings.newsdata_api_key and not args.scrape_only:
         logger.error("NEWSDATA_API_KEY not set. Please set it in .env file.")
+        logger.info("Tip: Use --source gdelt to collect from GDELT (no API key needed)")
         return 1
 
     try:
-        collector = NewsCollector()
+        collector = NewsCollector(source=args.source)
 
         brand_only = not args.with_keywords
 
@@ -119,7 +131,7 @@ def main() -> int:
             )
         else:
             mode = "brand-only" if brand_only else "with keywords"
-            logger.info(f"Running collection in {mode} mode")
+            logger.info(f"Running {args.source.upper()} collection in {mode} mode")
             stats = collector.collect_daily_news(
                 max_calls=args.max_calls,
                 scrape_limit=args.scrape_limit,

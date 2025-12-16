@@ -3,13 +3,18 @@
 import logging
 import random
 from dataclasses import dataclass, field
+from typing import Literal
 
 from .api_client import NewsDataClient
 from .config import settings
 from .database import Database, db
+from .gdelt_client import GDELTClient
 from .scraper import ArticleScraper
 
 logger = logging.getLogger(__name__)
+
+# Type alias for supported API sources
+ApiSource = Literal["newsdata", "gdelt"]
 
 
 def normalize_title(title: str | None) -> str:
@@ -39,11 +44,20 @@ class NewsCollector:
     def __init__(
         self,
         database: Database | None = None,
-        api_client: NewsDataClient | None = None,
+        api_client: NewsDataClient | GDELTClient | None = None,
         scraper: ArticleScraper | None = None,
+        source: ApiSource = "newsdata",
     ):
         self.db = database or db
-        self.api_client = api_client or NewsDataClient()
+        self.source = source
+
+        if api_client is not None:
+            self.api_client = api_client
+        elif source == "gdelt":
+            self.api_client = GDELTClient()
+        else:
+            self.api_client = NewsDataClient()
+
         self.scraper = scraper or ArticleScraper()
 
     def collect_from_api(
@@ -53,7 +67,7 @@ class NewsCollector:
         brand_only: bool = True,
     ) -> CollectionStats:
         """
-        Phase 1: Collect article metadata from NewsData.io API.
+        Phase 1: Collect article metadata from API (NewsData.io or GDELT).
 
         Args:
             max_calls: Maximum API calls to make (default: from settings)
@@ -73,17 +87,25 @@ class NewsCollector:
         queries = self.api_client.generate_search_queries(brand_only=brand_only)
         random.shuffle(queries)
 
-        logger.info(f"Starting API collection with {len(queries)} queries, max {max_calls} calls")
+        logger.info(f"Starting {self.source.upper()} collection with {len(queries)} queries, max {max_calls} calls")
 
         for query, category in queries:
             if self.api_client.api_calls_made >= max_calls:
                 logger.info(f"Reached max API calls ({max_calls})")
                 break
 
-            cat_info = f" (category: {category})" if category else ""
-            logger.debug(f"Searching: {query}{cat_info}")
+            logger.debug(f"Searching: {query}")
 
-            articles, next_page = self.api_client.search_news(query, category=category)
+            # Call appropriate API based on source
+            if self.source == "gdelt":
+                articles, next_page = self.api_client.search_news(
+                    query,
+                    max_records=settings.gdelt_max_records,
+                    timespan=settings.gdelt_timespan,
+                )
+            else:
+                articles, next_page = self.api_client.search_news(query, category=category)
+
             stats.api_calls = self.api_client.api_calls_made
 
             if not articles:
@@ -221,6 +243,8 @@ class NewsCollector:
             scrape_limit: Maximum articles to scrape
             dry_run: If True, don't save to database
             brand_only: If True, search only by brand names (no keywords)
+
+        Note: The API source is determined by the `source` parameter passed to __init__.
 
         Returns:
             Combined CollectionStats
