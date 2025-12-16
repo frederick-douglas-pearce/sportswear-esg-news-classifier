@@ -1,9 +1,9 @@
 #!/bin/bash
-# Cron wrapper for scraping pending articles (no API calls)
-# Run this script via cron to scrape articles that haven't been processed yet
+# Cron wrapper for GDELT news collection (free API, no key required)
+# Run this script via cron to collect recent news from GDELT and scrape content
 #
-# Example crontab entry (runs every 3 hours, offset from collection):
-#   0 2,5,8,11,14,17,20,23 * * * /path/to/sportswear-esg-news-classifier/scripts/cron_scrape.sh
+# Schedule: runs at 3am, 9am, 3pm, 9pm (4x daily)
+# Uses 6-hour timespan to capture news since last run
 
 set -e
 
@@ -18,22 +18,24 @@ cd "$PROJECT_DIR"
 mkdir -p "$PROJECT_DIR/logs"
 
 # Log file with date
-LOG_FILE="$PROJECT_DIR/logs/scrape_$(date +%Y%m%d).log"
+LOG_FILE="$PROJECT_DIR/logs/gdelt_$(date +%Y%m%d).log"
 
-# Run the scrape-only script
+# Run GDELT collection with 6-hour window
 echo "========================================" >> "$LOG_FILE"
-echo "Scrape started: $(date)" >> "$LOG_FILE"
+echo "GDELT collection started: $(date)" >> "$LOG_FILE"
 echo "========================================" >> "$LOG_FILE"
 
-# Use uv to run the script - scrape only, no API calls
+# Use uv to run GDELT collection with 6-hour timespan
 ~/.local/bin/uv run python scripts/collect_news.py \
-    --scrape-only \
-    --scrape-limit 150 \
+    --source gdelt \
+    --timespan 6h \
+    --max-calls 50 \
+    --scrape-limit 100 \
     >> "$LOG_FILE" 2>&1
 
 EXIT_CODE=$?
 
-echo "Scrape finished: $(date), exit code: $EXIT_CODE" >> "$LOG_FILE"
+echo "GDELT collection finished: $(date), exit code: $EXIT_CODE" >> "$LOG_FILE"
 echo "" >> "$LOG_FILE"
 
 exit $EXIT_CODE

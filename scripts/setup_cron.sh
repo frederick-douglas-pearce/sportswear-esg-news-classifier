@@ -17,10 +17,10 @@ COLLECT_SCHEDULE="0 0,6,12,18 * * *"
 COLLECT_ENTRY="$COLLECT_SCHEDULE $COLLECT_SCRIPT"
 COLLECT_COMMENT="# ESG News Collector - API fetch + scrape (4x daily)"
 
-# Scrape-only: runs at 3am, 9am, 3pm, 9pm (4x daily, offset from collection)
+# GDELT collection: runs at 3am, 9am, 3pm, 9pm (4x daily, offset from NewsData collection)
 SCRAPE_SCHEDULE="0 3,9,15,21 * * *"
 SCRAPE_ENTRY="$SCRAPE_SCHEDULE $SCRAPE_SCRIPT"
-SCRAPE_COMMENT="# ESG News Scraper - scrape pending articles (4x daily)"
+SCRAPE_COMMENT="# ESG News GDELT - collect from GDELT + scrape (4x daily)"
 
 install_collect() {
     if crontab -l 2>/dev/null | grep -q "$COLLECT_SCRIPT"; then
@@ -33,10 +33,10 @@ install_collect() {
 
 install_scrape() {
     if crontab -l 2>/dev/null | grep -q "$SCRAPE_SCRIPT"; then
-        echo "Scrape job already installed."
+        echo "GDELT job already installed."
     else
         (crontab -l 2>/dev/null || true; echo "$SCRAPE_COMMENT"; echo "$SCRAPE_ENTRY") | crontab -
-        echo "✓ Scrape job installed (3am, 9am, 3pm, 9pm)"
+        echo "✓ GDELT job installed (3am, 9am, 3pm, 9pm)"
     fi
 }
 
@@ -51,10 +51,10 @@ remove_collect() {
 
 remove_scrape() {
     if crontab -l 2>/dev/null | grep -q "$SCRAPE_SCRIPT"; then
-        crontab -l | grep -v "$SCRAPE_SCRIPT" | grep -v "ESG News Scraper" | crontab -
-        echo "✓ Scrape job removed."
+        crontab -l | grep -v "$SCRAPE_SCRIPT" | grep -v "ESG News GDELT" | grep -v "ESG News Scraper" | crontab -
+        echo "✓ GDELT job removed."
     else
-        echo "No scrape job found."
+        echo "No GDELT job found."
     fi
 }
 
@@ -64,8 +64,8 @@ case "$1" in
         install_scrape
         echo ""
         echo "Logs:"
-        echo "  Collection: logs/collection_YYYYMMDD.log"
-        echo "  Scraping:   logs/scrape_YYYYMMDD.log"
+        echo "  NewsData:   logs/collection_YYYYMMDD.log"
+        echo "  GDELT:      logs/gdelt_YYYYMMDD.log"
         ;;
     install-collect)
         install_collect
@@ -93,9 +93,9 @@ case "$1" in
             echo "Collection: NOT INSTALLED"
         fi
         if crontab -l 2>/dev/null | grep -q "$SCRAPE_SCRIPT"; then
-            echo "Scraping:   ACTIVE (3am, 9am, 3pm, 9pm)"
+            echo "GDELT:      ACTIVE (3am, 9am, 3pm, 9pm)"
         else
-            echo "Scraping:   NOT INSTALLED"
+            echo "GDELT:      NOT INSTALLED"
         fi
         echo ""
         echo "Current crontab:"
@@ -116,8 +116,8 @@ case "$1" in
         echo "  remove-scrape    - Remove scrape job only"
         echo ""
         echo "Schedule:"
-        echo "  Collection (API + scrape): midnight, 6am, noon, 6pm"
-        echo "  Scrape-only:               3am, 9am, 3pm, 9pm"
+        echo "  NewsData (API + scrape):   midnight, 6am, noon, 6pm"
+        echo "  GDELT (free API + scrape): 3am, 9am, 3pm, 9pm"
         exit 1
         ;;
 esac
