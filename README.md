@@ -39,21 +39,24 @@ sportswear-esg-news-classifier/
 ├── logs/                       # Application logs
 ├── scripts/
 │   ├── collect_news.py         # CLI script for data collection
-│   ├── cron_collect.sh         # Cron wrapper for API collection + scraping
-│   ├── cron_scrape.sh          # Cron wrapper for scrape-only jobs
+│   ├── gdelt_backfill.py       # Historical backfill script (3 months)
+│   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
+│   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
 ├── src/
 │   └── data_collection/
 │       ├── __init__.py
 │       ├── config.py           # Settings, brands, keywords, API configuration
 │       ├── api_client.py       # NewsData.io API wrapper with query generation
+│       ├── gdelt_client.py     # GDELT DOC 2.0 API wrapper (free, 3 months history)
 │       ├── scraper.py          # Full article text extraction (newspaper4k)
 │       ├── database.py         # PostgreSQL operations with SQLAlchemy
 │       ├── models.py           # SQLAlchemy models (Article, CollectionRun)
 │       └── collector.py        # Orchestrates API collection + scraping phases
 └── tests/
     ├── conftest.py             # Shared pytest fixtures
-    ├── test_api_client.py      # API client unit tests
+    ├── test_api_client.py      # NewsData.io client unit tests
+    ├── test_gdelt_client.py    # GDELT client unit tests
     ├── test_collector.py       # Collector unit tests
     └── test_database.py        # Database integration tests
 ```
@@ -65,7 +68,7 @@ sportswear-esg-news-classifier/
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Docker and Docker Compose
-- NewsData.io API key ([get free tier here](https://newsdata.io/register))
+- NewsData.io API key ([get free tier here](https://newsdata.io/register)) - *optional if using GDELT*
 
 ### 2. Installation
 
@@ -137,8 +140,17 @@ uv run python scripts/collect_news.py --dry-run --max-calls 5 -v
 ### Production Collection
 
 ```bash
-# Run full daily collection (API fetch + scraping)
+# Run full daily collection using NewsData.io (requires API key)
 uv run python scripts/collect_news.py
+
+# Run collection using GDELT (free, no API key needed, 3 months history)
+uv run python scripts/collect_news.py --source gdelt
+
+# GDELT with shorter time window (for frequent collection)
+uv run python scripts/collect_news.py --source gdelt --timespan 6h
+
+# GDELT historical backfill for specific date range
+uv run python scripts/collect_news.py --source gdelt --start-date 2025-10-01 --end-date 2025-10-07
 
 # With custom limits
 uv run python scripts/collect_news.py --max-calls 100 --scrape-limit 50
@@ -147,11 +159,29 @@ uv run python scripts/collect_news.py --max-calls 100 --scrape-limit 50
 uv run python scripts/collect_news.py -v
 ```
 
+### GDELT Historical Backfill
+
+To collect 3 months of historical data from GDELT in weekly batches:
+
+```bash
+# Run full 3-month backfill
+uv run python scripts/gdelt_backfill.py
+
+# Test first batch only (dry run)
+uv run python scripts/gdelt_backfill.py --dry-run --max-calls 5
+
+# Resume from a specific date
+uv run python scripts/gdelt_backfill.py --start-from 2025-11-01
+
+# Backfill only 1 month
+uv run python scripts/gdelt_backfill.py --months 1
+```
+
 ### Scheduled Collection (Cron)
 
 Set up automatic collection with two cron jobs:
-- **Collection job**: Fetches from API + scrapes (4x daily)
-- **Scrape-only job**: Clears pending scrape backlog (4x daily, offset)
+- **NewsData job**: Fetches from NewsData.io API + scrapes (4x daily, requires API key)
+- **GDELT job**: Fetches from GDELT API + scrapes (4x daily, free, no key needed)
 
 ```bash
 # Install both cron jobs
@@ -164,21 +194,21 @@ Set up automatic collection with two cron jobs:
 ./scripts/setup_cron.sh remove
 
 # Install/remove individual jobs
-./scripts/setup_cron.sh install-collect   # Collection only
-./scripts/setup_cron.sh install-scrape    # Scrape-only
+./scripts/setup_cron.sh install-collect   # NewsData only
+./scripts/setup_cron.sh install-scrape    # GDELT only
 ./scripts/setup_cron.sh remove-collect
 ./scripts/setup_cron.sh remove-scrape
 
 # View logs
-tail -f logs/collection_$(date +%Y%m%d).log
-tail -f logs/scrape_$(date +%Y%m%d).log
+tail -f logs/collection_$(date +%Y%m%d).log   # NewsData logs
+tail -f logs/gdelt_$(date +%Y%m%d).log        # GDELT logs
 ```
 
 **Schedule:**
 | Time | Job | Description |
 |------|-----|-------------|
-| 12am, 6am, 12pm, 6pm | Collection | API fetch (50 calls) + scrape (100 articles) |
-| 3am, 9am, 3pm, 9pm | Scrape-only | Scrape pending articles (150 articles) |
+| 12am, 6am, 12pm, 6pm | NewsData | NewsData.io API (50 calls) + scrape (100 articles) |
+| 3am, 9am, 3pm, 9pm | GDELT | GDELT API (6h window) + scrape (100 articles) |
 
 ### Scrape-Only Mode
 
@@ -196,23 +226,29 @@ uv run python scripts/collect_news.py --scrape-only --scrape-limit 50
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `--source SOURCE` | API source: `newsdata` or `gdelt` | `newsdata` |
 | `--dry-run` | Don't save to database, just show what would be done | False |
 | `--max-calls N` | Maximum API calls to make | 200 |
 | `--scrape-only` | Only scrape pending articles, skip API collection | False |
 | `--scrape-limit N` | Maximum articles to scrape | 100 |
+| `--timespan SPAN` | GDELT only: relative time window (e.g., `6h`, `1d`, `1w`, `3m`) | `3m` |
+| `--start-date DATE` | GDELT only: start date for historical collection (YYYY-MM-DD) | - |
+| `--end-date DATE` | GDELT only: end date for historical collection (YYYY-MM-DD) | - |
 | `-v, --verbose` | Enable verbose/debug logging | False |
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `NEWSDATA_API_KEY` | Your NewsData.io API key | Required |
+| `NEWSDATA_API_KEY` | Your NewsData.io API key | Required (for NewsData) |
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5434/esg_news` |
 | `POSTGRES_USER` | Database username | `postgres` |
 | `POSTGRES_PASSWORD` | Database password | `postgres` |
 | `POSTGRES_DB` | Database name | `esg_news` |
 | `MAX_API_CALLS_PER_DAY` | API rate limit | `200` |
 | `SCRAPE_DELAY_SECONDS` | Delay between scrape requests | `2` |
+| `GDELT_TIMESPAN` | Default GDELT time window | `3m` |
+| `GDELT_MAX_RECORDS` | Max records per GDELT query | `250` |
 
 ## Database Schema
 
@@ -326,7 +362,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with 43 tests covering the data collection pipeline.
+The project includes a comprehensive test suite with 79 tests covering the data collection pipeline.
 
 ```bash
 # Run all tests
@@ -350,8 +386,9 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 
 | Test File | Tests | Description |
 |-----------|-------|-------------|
-| `test_api_client.py` | 21 | Brand extraction, article parsing, query generation |
-| `test_collector.py` | 10 | Deduplication, dry run mode, API limits |
+| `test_api_client.py` | 23 | NewsData.io brand extraction, article parsing, query generation |
+| `test_gdelt_client.py` | 31 | GDELT article parsing, query generation, date handling |
+| `test_collector.py` | 13 | Deduplication, dry run mode, API limits |
 | `test_database.py` | 12 | Upsert operations, queries (requires PostgreSQL) |
 
 ## Troubleshooting
@@ -391,9 +428,11 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 
 ### Phase 1: Data Collection (Current)
 - [x] NewsData.io API integration
+- [x] GDELT DOC 2.0 API integration (free, 3 months history)
 - [x] Article scraping with newspaper4k
 - [x] PostgreSQL + pgvector storage
-- [x] Automated cron scheduling (4x daily)
+- [x] Automated cron scheduling (8x daily: 4 NewsData + 4 GDELT)
+- [x] Historical backfill script for GDELT
 - [ ] Target: 1,000-2,000 articles over 10-14 days
 
 ### Phase 2: Data Labeling & Preprocessing
