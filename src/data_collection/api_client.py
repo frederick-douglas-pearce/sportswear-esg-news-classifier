@@ -125,20 +125,25 @@ class NewsDataClient:
             self.api_calls_made += 1
             return [], None
 
-    def _group_brands_for_query(self, keyword: str) -> list[str]:
+    def _group_brands_for_query(self, keyword: str | None = None) -> list[str]:
         """
         Group brands using OR to maximize coverage per query while staying under limit.
 
         Args:
-            keyword: The keyword to append to brand groups
+            keyword: Optional keyword to append to brand groups. If None, returns brand-only queries.
 
         Returns:
-            List of query strings like "(Nike OR Adidas OR Puma) keyword"
+            List of query strings like "(Nike OR Adidas OR Puma) keyword" or "Nike OR Adidas OR Puma"
         """
         queries = []
         current_brands: list[str] = []
-        # Reserve space for: "(" + ") " + keyword
-        overhead = 3 + len(keyword)
+
+        if keyword:
+            # Reserve space for: "(" + ") " + keyword
+            overhead = 3 + len(keyword)
+        else:
+            # No keyword, no overhead needed
+            overhead = 0
 
         for brand in BRANDS:
             # Calculate what the query would look like with this brand added
@@ -152,35 +157,50 @@ class NewsDataClient:
                 # Save current group and start new one
                 if current_brands:
                     brand_part = " OR ".join(current_brands)
-                    queries.append(f"({brand_part}) {keyword}")
+                    if keyword:
+                        queries.append(f"({brand_part}) {keyword}")
+                    else:
+                        queries.append(brand_part)
                 current_brands = [brand]
 
         # Don't forget the last group
         if current_brands:
             brand_part = " OR ".join(current_brands)
-            queries.append(f"({brand_part}) {keyword}")
+            if keyword:
+                queries.append(f"({brand_part}) {keyword}")
+            else:
+                queries.append(brand_part)
 
         return queries
 
-    def generate_search_queries(self) -> list[tuple[str, str | None]]:
+    def generate_search_queries(self, brand_only: bool = True) -> list[tuple[str, str | None]]:
         """
         Generate optimized queries combining multiple brands per API call.
 
+        Args:
+            brand_only: If True, generate queries with only brand names (no keywords).
+                       If False, generate queries combining brands with keywords.
+
         Strategy:
-        1. Group brands using OR operators: (Nike OR Adidas OR Puma) keyword
-        2. Maximizes articles per API call (up to 10 per call)
-        3. All queries stay under MAX_QUERY_LENGTH (100 chars for free tier)
-        4. No category filtering to maximize results
+        1. Group brands using OR operators to maximize coverage per query
+        2. All queries stay under MAX_QUERY_LENGTH (100 chars for free tier)
+        3. No category filtering to maximize results
 
         Returns list of tuples: (search_query, category_or_none)
         """
         queries = []
 
-        # Generate grouped brand queries for each keyword
-        for keyword in KEYWORDS:
-            grouped_queries = self._group_brands_for_query(keyword)
+        if brand_only:
+            # Generate brand-only queries (no keywords)
+            grouped_queries = self._group_brands_for_query(keyword=None)
             for query in grouped_queries:
                 queries.append((query, None))
+        else:
+            # Generate grouped brand queries for each keyword
+            for keyword in KEYWORDS:
+                grouped_queries = self._group_brands_for_query(keyword)
+                for query in grouped_queries:
+                    queries.append((query, None))
 
         return queries
 

@@ -36,3 +36,6 @@ Thumbs.db
 
 # uv
 uv.lock
+
+# VS Code
+*.code-workspace

@@ -75,6 +75,7 @@ class CollectionRun(Base):
     articles_scrape_failed = Column(Integer, default=0)
     status = Column(String(20), default="running")
     error_message = Column(Text)
+    notes = Column(Text)  # For annotations, cleanup records, etc.
 
     def __repr__(self) -> str:
         return f"<CollectionRun(id={self.id!r}, status={self.status!r})>"

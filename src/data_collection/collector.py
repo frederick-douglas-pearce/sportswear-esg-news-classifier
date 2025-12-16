@@ -50,6 +50,7 @@ class NewsCollector:
         self,
         max_calls: int | None = None,
         dry_run: bool = False,
+        brand_only: bool = True,
     ) -> CollectionStats:
         """
         Phase 1: Collect article metadata from NewsData.io API.
@@ -57,6 +58,7 @@ class NewsCollector:
         Args:
             max_calls: Maximum API calls to make (default: from settings)
             dry_run: If True, don't save to database
+            brand_only: If True, search only by brand names (no keywords)
 
         Returns:
             CollectionStats with results
@@ -68,7 +70,7 @@ class NewsCollector:
         seen_article_ids: set[str] = set()
         seen_titles: set[str] = set()
 
-        queries = self.api_client.generate_search_queries()
+        queries = self.api_client.generate_search_queries(brand_only=brand_only)
         random.shuffle(queries)
 
         logger.info(f"Starting API collection with {len(queries)} queries, max {max_calls} calls")
@@ -209,6 +211,7 @@ class NewsCollector:
         max_calls: int | None = None,
         scrape_limit: int = 100,
         dry_run: bool = False,
+        brand_only: bool = True,
     ) -> CollectionStats:
         """
         Run full daily collection: API fetch + scraping.
@@ -217,6 +220,7 @@ class NewsCollector:
             max_calls: Maximum API calls
             scrape_limit: Maximum articles to scrape
             dry_run: If True, don't save to database
+            brand_only: If True, search only by brand names (no keywords)
 
         Returns:
             Combined CollectionStats
@@ -228,7 +232,7 @@ class NewsCollector:
             run_id = run.id
 
         try:
-            api_stats = self.collect_from_api(max_calls=max_calls, dry_run=dry_run)
+            api_stats = self.collect_from_api(max_calls=max_calls, dry_run=dry_run, brand_only=brand_only)
             scrape_stats = self.scrape_pending_articles(limit=scrape_limit, dry_run=dry_run)
 
             combined = CollectionStats(

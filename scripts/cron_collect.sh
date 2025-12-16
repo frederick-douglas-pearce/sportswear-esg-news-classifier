@@ -30,6 +30,8 @@ echo "Collection started: $(date)" >> "$LOG_FILE"
 echo "========================================" >> "$LOG_FILE"
 
 # Use uv to run the script in the project's virtual environment
+# Default mode is brand-only queries (no keyword filtering)
+# Add --with-keywords to use the old brand + keyword combination queries
 ~/.local/bin/uv run python scripts/collect_news.py \
     --max-calls 50 \
     --scrape-limit 100 \

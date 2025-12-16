@@ -41,7 +41,22 @@ BRANDS: list[str] = [
     "Columbia Sportswear",
     "New Balance",
     "ASICS",
-    "Reebok"
+    "Reebok",
+    "Skechers",
+    "Fila",
+    "The North Face",
+    "Vans",
+    "Converse",
+    "Salomon",
+    "Mammut",
+    "Umbro",
+    "Anta",
+    "Li-Ning",
+    "Brooks",
+    "Decathlon",
+    "Deckers",
+    "Yonex",
+    "Mizuno"
 ]
 
 KEYWORDS: list[str] = [

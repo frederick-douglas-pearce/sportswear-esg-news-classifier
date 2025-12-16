@@ -10,14 +10,18 @@ Options:
     --max-calls N       Maximum API calls to make (default: 200)
     --scrape-only       Only scrape pending articles, skip API collection
     --scrape-limit N    Maximum articles to scrape (default: 100)
+    --with-keywords     Search with brand + keyword combinations (old behavior)
     --verbose, -v       Enable verbose logging
 
 Examples:
-    # Run full daily collection
+    # Run full daily collection (brand-only queries by default)
     python scripts/collect_news.py
 
     # Test without saving (dry run)
     python scripts/collect_news.py --dry-run --max-calls 5
+
+    # Use keyword-filtered queries (old behavior)
+    python scripts/collect_news.py --with-keywords
 
     # Only scrape pending articles
     python scripts/collect_news.py --scrape-only --scrape-limit 50
@@ -77,6 +81,11 @@ def parse_args() -> argparse.Namespace:
         help="Maximum articles to scrape (default: 100)",
     )
     parser.add_argument(
+        "--with-keywords",
+        action="store_true",
+        help="Search with brand + keyword combinations (old behavior, default: brand-only)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -100,6 +109,8 @@ def main() -> int:
     try:
         collector = NewsCollector()
 
+        brand_only = not args.with_keywords
+
         if args.scrape_only:
             logger.info("Running scrape-only mode")
             stats = collector.scrape_pending_articles(
@@ -107,10 +118,13 @@ def main() -> int:
                 dry_run=args.dry_run,
             )
         else:
+            mode = "brand-only" if brand_only else "with keywords"
+            logger.info(f"Running collection in {mode} mode")
             stats = collector.collect_daily_news(
                 max_calls=args.max_calls,
                 scrape_limit=args.scrape_limit,
                 dry_run=args.dry_run,
+                brand_only=brand_only,
             )
 
         logger.info(f"Collection complete:")

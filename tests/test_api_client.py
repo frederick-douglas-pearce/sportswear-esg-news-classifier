@@ -180,12 +180,26 @@ class TestQueryGeneration:
             has_or = any(" OR " in query for query, _ in queries)
             assert has_or, "Expected queries to use OR operator for brand grouping"
 
-    def test_queries_contain_keywords(self):
-        """Each query should end with a keyword."""
+    def test_brand_only_queries_no_keywords(self):
+        """Brand-only mode (default) should generate queries without keywords."""
         with patch("src.data_collection.api_client.NewsDataApiClient"):
             client = NewsDataClient(api_key="test_key")
 
-            queries = client.generate_search_queries()
+            queries = client.generate_search_queries(brand_only=True)
+
+            for query, _ in queries:
+                # Query format: Brand1 OR Brand2 OR Brand3 (no parentheses, no keyword)
+                has_keyword = any(f") {kw}" in query for kw in KEYWORDS)
+                assert not has_keyword, f"Brand-only query should not have keyword: {query}"
+                # Should have OR operators for brand grouping
+                assert " OR " in query or len(BRANDS) == 1
+
+    def test_keyword_queries_contain_keywords(self):
+        """Keyword mode should generate queries ending with a keyword."""
+        with patch("src.data_collection.api_client.NewsDataApiClient"):
+            client = NewsDataClient(api_key="test_key")
+
+            queries = client.generate_search_queries(brand_only=False)
 
             for query, _ in queries:
                 # Query format: (Brand1 OR Brand2) keyword
@@ -202,17 +216,28 @@ class TestQueryGeneration:
             for _, category in queries:
                 assert category is None, "Expected no category filtering"
 
-    def test_all_keywords_covered(self):
-        """All keywords should be covered by at least one query."""
+    def test_all_keywords_covered_in_keyword_mode(self):
+        """All keywords should be covered by at least one query in keyword mode."""
         with patch("src.data_collection.api_client.NewsDataApiClient"):
             client = NewsDataClient(api_key="test_key")
 
-            queries = client.generate_search_queries()
+            queries = client.generate_search_queries(brand_only=False)
             query_texts = [q for q, _ in queries]
 
             for keyword in KEYWORDS:
                 has_keyword = any(f") {keyword}" in q for q in query_texts)
                 assert has_keyword, f"Keyword not covered: {keyword}"
+
+    def test_brand_only_mode_fewer_queries(self):
+        """Brand-only mode should generate fewer queries than keyword mode."""
+        with patch("src.data_collection.api_client.NewsDataApiClient"):
+            client = NewsDataClient(api_key="test_key")
+
+            brand_only_queries = client.generate_search_queries(brand_only=True)
+            keyword_queries = client.generate_search_queries(brand_only=False)
+
+            # Brand-only should have far fewer queries (just brand groups, no keyword multiplication)
+            assert len(brand_only_queries) < len(keyword_queries)
 
 
 class TestBrandGrouping:
