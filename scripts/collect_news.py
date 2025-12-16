@@ -12,6 +12,9 @@ Options:
     --scrape-only       Only scrape pending articles, skip API collection
     --scrape-limit N    Maximum articles to scrape (default: 100)
     --with-keywords     Search with brand + keyword combinations (old behavior)
+    --timespan SPAN     GDELT only: relative time window (e.g., 6h, 1d, 1w, 3m)
+    --start-date DATE   GDELT only: start date for historical collection (YYYY-MM-DD)
+    --end-date DATE     GDELT only: end date for historical collection (YYYY-MM-DD)
     --verbose, -v       Enable verbose logging
 
 Examples:
@@ -20,6 +23,12 @@ Examples:
 
     # Collect from GDELT (free, no API key needed, 3 months history)
     python scripts/collect_news.py --source gdelt
+
+    # GDELT with shorter time window (for cron jobs)
+    python scripts/collect_news.py --source gdelt --timespan 6h
+
+    # GDELT historical backfill for specific date range
+    python scripts/collect_news.py --source gdelt --start-date 2025-10-01 --end-date 2025-10-07
 
     # Test GDELT without saving (dry run)
     python scripts/collect_news.py --source gdelt --dry-run --max-calls 3
@@ -34,6 +43,7 @@ Examples:
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -96,12 +106,32 @@ def parse_args() -> argparse.Namespace:
         help="Search with brand + keyword combinations (old behavior, default: brand-only)",
     )
     parser.add_argument(
+        "--timespan",
+        type=str,
+        help="GDELT only: relative time window (e.g., 6h, 1d, 1w, 3m). Overrides GDELT_TIMESPAN env var.",
+    )
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        help="GDELT only: start date for historical collection (YYYY-MM-DD). Overrides --timespan.",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        help="GDELT only: end date for historical collection (YYYY-MM-DD). Use with --start-date.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )
     return parser.parse_args()
+
+
+def parse_date(date_str: str) -> datetime:
+    """Parse date string (YYYY-MM-DD) into datetime at start of day."""
+    return datetime.strptime(date_str, "%Y-%m-%d")
 
 
 def main() -> int:
@@ -117,6 +147,32 @@ def main() -> int:
         logger.error("NEWSDATA_API_KEY not set. Please set it in .env file.")
         logger.info("Tip: Use --source gdelt to collect from GDELT (no API key needed)")
         return 1
+
+    # Parse and validate date range options (GDELT only)
+    start_datetime = None
+    end_datetime = None
+    timespan = args.timespan
+
+    if args.start_date or args.end_date:
+        if args.source != "gdelt":
+            logger.error("--start-date and --end-date are only supported with --source gdelt")
+            return 1
+        if args.start_date and not args.end_date:
+            # If only start date provided, use end of today
+            start_datetime = parse_date(args.start_date)
+            end_datetime = datetime.now().replace(hour=23, minute=59, second=59)
+            logger.info(f"Using date range: {args.start_date} to now")
+        elif args.end_date and not args.start_date:
+            logger.error("--end-date requires --start-date to be specified")
+            return 1
+        else:
+            start_datetime = parse_date(args.start_date)
+            end_datetime = parse_date(args.end_date).replace(hour=23, minute=59, second=59)
+            logger.info(f"Using date range: {args.start_date} to {args.end_date}")
+
+    if timespan and args.source != "gdelt":
+        logger.warning("--timespan is only supported with --source gdelt, ignoring")
+        timespan = None
 
     try:
         collector = NewsCollector(source=args.source)
@@ -137,6 +193,9 @@ def main() -> int:
                 scrape_limit=args.scrape_limit,
                 dry_run=args.dry_run,
                 brand_only=brand_only,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+                timespan=timespan,
             )
 
         logger.info(f"Collection complete:")

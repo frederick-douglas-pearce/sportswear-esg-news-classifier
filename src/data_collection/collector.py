@@ -3,6 +3,7 @@
 import logging
 import random
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal
 
 from .api_client import NewsDataClient
@@ -65,6 +66,9 @@ class NewsCollector:
         max_calls: int | None = None,
         dry_run: bool = False,
         brand_only: bool = True,
+        start_datetime: datetime | None = None,
+        end_datetime: datetime | None = None,
+        timespan: str | None = None,
     ) -> CollectionStats:
         """
         Phase 1: Collect article metadata from API (NewsData.io or GDELT).
@@ -73,6 +77,9 @@ class NewsCollector:
             max_calls: Maximum API calls to make (default: from settings)
             dry_run: If True, don't save to database
             brand_only: If True, search only by brand names (no keywords)
+            start_datetime: For GDELT - start of date range (overrides timespan)
+            end_datetime: For GDELT - end of date range
+            timespan: For GDELT - relative time window (e.g., "6h", "1w")
 
         Returns:
             CollectionStats with results
@@ -87,7 +94,17 @@ class NewsCollector:
         queries = self.api_client.generate_search_queries(brand_only=brand_only)
         random.shuffle(queries)
 
-        logger.info(f"Starting {self.source.upper()} collection with {len(queries)} queries, max {max_calls} calls")
+        # Build time range description for logging
+        if start_datetime and end_datetime:
+            time_desc = f" ({start_datetime.date()} to {end_datetime.date()})"
+        elif start_datetime:
+            time_desc = f" (from {start_datetime.date()})"
+        elif timespan:
+            time_desc = f" (timespan: {timespan})"
+        else:
+            time_desc = ""
+
+        logger.info(f"Starting {self.source.upper()} collection with {len(queries)} queries, max {max_calls} calls{time_desc}")
 
         for query, category in queries:
             if self.api_client.api_calls_made >= max_calls:
@@ -98,10 +115,14 @@ class NewsCollector:
 
             # Call appropriate API based on source
             if self.source == "gdelt":
+                # Use provided timespan or fall back to settings
+                effective_timespan = timespan or settings.gdelt_timespan
                 articles, next_page = self.api_client.search_news(
                     query,
                     max_records=settings.gdelt_max_records,
-                    timespan=settings.gdelt_timespan,
+                    timespan=effective_timespan,
+                    start_datetime=start_datetime,
+                    end_datetime=end_datetime,
                 )
             else:
                 articles, next_page = self.api_client.search_news(query, category=category)
@@ -234,6 +255,9 @@ class NewsCollector:
         scrape_limit: int = 100,
         dry_run: bool = False,
         brand_only: bool = True,
+        start_datetime: datetime | None = None,
+        end_datetime: datetime | None = None,
+        timespan: str | None = None,
     ) -> CollectionStats:
         """
         Run full daily collection: API fetch + scraping.
@@ -243,6 +267,9 @@ class NewsCollector:
             scrape_limit: Maximum articles to scrape
             dry_run: If True, don't save to database
             brand_only: If True, search only by brand names (no keywords)
+            start_datetime: For GDELT - start of date range (overrides timespan)
+            end_datetime: For GDELT - end of date range
+            timespan: For GDELT - relative time window (e.g., "6h", "1w")
 
         Note: The API source is determined by the `source` parameter passed to __init__.
 
@@ -256,7 +283,14 @@ class NewsCollector:
             run_id = run.id
 
         try:
-            api_stats = self.collect_from_api(max_calls=max_calls, dry_run=dry_run, brand_only=brand_only)
+            api_stats = self.collect_from_api(
+                max_calls=max_calls,
+                dry_run=dry_run,
+                brand_only=brand_only,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+                timespan=timespan,
+            )
             scrape_stats = self.scrape_pending_articles(limit=scrape_limit, dry_run=dry_run)
 
             combined = CollectionStats(

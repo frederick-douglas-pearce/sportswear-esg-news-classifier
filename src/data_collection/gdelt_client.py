@@ -122,12 +122,18 @@ class GDELTClient:
             raw_response=raw,
         )
 
+    def _format_datetime(self, dt: datetime) -> str:
+        """Format datetime for GDELT API (YYYYMMDDHHMMSS)."""
+        return dt.strftime("%Y%m%d%H%M%S")
+
     def search_news(
         self,
         query: str,
         language: str = LANGUAGE,
         max_records: int = 250,
         timespan: str | None = None,
+        start_datetime: datetime | None = None,
+        end_datetime: datetime | None = None,
     ) -> tuple[list[ArticleData], str | None]:
         """
         Search for news articles using GDELT DOC 2.0 API.
@@ -136,7 +142,12 @@ class GDELTClient:
             query: Search query string
             language: Language code (e.g., "en")
             max_records: Maximum results to return (up to 250)
-            timespan: Time window (e.g., "1w" for 1 week, "3m" for 3 months)
+            timespan: Relative time window (e.g., "6h", "1d", "1w", "3m")
+            start_datetime: Absolute start time (overrides timespan if provided)
+            end_datetime: Absolute end time (use with start_datetime)
+
+        Note: If start_datetime/end_datetime are provided, they override timespan.
+              Both must be within the last 3 months.
 
         Returns:
             Tuple of (list of articles, next_page token or None)
@@ -155,14 +166,17 @@ class GDELTClient:
                 "sort": "datedesc",
             }
 
-            if timespan:
-                params["timespan"] = timespan
-
             # Build URL with encoded query
             url = f"{GDELT_API_BASE}?query={quote_plus(params['query'])}"
             url += f"&mode={params['mode']}&format={params['format']}"
             url += f"&maxrecords={params['maxrecords']}&sort={params['sort']}"
-            if timespan:
+
+            # Add time parameters - absolute dates take precedence over timespan
+            if start_datetime:
+                url += f"&startdatetime={self._format_datetime(start_datetime)}"
+                if end_datetime:
+                    url += f"&enddatetime={self._format_datetime(end_datetime)}"
+            elif timespan:
                 url += f"&timespan={timespan}"
 
             logger.debug(f"GDELT API request: {url}")

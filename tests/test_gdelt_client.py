@@ -234,6 +234,28 @@ class TestQueryGeneration:
         assert len(with_keywords) > len(brand_only)
 
 
+class TestDatetimeFormatting:
+    """Tests for datetime formatting for GDELT API."""
+
+    def test_format_datetime(self):
+        """Should format datetime in GDELT format."""
+        client = GDELTClient()
+        dt = datetime(2025, 12, 3, 14, 30, 0)
+
+        result = client._format_datetime(dt)
+
+        assert result == "20251203143000"
+
+    def test_format_datetime_midnight(self):
+        """Should format midnight correctly."""
+        client = GDELTClient()
+        dt = datetime(2025, 1, 1, 0, 0, 0)
+
+        result = client._format_datetime(dt)
+
+        assert result == "20250101000000"
+
+
 class TestSearchNews:
     """Tests for the search_news API call."""
 
@@ -294,6 +316,62 @@ class TestSearchNews:
 
             assert articles == []
             assert next_page is None
+
+    def test_search_news_with_timespan(self):
+        """Should include timespan in URL."""
+        client = GDELTClient()
+
+        with patch.object(client.client, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"articles": []}
+            mock_get.return_value = mock_response
+
+            client.search_news("Nike", timespan="6h")
+
+            # Check that timespan is in the URL
+            call_args = mock_get.call_args
+            url = call_args[0][0]
+            assert "timespan=6h" in url
+
+    def test_search_news_with_date_range(self):
+        """Should include start and end datetime in URL."""
+        client = GDELTClient()
+
+        with patch.object(client.client, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"articles": []}
+            mock_get.return_value = mock_response
+
+            start = datetime(2025, 10, 1, 0, 0, 0)
+            end = datetime(2025, 10, 7, 23, 59, 59)
+            client.search_news("Nike", start_datetime=start, end_datetime=end)
+
+            # Check that dates are in the URL
+            call_args = mock_get.call_args
+            url = call_args[0][0]
+            assert "startdatetime=20251001000000" in url
+            assert "enddatetime=20251007235959" in url
+
+    def test_search_news_date_range_overrides_timespan(self):
+        """Date range should take precedence over timespan."""
+        client = GDELTClient()
+
+        with patch.object(client.client, "get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"articles": []}
+            mock_get.return_value = mock_response
+
+            start = datetime(2025, 10, 1, 0, 0, 0)
+            client.search_news("Nike", timespan="6h", start_datetime=start)
+
+            # Check that dates are in URL but timespan is not
+            call_args = mock_get.call_args
+            url = call_args[0][0]
+            assert "startdatetime=20251001000000" in url
+            assert "timespan" not in url
 
 
 class TestGetRemainingCalls:
