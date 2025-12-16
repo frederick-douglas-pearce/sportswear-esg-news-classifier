@@ -58,7 +58,7 @@ BRANDS: list[str] = [
     "Umbro",
     "Anta",
     "Li-Ning",
-    "Brooks",
+    "Brooks Running",
     "Decathlon",
     "Deckers",
     "Yonex",
