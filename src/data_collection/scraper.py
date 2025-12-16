@@ -7,6 +7,7 @@ import warnings
 from dataclasses import dataclass
 
 from dateutil.parser import UnknownTimezoneWarning
+from langdetect import LangDetectException, detect
 from newspaper import Article as NewspaperArticle
 
 # Suppress timezone warnings from dateutil (used by newspaper internally)
@@ -64,6 +65,24 @@ class ArticleScraper:
         text_lower = text.lower()
         return any(indicator in text_lower for indicator in PAYWALL_INDICATORS)
 
+    def _is_english(self, text: str, min_length: int = 100) -> bool:
+        """
+        Check if text is English using language detection.
+
+        Args:
+            text: Text to check
+            min_length: Minimum text length for reliable detection
+
+        Returns:
+            True if English or detection uncertain, False if definitely non-English
+        """
+        if not text or len(text) < min_length:
+            return True  # Can't reliably detect, assume English
+        try:
+            return detect(text) == "en"
+        except LangDetectException:
+            return True  # Detection failed, assume English
+
     def scrape_article(self, url: str) -> ScrapeResult:
         """
         Scrape full article content from URL.
@@ -94,6 +113,14 @@ class ArticleScraper:
                 return ScrapeResult(
                     success=False,
                     error="Paywall detected",
+                    status="skipped",
+                )
+
+            if not self._is_english(content):
+                self.articles_failed += 1
+                return ScrapeResult(
+                    success=False,
+                    error="Non-English content detected",
                     status="skipped",
                 )
 
