@@ -452,7 +452,7 @@ The labeling pipeline adds several new tables:
 | `chunk_id` | UUID | Foreign key to article_chunks (nullable) |
 | `category` | String | ESG category |
 | `excerpt` | Text | Evidence quote |
-| `similarity_score` | Float | Match confidence |
+| `relevance_score` | Float | Match confidence |
 
 **`labeling_runs`** - Tracks labeling batches with statistics and cost estimates.
 
@@ -547,7 +547,7 @@ LIMIT 5;"
 
 # Evidence excerpts for a brand
 docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT le.category, LEFT(le.excerpt, 80) as evidence, le.similarity_score
+SELECT le.category, LEFT(le.excerpt, 80) as evidence, le.relevance_score
 FROM label_evidence le
 JOIN brand_labels bl ON le.brand_label_id = bl.id
 WHERE bl.brand = 'Nike'
