@@ -62,7 +62,32 @@ BRANDS: list[str] = [
     "Decathlon",
     "Deckers",
     "Yonex",
-    "Mizuno"
+    "Mizuno",
+    "K-Swiss",
+    "Altra Running",
+    "Hoka",
+    "Saucony",
+    "Merrell",
+    "Timberland",
+    "Spyder",
+    "On Running",
+    "Allbirds",
+    "Gymshark",
+    "Everlast",
+    "Arc'teryx",
+    "Jack Wolfskin",
+    "Athleta",
+    "Vuori",
+    "Cotopaxi",
+    "Prana",
+    "Eddie Bauer",
+    "361 Degrees",
+    "Xtep",
+    "Peak Sport",
+    "Mountain Hardwear",
+    "Black Diamond",
+    "Outdoor Voices",
+    "Diadora"
 ]
 
 KEYWORDS: list[str] = [
