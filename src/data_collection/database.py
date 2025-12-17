@@ -11,7 +11,15 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .api_client import ArticleData
 from .config import settings
-from .models import Article, Base, CollectionRun
+from .models import (
+    Article,
+    ArticleChunk,
+    Base,
+    BrandLabel,
+    CollectionRun,
+    LabelEvidence,
+    LabelingRun,
+)
 
 logger = logging.getLogger(__name__)
 
