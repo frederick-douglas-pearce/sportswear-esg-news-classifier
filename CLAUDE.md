@@ -12,7 +12,7 @@ ESG News Classifier for sportswear brands - a multi-label text classification sy
 # Setup
 uv sync                                    # Install dependencies
 uv sync --extra dev                        # Install dev dependencies (testing)
-cp .env.example .env                       # Create environment file (add API key)
+cp .env.example .env                       # Create environment file (add API keys)
 docker compose up -d                       # Start PostgreSQL + pgvector
 
 # Data Collection (use uv run to execute in venv)
@@ -23,8 +23,15 @@ uv run python scripts/collect_news.py --dry-run --max-calls 5    # Test without 
 uv run python scripts/collect_news.py --scrape-only              # Only scrape pending articles
 uv run python scripts/gdelt_backfill.py                          # 3-month historical backfill
 
+# Article Labeling (requires ANTHROPIC_API_KEY and OPENAI_API_KEY)
+uv run python scripts/label_articles.py --stats                  # View labeling statistics
+uv run python scripts/label_articles.py --dry-run --batch-size 5 # Test without saving
+uv run python scripts/label_articles.py --batch-size 10          # Label batch of articles
+uv run python scripts/label_articles.py --article-id UUID        # Label specific article
+uv run python scripts/label_articles.py --skip-embedding         # Skip embedding generation
+
 # Testing
-uv run pytest                              # Run all tests (98 tests)
+uv run pytest                              # Run all tests (120 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -46,14 +53,26 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 - `gdelt_client.py` - GDELT DOC 2.0 API wrapper (free, 3 months history)
 - `scraper.py` - Full article text extraction with language detection (filters non-English)
 - `database.py` - PostgreSQL operations with SQLAlchemy
-- `models.py` - SQLAlchemy models (Article, CollectionRun)
+- `models.py` - SQLAlchemy models (Article, CollectionRun, ArticleChunk, BrandLabel, LabelEvidence, LabelingRun)
 - `collector.py` - Orchestrates API collection + scraping with in-memory deduplication
 
+### Labeling Pipeline (`src/labeling/`)
+- `config.py` - Labeling settings, Claude prompts, ESG category definitions
+- `models.py` - Pydantic models for LLM response parsing (CategoryLabel, BrandAnalysis, LabelingResponse)
+- `chunker.py` - Paragraph-based article chunking with tiktoken token counting
+- `embedder.py` - OpenAI embedding wrapper with batch processing
+- `labeler.py` - Claude Sonnet wrapper for ESG classification
+- `evidence_matcher.py` - Links evidence excerpts to chunks via exact/fuzzy/embedding similarity
+- `database.py` - Labeling-specific DB operations
+- `pipeline.py` - Orchestrates chunking → embedding → labeling → evidence matching
+
 ### Scripts (`scripts/`)
-- `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
-- `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
+- `collect_news.py` - CLI for NewsData.io/GDELT data collection
+- `label_articles.py` - CLI for LLM-based article labeling
 - `gdelt_backfill.py` - Historical backfill script (3 months in weekly batches)
 - `cleanup_non_english.py` - Remove non-English articles from database
+- `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
+- `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `setup_cron.sh` - Install/remove/status commands for cron management
 
 ### Test Suite (`tests/`)
@@ -63,10 +82,16 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 - `test_scraper.py` - Language detection, paywall detection, scraping (19 tests)
 - `test_collector.py` - Deduplication, dry run mode, API limits (13 tests)
 - `test_database.py` - Upsert operations, queries (12 tests, requires PostgreSQL)
+- `test_chunker.py` - Article chunking, token counting, paragraph boundaries (21 tests)
+- `test_labeler.py` - LLM response parsing, Pydantic model validation (13 tests)
 
 ### Database Schema
-- **articles**: Stores article metadata from API + full scraped content + future embeddings (pgvector)
+- **articles**: Stores article metadata from API + full scraped content + labeling_status
 - **collection_runs**: Logs each daily collection run with statistics
+- **article_chunks**: Chunked article text with embeddings (pgvector) for evidence linking
+- **brand_labels**: Per-brand ESG labels with sentiment (-1/0/+1) and confidence
+- **label_evidence**: Supporting excerpts linked to chunks via similarity matching
+- **labeling_runs**: Tracks labeling batches with cost estimates
 
 ### Environment Variables
 - `NEWSDATA_API_KEY` - Required for NewsData.io collection (not needed for GDELT)
@@ -75,6 +100,11 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 - `SCRAPE_DELAY_SECONDS` - Delay between scrape requests (default: 2)
 - `GDELT_TIMESPAN` - Default GDELT time window (default: 3m)
 - `GDELT_MAX_RECORDS` - Max records per GDELT query (default: 250)
+- `ANTHROPIC_API_KEY` - Required for Claude labeling
+- `OPENAI_API_KEY` - Required for embeddings
+- `LABELING_MODEL` - Claude model for labeling (default: claude-sonnet-4-20250514)
+- `EMBEDDING_MODEL` - OpenAI embedding model (default: text-embedding-3-small)
+- `LABELING_BATCH_SIZE` - Articles per labeling batch (default: 10)
 
 ## Search Keywords
 
@@ -98,9 +128,31 @@ The API client uses OR-grouped queries to maximize article yield per API call:
 - Respects NewsData.io free tier 100-char query limit
 - Generates ~54 optimized queries (vs 180+ individual queries)
 
-## Future Phases
+## ESG Labeling Categories
 
-### Model Development (Phase 3)
+The labeling pipeline classifies articles into 4 top-level ESG categories with ternary sentiment:
+- **Environmental**: Carbon emissions, waste management, sustainable materials
+- **Social**: Worker rights, diversity & inclusion, community engagement
+- **Governance**: Ethical sourcing, transparency, board structure
+- **Digital Transformation**: Technology innovation, digital initiatives
+
+Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
+
+## Project Phases
+
+### Phase 1: Data Collection ✅
+- NewsData.io and GDELT API integration
+- Article scraping with language detection
+- PostgreSQL + pgvector storage
+
+### Phase 2: LLM-Based Labeling ✅
+- Claude Sonnet classification with structured JSON output
+- Per-brand ESG labels with sentiment
+- Evidence extraction and chunk linking
+- OpenAI embeddings for semantic matching
+
+### Phase 3: Model Development (Current)
+- Export labeled data for training
 - Traditional ML: TF-IDF + Logistic Regression/Random Forest/XGBoost
 - Transformer-Based: Fine-tuned DistilBERT/RoBERTa
 

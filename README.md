@@ -15,13 +15,20 @@ A multi-label text classification system that categorizes news articles into ESG
   - [Scheduled Collection (Cron)](#scheduled-collection-cron)
   - [Scrape-Only Mode](#scrape-only-mode)
   - [Command-Line Options](#command-line-options)
+- [LLM-Based Article Labeling](#llm-based-article-labeling)
+  - [How It Works](#how-it-works)
+  - [Running the Labeling Pipeline](#running-the-labeling-pipeline)
+  - [Labeling Command-Line Options](#labeling-command-line-options)
+  - [Cost Estimation](#cost-estimation)
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
   - [Articles Table](#articles-table)
   - [Collection Runs Table](#collection-runs-table)
+  - [Labeling Tables](#labeling-tables)
 - [Querying the Database](#querying-the-database)
   - [Quick Stats](#quick-stats)
   - [Detailed Queries](#detailed-queries)
+  - [Labeling Queries](#labeling-queries)
   - [Interactive Database Access](#interactive-database-access)
 - [ESG Category Structure](#esg-category-structure)
 - [Testing](#testing)
@@ -39,28 +46,41 @@ sportswear-esg-news-classifier/
 ├── logs/                       # Application logs
 ├── scripts/
 │   ├── collect_news.py         # CLI script for data collection
+│   ├── label_articles.py       # CLI script for LLM-based labeling
 │   ├── gdelt_backfill.py       # Historical backfill script (3 months)
 │   ├── cleanup_non_english.py  # Remove non-English articles from database
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
 ├── src/
-│   └── data_collection/
+│   ├── data_collection/
+│   │   ├── __init__.py
+│   │   ├── config.py           # Settings, brands, keywords, API configuration
+│   │   ├── api_client.py       # NewsData.io API wrapper with query generation
+│   │   ├── gdelt_client.py     # GDELT DOC 2.0 API wrapper (free, 3 months history)
+│   │   ├── scraper.py          # Full article text extraction with language detection
+│   │   ├── database.py         # PostgreSQL operations with SQLAlchemy
+│   │   ├── models.py           # SQLAlchemy models (Article, CollectionRun, labeling tables)
+│   │   └── collector.py        # Orchestrates API collection + scraping phases
+│   └── labeling/
 │       ├── __init__.py
-│       ├── config.py           # Settings, brands, keywords, API configuration
-│       ├── api_client.py       # NewsData.io API wrapper with query generation
-│       ├── gdelt_client.py     # GDELT DOC 2.0 API wrapper (free, 3 months history)
-│       ├── scraper.py          # Full article text extraction with language detection
-│       ├── database.py         # PostgreSQL operations with SQLAlchemy
-│       ├── models.py           # SQLAlchemy models (Article, CollectionRun)
-│       └── collector.py        # Orchestrates API collection + scraping phases
+│       ├── config.py           # Labeling settings, prompts, category definitions
+│       ├── models.py           # Pydantic models for LLM responses
+│       ├── chunker.py          # Paragraph-based article chunking
+│       ├── embedder.py         # OpenAI embedding wrapper
+│       ├── labeler.py          # Claude labeling logic
+│       ├── evidence_matcher.py # Match excerpts to chunks via similarity
+│       ├── database.py         # Labeling-specific DB operations
+│       └── pipeline.py         # Orchestrates full labeling flow
 └── tests/
     ├── conftest.py             # Shared pytest fixtures
     ├── test_api_client.py      # NewsData.io client unit tests
     ├── test_gdelt_client.py    # GDELT client unit tests
     ├── test_scraper.py         # Scraper and language detection tests
     ├── test_collector.py       # Collector unit tests
-    └── test_database.py        # Database integration tests
+    ├── test_database.py        # Database integration tests
+    ├── test_chunker.py         # Article chunker unit tests
+    └── test_labeler.py         # LLM labeling response parsing tests
 ```
 
 ## Quick Start
@@ -238,6 +258,63 @@ uv run python scripts/collect_news.py --scrape-only --scrape-limit 50
 | `--end-date DATE` | GDELT only: end date for historical collection (YYYY-MM-DD) | - |
 | `-v, --verbose` | Enable verbose/debug logging | False |
 
+## LLM-Based Article Labeling
+
+The project includes an LLM-powered labeling pipeline that uses Claude Sonnet to automatically categorize articles into ESG categories with per-brand sentiment analysis. This generates training data for a cost-efficient classifier model.
+
+### How It Works
+
+1. **Chunking**: Articles are split into paragraph-based chunks (~500 tokens each) with character position tracking
+2. **Embedding**: Chunks are embedded using OpenAI's `text-embedding-3-small` model for semantic search
+3. **LLM Labeling**: Claude Sonnet analyzes each article and returns structured JSON with:
+   - Per-brand ESG category labels (Environmental, Social, Governance, Digital Transformation)
+   - Ternary sentiment for each category (+1 positive, 0 neutral, -1 negative)
+   - Supporting evidence quotes from the article
+   - Confidence score and reasoning
+4. **Evidence Matching**: Evidence excerpts are linked back to article chunks via exact match, fuzzy match, or embedding similarity
+
+### Running the Labeling Pipeline
+
+```bash
+# Check labeling statistics
+uv run python scripts/label_articles.py --stats
+
+# Test with dry run (doesn't save to database)
+uv run python scripts/label_articles.py --dry-run --batch-size 5
+
+# Label a batch of articles
+uv run python scripts/label_articles.py --batch-size 10
+
+# Label a specific article by UUID
+uv run python scripts/label_articles.py --article-id 12345678-1234-1234-1234-123456789abc
+
+# Skip embedding generation (faster but no semantic evidence matching)
+uv run python scripts/label_articles.py --batch-size 10 --skip-embedding
+
+# Verbose mode for debugging
+uv run python scripts/label_articles.py --batch-size 5 -v
+```
+
+### Labeling Command-Line Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--batch-size N` | Number of articles to process | 10 |
+| `--dry-run` | Show what would be done without saving | False |
+| `--article-id UUID` | Label a specific article | - |
+| `--skip-chunking` | Skip chunking for articles that already have chunks | False |
+| `--skip-embedding` | Skip embedding generation | False |
+| `--stats` | Show labeling statistics and exit | False |
+| `-v, --verbose` | Enable verbose/debug logging | False |
+
+### Cost Estimation
+
+| Component | Approximate Cost |
+|-----------|------------------|
+| OpenAI embeddings (text-embedding-3-small) | ~$0.02 per 1000 articles |
+| Claude Sonnet labeling | ~$10-15 per 1000 articles |
+| **Total** | **~$15 per 1000 articles** |
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -251,6 +328,14 @@ uv run python scripts/collect_news.py --scrape-only --scrape-limit 50
 | `SCRAPE_DELAY_SECONDS` | Delay between scrape requests | `2` |
 | `GDELT_TIMESPAN` | Default GDELT time window | `3m` |
 | `GDELT_MAX_RECORDS` | Max records per GDELT query | `250` |
+| `ANTHROPIC_API_KEY` | Anthropic API key for Claude labeling | Required (for labeling) |
+| `OPENAI_API_KEY` | OpenAI API key for embeddings | Required (for labeling) |
+| `LABELING_MODEL` | Claude model for labeling | `claude-sonnet-4-20250514` |
+| `EMBEDDING_MODEL` | OpenAI model for embeddings | `text-embedding-3-small` |
+| `LABELING_BATCH_SIZE` | Default articles per labeling batch | `10` |
+| `TARGET_CHUNK_TOKENS` | Target tokens per chunk | `500` |
+| `MAX_CHUNK_TOKENS` | Maximum tokens per chunk | `800` |
+| `MIN_CHUNK_TOKENS` | Minimum tokens per chunk | `100` |
 
 ## Database Schema
 
@@ -275,6 +360,48 @@ Stores article metadata from API + full scraped content + future embeddings:
 ### Collection Runs Table
 
 Logs each daily collection run with statistics for monitoring.
+
+### Labeling Tables
+
+The labeling pipeline adds several new tables:
+
+**`article_chunks`** - Chunked article text for embeddings and evidence linking:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `article_id` | UUID | Foreign key to articles |
+| `chunk_index` | Integer | Order within article |
+| `chunk_text` | Text | Chunk content |
+| `char_start`, `char_end` | Integer | Position in full_content |
+| `token_count` | Integer | Token count |
+| `embedding` | Vector(1536) | OpenAI embedding |
+
+**`brand_labels`** - Per-brand ESG labels with sentiment:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `article_id` | UUID | Foreign key to articles |
+| `brand` | String | Brand name (Nike, Adidas, etc.) |
+| `environmental`, `social`, `governance`, `digital_transformation` | Boolean | Category flags |
+| `environmental_sentiment`, etc. | SmallInt | Sentiment (-1, 0, 1, or NULL) |
+| `confidence_score` | Float | LLM confidence (0-1) |
+| `labeled_by` | String | Source (claude-sonnet, human, classifier) |
+| `model_version` | String | Model identifier |
+
+**`label_evidence`** - Supporting text excerpts:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `brand_label_id` | UUID | Foreign key to brand_labels |
+| `chunk_id` | UUID | Foreign key to article_chunks (nullable) |
+| `category` | String | ESG category |
+| `excerpt` | Text | Evidence quote |
+| `similarity_score` | Float | Match confidence |
+
+**`labeling_runs`** - Tracks labeling batches with statistics and cost estimates.
 
 ## Querying the Database
 
@@ -336,6 +463,44 @@ ORDER BY created_at DESC
 LIMIT 10;"
 ```
 
+### Labeling Queries
+
+```bash
+# Labeling statistics
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT labeling_status, COUNT(*)
+FROM articles
+GROUP BY labeling_status;"
+
+# Brand labels by category
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT brand,
+       COUNT(*) as total_labels,
+       SUM(CASE WHEN environmental THEN 1 ELSE 0 END) as environmental,
+       SUM(CASE WHEN social THEN 1 ELSE 0 END) as social,
+       SUM(CASE WHEN governance THEN 1 ELSE 0 END) as governance,
+       SUM(CASE WHEN digital_transformation THEN 1 ELSE 0 END) as digital
+FROM brand_labels
+GROUP BY brand
+ORDER BY total_labels DESC;"
+
+# Recent labeling runs
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT started_at::date, status, articles_processed, brands_labeled,
+       ROUND(estimated_cost_usd::numeric, 4) as cost
+FROM labeling_runs
+ORDER BY started_at DESC
+LIMIT 5;"
+
+# Evidence excerpts for a brand
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT le.category, LEFT(le.excerpt, 80) as evidence, le.similarity_score
+FROM label_evidence le
+JOIN brand_labels bl ON le.brand_label_id = bl.id
+WHERE bl.brand = 'Nike'
+LIMIT 10;"
+```
+
 ### Interactive Database Access
 
 ```bash
@@ -364,7 +529,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with 98 tests covering the data collection pipeline.
+The project includes a comprehensive test suite with 120 tests covering data collection and labeling pipelines.
 
 ```bash
 # Run all tests
@@ -393,6 +558,8 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 | `test_scraper.py` | 19 | Language detection, paywall detection, scraping |
 | `test_collector.py` | 13 | Deduplication, dry run mode, API limits |
 | `test_database.py` | 12 | Upsert operations, queries (requires PostgreSQL) |
+| `test_chunker.py` | 21 | Article chunking, token counting, paragraph boundaries |
+| `test_labeler.py` | 13 | LLM response parsing, Pydantic model validation |
 
 ## Troubleshooting
 
@@ -429,22 +596,25 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 
 ## Project Roadmap
 
-### Phase 1: Data Collection (Current)
+### Phase 1: Data Collection ✅
 - [x] NewsData.io API integration
 - [x] GDELT DOC 2.0 API integration (free, 3 months history)
 - [x] Article scraping with newspaper4k
 - [x] PostgreSQL + pgvector storage
 - [x] Automated cron scheduling (8x daily: 4 NewsData + 4 GDELT)
 - [x] Historical backfill script for GDELT
-- [ ] Target: 1,000-2,000 articles over 10-14 days
+- [x] Target: 1,000-2,000 articles over 10-14 days
 
-### Phase 2: Data Labeling & Preprocessing
-- [ ] Create labeling guidelines
-- [ ] Manual labeling of 500-800 articles
-- [ ] Text preprocessing pipeline
-- [ ] Multi-label dataset preparation
+### Phase 2: Data Labeling ✅
+- [x] LLM-based labeling pipeline with Claude Sonnet
+- [x] Per-brand ESG category labels with ternary sentiment
+- [x] Article chunking for evidence extraction
+- [x] OpenAI embeddings for semantic evidence matching
+- [x] Evidence linking to source text chunks
+- [x] Labeling CLI with dry-run and batch support
 
-### Phase 3: Model Development
+### Phase 3: Model Development (Current)
+- [ ] Export labeled data for training
 - [ ] Baseline: TF-IDF + Logistic Regression/Random Forest/XGBoost
 - [ ] Advanced: Fine-tuned DistilBERT/RoBERTa
 - [ ] Multi-label classification evaluation
