@@ -24,7 +24,7 @@ uv run python scripts/collect_news.py --scrape-only              # Only scrape p
 uv run python scripts/gdelt_backfill.py                          # 3-month historical backfill
 
 # Testing
-uv run pytest                              # Run all tests (79 tests)
+uv run pytest                              # Run all tests (98 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -44,21 +44,23 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 - `config.py` - Settings, brands list, keywords, and API configuration
 - `api_client.py` - NewsData.io API wrapper with OR-grouped query generation
 - `gdelt_client.py` - GDELT DOC 2.0 API wrapper (free, 3 months history)
-- `scraper.py` - Full article text extraction using newspaper4k
+- `scraper.py` - Full article text extraction with language detection (filters non-English)
 - `database.py` - PostgreSQL operations with SQLAlchemy
 - `models.py` - SQLAlchemy models (Article, CollectionRun)
 - `collector.py` - Orchestrates API collection + scraping with in-memory deduplication
 
-### Cron Scripts (`scripts/`)
+### Scripts (`scripts/`)
 - `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
 - `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `gdelt_backfill.py` - Historical backfill script (3 months in weekly batches)
+- `cleanup_non_english.py` - Remove non-English articles from database
 - `setup_cron.sh` - Install/remove/status commands for cron management
 
 ### Test Suite (`tests/`)
 - `conftest.py` - Shared pytest fixtures
 - `test_api_client.py` - NewsData.io brand extraction, article parsing, query generation (23 tests)
 - `test_gdelt_client.py` - GDELT article parsing, query generation, date handling (31 tests)
+- `test_scraper.py` - Language detection, paywall detection, scraping (19 tests)
 - `test_collector.py` - Deduplication, dry run mode, API limits (13 tests)
 - `test_database.py` - Upsert operations, queries (12 tests, requires PostgreSQL)
 

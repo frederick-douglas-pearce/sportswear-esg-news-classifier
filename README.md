@@ -40,6 +40,7 @@ sportswear-esg-news-classifier/
 ├── scripts/
 │   ├── collect_news.py         # CLI script for data collection
 │   ├── gdelt_backfill.py       # Historical backfill script (3 months)
+│   ├── cleanup_non_english.py  # Remove non-English articles from database
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
@@ -49,7 +50,7 @@ sportswear-esg-news-classifier/
 │       ├── config.py           # Settings, brands, keywords, API configuration
 │       ├── api_client.py       # NewsData.io API wrapper with query generation
 │       ├── gdelt_client.py     # GDELT DOC 2.0 API wrapper (free, 3 months history)
-│       ├── scraper.py          # Full article text extraction (newspaper4k)
+│       ├── scraper.py          # Full article text extraction with language detection
 │       ├── database.py         # PostgreSQL operations with SQLAlchemy
 │       ├── models.py           # SQLAlchemy models (Article, CollectionRun)
 │       └── collector.py        # Orchestrates API collection + scraping phases
@@ -57,6 +58,7 @@ sportswear-esg-news-classifier/
     ├── conftest.py             # Shared pytest fixtures
     ├── test_api_client.py      # NewsData.io client unit tests
     ├── test_gdelt_client.py    # GDELT client unit tests
+    ├── test_scraper.py         # Scraper and language detection tests
     ├── test_collector.py       # Collector unit tests
     └── test_database.py        # Database integration tests
 ```
@@ -362,7 +364,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with 79 tests covering the data collection pipeline.
+The project includes a comprehensive test suite with 98 tests covering the data collection pipeline.
 
 ```bash
 # Run all tests
@@ -388,6 +390,7 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 |-----------|-------|-------------|
 | `test_api_client.py` | 23 | NewsData.io brand extraction, article parsing, query generation |
 | `test_gdelt_client.py` | 31 | GDELT article parsing, query generation, date handling |
+| `test_scraper.py` | 19 | Language detection, paywall detection, scraping |
 | `test_collector.py` | 13 | Deduplication, dry run mode, API limits |
 | `test_database.py` | 12 | Upsert operations, queries (requires PostgreSQL) |
 
