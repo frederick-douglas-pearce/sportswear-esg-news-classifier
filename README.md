@@ -2,8 +2,61 @@
 
 A multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for major sportswear brands including Nike, Adidas, Puma, Under Armour, Lululemon, Patagonia, Columbia Sportswear, New Balance, ASICS, and Reebok.
 
+## System Architecture
+
+```mermaid
+flowchart TB
+    subgraph sources["Data Sources"]
+        newsdata["NewsData.io API"]
+        gdelt["GDELT DOC 2.0 API"]
+    end
+
+    subgraph collection["Phase 1: Data Collection"]
+        api_client["API Clients<br/><i>api_client.py, gdelt_client.py</i>"]
+        scraper["Article Scraper<br/><i>newspaper4k + langdetect</i>"]
+    end
+
+    subgraph storage["PostgreSQL + pgvector"]
+        articles[("articles<br/><i>metadata, full_content</i>")]
+        chunks[("article_chunks<br/><i>text, embeddings</i>")]
+        labels[("brand_labels<br/><i>ESG categories, sentiment</i>")]
+        evidence[("label_evidence<br/><i>excerpts, similarity</i>")]
+    end
+
+    subgraph labeling["Phase 2: LLM Labeling"]
+        chunker["Article Chunker<br/><i>~500 tokens/chunk</i>"]
+        embedder["OpenAI Embedder<br/><i>text-embedding-3-small</i>"]
+        claude["Claude Sonnet<br/><i>ESG classification</i>"]
+        matcher["Evidence Matcher<br/><i>exact/fuzzy/semantic</i>"]
+    end
+
+    subgraph output["Output"]
+        training["Training Data<br/><i>Per-brand ESG labels</i>"]
+    end
+
+    newsdata --> api_client
+    gdelt --> api_client
+    api_client --> scraper
+    scraper --> articles
+
+    articles --> chunker
+    chunker --> chunks
+    chunks --> embedder
+    embedder --> chunks
+
+    articles --> claude
+    claude --> labels
+    claude --> matcher
+    chunks --> matcher
+    matcher --> evidence
+
+    labels --> training
+    evidence --> training
+```
+
 ## Table of Contents
 
+- [System Architecture](#system-architecture)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
   - [1. Prerequisites](#1-prerequisites)
