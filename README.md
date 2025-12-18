@@ -402,6 +402,31 @@ uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
 | `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
 | `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
 
+### ML Classifier Opportunities
+
+The project is designed to train three progressively complex classifiers that can reduce Claude API costs while maintaining accuracy:
+
+**1. False Positive Brand Classifier**
+- **Purpose**: Filter out articles where brand names match non-sportswear entities (e.g., "Puma" the animal, "Patagonia" the region, "Black Diamond" the power company)
+- **Input**: Article title + content + detected brand name
+- **Output**: Binary classification (is_sportswear: 0 or 1)
+- **Training Data**: ~450 records from `--dataset fp` export
+- **Impact**: Prevents ~15% of articles from requiring expensive LLM labeling
+
+**2. ESG Pre-filter Classifier**
+- **Purpose**: Quickly identify whether an article contains any ESG-relevant content before detailed classification
+- **Input**: Article title + content
+- **Output**: Binary classification (has_esg: 0 or 1)
+- **Training Data**: ~550 records from `--dataset esg-prefilter` export
+- **Impact**: Skip detailed ESG labeling for articles with no ESG content
+
+**3. ESG Multi-label Classifier**
+- **Purpose**: Classify articles into specific ESG categories with sentiment, replacing Claude for routine classification
+- **Input**: Article title + content + brand name
+- **Output**: Multi-label (Environmental, Social, Governance, Digital Transformation) with ternary sentiment (-1, 0, +1)
+- **Training Data**: ~380 records from `--dataset esg-labels` export
+- **Impact**: Replace Claude API calls entirely for high-confidence predictions
+
 ## Environment Variables
 
 | Variable | Description | Default |

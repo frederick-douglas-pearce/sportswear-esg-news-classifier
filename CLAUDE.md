@@ -149,6 +149,16 @@ The labeling pipeline classifies articles into 4 top-level ESG categories with t
 
 Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
 
+## ML Classifier Opportunities
+
+Three classifiers to reduce Claude API costs while maintaining accuracy:
+
+1. **False Positive Brand Classifier** - Filter articles where brand names match non-sportswear entities (e.g., "Puma" animal, "Patagonia" region, "Black Diamond" power company). Binary classification using `--dataset fp` export.
+
+2. **ESG Pre-filter Classifier** - Quickly identify if an article contains ESG content before detailed classification. Binary classification using `--dataset esg-prefilter` export.
+
+3. **ESG Multi-label Classifier** - Full ESG category classification with sentiment, replacing Claude for routine cases. Multi-label output using `--dataset esg-labels` export.
+
 ## Project Phases
 
 ### Phase 1: Data Collection ✅
