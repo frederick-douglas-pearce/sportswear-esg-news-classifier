@@ -100,8 +100,10 @@ sportswear-esg-news-classifier/
 ├── scripts/
 │   ├── collect_news.py         # CLI script for data collection
 │   ├── label_articles.py       # CLI script for LLM-based labeling
+│   ├── export_training_data.py # Export labeled data for ML training
 │   ├── gdelt_backfill.py       # Historical backfill script (3 months)
 │   ├── cleanup_non_english.py  # Remove non-English articles from database
+│   ├── cleanup_false_positives.py # Identify/remove false positive brand matches
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
@@ -133,7 +135,10 @@ sportswear-esg-news-classifier/
     ├── test_collector.py       # Collector unit tests
     ├── test_database.py        # Database integration tests
     ├── test_chunker.py         # Article chunker unit tests
-    └── test_labeler.py         # LLM labeling response parsing tests
+    ├── test_labeler.py         # LLM labeling and response parsing tests
+    ├── test_embedder.py        # OpenAI embedder unit tests
+    ├── test_evidence_matcher.py # Evidence matching unit tests
+    └── test_labeling_pipeline.py # Labeling pipeline unit tests
 ```
 
 ## Quick Start
@@ -368,6 +373,35 @@ uv run python scripts/label_articles.py --batch-size 5 -v
 | Claude Sonnet labeling | ~$10-15 per 1000 articles |
 | **Total** | **~$15 per 1000 articles** |
 
+### Exporting Training Data
+
+Export labeled data for ML classifier training:
+
+```bash
+# Export false positive classifier data (sportswear vs non-sportswear brands)
+uv run python scripts/export_training_data.py --dataset fp
+
+# Export ESG pre-filter data (has ESG content vs no ESG)
+uv run python scripts/export_training_data.py --dataset esg-prefilter
+
+# Export full ESG multi-label classifier data
+uv run python scripts/export_training_data.py --dataset esg-labels
+
+# Export only new data since a date (for incremental updates)
+uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01
+
+# Export to specific file
+uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
+```
+
+**Export Formats (JSONL):**
+
+| Dataset | Fields | Use Case |
+|---------|--------|----------|
+| `fp` | article_id, title, content, brand, is_sportswear | False positive brand classifier |
+| `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
+| `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -582,7 +616,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with 120 tests covering data collection and labeling pipelines.
+The project includes a comprehensive test suite with 190 tests covering data collection and labeling pipelines (72% code coverage).
 
 ```bash
 # Run all tests
@@ -612,7 +646,10 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 | `test_collector.py` | 13 | Deduplication, dry run mode, API limits |
 | `test_database.py` | 12 | Upsert operations, queries (requires PostgreSQL) |
 | `test_chunker.py` | 21 | Article chunking, token counting, paragraph boundaries |
-| `test_labeler.py` | 13 | LLM response parsing, Pydantic model validation |
+| `test_labeler.py` | 33 | LLM response parsing, ArticleLabeler, JSON extraction |
+| `test_embedder.py` | 15 | OpenAI embedder, batching, retry logic |
+| `test_evidence_matcher.py` | 24 | Evidence matching, fuzzy/exact/embedding similarity |
+| `test_labeling_pipeline.py` | 13 | Pipeline orchestration, statistics tracking |
 
 ## Troubleshooting
 
@@ -667,10 +704,12 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 - [x] Labeling CLI with dry-run and batch support
 
 ### Phase 3: Model Development (Current)
-- [ ] Export labeled data for training
-- [ ] Baseline: TF-IDF + Logistic Regression/Random Forest/XGBoost
+- [x] Export labeled data for training (JSONL format for 3 classifier types)
+- [x] False positive brand detection and cleanup tools
+- [ ] False Positive Classifier: Is the brand mention about sportswear?
+- [ ] ESG Pre-filter: Does the article contain ESG content?
+- [ ] ESG Classifier: Multi-label ESG category classification
 - [ ] Advanced: Fine-tuned DistilBERT/RoBERTa
-- [ ] Multi-label classification evaluation
 
 ### Phase 4: Evaluation & Explainability
 - [ ] Per-category Precision, Recall, F1-score

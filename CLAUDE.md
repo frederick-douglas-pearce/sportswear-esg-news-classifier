@@ -30,8 +30,14 @@ uv run python scripts/label_articles.py --batch-size 10          # Label batch o
 uv run python scripts/label_articles.py --article-id UUID        # Label specific article
 uv run python scripts/label_articles.py --skip-embedding         # Skip embedding generation
 
+# Export Training Data
+uv run python scripts/export_training_data.py --dataset fp       # False positive classifier data
+uv run python scripts/export_training_data.py --dataset esg-prefilter  # ESG pre-filter data
+uv run python scripts/export_training_data.py --dataset esg-labels     # Multi-label ESG data
+uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01  # Incremental export
+
 # Testing
-uv run pytest                              # Run all tests (120 tests)
+uv run pytest                              # Run all tests (190 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -69,13 +75,15 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
 - `label_articles.py` - CLI for LLM-based article labeling
+- `export_training_data.py` - Export labeled data for ML training (JSONL format)
 - `gdelt_backfill.py` - Historical backfill script (3 months in weekly batches)
 - `cleanup_non_english.py` - Remove non-English articles from database
+- `cleanup_false_positives.py` - Identify/remove false positive brand matches
 - `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
 - `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `setup_cron.sh` - Install/remove/status commands for cron management
 
-### Test Suite (`tests/`)
+### Test Suite (`tests/`) - 190 tests, 72% coverage
 - `conftest.py` - Shared pytest fixtures
 - `test_api_client.py` - NewsData.io brand extraction, article parsing, query generation (23 tests)
 - `test_gdelt_client.py` - GDELT article parsing, query generation, date handling (31 tests)
@@ -83,7 +91,10 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 - `test_collector.py` - Deduplication, dry run mode, API limits (13 tests)
 - `test_database.py` - Upsert operations, queries (12 tests, requires PostgreSQL)
 - `test_chunker.py` - Article chunking, token counting, paragraph boundaries (21 tests)
-- `test_labeler.py` - LLM response parsing, Pydantic model validation (13 tests)
+- `test_labeler.py` - LLM response parsing, ArticleLabeler, JSON extraction (33 tests)
+- `test_embedder.py` - OpenAI embedder, batching, retry logic (15 tests)
+- `test_evidence_matcher.py` - Evidence matching, fuzzy/exact/embedding similarity (24 tests)
+- `test_labeling_pipeline.py` - Pipeline orchestration, statistics tracking (13 tests)
 
 ### Database Schema
 - **articles**: Stores article metadata from API + full scraped content + labeling_status
