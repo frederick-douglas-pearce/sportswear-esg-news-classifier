@@ -132,8 +132,54 @@ ESG_CATEGORIES = {
     },
 }
 
+# Target sportswear/outdoor apparel brands
+TARGET_SPORTSWEAR_BRANDS = [
+    "Nike",
+    "Adidas",
+    "Puma",
+    "Under Armour",
+    "Lululemon",
+    "Patagonia",
+    "Columbia Sportswear",
+    "New Balance",
+    "ASICS",
+    "Reebok",
+    "The North Face",
+    "Arc'teryx",
+    "Salomon",
+    "Brooks Running",
+    "Saucony",
+    "Hoka",
+    "On Running",
+    "Allbirds",
+    "Fila",
+    "Skechers",
+]
+
+# Known brand name conflicts (for documentation)
+BRAND_NAME_CONFLICTS = {
+    "Puma": ["puma (animal/wildcat)", "Ford Puma (car)", "Puma Exploration (mining company)"],
+    "Patagonia": ["Patagonia (region in South America)"],
+    "Columbia": ["Columbia (country)", "Columbia River", "Columbia University", "Columbia Pictures"],
+}
+
 # System prompt for Claude labeling
 LABELING_SYSTEM_PROMPT = """You are an ESG (Environmental, Social, Governance) news analyst specializing in the sportswear and outdoor apparel industry. Your task is to analyze news articles and classify them according to ESG categories for each brand mentioned.
+
+## CRITICAL: Brand Verification
+
+Before analyzing any brand, you MUST first verify that the article is actually about the SPORTSWEAR/APPAREL COMPANY, not something else with the same name.
+
+**Common false positives to watch for:**
+- **Puma**: Could be the animal (wildcat/cougar), Ford Puma (car model), or Puma Exploration (mining company)
+- **Patagonia**: Could be the geographic region in South America
+- **Columbia**: Could be the country, Columbia River, Columbia University, or Columbia Pictures
+- **North Face**: Could be a geographic term for the north side of a mountain
+
+**Target sportswear brands we are tracking:**
+Nike, Adidas, Puma (sportswear), Under Armour, Lululemon, Patagonia (outdoor apparel), Columbia Sportswear, New Balance, ASICS, Reebok, The North Face, Arc'teryx, Salomon, Brooks Running, Saucony, Hoka, On Running, Allbirds, Fila, Skechers
+
+If the article is NOT about the sportswear company, set `is_sportswear_brand: false` and explain what the brand name actually refers to.
 
 ## Classification Categories
 
@@ -157,11 +203,12 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 
 ## Important Guidelines
 
-1. Only assign a category if the article contains clear, relevant information about that topic for the specific brand.
-2. An article can have multiple categories if it covers multiple ESG topics.
-3. Different brands in the same article may have different categories and sentiments.
-4. If a brand is only briefly mentioned without substantive ESG-related content, do not assign categories for that brand.
-5. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0)."""
+1. FIRST verify if each brand mention refers to the sportswear company or something else.
+2. Only assign ESG categories if the article is about the sportswear brand AND contains clear, relevant information.
+3. An article can have multiple categories if it covers multiple ESG topics.
+4. Different brands in the same article may have different categories and sentiments.
+5. If a brand is only briefly mentioned without substantive ESG-related content, do not assign categories for that brand.
+6. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0)."""
 
 # User prompt template for labeling
 LABELING_USER_PROMPT_TEMPLATE = """Analyze this news article for ESG classifications for each brand mentioned.
@@ -176,13 +223,17 @@ LABELING_USER_PROMPT_TEMPLATE = """Analyze this news article for ESG classificat
 
 ---
 
-For each brand mentioned with substantive ESG-related content, provide your analysis in the following JSON format:
+For each brand mentioned, FIRST verify if it refers to the sportswear/apparel company. Then provide ESG analysis only for confirmed sportswear brands with substantive content.
+
+Respond in the following JSON format:
 
 ```json
 {{
   "brand_analyses": [
     {{
       "brand": "Brand Name",
+      "is_sportswear_brand": true,
+      "not_sportswear_reason": null,
       "categories": {{
         "environmental": {{
           "applies": true,
@@ -207,18 +258,28 @@ For each brand mentioned with substantive ESG-related content, provide your anal
       }},
       "confidence": 0.85,
       "reasoning": "Brief explanation of why these classifications were assigned"
+    }},
+    {{
+      "brand": "Puma",
+      "is_sportswear_brand": false,
+      "not_sportswear_reason": "Article is about puma (wildcat/mountain lion), not Puma sportswear",
+      "categories": {{}},
+      "confidence": 0.95,
+      "reasoning": "Brand name refers to the animal, not the sportswear company"
     }}
   ],
-  "article_summary": "1-2 sentence summary of the article's main ESG themes"
+  "article_summary": "1-2 sentence summary of the article's main themes"
 }}
 ```
 
 Important reminders:
-- Only set `applies: true` if the article contains clear, relevant information for that category
+- FIRST check if each brand refers to the sportswear company or something else (animal, region, car, etc.)
+- If NOT a sportswear brand: set `is_sportswear_brand: false`, explain in `not_sportswear_reason`, leave `categories` empty
+- If IS a sportswear brand: set `is_sportswear_brand: true`, `not_sportswear_reason: null`, fill in categories
+- Only set `applies: true` if the article contains clear, relevant ESG information for that category
 - Sentiment must be -1, 0, or 1 when applies is true; null when applies is false
 - Evidence quotes MUST be exact text from the article
-- Confidence score (0.0-1.0) reflects certainty in the overall classification for that brand
-- If a brand has no substantive ESG content, omit it from brand_analyses"""
+- If a sportswear brand has no substantive ESG content, omit it from brand_analyses entirely"""
 
 
 labeling_settings = LabelingSettings()

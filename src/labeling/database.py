@@ -122,6 +122,9 @@ class LabelingDatabase:
     ) -> list[BrandLabel]:
         """Save brand labels from LLM analysis.
 
+        Only saves labels for brands confirmed to be sportswear companies.
+        Non-sportswear brands (animals, regions, cars, etc.) are filtered out.
+
         Args:
             session: Database session
             article_id: UUID of the article
@@ -130,13 +133,28 @@ class LabelingDatabase:
             labeled_by: Labeling source identifier
 
         Returns:
-            List of created BrandLabel objects
+            List of created BrandLabel objects (only sportswear brands)
         """
         # Delete any existing labels for this article
         session.query(BrandLabel).filter(BrandLabel.article_id == article_id).delete()
 
         db_labels = []
         for analysis in brand_analyses:
+            # Skip non-sportswear brands
+            if not analysis.is_sportswear_brand:
+                logger.info(
+                    f"Skipping non-sportswear brand '{analysis.brand}': "
+                    f"{analysis.not_sportswear_reason}"
+                )
+                continue
+
+            # Skip if no categories (shouldn't happen for sportswear brands, but just in case)
+            if not analysis.categories:
+                logger.warning(
+                    f"Sportswear brand '{analysis.brand}' has no categories, skipping"
+                )
+                continue
+
             categories = analysis.categories
 
             label = BrandLabel(
@@ -271,6 +289,11 @@ class LabelingDatabase:
         skipped = (
             session.query(Article).filter(Article.labeling_status == "skipped").count()
         )
+        false_positive = (
+            session.query(Article)
+            .filter(Article.labeling_status == "false_positive")
+            .count()
+        )
         total_labels = session.query(BrandLabel).count()
         total_chunks = session.query(ArticleChunk).count()
 
@@ -279,6 +302,7 @@ class LabelingDatabase:
             "pending_labeling": pending,
             "labeled": labeled,
             "skipped": skipped,
+            "false_positive": false_positive,
             "total_brand_labels": total_labels,
             "total_chunks": total_chunks,
         }

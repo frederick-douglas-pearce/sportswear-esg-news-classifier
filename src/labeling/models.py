@@ -31,20 +31,36 @@ class BrandAnalysis(BaseModel):
     """Analysis results for a single brand in an article."""
 
     brand: str = Field(description="Brand name being analyzed")
+    is_sportswear_brand: bool = Field(
+        default=True,
+        description="Whether the brand mentioned is the sportswear/apparel company (not animal, region, car, etc.)",
+    )
+    not_sportswear_reason: str | None = Field(
+        default=None,
+        description="If is_sportswear_brand is false, explains what the brand actually refers to",
+    )
     categories: dict[str, CategoryLabel] = Field(
+        default_factory=dict,
         description="Category labels keyed by category name",
     )
     confidence: float = Field(
+        default=0.0,
         ge=0.0,
         le=1.0,
         description="Confidence score for this brand's classification (0.0-1.0)",
     )
-    reasoning: str = Field(description="Brief explanation of classification decisions")
+    reasoning: str = Field(
+        default="",
+        description="Brief explanation of classification decisions",
+    )
 
     @field_validator("categories")
     @classmethod
-    def validate_categories(cls, v):
-        """Validate that all expected categories are present."""
+    def validate_categories(cls, v, info):
+        """Validate that all expected categories are present (only if sportswear brand)."""
+        # Skip validation if categories is empty (may be non-sportswear brand)
+        if not v:
+            return v
         expected = {"environmental", "social", "governance", "digital_transformation"}
         if not expected.issubset(set(v.keys())):
             missing = expected - set(v.keys())
