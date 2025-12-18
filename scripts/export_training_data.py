@@ -57,7 +57,9 @@ def export_false_positive_data(
     Returns one record per article with:
     - article_id, title, content, brands (list), is_sportswear (1/0)
 
-    Positive class (is_sportswear=1): Articles with labeling_status='labeled'
+    Positive class (is_sportswear=1): Articles with labeling_status='labeled' or 'skipped'
+        - labeled: confirmed sportswear with ESG content
+        - skipped: confirmed sportswear but no ESG content
     Negative class (is_sportswear=0): Articles with labeling_status='false_positive'
 
     This matches the behavior of Claude's labeling pipeline which receives
@@ -70,22 +72,24 @@ def export_false_positive_data(
     if since:
         base_filter = and_(base_filter, Article.created_at >= since)
 
-    # Positive examples: labeled articles (confirmed sportswear)
-    labeled_articles = (
+    # Positive examples: labeled and skipped articles (both confirmed sportswear)
+    # - labeled: has ESG content
+    # - skipped: no ESG content, but still about sportswear brand
+    sportswear_articles = (
         session.query(Article)
         .filter(base_filter)
-        .filter(Article.labeling_status == "labeled")
+        .filter(Article.labeling_status.in_(["labeled", "skipped"]))
         .all()
     )
 
-    for article in labeled_articles:
+    for article in sportswear_articles:
         records.append({
             "article_id": str(article.id),
             "title": article.title,
             "content": article.full_content or article.description or "",
             "brands": article.brands_mentioned or [],
             "is_sportswear": 1,
-            "source": "labeled",
+            "source": article.labeling_status,
         })
 
     # Negative examples: false positive articles
