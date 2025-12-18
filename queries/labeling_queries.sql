@@ -87,6 +87,26 @@ SELECT
 FROM brand_labels
 WHERE social = true
 GROUP BY brand
+UNION ALL
+SELECT
+    brand,
+    'governance' AS category,
+    SUM(CASE WHEN governance_sentiment = 1 THEN 1 ELSE 0 END) AS positive,
+    SUM(CASE WHEN governance_sentiment = 0 THEN 1 ELSE 0 END) AS neutral,
+    SUM(CASE WHEN governance_sentiment = -1 THEN 1 ELSE 0 END) AS negative
+FROM brand_labels
+WHERE governance = true
+GROUP BY brand
+UNION ALL
+SELECT
+    brand,
+    'digital' AS category,
+    SUM(CASE WHEN digital_sentiment = 1 THEN 1 ELSE 0 END) AS positive,
+    SUM(CASE WHEN digital_sentiment = 0 THEN 1 ELSE 0 END) AS neutral,
+    SUM(CASE WHEN digital_sentiment = -1 THEN 1 ELSE 0 END) AS negative
+FROM brand_labels
+WHERE digital_transformation = true
+GROUP BY brand
 ORDER BY brand, category;
 
 -- Overall sentiment distribution
