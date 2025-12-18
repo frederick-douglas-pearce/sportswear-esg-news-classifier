@@ -6,6 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.data_collection.config import BRANDS
+
 load_dotenv()
 
 
@@ -132,39 +134,20 @@ ESG_CATEGORIES = {
     },
 }
 
-# Target sportswear/outdoor apparel brands
-TARGET_SPORTSWEAR_BRANDS = [
-    "Nike",
-    "Adidas",
-    "Puma",
-    "Under Armour",
-    "Lululemon",
-    "Patagonia",
-    "Columbia Sportswear",
-    "New Balance",
-    "ASICS",
-    "Reebok",
-    "The North Face",
-    "Arc'teryx",
-    "Salomon",
-    "Brooks Running",
-    "Saucony",
-    "Hoka",
-    "On Running",
-    "Allbirds",
-    "Fila",
-    "Skechers",
-]
+# Target sportswear/outdoor apparel brands - imported from data_collection.config
+TARGET_SPORTSWEAR_BRANDS = BRANDS
 
 # Known brand name conflicts (for documentation)
 BRAND_NAME_CONFLICTS = {
     "Puma": ["puma (animal/wildcat)", "Ford Puma (car)", "Puma Exploration (mining company)"],
     "Patagonia": ["Patagonia (region in South America)"],
     "Columbia": ["Columbia (country)", "Columbia River", "Columbia University", "Columbia Pictures"],
+    "Black Diamond": ["Black Diamond Corporation (power company)", "Black Diamond Equipment (climbing gear)"],
+    "North Face": ["north face (geographic term for north side of mountain)"],
 }
 
-# System prompt for Claude labeling
-LABELING_SYSTEM_PROMPT = """You are an ESG (Environmental, Social, Governance) news analyst specializing in the sportswear and outdoor apparel industry. Your task is to analyze news articles and classify them according to ESG categories for each brand mentioned.
+# System prompt template for Claude labeling (brand list populated dynamically)
+_LABELING_SYSTEM_PROMPT_TEMPLATE = """You are an ESG (Environmental, Social, Governance) news analyst specializing in the sportswear and outdoor apparel industry. Your task is to analyze news articles and classify them according to ESG categories for each brand mentioned.
 
 ## CRITICAL: Brand Verification
 
@@ -175,9 +158,11 @@ Before analyzing any brand, you MUST first verify that the article is actually a
 - **Patagonia**: Could be the geographic region in South America
 - **Columbia**: Could be the country, Columbia River, Columbia University, or Columbia Pictures
 - **North Face**: Could be a geographic term for the north side of a mountain
+- **Black Diamond**: Could be Black Diamond Corporation (power company) or Black Diamond Equipment (climbing gear - check context)
+- **Anta/Li-Ning/361 Degrees/Xtep/Peak**: Chinese sportswear brands - verify it's about the apparel company
 
 **Target sportswear brands we are tracking:**
-Nike, Adidas, Puma (sportswear), Under Armour, Lululemon, Patagonia (outdoor apparel), Columbia Sportswear, New Balance, ASICS, Reebok, The North Face, Arc'teryx, Salomon, Brooks Running, Saucony, Hoka, On Running, Allbirds, Fila, Skechers
+{brands}
 
 If the article is NOT about the sportswear company, set `is_sportswear_brand: false` and explain what the brand name actually refers to.
 
@@ -209,6 +194,11 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 4. Different brands in the same article may have different categories and sentiments.
 5. If a brand is only briefly mentioned without substantive ESG-related content, do not assign categories for that brand.
 6. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0)."""
+
+# Build the system prompt with the current brand list
+LABELING_SYSTEM_PROMPT = _LABELING_SYSTEM_PROMPT_TEMPLATE.format(
+    brands=", ".join(TARGET_SPORTSWEAR_BRANDS)
+)
 
 # User prompt template for labeling
 LABELING_USER_PROMPT_TEMPLATE = """Analyze this news article for ESG classifications for each brand mentioned.
