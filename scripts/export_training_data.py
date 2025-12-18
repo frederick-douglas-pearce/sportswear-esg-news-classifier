@@ -54,11 +54,14 @@ def export_false_positive_data(
 ) -> list[dict[str, Any]]:
     """Export data for false positive brand classifier.
 
-    Returns records with:
-    - article_id, title, content, brand, is_sportswear (1/0)
+    Returns one record per article with:
+    - article_id, title, content, brands (list), is_sportswear (1/0)
 
     Positive class (is_sportswear=1): Articles with labeling_status='labeled'
     Negative class (is_sportswear=0): Articles with labeling_status='false_positive'
+
+    This matches the behavior of Claude's labeling pipeline which receives
+    an article + brands_mentioned and determines if it's about sportswear.
     """
     records = []
 
@@ -76,21 +79,14 @@ def export_false_positive_data(
     )
 
     for article in labeled_articles:
-        # Get the brands that were confirmed as sportswear
-        brand_labels = (
-            session.query(BrandLabel)
-            .filter(BrandLabel.article_id == article.id)
-            .all()
-        )
-        for label in brand_labels:
-            records.append({
-                "article_id": str(article.id),
-                "title": article.title,
-                "content": article.full_content or article.description or "",
-                "brand": label.brand,
-                "is_sportswear": 1,
-                "source": "labeled",
-            })
+        records.append({
+            "article_id": str(article.id),
+            "title": article.title,
+            "content": article.full_content or article.description or "",
+            "brands": article.brands_mentioned or [],
+            "is_sportswear": 1,
+            "source": "labeled",
+        })
 
     # Negative examples: false positive articles
     fp_articles = (
@@ -101,19 +97,15 @@ def export_false_positive_data(
     )
 
     for article in fp_articles:
-        # Extract brand from labeling_error which contains the reason
-        # Format: "Brand: reason" or "Auto-detected: Brand matched pattern..."
-        brands = article.brands_mentioned or []
-        for brand in brands:
-            records.append({
-                "article_id": str(article.id),
-                "title": article.title,
-                "content": article.full_content or article.description or "",
-                "brand": brand,
-                "is_sportswear": 0,
-                "source": "false_positive",
-                "fp_reason": article.labeling_error,
-            })
+        records.append({
+            "article_id": str(article.id),
+            "title": article.title,
+            "content": article.full_content or article.description or "",
+            "brands": article.brands_mentioned or [],
+            "is_sportswear": 0,
+            "source": "false_positive",
+            "fp_reason": article.labeling_error,
+        })
 
     return records
 
@@ -249,14 +241,18 @@ def print_stats(records: list[dict], dataset: str) -> None:
     if dataset == "fp":
         sportswear = sum(1 for r in records if r["is_sportswear"] == 1)
         not_sportswear = sum(1 for r in records if r["is_sportswear"] == 0)
-        print(f"Sportswear (positive): {sportswear}")
-        print(f"Not sportswear (negative): {not_sportswear}")
+        print(f"Sportswear articles (positive): {sportswear}")
+        print(f"False positive articles (negative): {not_sportswear}")
         print(f"Class ratio: {sportswear}:{not_sportswear}")
 
-        # Brand distribution for negatives
+        # Brand distribution for false positives
         from collections import Counter
-        fp_brands = Counter(r["brand"] for r in records if r["is_sportswear"] == 0)
-        print("\nTop false positive brands:")
+        fp_brands: Counter[str] = Counter()
+        for r in records:
+            if r["is_sportswear"] == 0:
+                for brand in r["brands"]:
+                    fp_brands[brand] += 1
+        print("\nTop brands in false positive articles:")
         for brand, count in fp_brands.most_common(10):
             print(f"  {brand}: {count}")
 
