@@ -36,6 +36,10 @@ uv run python scripts/export_training_data.py --dataset esg-prefilter  # ESG pre
 uv run python scripts/export_training_data.py --dataset esg-labels     # Multi-label ESG data
 uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01  # Incremental export
 
+# ML Classifier Notebooks (run from project root)
+# Note: Requires jupyter notebook to view/run interactively
+# The notebook can also be executed as Python scripts using the fp1_nb module
+
 # Testing
 uv run pytest                              # Run all tests (190 tests)
 uv run pytest -v                           # Run with verbose output
@@ -82,6 +86,15 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 - `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
 - `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `setup_cron.sh` - Install/remove/status commands for cron management
+
+### ML Classifier Notebooks (`notebooks/`)
+- `fp1_classifier.ipynb` - False Positive Brand Classifier (TF-IDF + Logistic Regression, PR-AUC: 0.9943)
+
+### Notebook Utilities (`src/fp1_nb/`)
+- `data_utils.py` - JSONL loading, target analysis, stratified train/val/test splitting
+- `eda_utils.py` - Text length analysis, brand distribution, word frequency analysis
+- `preprocessing.py` - Text cleaning, feature engineering, TF-IDF pipeline building
+- `modeling.py` - GridSearchCV utilities, model evaluation metrics, comparison plots
 
 ### Test Suite (`tests/`) - 190 tests, 72% coverage
 - `conftest.py` - Shared pytest fixtures
@@ -173,9 +186,11 @@ Three classifiers to reduce Claude API costs while maintaining accuracy:
 - OpenAI embeddings for semantic matching
 
 ### Phase 3: Model Development (Current)
-- Export labeled data for training
-- Traditional ML: TF-IDF + Logistic Regression/Random Forest/XGBoost
-- Transformer-Based: Fine-tuned DistilBERT/RoBERTa
+- Export labeled data for training (844 FP, 725 ESG-prefilter, 554 ESG-labels records)
+- False Positive Classifier: TF-IDF + Logistic Regression (PR-AUC: 0.9943) ✅
+- ESG Pre-filter Classifier: In progress
+- ESG Multi-label Classifier: Planned
+- Advanced: Fine-tuned DistilBERT/RoBERTa (future)
 
 ### Key Metrics
 - Per-category Precision, Recall, F1-score

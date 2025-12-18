@@ -73,6 +73,8 @@ flowchart TB
   - [Running the Labeling Pipeline](#running-the-labeling-pipeline)
   - [Labeling Command-Line Options](#labeling-command-line-options)
   - [Cost Estimation](#cost-estimation)
+  - [ML Classifier Notebooks](#ml-classifier-notebooks)
+  - [ML Classifier Opportunities](#ml-classifier-opportunities)
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
   - [Articles Table](#articles-table)
@@ -107,6 +109,9 @@ sportswear-esg-news-classifier/
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
+├── notebooks/
+│   └── fp1_classifier.ipynb    # False Positive Brand Classifier notebook
+├── models/                     # Saved ML models (gitignored)
 ├── src/
 │   ├── data_collection/
 │   │   ├── __init__.py
@@ -117,16 +122,22 @@ sportswear-esg-news-classifier/
 │   │   ├── database.py         # PostgreSQL operations with SQLAlchemy
 │   │   ├── models.py           # SQLAlchemy models (Article, CollectionRun, labeling tables)
 │   │   └── collector.py        # Orchestrates API collection + scraping phases
-│   └── labeling/
+│   ├── labeling/
+│   │   ├── __init__.py
+│   │   ├── config.py           # Labeling settings, prompts, category definitions
+│   │   ├── models.py           # Pydantic models for LLM responses
+│   │   ├── chunker.py          # Paragraph-based article chunking
+│   │   ├── embedder.py         # OpenAI embedding wrapper
+│   │   ├── labeler.py          # Claude labeling logic
+│   │   ├── evidence_matcher.py # Match excerpts to chunks via similarity
+│   │   ├── database.py         # Labeling-specific DB operations
+│   │   └── pipeline.py         # Orchestrates full labeling flow
+│   └── fp1_nb/                 # FP classifier notebook utilities
 │       ├── __init__.py
-│       ├── config.py           # Labeling settings, prompts, category definitions
-│       ├── models.py           # Pydantic models for LLM responses
-│       ├── chunker.py          # Paragraph-based article chunking
-│       ├── embedder.py         # OpenAI embedding wrapper
-│       ├── labeler.py          # Claude labeling logic
-│       ├── evidence_matcher.py # Match excerpts to chunks via similarity
-│       ├── database.py         # Labeling-specific DB operations
-│       └── pipeline.py         # Orchestrates full labeling flow
+│       ├── data_utils.py       # Data loading, splitting, target analysis
+│       ├── eda_utils.py        # Text analysis, brand distribution, word frequencies
+│       ├── preprocessing.py    # Text cleaning, TF-IDF pipeline
+│       └── modeling.py         # GridSearchCV, model evaluation, comparison
 └── tests/
     ├── conftest.py             # Shared pytest fixtures
     ├── test_api_client.py      # NewsData.io client unit tests
@@ -402,29 +413,57 @@ uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
 | `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
 | `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
 
+### ML Classifier Notebooks
+
+The project includes Jupyter notebooks for developing and training ML classifiers. These notebooks use supporting utility modules in `src/fp1_nb/` for consistent preprocessing and evaluation.
+
+#### False Positive Brand Classifier (`notebooks/fp1_classifier.ipynb`)
+
+A complete ML workflow for distinguishing sportswear brand articles from false positives (e.g., "Puma" the animal, "Patagonia" the region):
+
+**Notebook Sections:**
+1. Data Loading & Exploration (844 articles)
+2. Target Variable Analysis (725 sportswear vs 119 false positives)
+3. Text Analysis & EDA (length distributions, brand distribution, word frequencies)
+4. Data Preprocessing (TF-IDF with text cleaning)
+5. Train/Validation/Test Split (60/20/20 stratified)
+6. Baseline Models (Logistic Regression, Naive Bayes, Linear SVM, Random Forest)
+7. Hyperparameter Tuning with GridSearchCV
+8. Model Selection & Final Test Evaluation
+9. Model Saving with joblib
+
+**Performance:** Logistic Regression achieves PR-AUC: 0.9943, ROC-AUC: 0.9635, F1: 0.9614
+
+**Supporting Modules (`src/fp1_nb/`):**
+- `data_utils.py` - JSONL loading, target analysis, stratified splitting
+- `eda_utils.py` - Text length analysis, brand distribution, word frequencies
+- `preprocessing.py` - Text cleaning, feature engineering, TF-IDF pipelines
+- `modeling.py` - GridSearchCV utilities, model evaluation, comparison plots
+
 ### ML Classifier Opportunities
 
 The project is designed to train three progressively complex classifiers that can reduce Claude API costs while maintaining accuracy:
 
-**1. False Positive Brand Classifier**
+**1. False Positive Brand Classifier** ✅ (Notebook Complete)
 - **Purpose**: Filter out articles where brand names match non-sportswear entities (e.g., "Puma" the animal, "Patagonia" the region, "Black Diamond" the power company)
 - **Input**: Article title + content + detected brand name
 - **Output**: Binary classification (is_sportswear: 0 or 1)
-- **Training Data**: ~450 records from `--dataset fp` export
+- **Training Data**: 844 records from `--dataset fp` export (725 sportswear, 119 false positives)
 - **Impact**: Prevents ~15% of articles from requiring expensive LLM labeling
+- **Best Model**: Logistic Regression with TF-IDF (PR-AUC: 0.9943)
 
 **2. ESG Pre-filter Classifier**
 - **Purpose**: Quickly identify whether an article contains any ESG-relevant content before detailed classification
 - **Input**: Article title + content
 - **Output**: Binary classification (has_esg: 0 or 1)
-- **Training Data**: ~550 records from `--dataset esg-prefilter` export
+- **Training Data**: 725 records from `--dataset esg-prefilter` export
 - **Impact**: Skip detailed ESG labeling for articles with no ESG content
 
 **3. ESG Multi-label Classifier**
 - **Purpose**: Classify articles into specific ESG categories with sentiment, replacing Claude for routine classification
 - **Input**: Article title + content + brand name
 - **Output**: Multi-label (Environmental, Social, Governance, Digital Transformation) with ternary sentiment (-1, 0, +1)
-- **Training Data**: ~380 records from `--dataset esg-labels` export
+- **Training Data**: 554 records from `--dataset esg-labels` export
 - **Impact**: Replace Claude API calls entirely for high-confidence predictions
 
 ## Environment Variables
@@ -731,9 +770,11 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 ### Phase 3: Model Development (Current)
 - [x] Export labeled data for training (JSONL format for 3 classifier types)
 - [x] False positive brand detection and cleanup tools
-- [ ] False Positive Classifier: Is the brand mention about sportswear?
-- [ ] ESG Pre-filter: Does the article contain ESG content?
-- [ ] ESG Classifier: Multi-label ESG category classification
+- [x] False Positive Classifier notebook with full ML pipeline
+  - TF-IDF + Logistic Regression achieves PR-AUC: 0.9943
+  - Supporting modules in `src/fp1_nb/` for reusable utilities
+- [ ] ESG Pre-filter Classifier: Does the article contain ESG content?
+- [ ] ESG Multi-label Classifier: Category classification with sentiment
 - [ ] Advanced: Fine-tuned DistilBERT/RoBERTa
 
 ### Phase 4: Evaluation & Explainability
