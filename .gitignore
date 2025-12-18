@@ -15,6 +15,11 @@ __pycache__/
 
 # Logs
 logs/*.log
+models/logs/
+
+# Saved models
+models/*.joblib
+models/*.pkl
 
 # Data
 *.db
