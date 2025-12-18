@@ -19,6 +19,7 @@ logs/*.log
 # Data
 *.db
 *.sqlite
+data/*.jsonl
 
 # Distribution
 dist/
