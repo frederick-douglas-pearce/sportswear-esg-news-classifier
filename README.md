@@ -69,10 +69,11 @@ flowchart TB
   - [Scrape-Only Mode](#scrape-only-mode)
   - [Command-Line Options](#command-line-options)
 - [LLM-Based Article Labeling](#llm-based-article-labeling)
-  - [How It Works](#how-it-works)
+  - [LLM Labeling Workflow](#llm-labeling-workflow)
   - [Running the Labeling Pipeline](#running-the-labeling-pipeline)
   - [Labeling Command-Line Options](#labeling-command-line-options)
   - [Cost Estimation](#cost-estimation)
+  - [Exporting Training Data](#exporting-training-data)
   - [ML Classifier Notebooks](#ml-classifier-notebooks)
   - [ML Classifier Opportunities](#ml-classifier-opportunities)
 - [Environment Variables](#environment-variables)
@@ -177,8 +178,8 @@ uv sync --extra dev
 # Create environment file from template
 cp .env.example .env
 
-# Edit .env and add your NewsData.io API key
-# NEWSDATA_API_KEY=your_api_key_here
+# Edit .env and add your API keys, e.g.
+# NEWSDATA_API_KEY=your_api_key_here, etc
 ```
 
 ### 3. Start the Database
@@ -329,9 +330,43 @@ uv run python scripts/collect_news.py --scrape-only --scrape-limit 50
 
 ## LLM-Based Article Labeling
 
-The project includes an LLM-powered labeling pipeline that uses Claude Sonnet to automatically categorize articles into ESG categories with per-brand sentiment analysis. This generates training data for a cost-efficient classifier model.
+The project uses a **hybrid LLM + ML approach** for article classification:
 
-### How It Works
+1. **LLM Labeling (Claude Sonnet)**: High-quality labeling of articles into ESG categories with per-brand sentiment analysis. This generates training data for ML classifiers.
+
+2. **ML Classifiers**: Cost-efficient models trained on LLM-labeled data that can filter and classify articles at a fraction of the cost (~$0 vs ~$15/1000 articles).
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Article Classification Pipeline                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  New Article ──► FP Classifier ──► ESG Pre-filter ──► ESG Classifier        │
+│                  (Is this about     (Has ESG          (Category +           │
+│                   sportswear?)       content?)         Sentiment)           │
+│                       │                  │                  │               │
+│                       ▼                  ▼                  ▼               │
+│               ┌───────────────┐  ┌───────────────┐  ┌───────────────┐       │
+│               │ False Positive│  │ No ESG Content│  │ High-Confidence│      │
+│               │   (Skip)      │  │   (Skip)      │  │  Prediction   │       │
+│               └───────────────┘  └───────────────┘  └───────────────┘       │
+│                                                             │               │
+│                                         Low Confidence ─────┘               │
+│                                                │                            │
+│                                                ▼                            │
+│                                    ┌───────────────────┐                    │
+│                                    │  Claude Sonnet    │                    │
+│                                    │  (Fallback LLM)   │                    │
+│                                    └───────────────────┘                    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Cost Savings**: By filtering false positives (~15% of articles) and non-ESG content (~30% of articles) with ML classifiers before LLM labeling, the pipeline can reduce Claude API costs by 40-50%.
+
+### LLM Labeling Workflow
+
+The LLM labeling pipeline processes articles through these steps:
 
 1. **Chunking**: Articles are split into paragraph-based chunks (~500 tokens each) with character position tracking
 2. **Embedding**: Chunks are embedded using OpenAI's `text-embedding-3-small` model for semantic search
@@ -341,6 +376,8 @@ The project includes an LLM-powered labeling pipeline that uses Claude Sonnet to
    - Supporting evidence quotes from the article
    - Confidence score and reasoning
 4. **Evidence Matching**: Evidence excerpts are linked back to article chunks via exact match, fuzzy match, or embedding similarity
+
+The labeled data is then exported to train ML classifiers that can handle routine classification at scale.
 
 ### Running the Labeling Pipeline
 
@@ -409,36 +446,9 @@ uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
 
 | Dataset | Fields | Use Case |
 |---------|--------|----------|
-| `fp` | article_id, title, content, brand, is_sportswear | False positive brand classifier |
+| `fp` | article_id, title, content, brands, is_sportswear | False positive brand classifier |
 | `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
 | `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
-
-### ML Classifier Notebooks
-
-The project includes Jupyter notebooks for developing and training ML classifiers. These notebooks use supporting utility modules in `src/fp1_nb/` for consistent preprocessing and evaluation.
-
-#### False Positive Brand Classifier (`notebooks/fp1_classifier.ipynb`)
-
-A complete ML workflow for distinguishing sportswear brand articles from false positives (e.g., "Puma" the animal, "Patagonia" the region):
-
-**Notebook Sections:**
-1. Data Loading & Exploration (844 articles)
-2. Target Variable Analysis (725 sportswear vs 119 false positives)
-3. Text Analysis & EDA (length distributions, brand distribution, word frequencies)
-4. Data Preprocessing (TF-IDF with text cleaning)
-5. Train/Validation/Test Split (60/20/20 stratified)
-6. Baseline Models (Logistic Regression, Naive Bayes, Linear SVM, Random Forest)
-7. Hyperparameter Tuning with GridSearchCV
-8. Model Selection & Final Test Evaluation
-9. Model Saving with joblib
-
-**Performance:** Logistic Regression achieves PR-AUC: 0.9943, ROC-AUC: 0.9635, F1: 0.9614
-
-**Supporting Modules (`src/fp1_nb/`):**
-- `data_utils.py` - JSONL loading, target analysis, stratified splitting
-- `eda_utils.py` - Text length analysis, brand distribution, word frequencies
-- `preprocessing.py` - Text cleaning, feature engineering, TF-IDF pipelines
-- `modeling.py` - GridSearchCV utilities, model evaluation, comparison plots
 
 ### ML Classifier Opportunities
 
@@ -465,6 +475,33 @@ The project is designed to train three progressively complex classifiers that ca
 - **Output**: Multi-label (Environmental, Social, Governance, Digital Transformation) with ternary sentiment (-1, 0, +1)
 - **Training Data**: 554 records from `--dataset esg-labels` export
 - **Impact**: Replace Claude API calls entirely for high-confidence predictions
+
+### ML Classifier Notebooks
+
+The project includes Jupyter notebooks for developing and training the ML classifiers described in the previous section. These notebooks use supporting utility modules in `src/fp1_nb/` for consistent preprocessing and evaluation.
+
+#### False Positive Brand Classifier (`notebooks/fp1_classifier.ipynb`)
+
+A complete ML workflow for distinguishing sportswear brand articles from false positives (e.g., "Puma" the animal, "Patagonia" the region):
+
+**Notebook Sections:**
+1. Data Loading & Exploration (844 articles)
+2. Target Variable Analysis (725 sportswear vs 119 false positives)
+3. Text Analysis & EDA (length distributions, brand distribution, word frequencies)
+4. Data Preprocessing (TF-IDF with text cleaning)
+5. Train/Validation/Test Split (60/20/20 stratified)
+6. Baseline Models (Logistic Regression, Naive Bayes, Linear SVM, Random Forest)
+7. Hyperparameter Tuning with GridSearchCV
+8. Model Selection & Final Test Evaluation
+9. Model Saving with joblib
+
+**Performance:** Logistic Regression achieves PR-AUC: 0.9943, ROC-AUC: 0.9635, F1: 0.9614
+
+**Supporting Modules (`src/fp1_nb/`):**
+- `data_utils.py` - JSONL loading, target analysis, stratified splitting
+- `eda_utils.py` - Text length analysis, brand distribution, word frequencies
+- `preprocessing.py` - Text cleaning, feature engineering, TF-IDF pipelines
+- `modeling.py` - GridSearchCV utilities, model evaluation, comparison plots
 
 ## Environment Variables
 
