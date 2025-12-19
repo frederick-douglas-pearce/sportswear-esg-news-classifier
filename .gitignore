@@ -40,6 +40,11 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+Untitled*.ipynb
+
 # uv
 uv.lock
 

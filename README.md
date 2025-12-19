@@ -825,7 +825,7 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 - [ ] SHAP values for model explainability
 
 ### Phase 5: Deployment
-- [ ] FastAPI/Flask backend
+- [ ] FastAPI backend
 - [ ] Streamlit dashboard
 - [ ] Docker containerization
 - [ ] Cloud deployment (Render/Railway/HuggingFace Spaces)

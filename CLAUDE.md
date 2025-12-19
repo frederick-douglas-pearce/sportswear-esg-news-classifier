@@ -90,6 +90,11 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 ### ML Classifier Notebooks (`notebooks/`)
 - `fp1_classifier.ipynb` - False Positive Brand Classifier (TF-IDF + Logistic Regression, PR-AUC: 0.9943)
 
+**Notebook Standards:**
+- All package imports MUST be placed in the Setup section at the beginning of the notebook
+- Do not scatter imports throughout the notebook cells
+- Group imports: standard library, third-party packages, then project modules
+
 ### Notebook Utilities (`src/fp1_nb/`)
 - `data_utils.py` - JSONL loading, target analysis, stratified train/val/test splitting
 - `eda_utils.py` - Text length analysis, brand distribution, word frequency analysis
