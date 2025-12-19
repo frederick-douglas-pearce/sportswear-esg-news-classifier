@@ -18,6 +18,11 @@ from src.fp1_nb.preprocessing import (
     clean_text,
     create_text_features,
     build_tfidf_pipeline,
+    extract_brand_context,
+    compute_sportswear_vocab_features,
+    create_sportswear_vocab_df,
+    create_enhanced_text_features,
+    SPORTSWEAR_VOCAB,
 )
 from src.fp1_nb.modeling import (
     create_search_object,
@@ -47,6 +52,11 @@ __all__ = [
     "clean_text",
     "create_text_features",
     "build_tfidf_pipeline",
+    "extract_brand_context",
+    "compute_sportswear_vocab_features",
+    "create_sportswear_vocab_df",
+    "create_enhanced_text_features",
+    "SPORTSWEAR_VOCAB",
     # Modeling
     "create_search_object",
     "tune_with_logging",
