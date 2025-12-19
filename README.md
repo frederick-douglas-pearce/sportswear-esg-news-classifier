@@ -328,13 +328,13 @@ uv run python scripts/collect_news.py --scrape-only --scrape-limit 50
 | `--end-date DATE` | GDELT only: end date for historical collection (YYYY-MM-DD) | - |
 | `-v, --verbose` | Enable verbose/debug logging | False |
 
-## LLM-Based Article Labeling
+## AI-Based Article Labeling
 
 The project uses a **hybrid LLM + ML approach** for article classification:
 
 1. **LLM Labeling (Claude Sonnet)**: High-quality labeling of articles into ESG categories with per-brand sentiment analysis. This generates training data for ML classifiers.
 
-2. **ML Classifiers**: Cost-efficient models trained on LLM-labeled data that can filter and classify articles at a fraction of the cost (~$0 vs ~$15/1000 articles).
+2. **ML Classifiers**: Cost-efficient models trained on LLM-labeled data that can filter and classify articles at little to no cost (~$0 vs ~$15/1000 articles).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -714,6 +714,11 @@ The classifier will categorize articles into these ESG categories:
 - `ethical_sourcing` - Supply chain ethics, transparency
 - `transparency` - Corporate disclosure, reporting
 - `board_structure` - Corporate governance, leadership
+
+**Digital Transformation:**
+- `technology_innovation` - AI/ML applications, smart products, wearable tech
+- `digital_retail` - E-commerce platforms, omnichannel experiences, direct-to-consumer
+- `supply_chain_tech` - Blockchain traceability, inventory optimization, logistics automation
 
 ## Testing
 
