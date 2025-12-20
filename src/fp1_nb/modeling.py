@@ -16,6 +16,8 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     f1_score,
+    fbeta_score,
+    make_scorer,
     precision_recall_curve,
     precision_score,
     recall_score,
@@ -23,6 +25,9 @@ from sklearn.metrics import (
     roc_curve,
 )
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+
+# F2 scorer for recall-focused optimization
+f2_scorer = make_scorer(fbeta_score, beta=2)
 
 
 def _save_figure(fig: plt.Figure, save_path: Optional[str], dpi: int = 150) -> None:
@@ -66,9 +71,9 @@ def create_search_object(
         scoring = {
             'accuracy': 'accuracy',
             'f1': 'f1',
+            'f2': f2_scorer,
             'precision': 'precision',
             'recall': 'recall',
-            'roc_auc': 'roc_auc',
             'average_precision': 'average_precision',
         }
 
