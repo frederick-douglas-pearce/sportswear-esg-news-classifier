@@ -44,6 +44,8 @@ Thumbs.db
 .ipynb_checkpoints/
 *.ipynb_checkpoints/
 Untitled*.ipynb
+notebooks/images/
+notebooks/models/
 
 # uv
 uv.lock
