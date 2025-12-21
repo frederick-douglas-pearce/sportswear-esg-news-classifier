@@ -1,0 +1,32 @@
+NER Feature Analysis Report
+======================================================================
+
+Total samples: 971
+Sportswear: 841
+False positives: 130
+
+Entity Discrimination Analysis:
+entity_type  fp_count  sw_count  fp_freq  sw_freq  discrimination       suggests
+   QUANTITY        39        82 0.016414 0.003337        0.249042 false_positive
+        FAC        35       154 0.014731 0.006267        0.461951 false_positive
+       TIME        29       141 0.012205 0.005738        0.510229 false_positive
+        GPE       299      1823 0.125842 0.074184        0.592739 false_positive
+        LAW         7        33 0.002946 0.001343        0.593717 false_positive
+   CARDINAL       268      1686 0.112795 0.068609        0.611708 false_positive
+WORK_OF_ART        32       239 0.013468 0.009726        0.741341        neutral
+        LOC        39       336 0.016414 0.013673        0.842590        neutral
+   LANGUAGE         1         5 0.000421 0.000203        0.846990        neutral
+       NORP        50       478 0.021044 0.019451        0.927766        neutral
+        ORG       781      7661 0.328704 0.311752        0.948586        neutral
+     PERSON       353      3905 0.148569 0.158908        1.069124        neutral
+    ORDINAL        26       312 0.010943 0.012696        1.146832        neutral
+       DATE       300      3571 0.126263 0.145316        1.149718        neutral
+    PRODUCT        13       182 0.005471 0.007406        1.298981        neutral
+      MONEY        76      2635 0.031987 0.107227        3.280950     sportswear
+    PERCENT        27      1147 0.011364 0.046675        3.856094     sportswear
+      EVENT         1       184 0.000421 0.007488        5.973492     sportswear
+
+Recommendations:
+FP-indicating: ['QUANTITY', 'FAC']
+SW-indicating: ['MONEY', 'PERCENT', 'EVENT']
+Neutral: ['TIME', 'GPE', 'LAW', 'CARDINAL', 'WORK_OF_ART', 'LOC', 'LANGUAGE', 'NORP', 'ORG', 'PERSON', 'ORDINAL', 'DATE', 'PRODUCT']

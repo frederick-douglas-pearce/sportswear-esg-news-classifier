@@ -46,13 +46,15 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'doc2vec',
         'sentence_transformer',
         'sentence_transformer_ner',  # Sentence embeddings + NER entity type features
+        'sentence_transformer_ner_vocab',  # Sentence + NER + domain vocabulary features
         'hybrid',
     ]
 
     # NER entity types that suggest false positives vs sportswear
-    # False positive indicators (animals, locations, etc.)
-    FP_ENTITY_TYPES = ['ANIMAL', 'GPE', 'LOC', 'FAC', 'NORP', 'EVENT']
-    # Sportswear indicators (organizations, products, money/business)
+    # Original intuitive categories (best performing in experiments)
+    # False positive indicators (locations, facilities, groups, events)
+    FP_ENTITY_TYPES = ['GPE', 'LOC', 'FAC', 'NORP', 'EVENT']
+    # Sportswear indicators (organizations, products, financial terms)
     SW_ENTITY_TYPES = ['ORG', 'PRODUCT', 'MONEY', 'PERCENT', 'CARDINAL']
 
     # POS patterns that suggest sportswear context
@@ -662,6 +664,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
 
+        elif self.method == 'sentence_transformer_ner_vocab':
+            # Sentence embeddings + NER + domain vocabulary features
+            self._fit_sentence_transformer()
+            # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+            # Fit scaler on vocab features
+            vocab_features = self._compute_vocab_features(texts)
+            self._vocab_scaler = StandardScaler()
+            self._vocab_scaler.fit(vocab_features)
+
         elif self.method == 'hybrid':
             self._tfidf = self._create_tfidf_word()
             self._tfidf.fit(texts)
@@ -778,6 +792,15 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
             return np.hstack([sentence_features, ner_scaled])
+
+        elif self.method == 'sentence_transformer_ner_vocab':
+            # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled vocab features
+            sentence_features = self._transform_sentence_transformer(texts)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            vocab_features = self._compute_vocab_features(texts)
+            vocab_scaled = self._vocab_scaler.transform(vocab_features)
+            return np.hstack([sentence_features, ner_scaled, vocab_scaled])
 
         elif self.method == 'hybrid':
             return self._transform_hybrid(texts)

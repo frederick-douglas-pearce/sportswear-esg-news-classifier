@@ -18,42 +18,6 @@
     "cv_precision": 0.935050649176287
   },
   {
-    "name": "tfidf_ner",
-    "classifier": "LogisticRegression",
-    "n_features": 10006,
-    "cv_f2": 0.9354786610711031,
-    "cv_f2_std": 0.009006178815927426,
-    "cv_recall": 0.9325396825396824,
-    "cv_precision": 0.9476900236793494
-  },
-  {
-    "name": "tfidf_ner",
-    "classifier": "HistGradientBoosting",
-    "n_features": 10006,
-    "cv_f2": 0.9323694230930872,
-    "cv_f2_std": 0.019821777762439343,
-    "cv_recall": 0.9325396825396824,
-    "cv_precision": 0.9335150951956587
-  },
-  {
-    "name": "tfidf_pos",
-    "classifier": "LogisticRegression",
-    "n_features": 10005,
-    "cv_f2": 0.9373174356474885,
-    "cv_f2_std": 0.010550744483520048,
-    "cv_recall": 0.9325396825396824,
-    "cv_precision": 0.957575295269334
-  },
-  {
-    "name": "tfidf_pos",
-    "classifier": "HistGradientBoosting",
-    "n_features": 10005,
-    "cv_f2": 0.9362654776933809,
-    "cv_f2_std": 0.015122958174711463,
-    "cv_recall": 0.9345238095238094,
-    "cv_precision": 0.9444734857362244
-  },
-  {
     "name": "tfidf_lsa",
     "classifier": "LogisticRegression",
     "n_features": 100,
@@ -75,19 +39,19 @@
     "name": "doc2vec",
     "classifier": "LogisticRegression",
     "n_features": 100,
-    "cv_f2": 0.9251328801969017,
-    "cv_f2_std": 0.01384842594438272,
-    "cv_recall": 0.9226190476190476,
-    "cv_precision": 0.9356437259627536
+    "cv_f2": 0.9112258134706731,
+    "cv_f2_std": 0.007420883839984912,
+    "cv_recall": 0.9047619047619048,
+    "cv_precision": 0.9387909468238975
   },
   {
     "name": "doc2vec",
     "classifier": "HistGradientBoosting",
     "n_features": 100,
-    "cv_f2": 0.9532655283781427,
-    "cv_f2_std": 0.009379921730821713,
-    "cv_recall": 0.9642857142857143,
-    "cv_precision": 0.9120567694880065
+    "cv_f2": 0.9548255033651185,
+    "cv_f2_std": 0.011568249491911188,
+    "cv_recall": 0.9662698412698413,
+    "cv_precision": 0.9126059334581296
   },
   {
     "name": "sentence_transformer",
@@ -124,5 +88,23 @@
     "cv_f2_std": 0.012226146717705113,
     "cv_recall": 0.9682539682539683,
     "cv_precision": 0.9348801215401416
+  },
+  {
+    "name": "sentence_transformer_ner_vocab",
+    "classifier": "LogisticRegression",
+    "n_features": 404,
+    "cv_f2": 0.8764789260227518,
+    "cv_f2_std": 0.03789117679006335,
+    "cv_recall": 0.8531746031746031,
+    "cv_precision": 0.9864024864024864
+  },
+  {
+    "name": "sentence_transformer_ner_vocab",
+    "classifier": "HistGradientBoosting",
+    "n_features": 404,
+    "cv_f2": 0.9497378148345507,
+    "cv_f2_std": 0.0034757710178227844,
+    "cv_recall": 0.9523809523809522,
+    "cv_precision": 0.9393504615276688
   }
 ]
