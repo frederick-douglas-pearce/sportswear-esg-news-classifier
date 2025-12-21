@@ -36,42 +36,6 @@
     "cv_precision": 0.9360930091466028
   },
   {
-    "name": "doc2vec",
-    "classifier": "LogisticRegression",
-    "n_features": 100,
-    "cv_f2": 0.9112258134706731,
-    "cv_f2_std": 0.007420883839984912,
-    "cv_recall": 0.9047619047619048,
-    "cv_precision": 0.9387909468238975
-  },
-  {
-    "name": "doc2vec",
-    "classifier": "HistGradientBoosting",
-    "n_features": 100,
-    "cv_f2": 0.9548255033651185,
-    "cv_f2_std": 0.011568249491911188,
-    "cv_recall": 0.9662698412698413,
-    "cv_precision": 0.9126059334581296
-  },
-  {
-    "name": "sentence_transformer",
-    "classifier": "LogisticRegression",
-    "n_features": 384,
-    "cv_f2": 0.9034191950229128,
-    "cv_f2_std": 0.02218288588241728,
-    "cv_recall": 0.8849206349206349,
-    "cv_precision": 0.9868977625705879
-  },
-  {
-    "name": "sentence_transformer",
-    "classifier": "HistGradientBoosting",
-    "n_features": 384,
-    "cv_f2": 0.9569349986089825,
-    "cv_f2_std": 0.013361899106364363,
-    "cv_recall": 0.9623015873015873,
-    "cv_precision": 0.9363250325167792
-  },
-  {
     "name": "sentence_transformer_ner",
     "classifier": "LogisticRegression",
     "n_features": 390,
@@ -88,23 +52,5 @@
     "cv_f2_std": 0.012226146717705113,
     "cv_recall": 0.9682539682539683,
     "cv_precision": 0.9348801215401416
-  },
-  {
-    "name": "sentence_transformer_ner_vocab",
-    "classifier": "LogisticRegression",
-    "n_features": 404,
-    "cv_f2": 0.8764789260227518,
-    "cv_f2_std": 0.03789117679006335,
-    "cv_recall": 0.8531746031746031,
-    "cv_precision": 0.9864024864024864
-  },
-  {
-    "name": "sentence_transformer_ner_vocab",
-    "classifier": "HistGradientBoosting",
-    "n_features": 404,
-    "cv_f2": 0.9497378148345507,
-    "cv_f2_std": 0.0034757710178227844,
-    "cv_recall": 0.9523809523809522,
-    "cv_precision": 0.9393504615276688
   }
 ]
