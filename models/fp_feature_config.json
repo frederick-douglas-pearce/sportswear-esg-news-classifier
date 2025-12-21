@@ -24,6 +24,6 @@
   "sentence_model_name": "all-MiniLM-L6-v2",
   "include_vocab_features": true,
   "vocab_window_size": 15,
-  "proximity_window_size": 15,
+  "proximity_window_size": 20,
   "random_state": 42
 }
