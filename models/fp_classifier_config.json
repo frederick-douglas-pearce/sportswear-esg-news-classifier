@@ -1,15 +1,22 @@
 {
   "threshold": 0.5300654367940676,
   "target_recall": 0.98,
+  "model_name": "RF_tuned",
   "transformer_method": "sentence_transformer_ner",
-  "classifier_type": "RandomForestClassifier",
-  "cv_f2": 0.9726383710365404,
-  "test_f2": 0.9639953542392566,
   "best_params": {
     "class_weight": "balanced_subsample",
     "max_depth": 20,
     "min_samples_leaf": 1,
     "min_samples_split": 2,
     "n_estimators": 200
-  }
+  },
+  "cv_f2": 0.9726383710365404,
+  "cv_recall": 0.9940476190476191,
+  "cv_precision": 0.8956828241525336,
+  "test_f2": 0.9639953542392566,
+  "test_recall": 0.9822485207100592,
+  "test_precision": 0.8972972972972973,
+  "threshold_recall": 0.9822485207100592,
+  "threshold_precision": 0.9021739130434783,
+  "threshold_f2": 0.9651162790697675
 }

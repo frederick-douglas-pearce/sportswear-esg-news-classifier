@@ -1,0 +1,18 @@
+{
+  "model_name": "RF_tuned",
+  "cv_f2": 0.9726383710365404,
+  "cv_recall": 0.9940476190476191,
+  "cv_precision": 0.8956828241525336,
+  "cv_f1": 0.942241270799529,
+  "cv_accuracy": 0.8943062663992896,
+  "cv_pr_auc": 0.994070424610996,
+  "best_params": {
+    "class_weight": "balanced_subsample",
+    "max_depth": 20,
+    "min_samples_leaf": 1,
+    "min_samples_split": 2,
+    "n_estimators": 200
+  },
+  "transformer_method": "sentence_transformer_ner",
+  "n_folds": 3
+}
