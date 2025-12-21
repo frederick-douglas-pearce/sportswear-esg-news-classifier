@@ -111,7 +111,9 @@ sportswear-esg-news-classifier/
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
 ├── notebooks/
-│   └── fp1_classifier.ipynb    # False Positive Brand Classifier notebook
+│   ├── fp1_EDA_FE.ipynb              # EDA & Feature Engineering (exports transformer)
+│   ├── fp2_model_selection_tuning.ipynb  # Model selection & hyperparameter tuning
+│   └── fp3_model_evaluation_deployment.ipynb  # Test evaluation & deployment export
 ├── models/                     # Saved ML models (gitignored)
 ├── src/
 │   ├── data_collection/
@@ -133,12 +135,21 @@ sportswear-esg-news-classifier/
 │   │   ├── evidence_matcher.py # Match excerpts to chunks via similarity
 │   │   ├── database.py         # Labeling-specific DB operations
 │   │   └── pipeline.py         # Orchestrates full labeling flow
-│   └── fp1_nb/                 # FP classifier notebook utilities
+│   ├── fp1_nb/                 # FP classifier - EDA & feature engineering
+│   │   ├── __init__.py
+│   │   ├── data_utils.py       # Data loading, splitting, target analysis
+│   │   ├── eda_utils.py        # Text analysis, brand distribution, word frequencies
+│   │   ├── preprocessing.py    # Text cleaning, feature engineering
+│   │   ├── feature_transformer.py  # Sentence transformer + NER features
+│   │   ├── ner_analysis.py     # Named entity recognition utilities
+│   │   └── modeling.py         # GridSearchCV, model evaluation, comparison
+│   ├── fp2_nb/                 # FP classifier - model selection & tuning
+│   │   ├── __init__.py
+│   │   └── overfitting_analysis.py  # Train-val gap visualization
+│   └── fp3_nb/                 # FP classifier - evaluation & deployment
 │       ├── __init__.py
-│       ├── data_utils.py       # Data loading, splitting, target analysis
-│       ├── eda_utils.py        # Text analysis, brand distribution, word frequencies
-│       ├── preprocessing.py    # Text cleaning, TF-IDF pipeline
-│       └── modeling.py         # GridSearchCV, model evaluation, comparison
+│       ├── threshold_optimization.py  # Threshold tuning for target recall
+│       └── deployment.py       # Pipeline export utilities
 └── tests/
     ├── conftest.py             # Shared pytest fixtures
     ├── test_api_client.py      # NewsData.io client unit tests
@@ -454,13 +465,13 @@ uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
 
 The project is designed to train three progressively complex classifiers that can reduce Claude API costs while maintaining accuracy:
 
-**1. False Positive Brand Classifier** ✅ (Notebook Complete)
+**1. False Positive Brand Classifier** ✅ (Complete)
 - **Purpose**: Filter out articles where brand names match non-sportswear entities (e.g., "Puma" the animal, "Patagonia" the region, "Black Diamond" the power company)
 - **Input**: Article title + content + detected brand name
 - **Output**: Binary classification (is_sportswear: 0 or 1)
-- **Training Data**: 844 records from `--dataset fp` export (725 sportswear, 119 false positives)
+- **Training Data**: 993 records from `--dataset fp` export (856 sportswear, 137 false positives)
 - **Impact**: Prevents ~15% of articles from requiring expensive LLM labeling
-- **Best Model**: Logistic Regression with TF-IDF (PR-AUC: 0.9943)
+- **Best Model**: Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 0.988)
 
 **2. ESG Pre-filter Classifier**
 - **Purpose**: Quickly identify whether an article contains any ESG-relevant content before detailed classification
@@ -478,30 +489,59 @@ The project is designed to train three progressively complex classifiers that ca
 
 ### ML Classifier Notebooks
 
-The project includes Jupyter notebooks for developing and training the ML classifiers described in the previous section. These notebooks use supporting utility modules in `src/fp1_nb/` for consistent preprocessing and evaluation.
+The project includes a 3-notebook pipeline for developing and training the False Positive Brand Classifier. The notebooks use supporting utility modules in `src/fp1_nb/`, `src/fp2_nb/`, and `src/fp3_nb/` for consistent preprocessing and evaluation.
 
-#### False Positive Brand Classifier (`notebooks/fp1_classifier.ipynb`)
+#### Notebook Pipeline Overview
 
-A complete ML workflow for distinguishing sportswear brand articles from false positives (e.g., "Puma" the animal, "Patagonia" the region):
+```
+fp1_EDA_FE.ipynb          fp2_model_selection_tuning.ipynb          fp3_model_evaluation_deployment.ipynb
+(EDA & Features)          (Model Selection & Tuning)                 (Test Evaluation & Deployment)
+      │                              │                                          │
+      ▼                              ▼                                          ▼
+┌─────────────────┐        ┌─────────────────────┐              ┌────────────────────────────┐
+│ • Data loading  │        │ • Baseline models   │              │ • Load artifacts from      │
+│ • EDA           │        │ • GridSearchCV      │              │   fp1 and fp2              │
+│ • Feature eng   │ ────►  │ • Train-val gap     │ ──────────►  │ • Final test evaluation    │
+│ • Transformer   │        │ • Best model select │              │ • Threshold optimization   │
+│   export        │        │ • Model export      │              │ • Pipeline export          │
+└─────────────────┘        └─────────────────────┘              └────────────────────────────┘
+      │                              │                                          │
+      ▼                              ▼                                          ▼
+fp_feature_transformer.joblib  fp_best_classifier.joblib          fp_classifier_pipeline.joblib
+fp_feature_config.json         fp_cv_metrics.json                  fp_classifier_config.json
+```
 
-**Notebook Sections:**
-1. Data Loading & Exploration (844 articles)
-2. Target Variable Analysis (725 sportswear vs 119 false positives)
-3. Text Analysis & EDA (length distributions, brand distribution, word frequencies)
-4. Data Preprocessing (TF-IDF with text cleaning)
-5. Train/Validation/Test Split (60/20/20 stratified)
-6. Baseline Models (Logistic Regression, Naive Bayes, Linear SVM, Random Forest)
-7. Hyperparameter Tuning with GridSearchCV
-8. Model Selection & Final Test Evaluation
-9. Model Saving with joblib
+#### fp1_EDA_FE.ipynb - EDA & Feature Engineering
 
-**Performance:** Logistic Regression achieves PR-AUC: 0.9943, ROC-AUC: 0.9635, F1: 0.9614
+- **Data Loading**: 993 articles (856 sportswear, 137 false positives)
+- **EDA**: Text length distributions, brand distribution, word frequencies
+- **Feature Engineering**: Sentence-transformer embeddings + NER brand context features
+- **Hyperparameter Tuning**: Optimizes `proximity_window_size` for NER features
+- **Exports**: Feature transformer and configuration for fp2
 
-**Supporting Modules (`src/fp1_nb/`):**
-- `data_utils.py` - JSONL loading, target analysis, stratified splitting
-- `eda_utils.py` - Text length analysis, brand distribution, word frequencies
-- `preprocessing.py` - Text cleaning, feature engineering, TF-IDF pipelines
-- `modeling.py` - GridSearchCV utilities, model evaluation, comparison plots
+#### fp2_model_selection_tuning.ipynb - Model Selection & Tuning
+
+- **Baseline Models**: LR, RF, HGB with 3-fold stratified CV
+- **Hyperparameter Tuning**: GridSearchCV optimizing F2 score
+- **Overfitting Analysis**: Train-validation gap visualization
+- **Best Model**: Random Forest with `balanced_subsample` class weights
+- **Exports**: Best classifier and CV metrics for fp3
+
+#### fp3_model_evaluation_deployment.ipynb - Test Evaluation & Deployment
+
+- **Test Evaluation**: Final held-out test set evaluation (ONLY notebook using test data)
+- **Threshold Optimization**: Find optimal threshold for 98% target recall
+- **Pipeline Export**: Complete sklearn Pipeline for deployment
+
+**Performance (Random Forest):**
+- CV F2: 0.973, Test F2: 0.974
+- Test Recall: 98.8%, Test Precision: 91.9%
+- Optimized threshold: 0.605 (at 98% recall)
+
+**Supporting Modules:**
+- `src/fp1_nb/` - Data loading, EDA, feature transformer, NER analysis, modeling utilities
+- `src/fp2_nb/` - Train-validation gap analysis, overfitting visualization
+- `src/fp3_nb/` - Threshold optimization, deployment pipeline utilities
 
 ## Environment Variables
 
@@ -812,9 +852,12 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 ### Phase 3: Model Development (Current)
 - [x] Export labeled data for training (JSONL format for 3 classifier types)
 - [x] False positive brand detection and cleanup tools
-- [x] False Positive Classifier notebook with full ML pipeline
-  - TF-IDF + Logistic Regression achieves PR-AUC: 0.9943
-  - Supporting modules in `src/fp1_nb/` for reusable utilities
+- [x] False Positive Classifier - 3-notebook pipeline complete
+  - fp1: EDA + sentence-transformer/NER feature engineering
+  - fp2: Model selection + hyperparameter tuning (3-fold CV)
+  - fp3: Test evaluation + threshold optimization + deployment export
+  - Random Forest achieves Test F2: 0.974, Recall: 98.8%
+  - Supporting modules in `src/fp1_nb/`, `src/fp2_nb/`, `src/fp3_nb/`
 - [ ] ESG Pre-filter Classifier: Does the article contain ESG content?
 - [ ] ESG Multi-label Classifier: Category classification with sentiment
 - [ ] Advanced: Fine-tuned DistilBERT/RoBERTa

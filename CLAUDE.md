@@ -88,18 +88,35 @@ tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 - `setup_cron.sh` - Install/remove/status commands for cron management
 
 ### ML Classifier Notebooks (`notebooks/`)
-- `fp1_classifier.ipynb` - False Positive Brand Classifier (TF-IDF + Logistic Regression, PR-AUC: 0.9943)
+
+**False Positive Classifier Pipeline (3 notebooks):**
+- `fp1_EDA_FE.ipynb` - EDA & Feature Engineering (exports transformer)
+- `fp2_model_selection_tuning.ipynb` - Model selection & hyperparameter tuning
+- `fp3_model_evaluation_deployment.ipynb` - Test evaluation & deployment export
+
+**Best Model:** Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 98.8%)
 
 **Notebook Standards:**
 - All package imports MUST be placed in the Setup section at the beginning of the notebook
 - Do not scatter imports throughout the notebook cells
 - Group imports: standard library, third-party packages, then project modules
 
-### Notebook Utilities (`src/fp1_nb/`)
+### Notebook Utilities
+
+**`src/fp1_nb/`** - EDA & feature engineering utilities:
 - `data_utils.py` - JSONL loading, target analysis, stratified train/val/test splitting
 - `eda_utils.py` - Text length analysis, brand distribution, word frequency analysis
-- `preprocessing.py` - Text cleaning, feature engineering, TF-IDF pipeline building
+- `preprocessing.py` - Text cleaning, feature engineering
+- `feature_transformer.py` - Sentence transformer + NER brand context features
+- `ner_analysis.py` - Named entity recognition utilities
 - `modeling.py` - GridSearchCV utilities, model evaluation metrics, comparison plots
+
+**`src/fp2_nb/`** - Model selection & tuning utilities:
+- `overfitting_analysis.py` - Train-validation gap visualization, iteration performance
+
+**`src/fp3_nb/`** - Evaluation & deployment utilities:
+- `threshold_optimization.py` - Threshold tuning for target recall
+- `deployment.py` - Pipeline export utilities
 
 ### Test Suite (`tests/`) - 190 tests, 72% coverage
 - `conftest.py` - Shared pytest fixtures
@@ -171,7 +188,7 @@ Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
 
 Three classifiers to reduce Claude API costs while maintaining accuracy:
 
-1. **False Positive Brand Classifier** - Filter articles where brand names match non-sportswear entities (e.g., "Puma" animal, "Patagonia" region, "Black Diamond" power company). Binary classification using `--dataset fp` export.
+1. **False Positive Brand Classifier** ✅ - Filter articles where brand names match non-sportswear entities (e.g., "Puma" animal, "Patagonia" region, "Black Diamond" power company). Binary classification using `--dataset fp` export. **Complete**: Random Forest with Test F2: 0.974.
 
 2. **ESG Pre-filter Classifier** - Quickly identify if an article contains ESG content before detailed classification. Binary classification using `--dataset esg-prefilter` export.
 
@@ -191,9 +208,11 @@ Three classifiers to reduce Claude API costs while maintaining accuracy:
 - OpenAI embeddings for semantic matching
 
 ### Phase 3: Model Development (Current)
-- Export labeled data for training (844 FP, 725 ESG-prefilter, 554 ESG-labels records)
-- False Positive Classifier: TF-IDF + Logistic Regression (PR-AUC: 0.9943) ✅
-- ESG Pre-filter Classifier: In progress
+- Export labeled data for training (993 FP, 856 ESG-prefilter, 554 ESG-labels records)
+- False Positive Classifier: 3-notebook pipeline complete ✅
+  - Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 98.8%)
+  - Threshold optimized for 98% target recall
+- ESG Pre-filter Classifier: Planned
 - ESG Multi-label Classifier: Planned
 - Advanced: Fine-tuned DistilBERT/RoBERTa (future)
 
