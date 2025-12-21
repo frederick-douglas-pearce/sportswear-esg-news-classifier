@@ -1,0 +1,15 @@
+{
+  "threshold": 0.5300654367940676,
+  "target_recall": 0.98,
+  "transformer_method": "sentence_transformer_ner",
+  "classifier_type": "RandomForestClassifier",
+  "cv_f2": 0.9726383710365404,
+  "test_f2": 0.9639953542392566,
+  "best_params": {
+    "class_weight": "balanced_subsample",
+    "max_depth": 20,
+    "min_samples_leaf": 1,
+    "min_samples_split": 2,
+    "n_estimators": 200
+  }
+}
