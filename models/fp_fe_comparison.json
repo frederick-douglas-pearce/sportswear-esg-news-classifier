@@ -3,54 +3,54 @@
     "name": "tfidf_word",
     "classifier": "LogisticRegression",
     "n_features": 10000,
-    "cv_f2": 0.9443804767515535,
-    "cv_f2_std": 0.01571430328924773,
-    "cv_recall": 0.9444444444444443,
-    "cv_precision": 0.9445019688689915
+    "cv_f2": 0.9532527785341838,
+    "cv_f2_std": 0.015866330261456854,
+    "cv_recall": 0.9551656920077973,
+    "cv_precision": 0.9459539252980931
   },
   {
     "name": "tfidf_word",
     "classifier": "HistGradientBoosting",
     "n_features": 10000,
-    "cv_f2": 0.9279145603482114,
-    "cv_f2_std": 0.01656661447538918,
-    "cv_recall": 0.9265873015873015,
-    "cv_precision": 0.935050649176287
+    "cv_f2": 0.9202727228088875,
+    "cv_f2_std": 0.016792442846012338,
+    "cv_recall": 0.9142300194931775,
+    "cv_precision": 0.945569406886246
   },
   {
     "name": "tfidf_lsa",
     "classifier": "LogisticRegression",
     "n_features": 100,
-    "cv_f2": 0.9168308642983781,
-    "cv_f2_std": 0.023115999650041026,
-    "cv_recall": 0.9027777777777778,
-    "cv_precision": 0.9785283850843918
+    "cv_f2": 0.9273310990215387,
+    "cv_f2_std": 0.030249611901790614,
+    "cv_recall": 0.9181286549707602,
+    "cv_precision": 0.9670428370515142
   },
   {
     "name": "tfidf_lsa",
     "classifier": "HistGradientBoosting",
     "n_features": 100,
-    "cv_f2": 0.9521425204893719,
-    "cv_f2_std": 0.01125442810034157,
-    "cv_recall": 0.9563492063492064,
-    "cv_precision": 0.9360930091466028
+    "cv_f2": 0.942061821014784,
+    "cv_f2_std": 0.017147580837628063,
+    "cv_recall": 0.939571150097466,
+    "cv_precision": 0.9526095691991402
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LogisticRegression",
     "n_features": 390,
-    "cv_f2": 0.9017106087754759,
-    "cv_f2_std": 0.026223649606102083,
-    "cv_recall": 0.8829365079365079,
-    "cv_precision": 0.9868613767554062
+    "cv_f2": 0.9078131642245362,
+    "cv_f2_std": 0.00843833017611345,
+    "cv_recall": 0.8908382066276803,
+    "cv_precision": 0.9829149742465596
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "HistGradientBoosting",
     "n_features": 390,
-    "cv_f2": 0.9613449192110588,
-    "cv_f2_std": 0.012226146717705113,
-    "cv_recall": 0.9682539682539683,
-    "cv_precision": 0.9348801215401416
+    "cv_f2": 0.9553130241624733,
+    "cv_f2_std": 0.012075611278662118,
+    "cv_recall": 0.9590643274853802,
+    "cv_precision": 0.9407340953393585
   }
 ]

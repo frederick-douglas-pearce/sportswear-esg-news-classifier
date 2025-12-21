@@ -1,5 +1,5 @@
 {
-  "threshold": 0.5300654367940676,
+  "threshold": 0.605027986990411,
   "target_recall": 0.98,
   "model_name": "RF_tuned",
   "transformer_method": "sentence_transformer_ner",
@@ -10,13 +10,13 @@
     "min_samples_split": 2,
     "n_estimators": 200
   },
-  "cv_f2": 0.9726383710365404,
-  "cv_recall": 0.9940476190476191,
-  "cv_precision": 0.8956828241525336,
-  "test_f2": 0.9639953542392566,
-  "test_recall": 0.9822485207100592,
-  "test_precision": 0.8972972972972973,
-  "threshold_recall": 0.9822485207100592,
-  "threshold_precision": 0.9021739130434783,
-  "threshold_f2": 0.9651162790697675
+  "cv_f2": 0.973410384780301,
+  "cv_recall": 0.9956140350877193,
+  "cv_precision": 0.8937170614089905,
+  "test_f2": 0.9736540664375716,
+  "test_recall": 0.9883720930232558,
+  "test_precision": 0.918918918918919,
+  "threshold_recall": 0.9825581395348837,
+  "threshold_precision": 0.9388888888888889,
+  "threshold_f2": 0.9735023041474654
 }
