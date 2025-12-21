@@ -141,7 +141,7 @@ def tune_with_logging(
 
     if verbose:
         total_combinations = _calculate_total_combinations(search_object.param_grid)
-        n_splits = search_object.cv if isinstance(search_object.cv, int) else 5
+        n_splits = search_object.cv if isinstance(search_object.cv, int) else getattr(search_object.cv, 'n_splits', 5)
         print(f"\n{'='*60}")
         print(f"HYPERPARAMETER TUNING: {model_name}")
         print(f"{'='*60}")

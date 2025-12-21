@@ -25,6 +25,12 @@ dependencies = [
     "matplotlib>=3.8",
     "seaborn>=0.13",
     "joblib>=1.3",
+    # Feature engineering dependencies
+    "gensim>=4.3",
+    "sentence-transformers>=2.2",
+    "spacy>=3.7",
+    "notebook>=7.5.1",
+    "nbconvert>=7.16.6",
 ]
 
 [project.optional-dependencies]

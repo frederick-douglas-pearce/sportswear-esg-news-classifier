@@ -34,6 +34,7 @@ from src.fp1_nb.modeling import (
     evaluate_model,
     compare_val_test_performance,
 )
+from src.fp1_nb.feature_transformer import FPFeatureTransformer
 
 __all__ = [
     # Data utilities
@@ -66,4 +67,6 @@ __all__ = [
     "get_best_model",
     "evaluate_model",
     "compare_val_test_performance",
+    # Feature Transformer
+    "FPFeatureTransformer",
 ]
