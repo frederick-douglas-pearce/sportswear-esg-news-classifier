@@ -1,0 +1,136 @@
+NER Feature Stability Analysis Report
+======================================================================
+Generated: 2025-12-20
+Dataset: 971 samples (841 sportswear, 130 false positives)
+
+Purpose: Test stability of NER entity type recommendations across
+different proximity_window_size values (15, 20, 25) to validate
+the optimal window size selection.
+
+======================================================================
+DISCRIMINATION SCORES BY WINDOW SIZE
+======================================================================
+
+Entity       |  Win=15 |  Win=20 |  Win=25 | Range  | Stability
+-------------|---------|---------|---------|--------|----------
+QUANTITY     |   0.249 |   0.263 |   0.263 |  0.014 | stable
+FAC          |   0.462 |   0.501 |   0.503 |  0.041 | stable
+TIME         |   0.510 |   0.461 |   0.484 |  0.049 | stable
+GPE          |   0.593 |   0.588 |   0.605 |  0.017 | stable
+LAW          |   0.594 |   0.679 |   0.548 |  0.131 | stable
+CARDINAL     |   0.612 |   0.625 |   0.639 |  0.027 | stable
+WORK_OF_ART  |   0.741 |   0.820 |   0.848 |  0.107 | stable
+LOC          |   0.843 |   0.912 |   0.994 |  0.151 | stable
+LANGUAGE     |   0.847 |   0.870 |   0.910 |  0.063 | stable
+NORP         |   0.928 |   0.950 |   0.854 |  0.096 | stable
+ORG          |   0.949 |   0.943 |   0.928 |  0.021 | stable
+PERSON       |   1.069 |   1.063 |   1.065 |  0.006 | stable
+ORDINAL      |   1.147 |   1.121 |   1.035 |  0.112 | stable
+DATE         |   1.150 |   1.136 |   1.142 |  0.014 | stable
+PRODUCT      |   1.299 |   1.309 |   1.281 |  0.028 | stable
+MONEY        |   3.281 |   3.321 |   3.404 |  0.123 | stable
+PERCENT      |   3.856 |   3.869 |   3.890 |  0.034 | stable
+EVENT        |   5.973 |   6.391 |   4.560 |  1.831 | unstable*
+
+* EVENT has high variance but remains strongly SW-indicating across all windows
+
+======================================================================
+CATEGORY RECOMMENDATIONS BY WINDOW SIZE
+======================================================================
+
+Thresholds: FP-indicating < 0.5, SW-indicating > 2.0
+
+Window=15:
+  FP-indicating: ['QUANTITY', 'FAC']
+  SW-indicating: ['MONEY', 'PERCENT', 'EVENT']
+  Neutral: ['TIME', 'GPE', 'LAW', 'CARDINAL', 'WORK_OF_ART', 'LOC',
+            'LANGUAGE', 'NORP', 'ORG', 'PERSON', 'ORDINAL', 'DATE', 'PRODUCT']
+
+Window=20:
+  FP-indicating: ['QUANTITY', 'TIME']
+  SW-indicating: ['MONEY', 'PERCENT', 'EVENT']
+  Neutral: ['FAC', 'GPE', 'CARDINAL', 'LAW', 'WORK_OF_ART', 'LANGUAGE',
+            'LOC', 'ORG', 'NORP', 'PERSON', 'ORDINAL', 'DATE', 'PRODUCT']
+
+Window=25:
+  FP-indicating: ['QUANTITY', 'TIME']
+  SW-indicating: ['MONEY', 'PERCENT', 'EVENT']
+  Neutral: ['FAC', 'LAW', 'GPE', 'CARDINAL', 'WORK_OF_ART', 'NORP',
+            'LANGUAGE', 'ORG', 'LOC', 'ORDINAL', 'PERSON', 'DATE', 'PRODUCT']
+
+======================================================================
+STABILITY SUMMARY
+======================================================================
+
+Consistent FP-indicating (all 3 windows): ['QUANTITY']
+Inconsistent FP-indicating: ['FAC', 'TIME'] (flip near threshold)
+
+Consistent SW-indicating (all 3 windows): ['EVENT', 'MONEY', 'PERCENT']
+Inconsistent SW-indicating: (none)
+
+======================================================================
+CURRENT CONFIGURATION VS DATA-DRIVEN RECOMMENDATIONS
+======================================================================
+
+Current FP_ENTITY_TYPES: ['GPE', 'LOC', 'FAC', 'NORP', 'EVENT']
+  - GPE: 0.59-0.61 (borderline FP/neutral)
+  - LOC: 0.84-0.99 (neutral)
+  - FAC: 0.46-0.50 (borderline FP)
+  - NORP: 0.85-0.95 (neutral)
+  - EVENT: 4.56-6.39 (MISCLASSIFIED - should be SW!)
+
+Current SW_ENTITY_TYPES: ['ORG', 'PRODUCT', 'MONEY', 'PERCENT', 'CARDINAL']
+  - ORG: 0.93-0.95 (neutral)
+  - PRODUCT: 1.28-1.31 (neutral)
+  - MONEY: 3.28-3.40 (SW - correct)
+  - PERCENT: 3.86-3.89 (SW - correct)
+  - CARDINAL: 0.61-0.64 (borderline FP/neutral)
+
+Data-driven recommendation:
+  FP_ENTITY_TYPES: ['QUANTITY'] (most stable)
+  SW_ENTITY_TYPES: ['MONEY', 'PERCENT', 'EVENT']
+
+======================================================================
+EXPERIMENTAL RESULTS
+======================================================================
+
+Feature engineering comparison (HistGradientBoostingClassifier, 3-fold CV):
+
+1. Current intuitive entity types (proximity=15):    F2 = 0.9613
+2. Data-driven entity types (proximity=15):          F2 = 0.9578 (-0.35%)
+3. Hybrid entity types (proximity=15):               F2 = 0.9585 (-0.28%)
+
+The "intuitive" entity types, despite apparent misalignment with
+discrimination scores, outperform data-driven configurations.
+
+======================================================================
+CONCLUSIONS
+======================================================================
+
+1. STABILITY CONFIRMED: All entity discrimination scores are stable
+   across proximity_window_size values 15-25 (variation < 0.3 for 17/18).
+
+2. OPTIMAL WINDOW: proximity_window_size=15 is optimal (F2=0.9613).
+   Values 20-25 show slightly lower performance (F2=0.9569).
+
+3. ENTITY TYPE PARADOX: Current "intuitive" entity types perform better
+   than data-driven recommendations despite apparent misclassifications
+   (e.g., EVENT in FP category). This suggests:
+   - The model learns to use these features in unexpected ways
+   - Simple discrimination scores don't capture interaction effects
+   - The current configuration captures domain knowledge not visible in stats
+
+4. RECOMMENDATION: Keep current entity type configuration unchanged.
+   Re-evaluate if:
+   - Dataset size increases significantly (>2000 samples)
+   - New entity types become relevant
+   - Model architecture changes
+
+======================================================================
+FUTURE WORK
+======================================================================
+
+Consider testing entity types as hyperparameters during model tuning:
+- Include FP_ENTITY_TYPES and SW_ENTITY_TYPES in grid search
+- Test data-driven vs intuitive configurations with different classifiers
+- Evaluate if transformer-based models benefit from different NER features
