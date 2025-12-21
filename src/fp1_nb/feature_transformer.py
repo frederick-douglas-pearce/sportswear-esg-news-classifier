@@ -45,6 +45,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'tfidf_pos',  # TF-IDF + POS pattern features
         'doc2vec',
         'sentence_transformer',
+        'sentence_transformer_ner',  # Sentence embeddings + NER entity type features
         'hybrid',
     ]
 
@@ -653,6 +654,14 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         elif self.method == 'sentence_transformer':
             self._fit_sentence_transformer()
 
+        elif self.method == 'sentence_transformer_ner':
+            # Sentence embeddings + NER entity type features
+            self._fit_sentence_transformer()
+            # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+
         elif self.method == 'hybrid':
             self._tfidf = self._create_tfidf_word()
             self._tfidf.fit(texts)
@@ -762,6 +771,13 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         elif self.method == 'sentence_transformer':
             return self._transform_sentence_transformer(texts)
+
+        elif self.method == 'sentence_transformer_ner':
+            # Sentence embeddings (384-dim) + scaled NER features (6-dim)
+            sentence_features = self._transform_sentence_transformer(texts)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            return np.hstack([sentence_features, ner_scaled])
 
         elif self.method == 'hybrid':
             return self._transform_hybrid(texts)

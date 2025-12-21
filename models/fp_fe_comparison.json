@@ -10,12 +10,12 @@
   },
   {
     "name": "tfidf_word",
-    "classifier": "GradientBoosting",
+    "classifier": "HistGradientBoosting",
     "n_features": 10000,
-    "cv_f2": 0.9528617770735375,
-    "cv_f2_std": 0.007049629333658611,
-    "cv_recall": 0.9702380952380952,
-    "cv_precision": 0.8892518241718145
+    "cv_f2": 0.9279145603482114,
+    "cv_f2_std": 0.01656661447538918,
+    "cv_recall": 0.9265873015873015,
+    "cv_precision": 0.935050649176287
   },
   {
     "name": "tfidf_ner",
@@ -28,12 +28,12 @@
   },
   {
     "name": "tfidf_ner",
-    "classifier": "GradientBoosting",
+    "classifier": "HistGradientBoosting",
     "n_features": 10006,
-    "cv_f2": 0.9535895171958945,
-    "cv_f2_std": 0.003322456419563029,
-    "cv_recall": 0.9702380952380952,
-    "cv_precision": 0.8925869311327181
+    "cv_f2": 0.9323694230930872,
+    "cv_f2_std": 0.019821777762439343,
+    "cv_recall": 0.9325396825396824,
+    "cv_precision": 0.9335150951956587
   },
   {
     "name": "tfidf_pos",
@@ -46,12 +46,12 @@
   },
   {
     "name": "tfidf_pos",
-    "classifier": "GradientBoosting",
+    "classifier": "HistGradientBoosting",
     "n_features": 10005,
-    "cv_f2": 0.9551871953651049,
-    "cv_f2_std": 0.007990810438504227,
-    "cv_recall": 0.9722222222222222,
-    "cv_precision": 0.8927512388115244
+    "cv_f2": 0.9362654776933809,
+    "cv_f2_std": 0.015122958174711463,
+    "cv_recall": 0.9345238095238094,
+    "cv_precision": 0.9444734857362244
   },
   {
     "name": "tfidf_lsa",
@@ -64,30 +64,30 @@
   },
   {
     "name": "tfidf_lsa",
-    "classifier": "GradientBoosting",
+    "classifier": "HistGradientBoosting",
     "n_features": 100,
-    "cv_f2": 0.9639380919720817,
-    "cv_f2_std": 0.008215905724703043,
-    "cv_recall": 0.9761904761904763,
-    "cv_precision": 0.9178925256095978
+    "cv_f2": 0.9521425204893719,
+    "cv_f2_std": 0.01125442810034157,
+    "cv_recall": 0.9563492063492064,
+    "cv_precision": 0.9360930091466028
   },
   {
     "name": "doc2vec",
     "classifier": "LogisticRegression",
     "n_features": 100,
-    "cv_f2": 0.9045576887015727,
-    "cv_f2_std": 0.026140155721668012,
-    "cv_recall": 0.8968253968253969,
-    "cv_precision": 0.9377799904055051
+    "cv_f2": 0.9251328801969017,
+    "cv_f2_std": 0.01384842594438272,
+    "cv_recall": 0.9226190476190476,
+    "cv_precision": 0.9356437259627536
   },
   {
     "name": "doc2vec",
-    "classifier": "GradientBoosting",
+    "classifier": "HistGradientBoosting",
     "n_features": 100,
-    "cv_f2": 0.9586783206120274,
-    "cv_f2_std": 0.011056527015199167,
-    "cv_recall": 0.9761904761904763,
-    "cv_precision": 0.8947306436668138
+    "cv_f2": 0.9532655283781427,
+    "cv_f2_std": 0.009379921730821713,
+    "cv_recall": 0.9642857142857143,
+    "cv_precision": 0.9120567694880065
   },
   {
     "name": "sentence_transformer",
@@ -100,11 +100,29 @@
   },
   {
     "name": "sentence_transformer",
-    "classifier": "GradientBoosting",
+    "classifier": "HistGradientBoosting",
     "n_features": 384,
-    "cv_f2": 0.9419525782512879,
-    "cv_f2_std": 0.01776791422278503,
-    "cv_recall": 0.9424603174603173,
-    "cv_precision": 0.9409846962657072
+    "cv_f2": 0.9569349986089825,
+    "cv_f2_std": 0.013361899106364363,
+    "cv_recall": 0.9623015873015873,
+    "cv_precision": 0.9363250325167792
+  },
+  {
+    "name": "sentence_transformer_ner",
+    "classifier": "LogisticRegression",
+    "n_features": 390,
+    "cv_f2": 0.9017106087754759,
+    "cv_f2_std": 0.026223649606102083,
+    "cv_recall": 0.8829365079365079,
+    "cv_precision": 0.9868613767554062
+  },
+  {
+    "name": "sentence_transformer_ner",
+    "classifier": "HistGradientBoosting",
+    "n_features": 390,
+    "cv_f2": 0.9613449192110588,
+    "cv_f2_std": 0.012226146717705113,
+    "cv_recall": 0.9682539682539683,
+    "cv_precision": 0.9348801215401416
   }
 ]
