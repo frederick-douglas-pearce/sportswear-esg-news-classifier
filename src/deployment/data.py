@@ -1,7 +1,7 @@
 """Data loading and splitting utilities for FP Classifier deployment."""
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -41,24 +41,58 @@ def create_text_features(
     title_col: str = "title",
     content_col: str = "content",
     brands_col: str = "brands",
+    source_name_col: Optional[str] = "source_name",
+    category_col: Optional[str] = "category",
+    include_metadata: bool = True,
 ) -> pd.Series:
-    """Create combined text features from title, content, and brands.
+    """Create combined text features from title, content, brands, and metadata.
 
-    Combines article title, content, and brand names into a single text
-    feature string for model input.
+    Combines article title, content, brand names, and optionally metadata
+    (source name, categories) into a single text feature string for model input.
+
+    When include_metadata=True, prepends a structured prefix like:
+    "[Source: wwd.com] [Category: business, sports] Title content brands"
+
+    This allows sentence transformers to learn semantic relationships between
+    publishers and content, improving generalization to new publishers.
 
     Args:
         df: DataFrame containing the article data
         title_col: Name of column containing article title
         content_col: Name of column containing article content
         brands_col: Name of column containing brands list
+        source_name_col: Name of column containing publisher name (or None to skip)
+        category_col: Name of column containing categories list (or None to skip)
+        include_metadata: Whether to include source/category prefix in text
 
     Returns:
         Series of combined text features
     """
 
+    def format_metadata_prefix(source_name: Optional[str], categories: Optional[List]) -> str:
+        """Format metadata as a text prefix."""
+        parts = []
+        if source_name:
+            parts.append(f"[Source: {source_name}]")
+        if categories:
+            if isinstance(categories, list):
+                cats_str = ", ".join(str(c) for c in categories)
+            else:
+                cats_str = str(categories)
+            parts.append(f"[Category: {cats_str}]")
+        if parts:
+            return " ".join(parts) + " "
+        return ""
+
     def combine_text(row) -> str:
         """Combine text fields for a single row."""
+        # Metadata prefix (if enabled)
+        prefix = ""
+        if include_metadata:
+            source = row.get(source_name_col) if source_name_col and source_name_col in row.index else None
+            cats = row.get(category_col) if category_col and category_col in row.index else None
+            prefix = format_metadata_prefix(source, cats)
+
         title = str(row.get(title_col, "")) if pd.notna(row.get(title_col)) else ""
         content = str(row.get(content_col, "")) if pd.notna(row.get(content_col)) else ""
 
@@ -73,7 +107,9 @@ def create_text_features(
 
         # Combine with spaces
         parts = [title, content, brands_str]
-        return " ".join(part for part in parts if part)
+        text = " ".join(part for part in parts if part)
+
+        return prefix + text
 
     return df.apply(combine_text, axis=1)
 

@@ -81,6 +81,37 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'product', 'products', 'line', 'model', 'design', 'edition',
     ]
 
+    # Publishers strongly associated with sportswear content
+    SPORTSWEAR_PUBLISHERS = [
+        'wwd.com',              # Women's Wear Daily - fashion trade
+        'highsnobiety.com',     # Streetwear/sneaker culture
+        'hypebeast.com',        # Streetwear/fashion
+        'sneakernews.com',      # Sneaker news
+        'gearjunkie.com',       # Outdoor gear reviews
+        'runningmagazine.ca',   # Running content
+        'runnersworld.com',     # Running content
+        'outsideonline.com',    # Outdoor sports
+        'solecollector.com',    # Sneaker culture
+        'nicekicks.com',        # Sneaker culture
+        'footwearnews.com',     # Footwear industry
+        'sgbonline.com',        # Sporting goods business
+    ]
+
+    # Publishers associated with false positives (wildlife, geography, etc.)
+    FP_PUBLISHERS = [
+        'nationalgeographic.com',  # Wildlife, geography
+        'autoexpress.co.uk',       # Puma helicopters
+        'flightglobal.com',        # Aircraft (Puma helicopters)
+        'defensenews.com',         # Military (Puma vehicles)
+        'janes.com',               # Defense/military
+    ]
+
+    # Categories that indicate sportswear content
+    SPORTSWEAR_CATEGORIES = ['business', 'sports', 'lifestyle']
+
+    # Categories that may indicate false positives
+    FP_CATEGORIES = ['environment', 'science', 'world', 'crime']
+
     def __init__(
         self,
         method: str = 'tfidf_word',
@@ -111,6 +142,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         vocab_window_size: int = 15,
         # Proximity parameters
         proximity_window_size: int = 15,
+        # Metadata parameters
+        include_metadata_in_text: bool = True,
+        include_metadata_features: bool = True,
         # General
         random_state: int = 42,
     ):
@@ -137,6 +171,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             include_vocab_features: Whether to include domain vocab features
             vocab_window_size: Context window for vocab features
             proximity_window_size: Words to check for keyword proximity
+            include_metadata_in_text: Whether to prepend source/category to text
+            include_metadata_features: Whether to add discrete metadata features
             random_state: Random seed for reproducibility
         """
         self.method = method
@@ -159,6 +195,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self.include_vocab_features = include_vocab_features
         self.vocab_window_size = vocab_window_size
         self.proximity_window_size = proximity_window_size
+        self.include_metadata_in_text = include_metadata_in_text
+        self.include_metadata_features = include_metadata_features
         self.random_state = random_state
 
         # Fitted components (set during fit)
@@ -173,6 +211,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self._doc2vec_scaler = None  # For scaling Doc2Vec in combined mode
         self._ner_scaler = None  # For scaling NER features
         self._pos_scaler = None  # For scaling POS features
+        self._metadata_scaler = None  # For scaling metadata features
         self._is_fitted = False
 
     def _validate_method(self) -> None:
@@ -570,6 +609,98 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             features_list.append([noun_after, verb_before, adj_before, action_verb_near, sportswear_patterns])
 
         return np.array(features_list)
+
+    def _compute_metadata_features(
+        self,
+        source_names: List[Optional[str]],
+        categories: List[Optional[List[str]]],
+    ) -> np.ndarray:
+        """Compute discrete features from article metadata.
+
+        Features computed:
+        - is_sportswear_publisher: 1 if source is in SPORTSWEAR_PUBLISHERS
+        - is_fp_publisher: 1 if source is in FP_PUBLISHERS
+        - has_business_category: 1 if 'business' in categories
+        - has_sports_category: 1 if 'sports' in categories
+        - has_environment_category: 1 if 'environment' in categories
+        - has_science_category: 1 if 'science' in categories
+        - n_sportswear_categories: count of sportswear-related categories
+        - n_fp_categories: count of FP-related categories
+
+        Args:
+            source_names: List of publisher names (can contain None)
+            categories: List of category lists (can contain None)
+
+        Returns:
+            Feature matrix of shape (n_samples, 8)
+        """
+        features_list = []
+
+        for source, cats in zip(source_names, categories):
+            source_lower = source.lower() if source else ""
+            cats_lower = [c.lower() for c in (cats or [])]
+
+            # Publisher features
+            is_sportswear_pub = 1 if any(
+                pub in source_lower for pub in self.SPORTSWEAR_PUBLISHERS
+            ) else 0
+            is_fp_pub = 1 if any(
+                pub in source_lower for pub in self.FP_PUBLISHERS
+            ) else 0
+
+            # Category features
+            has_business = 1 if 'business' in cats_lower else 0
+            has_sports = 1 if 'sports' in cats_lower else 0
+            has_environment = 1 if 'environment' in cats_lower else 0
+            has_science = 1 if 'science' in cats_lower else 0
+
+            # Aggregate category counts
+            n_sw_cats = sum(1 for c in cats_lower if c in self.SPORTSWEAR_CATEGORIES)
+            n_fp_cats = sum(1 for c in cats_lower if c in self.FP_CATEGORIES)
+
+            features_list.append([
+                is_sportswear_pub,
+                is_fp_pub,
+                has_business,
+                has_sports,
+                has_environment,
+                has_science,
+                n_sw_cats,
+                n_fp_cats,
+            ])
+
+        return np.array(features_list)
+
+    @staticmethod
+    def format_metadata_prefix(
+        source_name: Optional[str],
+        categories: Optional[List[str]],
+    ) -> str:
+        """Format metadata as a text prefix for embedding.
+
+        Creates a structured prefix that will be prepended to article text
+        before encoding. This allows the sentence transformer to learn
+        semantic relationships between publishers and content.
+
+        Args:
+            source_name: Publisher name (e.g., "wwd.com")
+            categories: List of categories (e.g., ["business", "sports"])
+
+        Returns:
+            Formatted prefix string, e.g., "[Source: wwd.com] [Category: business, sports]"
+        """
+        parts = []
+
+        if source_name:
+            parts.append(f"[Source: {source_name}]")
+
+        if categories:
+            cats_str = ", ".join(categories)
+            parts.append(f"[Category: {cats_str}]")
+
+        if parts:
+            return " ".join(parts) + " "
+        return ""
 
     def fit(self, X: Union[List[str], np.ndarray], y: Optional[np.ndarray] = None):
         """Fit the feature transformer on training data.

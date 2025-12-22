@@ -88,6 +88,8 @@ def export_false_positive_data(
             "title": article.title,
             "content": article.full_content or article.description or "",
             "brands": article.brands_mentioned or [],
+            "source_name": article.source_name,
+            "category": article.category or [],
             "is_sportswear": 1,
             "source": article.labeling_status,
         })
@@ -106,6 +108,8 @@ def export_false_positive_data(
             "title": article.title,
             "content": article.full_content or article.description or "",
             "brands": article.brands_mentioned or [],
+            "source_name": article.source_name,
+            "category": article.category or [],
             "is_sportswear": 0,
             "source": "false_positive",
             "fp_reason": article.labeling_error,
