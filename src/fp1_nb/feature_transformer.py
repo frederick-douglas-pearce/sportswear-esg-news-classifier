@@ -676,27 +676,27 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         source_name: Optional[str],
         categories: Optional[List[str]],
     ) -> str:
-        """Format metadata as a text prefix for embedding.
+        """Format metadata as a natural text prefix for embedding.
 
-        Creates a structured prefix that will be prepended to article text
-        before encoding. This allows the sentence transformer to learn
-        semantic relationships between publishers and content.
+        Uses plain text without brackets/special formatting to work well
+        with both TF-IDF (after punctuation removal) and sentence transformers.
+        The domain name and categories are included as natural words that
+        can be learned semantically.
 
         Args:
             source_name: Publisher name (e.g., "wwd.com")
             categories: List of categories (e.g., ["business", "sports"])
 
         Returns:
-            Formatted prefix string, e.g., "[Source: wwd.com] [Category: business, sports]"
+            Natural text prefix, e.g., "wwd.com business sports "
         """
         parts = []
 
         if source_name:
-            parts.append(f"[Source: {source_name}]")
+            parts.append(source_name)
 
         if categories:
-            cats_str = ", ".join(categories)
-            parts.append(f"[Category: {cats_str}]")
+            parts.extend(categories)
 
         if parts:
             return " ".join(parts) + " "

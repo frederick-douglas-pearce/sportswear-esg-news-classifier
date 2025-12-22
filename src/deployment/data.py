@@ -70,16 +70,21 @@ def create_text_features(
     """
 
     def format_metadata_prefix(source_name: Optional[str], categories: Optional[List]) -> str:
-        """Format metadata as a text prefix."""
+        """Format metadata as a natural text prefix.
+
+        Uses plain text without brackets to work well with both TF-IDF
+        (after punctuation removal) and sentence transformers.
+        """
         parts = []
         if source_name:
-            parts.append(f"[Source: {source_name}]")
+            # Just include the domain name as natural text
+            parts.append(source_name)
         if categories:
             if isinstance(categories, list):
-                cats_str = ", ".join(str(c) for c in categories)
+                # Include categories as space-separated words
+                parts.extend(str(c) for c in categories)
             else:
-                cats_str = str(categories)
-            parts.append(f"[Category: {cats_str}]")
+                parts.append(str(categories))
         if parts:
             return " ".join(parts) + " "
         return ""
