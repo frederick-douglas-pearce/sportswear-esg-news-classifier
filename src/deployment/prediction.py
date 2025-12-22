@@ -107,6 +107,8 @@ class FPClassifier:
         title: str,
         content: str,
         brands: Optional[List[str]] = None,
+        source_name: Optional[str] = None,
+        category: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Make a prediction from separate article fields.
 
@@ -116,11 +118,13 @@ class FPClassifier:
             title: Article title
             content: Article content/body
             brands: List of brand names
+            source_name: News source name (e.g., "ESPN", "National Geographic")
+            category: List of article categories (e.g., ["sports", "business"])
 
         Returns:
             Prediction result dictionary
         """
-        text = prepare_input(title, content, brands)
+        text = prepare_input(title, content, brands, source_name, category)
         return self.predict(text)
 
     def predict_batch(
@@ -171,7 +175,8 @@ class FPClassifier:
         """Make predictions for multiple articles from field dictionaries.
 
         Args:
-            articles: List of dicts with "title", "content", and optional "brands"
+            articles: List of dicts with "title", "content", and optional
+                      "brands", "source_name", "category"
 
         Returns:
             List of prediction dictionaries
@@ -181,6 +186,8 @@ class FPClassifier:
                 article.get("title", ""),
                 article.get("content", ""),
                 article.get("brands"),
+                article.get("source_name"),
+                article.get("category"),
             )
             for article in articles
         ]

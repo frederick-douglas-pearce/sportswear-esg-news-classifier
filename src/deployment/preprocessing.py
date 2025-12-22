@@ -45,16 +45,22 @@ def prepare_input(
     title: str,
     content: str,
     brands: Optional[List[str]] = None,
+    source_name: Optional[str] = None,
+    category: Optional[List[str]] = None,
+    include_metadata: bool = True,
 ) -> str:
     """Prepare raw API input for the classifier pipeline.
 
-    Combines title, content, and brands into a single text string
-    that matches the format expected by the trained model.
+    Combines title, content, brands, and optional metadata into a single
+    text string that matches the format expected by the trained model.
 
     Args:
         title: Article title
         content: Article content/body
         brands: List of brand names mentioned in the article
+        source_name: News source name (e.g., "National Geographic", "ESPN")
+        category: List of article categories (e.g., ["sports", "business"])
+        include_metadata: Whether to prepend metadata to text (default True)
 
     Returns:
         Combined text string ready for classification
@@ -63,7 +69,9 @@ def prepare_input(
         >>> text = prepare_input(
         ...     title="Nike releases new running shoe",
         ...     content="The athletic giant unveiled...",
-        ...     brands=["Nike"]
+        ...     brands=["Nike"],
+        ...     source_name="ESPN",
+        ...     category=["sports", "business"]
         ... )
     """
     # Handle None/empty values
@@ -79,8 +87,21 @@ def prepare_input(
     else:
         brands_str = ""
 
-    # Combine fields with spaces
-    parts = [title, content, brands_str]
+    # Build metadata prefix if enabled
+    metadata_parts = []
+    if include_metadata:
+        if source_name:
+            metadata_parts.append(f"Source {source_name}")
+        if category:
+            if isinstance(category, str):
+                category_str = category
+            else:
+                category_str = " ".join(str(c) for c in category if c)
+            if category_str:
+                metadata_parts.append(f"Category {category_str}")
+
+    # Combine all parts
+    parts = metadata_parts + [title, content, brands_str]
     combined = " ".join(part for part in parts if part)
 
     return combined

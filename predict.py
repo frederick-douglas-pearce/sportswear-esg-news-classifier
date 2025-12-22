@@ -69,6 +69,14 @@ class ArticleRequest(BaseModel):
         default_factory=list,
         description="List of brand names mentioned in the article",
     )
+    source_name: Optional[str] = Field(
+        default=None,
+        description="News source name (e.g., 'ESPN', 'National Geographic')",
+    )
+    category: Optional[List[str]] = Field(
+        default=None,
+        description="Article categories (e.g., ['sports', 'business'])",
+    )
 
     model_config = {
         "json_schema_extra": {
@@ -77,6 +85,8 @@ class ArticleRequest(BaseModel):
                     "title": "Nike announces new sustainability initiative",
                     "content": "The athletic footwear giant unveiled plans to reduce carbon emissions by 50% in its manufacturing process.",
                     "brands": ["Nike"],
+                    "source_name": "ESPN",
+                    "category": ["sports", "business"],
                 }
             ]
         }
@@ -179,7 +189,7 @@ async def predict(request: ArticleRequest):
     """Classify if an article is about sportswear brands.
 
     Args:
-        request: Article with title, content, and brands
+        request: Article with title, content, brands, and optional metadata
 
     Returns:
         Prediction result with probability and risk level
@@ -191,6 +201,8 @@ async def predict(request: ArticleRequest):
         title=request.title,
         content=request.content,
         brands=request.brands,
+        source_name=request.source_name,
+        category=request.category,
     )
 
     return PredictionResponse(**result)
@@ -220,6 +232,8 @@ async def predict_batch(request: BatchArticleRequest):
             "title": article.title,
             "content": article.content,
             "brands": article.brands,
+            "source_name": article.source_name,
+            "category": article.category,
         }
         for article in request.articles
     ]
