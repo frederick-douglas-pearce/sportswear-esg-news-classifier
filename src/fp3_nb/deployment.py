@@ -154,6 +154,122 @@ def validate_pipeline(
     return results
 
 
+def validate_pipeline_with_articles(
+    pipeline: Pipeline,
+    articles: List[Dict[str, Any]],
+    threshold: float = 0.5,
+    verbose: bool = True
+) -> Dict[str, Any]:
+    """Validate pipeline with structured article data including metadata.
+
+    Each article should have: title, content, brands, source_name, category,
+    and optionally expected_label for verification.
+
+    Args:
+        pipeline: Fitted sklearn Pipeline
+        articles: List of article dicts with metadata
+        threshold: Classification threshold
+        verbose: Whether to print results
+
+    Returns:
+        Dictionary with validation results including accuracy if expected labels provided
+    """
+    from src.fp1_nb.preprocessing import create_text_features, clean_text
+    import pandas as pd
+
+    # Convert articles to DataFrame for create_text_features
+    df = pd.DataFrame(articles)
+
+    # Create text features with metadata (same as training)
+    texts = create_text_features(
+        df,
+        text_col='content',
+        title_col='title',
+        brands_col='brands',
+        source_name_col='source_name',
+        category_col='category',
+        include_metadata=True,
+        clean_func=clean_text
+    ).tolist()
+
+    # Test predict
+    try:
+        predictions = pipeline.predict(texts)
+        probabilities = pipeline.predict_proba(texts)[:, 1]
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e),
+        }
+
+    # Apply threshold
+    predictions_at_threshold = (probabilities >= threshold).astype(int)
+
+    # Check accuracy if expected labels provided
+    expected_labels = [a.get('expected_label') for a in articles]
+    has_labels = all(label is not None for label in expected_labels)
+
+    if has_labels:
+        correct = sum(1 for pred, exp in zip(predictions_at_threshold, expected_labels) if pred == exp)
+        accuracy = correct / len(articles)
+    else:
+        accuracy = None
+
+    results = {
+        'success': True,
+        'n_samples': len(articles),
+        'predictions': predictions.tolist(),
+        'probabilities': probabilities.tolist(),
+        'predictions_at_threshold': predictions_at_threshold.tolist(),
+        'threshold': threshold,
+        'accuracy': accuracy,
+    }
+
+    if verbose:
+        print("\n" + "=" * 80)
+        print("PIPELINE VALIDATION WITH ARTICLES")
+        print("=" * 80)
+        print(f"\nThreshold: {threshold:.4f}")
+        print(f"Samples tested: {len(articles)}")
+        if accuracy is not None:
+            print(f"Accuracy: {accuracy:.1%} ({correct}/{len(articles)})")
+        print("\nResults:")
+        print("-" * 80)
+
+        for i, (article, prob, pred) in enumerate(zip(articles, probabilities, predictions_at_threshold)):
+            pred_label = "Sportswear" if pred == 1 else "False Positive"
+            expected = article.get('expected_label')
+
+            # Format expected vs actual
+            if expected is not None:
+                expected_str = "Sportswear" if expected == 1 else "FP"
+                match = "✓" if pred == expected else "✗"
+            else:
+                expected_str = "?"
+                match = " "
+
+            # Article info
+            title = article.get('title', '')[:50]
+            source = article.get('source_name', 'Unknown')
+            brands = article.get('brands', [])
+            brands_str = ', '.join(brands) if brands else 'None'
+
+            print(f"\n[{i+1}] {match} Prob: {prob:.3f} | Pred: {pred_label} | Expected: {expected_str}")
+            print(f"    Title: {title}...")
+            print(f"    Source: {source} | Brands: {brands_str}")
+
+        print("\n" + "-" * 80)
+        if accuracy is not None and accuracy == 1.0:
+            print("Validation PASSED - All predictions match expected labels")
+        elif accuracy is not None:
+            print(f"Validation COMPLETED - {accuracy:.1%} accuracy")
+        else:
+            print("Validation COMPLETED - No expected labels to verify")
+        print("=" * 80)
+
+    return results
+
+
 def load_deployment_artifacts(
     models_dir: Path,
     pipeline_name: str = 'fp_classifier'
