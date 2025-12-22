@@ -79,7 +79,6 @@ def create_search_object(
 
     common_params = {
         'estimator': estimator,
-        'param_grid': param_grid,
         'scoring': scoring,
         'refit': refit,
         'cv': cv if cv is not None else 5,
@@ -89,14 +88,15 @@ def create_search_object(
     }
 
     if search_type.lower() == 'grid':
-        return GridSearchCV(**common_params)
+        return GridSearchCV(param_grid=param_grid, **common_params)
     elif search_type.lower() == 'random':
         if n_iter is None:
             n_iter = 50
         return RandomizedSearchCV(
-            **common_params,
+            param_distributions=param_grid,
             n_iter=n_iter,
-            random_state=random_state
+            random_state=random_state,
+            **common_params
         )
     else:
         raise ValueError(f"search_type must be 'grid' or 'random', got '{search_type}'")
