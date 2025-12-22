@@ -294,6 +294,11 @@ class LabelingDatabase:
             .filter(Article.labeling_status == "false_positive")
             .count()
         )
+        unlabelable = (
+            session.query(Article)
+            .filter(Article.labeling_status == "unlabelable")
+            .count()
+        )
         total_labels = session.query(BrandLabel).count()
         total_chunks = session.query(ArticleChunk).count()
 
@@ -303,6 +308,7 @@ class LabelingDatabase:
             "labeled": labeled,
             "skipped": skipped,
             "false_positive": false_positive,
+            "unlabelable": unlabelable,
             "total_brand_labels": total_labels,
             "total_chunks": total_chunks,
         }

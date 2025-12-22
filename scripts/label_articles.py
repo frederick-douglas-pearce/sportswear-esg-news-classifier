@@ -109,6 +109,7 @@ def show_stats() -> None:
     print(f"Labeled:               {stats['labeled']}")
     print(f"Skipped:               {stats['skipped']}")
     print(f"False positives:       {stats['false_positive']}")
+    print(f"Unlabelable:           {stats['unlabelable']}")
     print(f"Total brand labels:    {stats['total_brand_labels']}")
     print(f"Total chunks:          {stats['total_chunks']}")
     print()
