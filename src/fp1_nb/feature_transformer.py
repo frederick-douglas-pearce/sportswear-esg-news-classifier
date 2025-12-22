@@ -702,12 +702,20 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return " ".join(parts) + " "
         return ""
 
-    def fit(self, X: Union[List[str], np.ndarray], y: Optional[np.ndarray] = None):
+    def fit(
+        self,
+        X: Union[List[str], np.ndarray],
+        y: Optional[np.ndarray] = None,
+        source_names: Optional[List[Optional[str]]] = None,
+        categories: Optional[List[Optional[List[str]]]] = None,
+    ):
         """Fit the feature transformer on training data.
 
         Args:
             X: Training texts
             y: Target labels (not used, for sklearn compatibility)
+            source_names: Optional list of publisher names for discrete metadata features
+            categories: Optional list of category lists for discrete metadata features
 
         Returns:
             self
@@ -716,6 +724,12 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         # Preprocess texts
         texts = self._preprocess_texts(X)
+
+        # Fit metadata scaler if metadata features enabled and metadata provided
+        if self.include_metadata_features and source_names is not None:
+            metadata_features = self._compute_metadata_features(source_names, categories or [None] * len(source_names))
+            self._metadata_scaler = StandardScaler()
+            self._metadata_scaler.fit(metadata_features)
 
         if self.method == 'tfidf_word':
             self._tfidf = self._create_tfidf_word()
@@ -853,11 +867,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         from sentence_transformers import SentenceTransformer
         self._sentence_model = SentenceTransformer(self.sentence_model_name)
 
-    def transform(self, X: Union[List[str], np.ndarray]) -> np.ndarray:
+    def transform(
+        self,
+        X: Union[List[str], np.ndarray],
+        source_names: Optional[List[Optional[str]]] = None,
+        categories: Optional[List[Optional[List[str]]]] = None,
+    ) -> np.ndarray:
         """Transform texts into feature vectors.
 
         Args:
             X: Texts to transform
+            source_names: Optional list of publisher names for discrete metadata features
+            categories: Optional list of category lists for discrete metadata features
 
         Returns:
             Feature matrix (sparse or dense depending on method)
@@ -868,61 +889,100 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         # Preprocess texts
         texts = self._preprocess_texts(X)
 
+        # Compute metadata features if enabled and metadata provided
+        metadata_scaled = None
+        if self.include_metadata_features and source_names is not None and self._metadata_scaler is not None:
+            metadata_features = self._compute_metadata_features(source_names, categories or [None] * len(source_names))
+            metadata_scaled = self._metadata_scaler.transform(metadata_features)
+
         if self.method == 'tfidf_word':
-            return self._tfidf.transform(texts)
+            features = self._tfidf.transform(texts)
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         elif self.method == 'tfidf_char':
-            return self._tfidf_char.transform(texts)
+            features = self._tfidf_char.transform(texts)
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         elif self.method == 'tfidf_lsa':
             tfidf_features = self._tfidf.transform(texts)
-            return self._lsa.transform(tfidf_features)
+            features = self._lsa.transform(tfidf_features)
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
 
         elif self.method == 'tfidf_context':
             # Extract context windows and transform
             context_texts = self._extract_all_context_windows(texts)
-            return self._tfidf.transform(context_texts)
+            features = self._tfidf.transform(context_texts)
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         elif self.method == 'tfidf_proximity':
             # TF-IDF + scaled proximity features
             tfidf_features = self._tfidf.transform(texts)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
-            return sparse.hstack([tfidf_features, proximity_scaled]).tocsr()
+            features = sparse.hstack([tfidf_features, proximity_scaled]).tocsr()
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         elif self.method == 'tfidf_doc2vec':
             # TF-IDF + scaled Doc2Vec embeddings
             tfidf_features = self._tfidf.transform(texts)
             doc2vec_features = self._transform_doc2vec(texts)
             doc2vec_scaled = self._doc2vec_scaler.transform(doc2vec_features)
-            return sparse.hstack([tfidf_features, doc2vec_scaled]).tocsr()
+            features = sparse.hstack([tfidf_features, doc2vec_scaled]).tocsr()
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         elif self.method == 'tfidf_ner':
             # TF-IDF + scaled NER entity type features
             tfidf_features = self._tfidf.transform(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
-            return sparse.hstack([tfidf_features, ner_scaled]).tocsr()
+            features = sparse.hstack([tfidf_features, ner_scaled]).tocsr()
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         elif self.method == 'tfidf_pos':
             # TF-IDF + scaled POS pattern features
             tfidf_features = self._tfidf.transform(texts)
             pos_features = self._compute_pos_features(texts)
             pos_scaled = self._pos_scaler.transform(pos_features)
-            return sparse.hstack([tfidf_features, pos_scaled]).tocsr()
+            features = sparse.hstack([tfidf_features, pos_scaled]).tocsr()
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         elif self.method == 'doc2vec':
-            return self._transform_doc2vec(texts)
+            features = self._transform_doc2vec(texts)
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
 
         elif self.method == 'sentence_transformer':
-            return self._transform_sentence_transformer(texts)
+            features = self._transform_sentence_transformer(texts)
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
 
         elif self.method == 'sentence_transformer_ner':
             # Sentence embeddings (384-dim) + scaled NER features (6-dim)
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
-            return np.hstack([sentence_features, ner_scaled])
+            features = np.hstack([sentence_features, ner_scaled])
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
 
         elif self.method == 'sentence_transformer_ner_vocab':
             # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled vocab features
@@ -931,10 +991,16 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_scaled = self._ner_scaler.transform(ner_features)
             vocab_features = self._compute_vocab_features(texts)
             vocab_scaled = self._vocab_scaler.transform(vocab_features)
-            return np.hstack([sentence_features, ner_scaled, vocab_scaled])
+            features = np.hstack([sentence_features, ner_scaled, vocab_scaled])
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
 
         elif self.method == 'hybrid':
-            return self._transform_hybrid(texts)
+            features = self._transform_hybrid(texts)
+            if metadata_scaled is not None:
+                return sparse.hstack([features, metadata_scaled]).tocsr()
+            return features
 
         raise ValueError(f"Unknown method: {self.method}")
 
@@ -969,18 +1035,34 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
     def fit_transform(
         self,
         X: Union[List[str], np.ndarray],
-        y: Optional[np.ndarray] = None
+        y: Optional[np.ndarray] = None,
+        source_names: Optional[List[Optional[str]]] = None,
+        categories: Optional[List[Optional[List[str]]]] = None,
     ) -> np.ndarray:
         """Fit and transform in one step.
 
         Args:
             X: Training texts
             y: Target labels (not used)
+            source_names: Optional list of publisher names for discrete metadata features
+            categories: Optional list of category lists for discrete metadata features
 
         Returns:
             Feature matrix
         """
-        return self.fit(X, y).transform(X)
+        return self.fit(X, y, source_names, categories).transform(X, source_names, categories)
+
+    # Metadata feature names (8 features from _compute_metadata_features)
+    METADATA_FEATURE_NAMES = [
+        'meta_is_sportswear_publisher',
+        'meta_is_fp_publisher',
+        'meta_has_business_category',
+        'meta_has_sports_category',
+        'meta_has_environment_category',
+        'meta_has_science_category',
+        'meta_n_sportswear_categories',
+        'meta_n_fp_categories',
+    ]
 
     def get_feature_names_out(self) -> Optional[np.ndarray]:
         """Get feature names (where available).
@@ -988,6 +1070,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         Returns:
             Array of feature names or None if not applicable
         """
+        names = None
+
         if self.method in ['tfidf_word', 'hybrid', 'tfidf_proximity', 'tfidf_doc2vec',
                           'tfidf_ner', 'tfidf_pos']:
             if self._tfidf is not None:
@@ -1028,11 +1112,17 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
                         'pos_sportswear_pattern_count'
                     ]
                     names.extend(pos_names)
-                return np.array(names)
 
         elif self.method == 'tfidf_char':
             if self._tfidf_char is not None:
-                return self._tfidf_char.get_feature_names_out()
+                names = list(self._tfidf_char.get_feature_names_out())
+
+        # Add metadata feature names if metadata scaler is fitted
+        if names is not None and self._metadata_scaler is not None:
+            names.extend(self.METADATA_FEATURE_NAMES)
+            return np.array(names)
+        elif names is not None:
+            return np.array(names)
 
         # LSA, Doc2Vec, and SentenceTransformer don't have interpretable names
         return None
@@ -1064,6 +1154,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             'include_vocab_features': self.include_vocab_features,
             'vocab_window_size': self.vocab_window_size,
             'proximity_window_size': self.proximity_window_size,
+            'include_metadata_in_text': self.include_metadata_in_text,
+            'include_metadata_features': self.include_metadata_features,
             'random_state': self.random_state,
         }
 

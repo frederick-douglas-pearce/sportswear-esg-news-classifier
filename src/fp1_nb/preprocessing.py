@@ -102,15 +102,24 @@ def create_text_features(
     text_col: str,
     title_col: Optional[str] = None,
     brands_col: Optional[str] = None,
+    source_name_col: Optional[str] = None,
+    category_col: Optional[str] = None,
+    include_metadata: bool = True,
     clean_func: Optional[Callable] = None
 ) -> pd.Series:
     """Create combined text features for classification.
+
+    Optionally prepends metadata (source name, categories) as natural text
+    to help embeddings learn semantic relationships between publishers and content.
 
     Args:
         df: DataFrame containing the data
         text_col: Name of the main text column
         title_col: Optional title column to prepend
         brands_col: Optional brands column to include
+        source_name_col: Optional column with publisher name (e.g., "wwd.com")
+        category_col: Optional column with article categories (list)
+        include_metadata: Whether to prepend source/category as natural text
         clean_func: Optional text cleaning function
 
     Returns:
@@ -119,9 +128,31 @@ def create_text_features(
     if clean_func is None:
         clean_func = clean_text
 
+    def format_metadata_prefix(source_name: Optional[str], categories: Optional[List]) -> str:
+        """Format metadata as natural text prefix (no brackets)."""
+        parts = []
+        if source_name:
+            parts.append(source_name)
+        if categories:
+            if isinstance(categories, list):
+                parts.extend(str(c) for c in categories)
+            else:
+                parts.append(str(categories))
+        if parts:
+            return ' '.join(parts) + ' '
+        return ''
+
     texts = []
     for idx, row in df.iterrows():
         parts = []
+
+        # Add metadata prefix if enabled
+        if include_metadata:
+            source = row.get(source_name_col) if source_name_col and source_name_col in row.index else None
+            cats = row.get(category_col) if category_col and category_col in row.index else None
+            prefix = format_metadata_prefix(source, cats)
+            if prefix:
+                parts.append(prefix.strip())
 
         # Add title if provided (with extra weight via repetition)
         if title_col and title_col in row and pd.notna(row[title_col]):
