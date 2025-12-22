@@ -137,13 +137,22 @@ ESG_CATEGORIES = {
 # Target sportswear/outdoor apparel brands - imported from data_collection.config
 TARGET_SPORTSWEAR_BRANDS = BRANDS
 
-# Known brand name conflicts (for documentation)
+# Known brand name conflicts (for documentation and prompt guidance)
 BRAND_NAME_CONFLICTS = {
     "Puma": ["puma (animal/wildcat)", "Ford Puma (car)", "Puma Exploration (mining company)"],
     "Patagonia": ["Patagonia (region in South America)"],
     "Columbia": ["Columbia (country)", "Columbia River", "Columbia University", "Columbia Pictures"],
     "Black Diamond": ["Black Diamond Corporation (power company)", "Black Diamond Equipment (climbing gear)"],
     "North Face": ["north face (geographic term for north side of mountain)"],
+    "Anta": [
+        "Anta (town/constituency in Rajasthan, India - 'Anta Assembly', 'Anta bypoll')",
+        "Antalpha Platform (NASDAQ: ANTA - financial/crypto company, NOT sportswear)",
+        "anta as substring in words (e.g., 'Vasundhara', 'Santa', 'advantage')",
+    ],
+    "Vans": [
+        "vans (vehicles - 'container vans', 'camper vans', 'police vans', 'delivery vans')",
+        "vans as common noun for any vehicle type",
+    ],
 }
 
 # System prompt template for Claude labeling (brand list populated dynamically)
@@ -159,7 +168,15 @@ Before analyzing any brand, you MUST first verify that the article is actually a
 - **Columbia**: Could be the country, Columbia River, Columbia University, or Columbia Pictures
 - **North Face**: Could be a geographic term for the north side of a mountain
 - **Black Diamond**: Could be Black Diamond Corporation (power company) or Black Diamond Equipment (climbing gear - check context)
-- **Anta/Li-Ning/361 Degrees/Xtep/Peak**: Chinese sportswear brands - verify it's about the apparel company
+- **Anta**: VERY HIGH FALSE POSITIVE RATE - carefully check context:
+  - "Anta Assembly", "Anta bypoll", "Anta constituency" = political district in Rajasthan, India (NOT sportswear)
+  - "Antalpha Platform" (NASDAQ: ANTA) = financial/crypto company (NOT the sportswear brand)
+  - Words containing "anta" as substring (e.g., "Vasundhara", "Santa", "advantage") = NOT the brand
+  - Only ANTA Sports (Chinese sportswear company) articles about shoes, apparel, athletes, or sports sponsorships are valid
+- **Vans**: COMMON FALSE POSITIVE - check if referring to VEHICLES:
+  - "container vans", "delivery vans", "camper vans", "police vans", "council vans" = vehicles (NOT sportswear)
+  - Only Vans (skateboarding/footwear brand) articles about shoes, apparel, skateboarding, or retail are valid
+- **Li-Ning/361 Degrees/Xtep/Peak**: Chinese sportswear brands - verify it's about the apparel company
 
 **Target sportswear brands we are tracking:**
 {brands}
