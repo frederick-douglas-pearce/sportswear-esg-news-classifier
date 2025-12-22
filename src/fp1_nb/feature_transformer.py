@@ -889,10 +889,19 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         # Preprocess texts
         texts = self._preprocess_texts(X)
 
-        # Compute metadata features if enabled and metadata provided
+        # Compute metadata features if enabled and scaler was fitted
+        # If metadata not provided but scaler exists, use default (empty) values
         metadata_scaled = None
-        if self.include_metadata_features and source_names is not None and self._metadata_scaler is not None:
-            metadata_features = self._compute_metadata_features(source_names, categories or [None] * len(source_names))
+        if self.include_metadata_features and self._metadata_scaler is not None:
+            if source_names is not None:
+                metadata_features = self._compute_metadata_features(source_names, categories or [None] * len(source_names))
+            else:
+                # Use default empty metadata when not provided (for deployment/inference)
+                n_samples = len(texts)
+                metadata_features = self._compute_metadata_features(
+                    [None] * n_samples,
+                    [None] * n_samples
+                )
             metadata_scaled = self._metadata_scaler.transform(metadata_features)
 
         if self.method == 'tfidf_word':
