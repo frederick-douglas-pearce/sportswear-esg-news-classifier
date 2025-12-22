@@ -76,6 +76,11 @@ flowchart TB
   - [Exporting Training Data](#exporting-training-data)
   - [ML Classifier Notebooks](#ml-classifier-notebooks)
   - [ML Classifier Opportunities](#ml-classifier-opportunities)
+- [FP Classifier Deployment](#fp-classifier-deployment)
+  - [Local Deployment](#local-deployment-without-docker)
+  - [Docker Deployment](#docker-deployment)
+  - [API Endpoints](#api-endpoints)
+  - [Retraining the Model](#retraining-the-model)
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
   - [Articles Table](#articles-table)
@@ -95,7 +100,10 @@ flowchart TB
 
 ```
 sportswear-esg-news-classifier/
-├── docker-compose.yml          # PostgreSQL + pgvector container configuration
+├── docker-compose.yml          # PostgreSQL + FP Classifier API containers
+├── Dockerfile                  # Multi-stage build for FP Classifier API
+├── predict.py                  # FastAPI service for FP classification
+├── train.py                    # Training script for FP classifier
 ├── pyproject.toml              # Project dependencies and metadata (uv/pip)
 ├── .env.example                # Environment variable template
 ├── .env                        # Local environment variables (not committed)
@@ -146,10 +154,16 @@ sportswear-esg-news-classifier/
 │   ├── fp2_nb/                 # FP classifier - model selection & tuning
 │   │   ├── __init__.py
 │   │   └── overfitting_analysis.py  # Train-val gap visualization
-│   └── fp3_nb/                 # FP classifier - evaluation & deployment
+│   ├── fp3_nb/                 # FP classifier - evaluation & deployment
+│   │   ├── __init__.py
+│   │   ├── threshold_optimization.py  # Threshold tuning for target recall
+│   │   └── deployment.py       # Pipeline export utilities
+│   └── deployment/             # Production deployment module
 │       ├── __init__.py
-│       ├── threshold_optimization.py  # Threshold tuning for target recall
-│       └── deployment.py       # Pipeline export utilities
+│       ├── config.py           # Configuration and risk level mapping
+│       ├── data.py             # Data loading and splitting utilities
+│       ├── preprocessing.py    # Text preprocessing for API
+│       └── prediction.py       # FPClassifier wrapper class
 └── tests/
     ├── conftest.py             # Shared pytest fixtures
     ├── test_api_client.py      # NewsData.io client unit tests
@@ -556,6 +570,134 @@ The Random Forest model shows training F2 = 1.0 across all hyperparameter combin
 - `src/fp2_nb/` - Train-validation gap analysis, overfitting visualization
 - `src/fp3_nb/` - Threshold optimization, deployment pipeline utilities
 
+## FP Classifier Deployment
+
+The False Positive Brand Classifier is deployed as a FastAPI REST API service.
+
+### Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        FP Classifier API                         │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Client ──► FastAPI ──► FPClassifier ──► sklearn Pipeline        │
+│              │               │               │                   │
+│              │               │               ├── FPFeatureTransformer │
+│              │               │               │   (sentence-transformer + NER) │
+│              │               │               │                   │
+│              │               │               └── RandomForestClassifier │
+│              │               │                                   │
+│              ▼               ▼                                   │
+│         /predict         Threshold                               │
+│         /predict/batch   (0.605)                                 │
+│         /health                                                  │
+│         /model/info                                              │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Local Deployment (without Docker)
+
+```bash
+# Install dependencies
+uv sync
+
+# Run training (optional - model already trained)
+uv run python train.py --verbose
+
+# Start API server
+uv run python predict.py
+# Or with uvicorn directly:
+uv run uvicorn predict:app --host 0.0.0.0 --port 8000
+
+# Access API docs
+open http://localhost:8000/docs
+```
+
+### Docker Deployment
+
+```bash
+# Build and start the API service
+docker compose build fp-classifier-api
+docker compose up -d fp-classifier-api
+
+# Check health
+curl http://localhost:8000/health
+
+# View logs
+docker logs fp-classifier-api
+
+# Stop
+docker compose down fp-classifier-api
+```
+
+**Note**: The Docker image is ~1-2GB due to sentence-transformers and spaCy models.
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check for container orchestration |
+| `/model/info` | GET | Model metadata and performance metrics |
+| `/predict` | POST | Classify single article |
+| `/predict/batch` | POST | Classify multiple articles in one request |
+
+### Example API Requests
+
+```bash
+# Health check
+curl http://localhost:8000/health
+# {"status":"healthy","model_loaded":true}
+
+# Get model info
+curl http://localhost:8000/model/info
+
+# Single prediction
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Nike releases new sustainability initiative",
+    "content": "The athletic footwear giant unveiled plans...",
+    "brands": ["Nike"]
+  }'
+# {"is_sportswear":true,"probability":0.935,"risk_level":"high","threshold":0.605}
+
+# Batch prediction
+curl -X POST http://localhost:8000/predict/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "articles": [
+      {"title": "Nike shoe sales soar", "content": "...", "brands": ["Nike"]},
+      {"title": "Adidas sponsors tournament", "content": "...", "brands": ["Adidas"]}
+    ]
+  }'
+```
+
+### Response Fields
+
+| Field | Description |
+|-------|-------------|
+| `is_sportswear` | Boolean - true if article is about sportswear brands |
+| `probability` | Float (0-1) - classifier confidence |
+| `risk_level` | "low" (<0.3), "medium" (0.3-0.6), "high" (>=0.6) |
+| `threshold` | Classification threshold used (default: 0.605) |
+
+### Retraining the Model
+
+```bash
+# Retrain with default settings
+uv run python train.py --verbose
+
+# Retrain with custom parameters
+uv run python train.py \
+  --data-path data/fp_training_data.jsonl \
+  --target-recall 0.98 \
+  --transformer-method sentence_transformer_ner \
+  --output-dir models \
+  --verbose
+```
+
 ## Environment Variables
 
 | Variable | Description | Default |
@@ -880,8 +1022,11 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
 - [ ] Hamming Loss (multi-label specific)
 - [ ] SHAP values for model explainability
 
-### Phase 5: Deployment
-- [ ] FastAPI backend
-- [ ] Streamlit dashboard
-- [ ] Docker containerization
+### Phase 5: Deployment (Current)
+- [x] FastAPI REST API (`predict.py`)
+- [x] Production training script (`train.py`)
+- [x] Deployment module (`src/deployment/`)
+- [x] Multi-stage Dockerfile
+- [x] Docker Compose integration
 - [ ] Cloud deployment (Render/Railway/HuggingFace Spaces)
+- [ ] Streamlit dashboard (optional)

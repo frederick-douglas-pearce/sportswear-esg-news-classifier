@@ -17,5 +17,30 @@ services:
       retries: 5
     restart: unless-stopped
 
+  fp-classifier-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fp-classifier-api
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    # Resource limits (adjust based on available resources)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
 volumes:
   postgres_data:

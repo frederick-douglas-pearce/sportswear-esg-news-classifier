@@ -31,6 +31,9 @@ dependencies = [
     "spacy>=3.7",
     "notebook>=7.5.1",
     "nbconvert>=7.16.6",
+    # API dependencies
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
 ]
 
 [project.optional-dependencies]
