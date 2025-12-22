@@ -116,13 +116,22 @@ class Database:
         status: str,
         error: str | None = None,
     ) -> None:
-        """Update article with scraped content."""
+        """Update article with scraped content.
+
+        If scraping fails (status is 'failed' or 'skipped'), also marks the
+        article as 'unlabelable' since we can't label without content.
+        """
         article = session.query(Article).filter_by(article_id=article_id).first()
         if article:
             article.full_content = content
             article.scrape_status = status
             article.scrape_error = error
             article.scraped_at = datetime.now(timezone.utc)
+
+            # Mark as unlabelable if scraping failed - can't label without content
+            if status in ('failed', 'skipped'):
+                article.labeling_status = 'unlabelable'
+                article.labeling_error = f'Scrape {status}: {error}' if error else f'Scrape {status}'
 
     def create_collection_run(self, session: Session) -> CollectionRun:
         """Create a new collection run record."""
