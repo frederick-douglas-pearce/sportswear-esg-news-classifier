@@ -527,6 +527,19 @@ fp_feature_config.json         fp_cv_metrics.json                  fp_classifier
 - **Best Model**: Random Forest with `balanced_subsample` class weights
 - **Exports**: Best classifier and CV metrics for fp3
 
+**Overfitting Analysis Note:**
+
+The Random Forest model shows training F2 = 1.0 across all hyperparameter combinations, while validation F2 ≈ 0.973. This pattern (perfect training scores) is expected with small datasets and Random Forest's default behavior:
+
+1. **Why train = 1.0**: With only ~530 samples per CV training fold and 390 features, individual trees can perfectly memorize training data when `min_samples_leaf=1`.
+
+2. **Why this is acceptable**: Despite individual tree overfitting, ensemble averaging reduces variance. The key evidence:
+   - Train-val gap is only 2.7% (below the 5% warning threshold)
+   - CV-to-test gap is negligible (+0.02%), confirming excellent generalization
+   - Validation F2 continues improving with more trees (ensemble benefit)
+
+3. **Generalization confirmed**: Test set performance (F2: 0.974) matches CV performance (F2: 0.973), indicating the model generalizes well to unseen data despite the high training scores.
+
 #### fp3_model_evaluation_deployment.ipynb - Test Evaluation & Deployment
 
 - **Test Evaluation**: Final held-out test set evaluation (ONLY notebook using test data)
