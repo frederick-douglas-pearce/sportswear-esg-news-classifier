@@ -55,6 +55,123 @@ tail -f logs/collection_$(date +%Y%m%d).log  # View NewsData logs
 tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 ```
 
+## Data Collection Status Reporting
+
+When the user asks about data collection progress (e.g., "how is data collection going?", "collection status"), run the following Python script to generate a comprehensive report:
+
+```python
+uv run python -c "
+from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+engine = create_engine(os.getenv('DATABASE_URL'))
+
+with engine.connect() as conn:
+    print('=' * 80)
+    print('DATA COLLECTION STATUS REPORT')
+    print('=' * 80)
+
+    # Collection runs summary (last 7 days)
+    print('\nCOLLECTION RUNS (Last 7 Days)')
+    print('-' * 60)
+    result = conn.execute(text('''
+        SELECT
+            COUNT(*) as runs,
+            SUM(articles_fetched) as fetched,
+            SUM(articles_duplicates) as duplicates,
+            SUM(articles_scraped) as scraped,
+            SUM(articles_scrape_failed) as failed
+        FROM collection_runs
+        WHERE started_at >= NOW() - INTERVAL '7 days'
+    '''))
+    row = result.fetchone()
+    print(f'  Runs completed:       {row.runs}')
+    print(f'  Articles fetched:     {row.fetched}')
+    print(f'  Duplicates skipped:   {row.duplicates}')
+    print(f'  Successfully scraped: {row.scraped}')
+    print(f'  Scrape failures:      {row.failed}')
+
+    print('\n' + '=' * 80)
+    print('ARTICLE LABELING STATUS')
+    print('=' * 80)
+
+    total = conn.execute(text('SELECT COUNT(*) FROM articles')).scalar()
+    labeled = conn.execute(text(\"SELECT COUNT(*) FROM articles WHERE labeling_status = 'labeled'\")).scalar()
+    false_pos = conn.execute(text(\"SELECT COUNT(*) FROM articles WHERE labeling_status = 'false_positive'\")).scalar()
+    skipped = conn.execute(text(\"SELECT COUNT(*) FROM articles WHERE labeling_status = 'skipped'\")).scalar()
+    pending = conn.execute(text(\"SELECT COUNT(*) FROM articles WHERE labeling_status = 'pending'\")).scalar()
+    unlabelable = conn.execute(text(\"SELECT COUNT(*) FROM articles WHERE labeling_status = 'unlabelable'\")).scalar()
+
+    print(f'\n{\"Status\":<20} {\"Count\":>8} {\"Percent\":>10}')
+    print('-' * 40)
+    print(f'{\"labeled\":<20} {labeled:>8} {(labeled/total)*100:>9.1f}%')
+    print(f'{\"false_positive\":<20} {false_pos:>8} {(false_pos/total)*100:>9.1f}%')
+    print(f'{\"skipped\":<20} {skipped:>8} {(skipped/total)*100:>9.1f}%')
+    print(f'{\"pending\":<20} {pending:>8} {(pending/total)*100:>9.1f}%')
+    print(f'{\"unlabelable\":<20} {unlabelable:>8} {(unlabelable/total)*100:>9.1f}%')
+    print('-' * 40)
+    print(f'{\"TOTAL\":<20} {total:>8}')
+
+    print('\n' + '=' * 80)
+    print('RECENT DAILY COLLECTION')
+    print('=' * 80)
+    result = conn.execute(text('''
+        SELECT
+            created_at::date as date,
+            COUNT(*) as total,
+            SUM(CASE WHEN scrape_status = 'success' THEN 1 ELSE 0 END) as scraped,
+            SUM(CASE WHEN scrape_status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN labeling_status = 'labeled' THEN 1 ELSE 0 END) as labeled
+        FROM articles
+        WHERE created_at >= NOW() - INTERVAL '7 days'
+        GROUP BY 1
+        ORDER BY 1 DESC
+    '''))
+    print(f'\n{\"Date\":<12} {\"Total\":>8} {\"Scraped\":>8} {\"Failed\":>8} {\"Labeled\":>8}')
+    print('-' * 50)
+    for row in result:
+        print(f'{str(row.date):<12} {row.total:>8} {row.scraped:>8} {row.failed:>8} {row.labeled:>8}')
+
+    print('\n' + '=' * 80)
+"
+```
+
+### Labeling Status Definitions
+
+- **labeled**: Successfully processed by LLM with ESG categories assigned
+- **false_positive**: Brand name matched but article is not about sportswear (e.g., "Puma" the animal)
+- **skipped**: Deliberately skipped (insufficient content, duplicate, etc.)
+- **pending**: Awaiting labeling (scraped successfully, ready to process)
+- **unlabelable**: Cannot be labeled (scrape failed, paywall, anti-bot, non-English)
+
+### Follow-up Actions
+
+1. **If pending > 0**: Run the labeling pipeline to process pending articles:
+   ```bash
+   uv run python scripts/label_articles.py --batch-size <pending_count>
+   ```
+
+2. **If scrape failures are high**: Check the scrape error patterns:
+   ```sql
+   SELECT scrape_error, COUNT(*) FROM articles
+   WHERE scrape_status = 'failed'
+   GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
+   ```
+
+3. **To view recent collection run details**:
+   ```sql
+   SELECT started_at::date, started_at::time, status, articles_fetched, articles_scraped, articles_scrape_failed
+   FROM collection_runs ORDER BY started_at DESC LIMIT 10;
+   ```
+
+### Important Notes
+
+- Failed/skipped scrapes are automatically marked as `unlabelable` (not `pending`)
+- Cron jobs run 4x daily for both NewsData.io and GDELT collection
+- Check logs at `logs/collection_*.log` and `logs/gdelt_*.log` for errors
+
 ## Architecture
 
 ### Data Collection Pipeline (`src/data_collection/`)
