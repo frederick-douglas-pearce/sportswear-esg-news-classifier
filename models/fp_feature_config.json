@@ -1,5 +1,5 @@
 {
-  "method": "tfidf_lsa",
+  "method": "sentence_transformer_ner",
   "max_features": 10000,
   "ngram_range": [
     1,
@@ -24,7 +24,7 @@
   "sentence_model_name": "all-MiniLM-L6-v2",
   "include_vocab_features": true,
   "vocab_window_size": 15,
-  "proximity_window_size": 15,
+  "proximity_window_size": 25,
   "include_metadata_in_text": true,
   "include_metadata_features": true,
   "random_state": 42

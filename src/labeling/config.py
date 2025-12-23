@@ -152,6 +152,14 @@ BRAND_NAME_CONFLICTS = {
     "Vans": [
         "vans (vehicles - 'container vans', 'camper vans', 'police vans', 'delivery vans')",
         "vans as common noun for any vehicle type",
+        "electric vans (EVs) - 'electric van fleet', 'EV vans', 'battery-swapping vans'",
+        "cargo/transit vans - 'cargo vans', 'transit vans', 'VW vans', 'Ford Transit vans'",
+        "automotive policy context - 'ZEV mandate for vans', 'CO2 legislation for vans'",
+    ],
+    "Decathlon": [
+        "Decathlon Capital Partners (venture capital/private equity firm)",
+        "Decathlon Management (investment management company)",
+        "Only Decathlon (French sporting goods retailer) articles about stores, products, or sports equipment are valid",
     ],
 }
 
@@ -173,9 +181,16 @@ Before analyzing any brand, you MUST first verify that the article is actually a
   - "Antalpha Platform" (NASDAQ: ANTA) = financial/crypto company (NOT the sportswear brand)
   - Words containing "anta" as substring (e.g., "Vasundhara", "Santa", "advantage") = NOT the brand
   - Only ANTA Sports (Chinese sportswear company) articles about shoes, apparel, athletes, or sports sponsorships are valid
-- **Vans**: COMMON FALSE POSITIVE - check if referring to VEHICLES:
+- **Vans**: VERY HIGH FALSE POSITIVE RATE - check if referring to VEHICLES:
   - "container vans", "delivery vans", "camper vans", "police vans", "council vans" = vehicles (NOT sportswear)
+  - "electric vans", "EV vans", "van fleet", "battery-swapping vans" = electric vehicles (NOT sportswear)
+  - "cargo vans", "transit vans", "VW vans", "Ford Transit" = commercial vehicles (NOT sportswear)
+  - "ZEV mandate for vans", "CO2 legislation for cars and vans" = automotive policy (NOT sportswear)
+  - Any article about GM BrightDrop, Volkswagen ID. Buzz, electric fleets = vehicles (NOT sportswear)
   - Only Vans (skateboarding/footwear brand) articles about shoes, apparel, skateboarding, or retail are valid
+- **Decathlon**: Check if referring to the SPORTING GOODS RETAILER:
+  - "Decathlon Capital Partners", "Decathlon Management" = investment/VC firms (NOT sportswear)
+  - Only Decathlon (French sporting goods retailer) articles about stores, products, or sports equipment are valid
 - **Li-Ning/361 Degrees/Xtep/Peak**: Chinese sportswear brands - verify it's about the apparel company
 
 **Target sportswear brands we are tracking:**

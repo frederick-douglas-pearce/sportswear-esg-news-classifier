@@ -1,23 +1,22 @@
 {
-  "threshold": 0.4224749558726438,
+  "threshold": 0.5393279257965797,
   "target_recall": 0.98,
-  "model_name": "HGB_tuned",
+  "model_name": "RF_tuned",
   "transformer_method": "sentence_transformer_ner",
   "best_params": {
-    "class_weight": null,
-    "l2_regularization": 0.0,
-    "learning_rate": 0.1,
-    "max_depth": 4,
-    "max_iter": 120,
-    "min_samples_leaf": 5
+    "class_weight": "balanced",
+    "max_depth": 20,
+    "min_samples_leaf": 1,
+    "min_samples_split": 8,
+    "n_estimators": 60
   },
-  "cv_f2": 0.9715345382970155,
-  "cv_recall": 0.9825517372318208,
-  "cv_precision": 0.9298896322014283,
-  "test_f2": 0.9653179190751445,
-  "test_recall": 0.9709302325581395,
-  "test_precision": 0.943502824858757,
-  "threshold_recall": 0.9825581395348837,
-  "threshold_precision": 0.9441340782122905,
-  "threshold_f2": 0.9746251441753172
+  "cv_f2": 0.9726896117847456,
+  "cv_recall": 0.9883104777956536,
+  "cv_precision": 0.9148526969140658,
+  "test_f2": 0.9803921568627451,
+  "test_recall": 0.9941520467836257,
+  "test_precision": 0.9289617486338798,
+  "threshold_recall": 0.9824561403508771,
+  "threshold_precision": 0.9438202247191011,
+  "threshold_f2": 0.974477958236659
 }
