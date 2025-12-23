@@ -1,9 +1,10 @@
 """Feature transformer for FP classifier - sklearn-compatible for deployment."""
 
+import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 from scipy import sparse
@@ -216,6 +217,79 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
     # Categories that may indicate false positives
     FP_CATEGORIES = ['environment', 'science', 'world', 'crime']
+
+    # Class-level caches to avoid redundant computation across instances
+    # These are shared across all FPFeatureTransformer instances
+    _embedding_cache: ClassVar[Dict[str, np.ndarray]] = {}
+    _ner_cache: ClassVar[Dict[str, np.ndarray]] = {}
+    _shared_sentence_models: ClassVar[Dict[str, Any]] = {}
+    _shared_spacy_model: ClassVar[Any] = None
+
+    @classmethod
+    def _get_texts_hash(cls, texts: List[str]) -> str:
+        """Generate a unique hash from a list of texts.
+
+        Args:
+            texts: List of text strings
+
+        Returns:
+            SHA256 hash of concatenated texts
+        """
+        # Use a separator unlikely to appear in texts
+        combined = "\x00".join(texts)
+        return hashlib.sha256(combined.encode('utf-8')).hexdigest()
+
+    @classmethod
+    def _get_embedding_cache_key(cls, model_name: str, texts_hash: str) -> str:
+        """Generate cache key for sentence embeddings.
+
+        Args:
+            model_name: Name of the sentence transformer model
+            texts_hash: Hash of the texts
+
+        Returns:
+            Cache key string
+        """
+        return f"emb:{model_name}:{texts_hash}"
+
+    @classmethod
+    def _get_ner_cache_key(cls, texts_hash: str, window_size: int) -> str:
+        """Generate cache key for NER features.
+
+        Args:
+            texts_hash: Hash of the texts
+            window_size: Proximity window size used for NER computation
+
+        Returns:
+            Cache key string
+        """
+        return f"ner:{window_size}:{texts_hash}"
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear all class-level caches.
+
+        Call this method to free memory when caches are no longer needed,
+        e.g., after completing a feature engineering comparison.
+        """
+        cls._embedding_cache.clear()
+        cls._ner_cache.clear()
+        cls._shared_sentence_models.clear()
+        cls._shared_spacy_model = None
+
+    @classmethod
+    def get_cache_stats(cls) -> Dict[str, int]:
+        """Get statistics about current cache usage.
+
+        Returns:
+            Dictionary with cache entry counts
+        """
+        return {
+            'embedding_entries': len(cls._embedding_cache),
+            'ner_entries': len(cls._ner_cache),
+            'loaded_sentence_models': len(cls._shared_sentence_models),
+            'spacy_loaded': cls._shared_spacy_model is not None,
+        }
 
     def __init__(
         self,
@@ -648,10 +722,17 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         return np.array(features_list)
 
     def _load_spacy_model(self) -> None:
-        """Load spaCy model for NER/POS features."""
+        """Load spaCy model for NER/POS features.
+
+        Uses a class-level shared model to avoid loading the model multiple
+        times when comparing different feature engineering methods.
+        """
         if self._spacy_model is None:
-            import spacy
-            self._spacy_model = spacy.load('en_core_web_sm')
+            # Check class-level shared model first
+            if FPFeatureTransformer._shared_spacy_model is None:
+                import spacy
+                FPFeatureTransformer._shared_spacy_model = spacy.load('en_core_web_sm')
+            self._spacy_model = FPFeatureTransformer._shared_spacy_model
 
     def _compute_ner_features(self, texts: List[str]) -> np.ndarray:
         """Compute NER-based features for all texts.
@@ -664,12 +745,23 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         - has_location_near: Binary flag if GPE/LOC entity near brand
         - has_org_near: Binary flag if ORG entity near brand
 
+        Uses class-level caching to avoid recomputing NER features for the
+        same texts when comparing different feature engineering methods.
+
         Args:
             texts: List of text strings
 
         Returns:
             numpy array of shape (n_samples, 6)
         """
+        # Check cache first
+        texts_hash = self._get_texts_hash(texts)
+        cache_key = self._get_ner_cache_key(texts_hash, self.proximity_window_size)
+
+        if cache_key in FPFeatureTransformer._ner_cache:
+            # Return a copy to prevent accidental modification
+            return FPFeatureTransformer._ner_cache[cache_key].copy()
+
         self._load_spacy_model()
         features_list = []
 
@@ -730,7 +822,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
             features_list.append([fp_count, sw_count, fp_ratio, has_animal, has_location, has_org])
 
-        return np.array(features_list)
+        # Cache the result
+        result = np.array(features_list)
+        FPFeatureTransformer._ner_cache[cache_key] = result.copy()
+
+        return result
 
     def _compute_pos_features(self, texts: List[str]) -> np.ndarray:
         """Compute POS-based features for all texts.
@@ -1082,9 +1178,19 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         )
 
     def _fit_sentence_transformer(self) -> None:
-        """Load sentence transformer model."""
-        from sentence_transformers import SentenceTransformer
-        self._sentence_model = SentenceTransformer(self.sentence_model_name)
+        """Load sentence transformer model.
+
+        Uses class-level shared models to avoid loading the same model
+        multiple times when comparing different feature engineering methods.
+        """
+        model_name = self.sentence_model_name
+
+        # Check class-level shared models first
+        if model_name not in FPFeatureTransformer._shared_sentence_models:
+            from sentence_transformers import SentenceTransformer
+            FPFeatureTransformer._shared_sentence_models[model_name] = SentenceTransformer(model_name)
+
+        self._sentence_model = FPFeatureTransformer._shared_sentence_models[model_name]
 
     def transform(
         self,
@@ -1256,8 +1362,32 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         return np.array(embeddings)
 
     def _transform_sentence_transformer(self, texts: List[str]) -> np.ndarray:
-        """Transform texts using sentence transformer."""
-        return self._sentence_model.encode(texts, show_progress_bar=False)
+        """Transform texts using sentence transformer.
+
+        Uses class-level caching to avoid recomputing embeddings for the
+        same texts when comparing different feature engineering methods.
+
+        Args:
+            texts: List of text strings to encode
+
+        Returns:
+            Numpy array of embeddings (n_samples, embedding_dim)
+        """
+        # Check cache first
+        texts_hash = self._get_texts_hash(texts)
+        cache_key = self._get_embedding_cache_key(self.sentence_model_name, texts_hash)
+
+        if cache_key in FPFeatureTransformer._embedding_cache:
+            # Return a copy to prevent accidental modification
+            return FPFeatureTransformer._embedding_cache[cache_key].copy()
+
+        # Compute embeddings
+        embeddings = self._sentence_model.encode(texts, show_progress_bar=False)
+
+        # Cache the result
+        FPFeatureTransformer._embedding_cache[cache_key] = embeddings.copy()
+
+        return embeddings
 
     def _transform_hybrid(self, texts: List[str]) -> sparse.csr_matrix:
         """Transform texts using TF-IDF + vocabulary features."""
