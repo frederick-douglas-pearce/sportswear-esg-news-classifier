@@ -3,72 +3,72 @@
     "name": "tfidf_word",
     "classifier": "LogisticRegression",
     "n_features": 10008,
-    "cv_f2": 0.9380963622044476,
-    "cv_f2_std": 0.013946096648682129,
-    "cv_recall": 0.9305350181476005,
-    "cv_precision": 0.970008055605689
+    "cv_f2": 0.9305119578778019,
+    "cv_f2_std": 0.010087999152694278,
+    "cv_recall": 0.9186046511627907,
+    "cv_precision": 0.9814172609462464
   },
   {
     "name": "tfidf_word",
     "classifier": "HistGradientBoosting",
     "n_features": 10008,
-    "cv_f2": 0.937308822832033,
-    "cv_f2_std": 0.014577696325015797,
-    "cv_recall": 0.9362929605233679,
-    "cv_precision": 0.9418749617492566
+    "cv_f2": 0.9206068354174352,
+    "cv_f2_std": 0.009173234120250649,
+    "cv_recall": 0.9127906976744186,
+    "cv_precision": 0.953565997859986
   },
   {
     "name": "tfidf_lsa",
     "classifier": "LogisticRegression",
     "n_features": 108,
-    "cv_f2": 0.9235393499969716,
-    "cv_f2_std": 0.025016361995246608,
-    "cv_recall": 0.9112447909665278,
-    "cv_precision": 0.9776351666487281
+    "cv_f2": 0.919130895787691,
+    "cv_f2_std": 0.007004452988549836,
+    "cv_recall": 0.9031007751937986,
+    "cv_precision": 0.9894637181307906
   },
   {
     "name": "tfidf_lsa",
     "classifier": "HistGradientBoosting",
     "n_features": 108,
-    "cv_f2": 0.938920160046543,
-    "cv_f2_std": 0.00949405835820568,
-    "cv_recall": 0.9382421472420127,
-    "cv_precision": 0.9420067582404976
+    "cv_f2": 0.9569723601427086,
+    "cv_f2_std": 0.0031281539132510523,
+    "cv_recall": 0.9573643410852712,
+    "cv_precision": 0.956371346358902
   },
   {
     "name": "doc2vec",
     "classifier": "LogisticRegression",
     "n_features": 108,
-    "cv_f2": 0.9019184111095875,
-    "cv_f2_std": 0.015455338108062024,
-    "cv_recall": 0.8957633194425775,
-    "cv_precision": 0.9285167997137035
+    "cv_f2": 0.9386824806739447,
+    "cv_f2_std": 0.01302087998239076,
+    "cv_recall": 0.937984496124031,
+    "cv_precision": 0.9416456638790239
   },
   {
     "name": "doc2vec",
     "classifier": "HistGradientBoosting",
     "n_features": 108,
-    "cv_f2": 0.9486404394773941,
-    "cv_f2_std": 0.009451848131363315,
-    "cv_recall": 0.9556279965945244,
-    "cv_precision": 0.921781199333708
+    "cv_f2": 0.9479727348455723,
+    "cv_f2_std": 0.003464887611424391,
+    "cv_recall": 0.9534883720930233,
+    "cv_precision": 0.926580751650584
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LogisticRegression",
     "n_features": 398,
-    "cv_f2": 0.9227603678913532,
-    "cv_f2_std": 0.016320822634767702,
-    "cv_recall": 0.9092731998028408,
-    "cv_precision": 0.9812169979048667
+    "cv_f2": 0.9198527846214679,
+    "cv_f2_std": 0.00455962033067341,
+    "cv_recall": 0.9031007751937984,
+    "cv_precision": 0.9936031778645299
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "HistGradientBoosting",
     "n_features": 398,
-    "cv_f2": 0.9534148866456403,
-    "cv_f2_std": 0.007549983112092693,
-    "cv_recall": 0.9556167943720034,
-    "cv_precision": 0.9447565659056759
+    "cv_f2": 0.9559786974080038,
+    "cv_f2_std": 0.003266351569337439,
+    "cv_recall": 0.9593023255813954,
+    "cv_precision": 0.9431261909455286
   }
 ]
