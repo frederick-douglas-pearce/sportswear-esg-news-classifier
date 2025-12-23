@@ -24,7 +24,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, cross_validate
 
 # F2 scorer for recall-focused optimization
 f2_scorer = make_scorer(fbeta_score, beta=2)
@@ -450,6 +450,244 @@ def evaluate_model(
         plt.show()
 
     return metrics
+
+
+def plot_fe_comparison(
+    fe_df: pd.DataFrame,
+    classifiers: Optional[List[str]] = None,
+    figsize: Tuple[int, int] = (14, 6),
+    save_path: Optional[str] = None,
+) -> None:
+    """Plot feature engineering comparison for multiple classifiers.
+
+    Creates a side-by-side horizontal bar chart comparing F2 and Recall scores
+    for each feature engineering method across specified classifiers.
+
+    Args:
+        fe_df: DataFrame with columns 'classifier', 'name', 'cv_f2', 'cv_recall'
+        classifiers: List of classifier names to display (default: LogisticRegression, HistGradientBoosting)
+        figsize: Figure size tuple
+        save_path: Optional path to save figure
+    """
+    if classifiers is None:
+        classifiers = ['LogisticRegression', 'HistGradientBoosting']
+
+    fig, axes = plt.subplots(1, len(classifiers), figsize=figsize)
+
+    # Handle single classifier case
+    if len(classifiers) == 1:
+        axes = [axes]
+
+    for idx, clf_name in enumerate(classifiers):
+        ax = axes[idx]
+        clf_df = fe_df[fe_df['classifier'] == clf_name].set_index('name')
+        clf_df = clf_df.sort_values('cv_f2', ascending=True)
+
+        x = range(len(clf_df))
+        width = 0.35
+
+        ax.barh([i - width / 2 for i in x], clf_df['cv_f2'], width, label='F2', color='steelblue')
+        ax.barh([i + width / 2 for i in x], clf_df['cv_recall'], width, label='Recall', color='coral')
+
+        ax.set_yticks(list(x))
+        ax.set_yticklabels(clf_df.index)
+        ax.set_xlabel('Score')
+        ax.set_title(f'{clf_name} Performance by Feature Engineering')
+        ax.legend(loc='lower right')
+        ax.set_xlim(0, 1)
+
+    plt.tight_layout()
+    _save_figure(fig, save_path)
+    plt.show()
+
+
+def analyze_tuning_results(
+    tuning_df: pd.DataFrame,
+    param_name: str,
+    default_value: Optional[Any] = None,
+    verbose: bool = True,
+) -> Tuple[Any, float]:
+    """Analyze hyperparameter tuning results and find optimal value.
+
+    Prints a summary of tuning results sorted by CV F2 score and identifies
+    the best parameter value. Optionally compares against a default value.
+
+    Args:
+        tuning_df: DataFrame with columns: param_name, cv_f2, cv_f2_std, cv_recall, cv_precision
+        param_name: Name of the tuned parameter column
+        default_value: Optional default value to compare improvement against
+        verbose: Whether to print results summary
+
+    Returns:
+        Tuple of (optimal_param_value, best_cv_f2)
+    """
+    tuning_df_sorted = tuning_df.sort_values('cv_f2', ascending=False)
+
+    # Find best value
+    best_idx = tuning_df['cv_f2'].idxmax()
+    optimal_param_value = tuning_df.loc[best_idx, param_name]
+
+    # Handle different types (int vs float)
+    if isinstance(optimal_param_value, (np.integer, int)):
+        optimal_param_value = int(optimal_param_value)
+
+    best_tuned_f2 = tuning_df.loc[best_idx, 'cv_f2']
+
+    # Calculate improvement vs default if provided
+    default_f2 = None
+    improvement = None
+    if default_value is not None:
+        default_f2_rows = tuning_df[tuning_df[param_name] == default_value]
+        if len(default_f2_rows) > 0:
+            default_f2 = default_f2_rows['cv_f2'].values[0]
+            improvement = (best_tuned_f2 - default_f2) * 100
+
+    if verbose:
+        print(f"{param_name.upper()} TUNING RESULTS")
+        print("=" * 70)
+        print(tuning_df_sorted.to_string(index=False))
+        print("\n" + "=" * 70)
+        print(f"Optimal {param_name}: {optimal_param_value}")
+        print(f"Best CV F2: {best_tuned_f2:.4f}")
+        if default_f2 is not None:
+            print(f"Default ({default_value}) CV F2: {default_f2:.4f}")
+            print(f"Improvement: {improvement:+.2f}%")
+        print("=" * 70)
+
+    return optimal_param_value, best_tuned_f2
+
+
+def plot_tuning_results(
+    tuning_df: pd.DataFrame,
+    param_name: str,
+    param_values: List[Any],
+    optimal_param_value: Any,
+    method_name: str,
+    description: str,
+    figsize: Tuple[int, int] = (10, 5),
+    save_path: Optional[str] = None,
+) -> None:
+    """Plot hyperparameter tuning results with error bars.
+
+    Creates a line plot showing CV F2 scores across parameter values,
+    with error bars for standard deviation and the best value highlighted.
+
+    Args:
+        tuning_df: DataFrame with columns: param_name, cv_f2, cv_f2_std
+        param_name: Name of the tuned parameter (used as x-axis label and for sorting)
+        param_values: List of parameter values tested (used for x-axis ticks)
+        optimal_param_value: Best parameter value to highlight
+        method_name: Feature engineering method name (for title)
+        description: Human-readable description of the parameter (for title)
+        figsize: Figure size tuple
+        save_path: Optional path to save figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Sort by parameter value for plotting
+    plot_df = tuning_df.sort_values(param_name)
+
+    ax.errorbar(
+        plot_df[param_name],
+        plot_df['cv_f2'],
+        yerr=plot_df['cv_f2_std'],
+        marker='o',
+        markersize=8,
+        capsize=5,
+        linewidth=2,
+        color='steelblue'
+    )
+
+    # Highlight best value
+    best_tuned_f2 = tuning_df.loc[tuning_df['cv_f2'].idxmax(), 'cv_f2']
+    ax.scatter(
+        [optimal_param_value], [best_tuned_f2],
+        s=150, c='red', zorder=5,
+        label=f'Best: {optimal_param_value}'
+    )
+
+    ax.set_xlabel(param_name, fontsize=12)
+    ax.set_ylabel('CV F2 Score', fontsize=12)
+    ax.set_title(f'{method_name}: {description} Tuning', fontsize=14)
+    ax.set_xticks(param_values)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    _save_figure(fig, save_path)
+    plt.show()
+
+
+def tune_feature_transformer(
+    transformer_class: Any,
+    base_config: Dict[str, Any],
+    param_name: str,
+    param_values: List[Any],
+    X_train: pd.Series,
+    y_train: pd.Series,
+    classifier: Any,
+    cv: Any,
+    scorer: Any,
+    train_source_names: Optional[List[str]] = None,
+    train_categories: Optional[List[str]] = None,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Tune a single hyperparameter for a feature transformer.
+
+    Evaluates different values of a hyperparameter using cross-validation
+    with a specified classifier and scoring function.
+
+    Args:
+        transformer_class: Feature transformer class (e.g., FPFeatureTransformer)
+        base_config: Base configuration dictionary for the transformer
+        param_name: Name of the hyperparameter to tune
+        param_values: List of values to try for the hyperparameter
+        X_train: Training text features (pd.Series)
+        y_train: Training labels (pd.Series)
+        classifier: Classifier to use for evaluation
+        cv: Cross-validation splitter
+        scorer: Scoring function (e.g., f2_scorer)
+        train_source_names: Optional source names for metadata features
+        train_categories: Optional categories for metadata features
+        random_state: Random seed for reproducibility
+
+    Returns:
+        DataFrame with columns: param_name, cv_f2, cv_f2_std, cv_recall, cv_precision
+    """
+    results = []
+
+    for value in param_values:
+        print(f"Testing {param_name}={value}...")
+
+        # Create config with tuned parameter
+        config = base_config.copy()
+        config[param_name] = value
+
+        transformer = transformer_class(**config, random_state=random_state)
+        X_transformed = transformer.fit_transform(
+            X_train,
+            source_names=train_source_names,
+            categories=train_categories
+        )
+
+        cv_scores = cross_validate(
+            classifier, X_transformed, y_train,
+            cv=cv,
+            scoring={'f2': scorer, 'recall': 'recall', 'precision': 'precision'},
+            return_train_score=False
+        )
+
+        results.append({
+            param_name: value,
+            'cv_f2': cv_scores['test_f2'].mean(),
+            'cv_f2_std': cv_scores['test_f2'].std(),
+            'cv_recall': cv_scores['test_recall'].mean(),
+            'cv_precision': cv_scores['test_precision'].mean(),
+        })
+
+        print(f"  CV F2: {results[-1]['cv_f2']:.4f} (+/- {results[-1]['cv_f2_std']:.4f})")
+
+    return pd.DataFrame(results)
 
 
 def compare_val_test_performance(
