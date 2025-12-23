@@ -40,6 +40,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'tfidf_word',
         'tfidf_char',
         'tfidf_lsa',
+        'tfidf_lsa_proximity',  # TF-IDF LSA + proximity features (positive + negative context)
+        'tfidf_lsa_ner_proximity',  # TF-IDF LSA + NER + proximity features
         'tfidf_context',  # TF-IDF on context window around brand mentions
         'tfidf_proximity',  # TF-IDF + keyword proximity features
         'tfidf_doc2vec',  # TF-IDF + Doc2Vec embeddings (lexical + semantic)
@@ -1049,6 +1051,55 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             )
             self._lsa.fit(tfidf_features)
 
+        elif self.method == 'tfidf_lsa_proximity':
+            # TF-IDF LSA + proximity features (positive + negative context)
+            self._tfidf = self._create_tfidf_word()
+            tfidf_features = self._tfidf.fit_transform(texts)
+
+            # Fit LSA on TF-IDF features
+            self._lsa = TruncatedSVD(
+                n_components=self.lsa_n_components,
+                random_state=self.random_state
+            )
+            self._lsa.fit(tfidf_features)
+
+            # Fit scaler on proximity features (uses combined vocabulary)
+            proximity_features = self._compute_proximity_features(texts)
+            self._proximity_scaler = StandardScaler()
+            self._proximity_scaler.fit(proximity_features)
+
+            # Fit scaler on negative context features
+            neg_context_features = self._compute_negative_context_features(texts)
+            self._neg_context_scaler = StandardScaler()
+            self._neg_context_scaler.fit(neg_context_features)
+
+        elif self.method == 'tfidf_lsa_ner_proximity':
+            # TF-IDF LSA + NER + proximity features
+            self._tfidf = self._create_tfidf_word()
+            tfidf_features = self._tfidf.fit_transform(texts)
+
+            # Fit LSA on TF-IDF features
+            self._lsa = TruncatedSVD(
+                n_components=self.lsa_n_components,
+                random_state=self.random_state
+            )
+            self._lsa.fit(tfidf_features)
+
+            # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+
+            # Fit scaler on proximity features (uses combined vocabulary)
+            proximity_features = self._compute_proximity_features(texts)
+            self._proximity_scaler = StandardScaler()
+            self._proximity_scaler.fit(proximity_features)
+
+            # Fit scaler on negative context features
+            neg_context_features = self._compute_negative_context_features(texts)
+            self._neg_context_scaler = StandardScaler()
+            self._neg_context_scaler.fit(neg_context_features)
+
         elif self.method == 'tfidf_context':
             # Extract context windows around brand mentions
             context_texts = self._extract_all_context_windows(texts)
@@ -1244,6 +1295,34 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         elif self.method == 'tfidf_lsa':
             tfidf_features = self._tfidf.transform(texts)
             features = self._lsa.transform(tfidf_features)
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
+
+        elif self.method == 'tfidf_lsa_proximity':
+            # TF-IDF LSA + proximity features (positive + negative context)
+            tfidf_features = self._tfidf.transform(texts)
+            lsa_features = self._lsa.transform(tfidf_features)
+            proximity_features = self._compute_proximity_features(texts)
+            proximity_scaled = self._proximity_scaler.transform(proximity_features)
+            neg_context_features = self._compute_negative_context_features(texts)
+            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+            features = np.hstack([lsa_features, proximity_scaled, neg_context_scaled])
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
+
+        elif self.method == 'tfidf_lsa_ner_proximity':
+            # TF-IDF LSA + NER + proximity features
+            tfidf_features = self._tfidf.transform(texts)
+            lsa_features = self._lsa.transform(tfidf_features)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            proximity_features = self._compute_proximity_features(texts)
+            proximity_scaled = self._proximity_scaler.transform(proximity_features)
+            neg_context_features = self._compute_negative_context_features(texts)
+            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+            features = np.hstack([lsa_features, ner_scaled, proximity_scaled, neg_context_scaled])
             if metadata_scaled is not None:
                 return np.hstack([features, metadata_scaled])
             return features
