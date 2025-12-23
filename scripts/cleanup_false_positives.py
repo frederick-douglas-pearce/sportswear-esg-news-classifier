@@ -51,11 +51,54 @@ FALSE_POSITIVE_PATTERNS = {
         r"\bpatagonia.*(penguin|wildlife|puma|guanaco|condor)\b",
         r"\b(trip|travel|expedition|voyage)\s+to\s+patagonia\b",
         r"\bsouth(ern)?\s+patagonia\b",
+        r"\bsailing\s+(in|to|through)\s+patagonia\b",
+        r"\btop\s+gear.*patagonia\b",
     ],
     "Columbia": [
         r"\bcolumbia\s+(university|river|country|pictures|records)\b",
         r"\bdistrict\s+of\s+columbia\b",
         r"\bbritish\s+columbia\b",  # This could be either, context matters
+    ],
+    "Vans": [
+        # EU legislation / automotive policy
+        r"\bcars\s+and\s+vans\b",
+        r"\bco2\s+(emission|legislation|standard).*vans\b",
+        r"\bvans?\s+(fleet|delivery|cargo|commercial|transit)\b",
+        r"\belectric\s+vans?\b",
+        r"\b(ev|battery|hybrid)\s+vans?\b",
+        # Stolen vehicles
+        r"\bstolen\s+vans?\b",
+        r"\bvans?\s+(stolen|theft|burglary)\b",
+        # Camper/motor vehicles
+        r"\bcamper\s+vans?\b",
+        r"\bvw\s+vans?\b",
+        r"\bford\s+transit\b",
+    ],
+    "Decathlon": [
+        # Investment/VC firms (not the sporting goods retailer)
+        r"\bdecathlon\s+(capital|management|partners|fund|ventures)\b",
+        r"\bdecathlon\s+(investment|portfolio|equity)\b",
+        r"\bfunding\s+(from|by)\s+decathlon\b",
+    ],
+    "Black Diamond": [
+        # Power/utility company
+        r"\bblack\s+diamond\s+(power|energy|electric|utility)\b",
+        r"\bblack\s+diamond.*(psc|commission|ratepayer)\b",
+        # Event name (not equipment company)
+        r"\bblack\s+diamond\s+(weekend|event|conference)\b",
+    ],
+    "New Balance": [
+        # Political/diplomatic phrase
+        r"\bnew\s+balance\s+of\s+(power|influence|force)\b",
+        # Children's balance bikes
+        r"\bnew\s+balance\s+bikes?\b",
+        r"\bbalance\s+bikes?\s+for\s+(kids|children|kindergarten)\b",
+    ],
+    "Anta": [
+        # Indian political constituency
+        r"\banta\s+(assembly|constituency|bypoll|seat)\b",
+        # Financial company (NASDAQ: ANTA)
+        r"\bantalpha\b",
     ],
 }
 
@@ -73,7 +116,7 @@ def setup_logging(verbose: bool = False) -> None:
 def list_potential_false_positives(session, limit: int = 50) -> list[Article]:
     """List articles that might be false positives based on title/content patterns."""
     # Get articles with potentially ambiguous brand names
-    ambiguous_brands = ["Puma", "Patagonia", "Columbia"]
+    ambiguous_brands = list(FALSE_POSITIVE_PATTERNS.keys())
 
     potential_fps = []
 

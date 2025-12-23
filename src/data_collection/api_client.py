@@ -1,6 +1,7 @@
 """NewsData.io API client wrapper."""
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -43,13 +44,19 @@ class NewsDataClient:
         self.api_calls_made = 0
 
     def _extract_brands(self, text: str) -> list[str]:
-        """Extract mentioned brands from article text."""
+        """Extract mentioned brands from article text using word boundary matching.
+
+        This prevents false positives like:
+        - 'Anta' matching 'Santa' or 'Himanta'
+        - 'ASICS' matching 'basic'
+        """
         if not text:
             return []
         text_lower = text.lower()
         found_brands = []
         for brand in BRANDS:
-            if brand.lower() in text_lower:
+            pattern = r"\b" + re.escape(brand.lower()) + r"\b"
+            if re.search(pattern, text_lower):
                 found_brands.append(brand)
         return found_brands
 

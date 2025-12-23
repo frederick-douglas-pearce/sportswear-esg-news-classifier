@@ -1,6 +1,7 @@
 """Feature transformer for FP classifier - sklearn-compatible for deployment."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -120,6 +121,51 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'technical', 'performance', 'durable', 'lightweight', 'packable',
         # Review/product context
         'review', 'tested', 'testing', 'field test', 'hands-on',
+    ]
+
+    # Non-sportswear context vocabulary - signals false positive cases
+    # These keywords near a brand mention suggest it's NOT about sportswear
+    NON_SPORTSWEAR_KEYWORDS = [
+        # Automotive context (Ford Puma, delivery vans, etc.)
+        'ford', 'volkswagen', 'renault', 'leapmotor', 'car', 'cars', 'vehicle',
+        'vehicles', 'automotive', 'automaker', 'driving', 'driver', 'drivers',
+        'suv', 'sedan', 'hatchback', 'crossover', 'ev', 'electric vehicle',
+        'mph', 'horsepower', 'engine', 'transmission', 'dealership',
+        # Vans as vehicles (not Vans footwear)
+        'delivery', 'cargo', 'commercial', 'fleet', 'transport', 'lorry',
+        'truck', 'trucking', 'camper', 'motorhome', 'stolen',
+        # Geographic regions (Patagonia region, not brand)
+        'region', 'glacier', 'glaciers', 'fjord', 'fjords', 'sailing',
+        'sailed', 'voyage', 'cruise', 'cruising', 'penguin', 'penguins',
+        'guanaco', 'guanacos', 'chile', 'argentina', 'torres del paine',
+        # Wildlife/animals (Puma the animal)
+        'wild', 'wildlife', 'animal', 'animals', 'species', 'habitat',
+        'predator', 'prey', 'hunting', 'hunted', 'mountain lion', 'cougar',
+        'cat', 'feline', 'spotted', 'sighting', 'conservation', 'endangered',
+        'zoo', 'sanctuary', 'ranger', 'rangers',
+        # Power/utility companies (Black Diamond Power)
+        'utility', 'utilities', 'power company', 'electric company',
+        'psc', 'commission', 'ratepayer', 'ratepayers', 'electricity',
+        'kilowatt', 'megawatt', 'grid', 'outage', 'blackout',
+        # Investment/finance (Decathlon Capital)
+        'capital', 'venture', 'vc', 'private equity', 'funding round',
+        'series a', 'series b', 'seed funding', 'dilution', 'governance',
+        # Universities/education (Columbia University)
+        'university', 'college', 'campus', 'professor', 'faculty',
+        'academic', 'research', 'institute', 'student', 'students',
+        'undergraduate', 'graduate', 'phd', 'dissertation',
+        # Political/diplomatic (New Balance of power)
+        'diplomatic', 'diplomacy', 'geopolitical', 'accord', 'treaty',
+        'alliance', 'alliances', 'military', 'defense', 'minister',
+        'embassy', 'ambassador', 'sanctions',
+        # Children's balance bikes (not New Balance)
+        'balance bike', 'balance bikes', 'tricycle', 'kindergarten',
+        'preschool', 'toddler', 'pedal', 'pedals',
+        # TV/entertainment (Top Gear Patagonia special)
+        'tv show', 'episode', 'special', 'presenter', 'presenters',
+        'clarkson', 'hammond', 'jeremy', 'richard', 'james may',
+        # NASA/space events
+        'nasa', 'space', 'astronaut', 'rocket', 'satellite',
     ]
 
     # Publishers strongly associated with sportswear content
@@ -267,6 +313,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self._spacy_model = None  # For NER/POS features
         self._vocab_scaler = None  # For scaling vocab features in hybrid mode
         self._proximity_scaler = None  # For scaling proximity features
+        self._neg_context_scaler = None  # For scaling negative context features
         self._doc2vec_scaler = None  # For scaling Doc2Vec in combined mode
         self._ner_scaler = None  # For scaling NER features
         self._pos_scaler = None  # For scaling POS features
@@ -328,15 +375,20 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         return [clean_text(str(text)) if text else "" for text in X]
 
     def _extract_brands_from_text(self, text: str) -> List[str]:
-        """Extract potential brand mentions from text for vocab features.
+        """Extract potential brand mentions from text using word boundary matching.
 
         Uses the full BRANDS list from config to ensure all tracked brands
         are detected for feature extraction.
+
+        This prevents false positives like:
+        - 'Anta' matching 'Santa' or 'Himanta'
+        - 'ASICS' matching 'basic'
         """
         text_lower = text.lower()
         found_brands = []
         for brand in BRANDS:
-            if brand.lower() in text_lower:
+            pattern = r"\b" + re.escape(brand.lower()) + r"\b"
+            if re.search(pattern, text_lower):
                 found_brands.append(brand)
         return found_brands
 
@@ -510,6 +562,88 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             has_keyword_near = 1 if min_distance <= self.proximity_window_size else 0
 
             features_list.append([min_distance, avg_distance, keywords_near_count, has_keyword_near])
+
+        return np.array(features_list)
+
+    def _compute_negative_context_features(self, texts: List[str]) -> np.ndarray:
+        """Compute negative context features to identify false positives.
+
+        For each text, computes features based on NON_SPORTSWEAR_KEYWORDS:
+        - neg_keyword_count: Count of non-sportswear keywords in full text
+        - neg_keyword_near_brand: Count of non-sportswear keywords near brand
+        - neg_ratio: Ratio of negative to positive keywords near brand
+        - has_neg_context: Binary flag if negative keywords outnumber positive
+
+        These features help identify articles where brand names appear in
+        non-sportswear contexts (e.g., "Ford Puma" car, "Patagonia" region).
+
+        Args:
+            texts: List of text strings
+
+        Returns:
+            numpy array of shape (n_samples, 4)
+        """
+        features_list = []
+        neg_keywords_set = set(kw.lower() for kw in self.NON_SPORTSWEAR_KEYWORDS)
+        pos_keywords = (
+            self.SPORTSWEAR_KEYWORDS +
+            self.CORPORATE_KEYWORDS +
+            self.OUTDOOR_KEYWORDS
+        )
+        pos_keywords_set = set(kw.lower() for kw in pos_keywords)
+
+        for text in texts:
+            text_lower = text.lower()
+            words = text_lower.split()
+            brands = self._extract_brands_from_text(text)
+
+            if not brands or not words:
+                features_list.append([0, 0, 0.5, 0])
+                continue
+
+            # Count negative keywords in full text
+            neg_count_full = sum(1 for word in words if word.strip('.,!?;:\'"()[]{}') in neg_keywords_set)
+
+            # Find brand positions
+            brand_word_indices = []
+            for brand in brands:
+                brand_lower = brand.lower()
+                start_pos = 0
+                while True:
+                    pos = text_lower.find(brand_lower, start_pos)
+                    if pos == -1:
+                        break
+                    word_idx = len(text_lower[:pos].split())
+                    brand_word_indices.append(word_idx)
+                    start_pos = pos + len(brand_lower)
+
+            if not brand_word_indices:
+                features_list.append([neg_count_full, 0, 0.5, 0])
+                continue
+
+            # Count keywords near brand mentions
+            neg_near_brand = 0
+            pos_near_brand = 0
+            for brand_idx in brand_word_indices:
+                window_start = max(0, brand_idx - self.proximity_window_size)
+                window_end = min(len(words), brand_idx + self.proximity_window_size + 1)
+                window_words = words[window_start:window_end]
+
+                for word in window_words:
+                    word_clean = word.strip('.,!?;:\'"()[]{}')
+                    if word_clean in neg_keywords_set:
+                        neg_near_brand += 1
+                    if word_clean in pos_keywords_set:
+                        pos_near_brand += 1
+
+            # Compute ratio (avoid division by zero)
+            total_near = neg_near_brand + pos_near_brand
+            neg_ratio = neg_near_brand / total_near if total_near > 0 else 0.5
+
+            # Binary flag: more negative than positive context
+            has_neg_context = 1 if neg_near_brand > pos_near_brand else 0
+
+            features_list.append([neg_count_full, neg_near_brand, neg_ratio, has_neg_context])
 
         return np.array(features_list)
 
@@ -891,7 +1025,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._vocab_scaler.fit(vocab_features)
 
         elif self.method == 'sentence_transformer_ner_proximity':
-            # Sentence embeddings + NER + proximity features (uses corporate/outdoor vocab)
+            # Sentence embeddings + NER + proximity features + negative context features
             self._fit_sentence_transformer()
             # Fit scaler on NER features
             ner_features = self._compute_ner_features(texts)
@@ -901,6 +1035,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             proximity_features = self._compute_proximity_features(texts)
             self._proximity_scaler = StandardScaler()
             self._proximity_scaler.fit(proximity_features)
+            # Fit scaler on negative context features
+            neg_context_features = self._compute_negative_context_features(texts)
+            self._neg_context_scaler = StandardScaler()
+            self._neg_context_scaler.fit(neg_context_features)
 
         elif self.method == 'hybrid':
             self._tfidf = self._create_tfidf_word()
@@ -1087,13 +1225,15 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return features
 
         elif self.method == 'sentence_transformer_ner_proximity':
-            # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled proximity (4-dim)
+            # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled proximity (4-dim) + neg context (4-dim)
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
-            features = np.hstack([sentence_features, ner_scaled, proximity_scaled])
+            neg_context_features = self._compute_negative_context_features(texts)
+            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+            features = np.hstack([sentence_features, ner_scaled, proximity_scaled, neg_context_scaled])
             if metadata_scaled is not None:
                 return np.hstack([features, metadata_scaled])
             return features
