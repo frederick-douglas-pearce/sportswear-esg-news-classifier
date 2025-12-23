@@ -5,7 +5,7 @@
   "cv_precision": 0.9148526969140658,
   "cv_f1": 0.950163203566595,
   "cv_accuracy": 0.9142512077294686,
-  "cv_pr_auc": 0.9942244182660674,
+  "cv_pr_auc": 0.9941202525903764,
   "best_params": {
     "class_weight": "balanced",
     "max_depth": 20,

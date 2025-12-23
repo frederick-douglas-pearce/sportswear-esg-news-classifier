@@ -12,10 +12,10 @@
     "name": "tfidf_word",
     "classifier": "RandomForest",
     "n_features": 10008,
-    "cv_f2": 0.9637250488962558,
-    "cv_f2_std": 0.002206610836909851,
-    "cv_recall": 0.982478806836212,
-    "cv_precision": 0.8959559972309884
+    "cv_f2": 0.9656298108010177,
+    "cv_f2_std": 0.004438852580825185,
+    "cv_recall": 0.9844281245750034,
+    "cv_precision": 0.8977011979290688
   },
   {
     "name": "tfidf_word",
@@ -57,46 +57,46 @@
     "name": "doc2vec",
     "classifier": "LogisticRegression",
     "n_features": 108,
-    "cv_f2": 0.9292123815750495,
-    "cv_f2_std": 0.0055839193864121355,
-    "cv_recall": 0.92994922707285,
-    "cv_precision": 0.9264504652435687
+    "cv_f2": 0.9407345343390983,
+    "cv_f2_std": 0.006816364117133159,
+    "cv_recall": 0.939661816038805,
+    "cv_precision": 0.945675709997379
   },
   {
     "name": "doc2vec",
     "classifier": "RandomForest",
     "n_features": 108,
-    "cv_f2": 0.960032310793303,
-    "cv_f2_std": 0.005517025245969144,
-    "cv_recall": 0.9902874110340449,
-    "cv_precision": 0.855531056643763
+    "cv_f2": 0.9709352985823574,
+    "cv_f2_std": 0.004420108724307789,
+    "cv_recall": 1.0,
+    "cv_precision": 0.8700959860383944
   },
   {
     "name": "doc2vec",
     "classifier": "HistGradientBoosting",
     "n_features": 108,
-    "cv_f2": 0.9569708572447976,
-    "cv_f2_std": 0.003742936851192827,
-    "cv_recall": 0.9688789156353416,
-    "cv_precision": 0.9121613491178708
+    "cv_f2": 0.9633936358862769,
+    "cv_f2_std": 0.006281929790909317,
+    "cv_recall": 0.9727548846275896,
+    "cv_precision": 0.9277488048674489
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LogisticRegression",
     "n_features": 398,
-    "cv_f2": 0.9675885665821986,
-    "cv_f2_std": 0.0043132999347414895,
+    "cv_f2": 0.9672157918899172,
+    "cv_f2_std": 0.004643424977356062,
     "cv_recall": 0.9766308536198377,
-    "cv_precision": 0.9333179481484567
+    "cv_precision": 0.9315616689212195
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "RandomForest",
     "n_features": 398,
-    "cv_f2": 0.9763070228867158,
-    "cv_f2_std": 0.0021771502214098636,
+    "cv_f2": 0.9766864215836529,
+    "cv_f2_std": 0.0028143660703312777,
     "cv_recall": 0.9941633800262931,
-    "cv_precision": 0.9110070257611241
+    "cv_precision": 0.9127152988855117
   },
   {
     "name": "sentence_transformer_ner",

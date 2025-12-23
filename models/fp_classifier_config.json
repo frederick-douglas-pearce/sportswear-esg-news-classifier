@@ -1,6 +1,6 @@
 {
-  "threshold": 0.5393279257965797,
-  "target_recall": 0.98,
+  "threshold": 0.5332036770702857,
+  "target_recall": 0.99,
   "model_name": "RF_tuned",
   "transformer_method": "sentence_transformer_ner",
   "best_params": {
@@ -13,10 +13,10 @@
   "cv_f2": 0.9726896117847456,
   "cv_recall": 0.9883104777956536,
   "cv_precision": 0.9148526969140658,
-  "test_f2": 0.9803921568627451,
+  "test_f2": 0.9781357882623706,
   "test_recall": 0.9941520467836257,
-  "test_precision": 0.9289617486338798,
-  "threshold_recall": 0.9824561403508771,
-  "threshold_precision": 0.9438202247191011,
-  "threshold_f2": 0.974477958236659
+  "test_precision": 0.918918918918919,
+  "threshold_recall": 0.9941520467836257,
+  "threshold_precision": 0.9444444444444444,
+  "threshold_f2": 0.9837962962962963
 }

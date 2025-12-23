@@ -47,6 +47,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'sentence_transformer',
         'sentence_transformer_ner',  # Sentence embeddings + NER entity type features
         'sentence_transformer_ner_vocab',  # Sentence + NER + domain vocabulary features
+        'sentence_transformer_ner_proximity',  # Sentence + NER + proximity features (corporate/outdoor vocab)
         'hybrid',
     ]
 
@@ -81,20 +82,78 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'product', 'products', 'line', 'model', 'design', 'edition',
     ]
 
+    # Corporate/business vocabulary - signals legitimate business news about sportswear companies
+    CORPORATE_KEYWORDS = [
+        # Executive/leadership
+        'ceo', 'cfo', 'coo', 'executive', 'chief', 'president', 'chairman',
+        'management', 'leadership', 'founder', 'director',
+        # Financial
+        'revenue', 'earnings', 'profit', 'sales', 'quarterly', 'fiscal',
+        'financing', 'loan', 'credit', 'investment', 'investors', 'capital',
+        'billion', 'million', 'growth', 'margin', 'guidance', 'forecast',
+        # Corporate actions
+        'partnership', 'acquisition', 'merger', 'expansion', 'restructuring',
+        'logistics', 'supply chain', 'distribution', 'warehouse', 'manufacturing',
+        'headquarters', 'subsidiary', 'division',
+        # Stock/investor
+        'stock', 'shares', 'nasdaq', 'nyse', 'analyst', 'shareholder',
+        # Business operations
+        'company', 'firm', 'corporation', 'enterprise', 'business',
+    ]
+
+    # Outdoor/adventure gear vocabulary - for outdoor apparel brands
+    OUTDOOR_KEYWORDS = [
+        # Outdoor activities
+        'outdoor', 'outdoors', 'hiking', 'climbing', 'mountaineering', 'backpacking',
+        'camping', 'trekking', 'trail', 'adventure', 'expedition', 'alpine',
+        # Outdoor gear types
+        'backpack', 'backpacks', 'duffel', 'luggage', 'tent', 'sleeping bag',
+        'daypack', 'rucksack', 'gear', 'equipment', 'kit',
+        # Outdoor apparel
+        'fleece', 'parka', 'shell', 'hardshell', 'softshell', 'insulation',
+        'waterproof', 'breathable', 'windproof', 'thermal', 'base layer',
+        'midlayer', 'outerwear', 'rainwear', 'puffer', 'down jacket',
+        # Environment/terrain
+        'mountain', 'mountains', 'summit', 'peak', 'wilderness', 'backcountry',
+        'forest', 'nature', 'terrain',
+        # Outdoor brands context
+        'technical', 'performance', 'durable', 'lightweight', 'packable',
+        # Review/product context
+        'review', 'tested', 'testing', 'field test', 'hands-on',
+    ]
+
     # Publishers strongly associated with sportswear content
     SPORTSWEAR_PUBLISHERS = [
+        # Fashion/streetwear trade
         'wwd.com',              # Women's Wear Daily - fashion trade
         'highsnobiety.com',     # Streetwear/sneaker culture
         'hypebeast.com',        # Streetwear/fashion
         'sneakernews.com',      # Sneaker news
-        'gearjunkie.com',       # Outdoor gear reviews
-        'runningmagazine.ca',   # Running content
-        'runnersworld.com',     # Running content
-        'outsideonline.com',    # Outdoor sports
         'solecollector.com',    # Sneaker culture
         'nicekicks.com',        # Sneaker culture
         'footwearnews.com',     # Footwear industry
+        # Outdoor/gear
+        'gearjunkie.com',       # Outdoor gear reviews
+        'outsideonline.com',    # Outdoor sports
+        'backpacker.com',       # Backpacking/hiking gear
+        'rei.com',              # REI outdoor retailer
+        'switchbacktravel.com', # Outdoor gear reviews
+        'outdoorgearlab.com',   # Outdoor gear testing
+        'trailrunnermag.com',   # Trail running
+        # Running/fitness
+        'runningmagazine.ca',   # Running content
+        'runnersworld.com',     # Running content
+        # Sporting goods business
         'sgbonline.com',        # Sporting goods business
+        'sportsonesource.com',  # Sports industry
+        # Business/finance (publish sportswear company news)
+        'finance.yahoo.com',    # Yahoo Finance
+        'reuters.com',          # Reuters business
+        'bloomberg.com',        # Bloomberg business
+        'marketwatch.com',      # Market news
+        'businesswire.com',     # Press releases
+        'prnewswire.com',       # Press releases
+        'globenewswire.com',    # Press releases
     ]
 
     # Publishers associated with false positives (wildlife, geography, etc.)
@@ -367,10 +426,14 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         """Compute keyword proximity features for all texts.
 
         For each text, computes:
-        - min_distance: Minimum word distance from any brand to any sportswear keyword
+        - min_distance: Minimum word distance from any brand to any relevant keyword
         - avg_distance: Average distance across all brand mentions
-        - keyword_count_near: Count of sportswear keywords within proximity window
+        - keyword_count_near: Count of relevant keywords within proximity window
         - has_keyword_near: Binary flag if any keyword within proximity window
+
+        Uses combined vocabulary from SPORTSWEAR_KEYWORDS, CORPORATE_KEYWORDS,
+        and OUTDOOR_KEYWORDS to capture sportswear product mentions, business
+        news about sportswear companies, and outdoor gear content.
 
         Args:
             texts: List of text strings
@@ -379,7 +442,13 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             numpy array of shape (n_samples, 4)
         """
         features_list = []
-        keywords_set = set(kw.lower() for kw in self.SPORTSWEAR_KEYWORDS)
+        # Combine all keyword lists for comprehensive coverage
+        all_keywords = (
+            self.SPORTSWEAR_KEYWORDS +
+            self.CORPORATE_KEYWORDS +
+            self.OUTDOOR_KEYWORDS
+        )
+        keywords_set = set(kw.lower() for kw in all_keywords)
 
         for text in texts:
             text_lower = text.lower()
@@ -821,6 +890,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._vocab_scaler = StandardScaler()
             self._vocab_scaler.fit(vocab_features)
 
+        elif self.method == 'sentence_transformer_ner_proximity':
+            # Sentence embeddings + NER + proximity features (uses corporate/outdoor vocab)
+            self._fit_sentence_transformer()
+            # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+            # Fit scaler on proximity features (uses combined vocabulary)
+            proximity_features = self._compute_proximity_features(texts)
+            self._proximity_scaler = StandardScaler()
+            self._proximity_scaler.fit(proximity_features)
+
         elif self.method == 'hybrid':
             self._tfidf = self._create_tfidf_word()
             self._tfidf.fit(texts)
@@ -1001,6 +1082,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             vocab_features = self._compute_vocab_features(texts)
             vocab_scaled = self._vocab_scaler.transform(vocab_features)
             features = np.hstack([sentence_features, ner_scaled, vocab_scaled])
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
+
+        elif self.method == 'sentence_transformer_ner_proximity':
+            # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled proximity (4-dim)
+            sentence_features = self._transform_sentence_transformer(texts)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            proximity_features = self._compute_proximity_features(texts)
+            proximity_scaled = self._proximity_scaler.transform(proximity_features)
+            features = np.hstack([sentence_features, ner_scaled, proximity_scaled])
             if metadata_scaled is not None:
                 return np.hstack([features, metadata_scaled])
             return features
