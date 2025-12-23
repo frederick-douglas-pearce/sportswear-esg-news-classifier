@@ -3,135 +3,135 @@
     "name": "tfidf_word",
     "classifier": "LogisticRegression",
     "n_features": 10008,
-    "cv_f2": 0.9595911070274651,
-    "cv_f2_std": 0.002503448651519501,
-    "cv_recall": 0.9980506822612085,
-    "cv_precision": 0.8314389454574157
+    "cv_f2": 0.9588209229324937,
+    "cv_f2_std": 0.002522409907393056,
+    "cv_recall": 0.998062015503876,
+    "cv_precision": 0.828522973974919
   },
   {
     "name": "tfidf_word",
     "classifier": "RandomForest",
     "n_features": 10008,
-    "cv_f2": 0.9656298108010177,
-    "cv_f2_std": 0.004438852580825185,
-    "cv_recall": 0.9844281245750034,
-    "cv_precision": 0.8977011979290688
+    "cv_f2": 0.9693280423485394,
+    "cv_f2_std": 0.0016405434195186383,
+    "cv_recall": 0.9884281041358606,
+    "cv_precision": 0.8999543921823715
   },
   {
     "name": "tfidf_word",
     "classifier": "HistGradientBoosting",
     "n_features": 10008,
-    "cv_f2": 0.9682095424336129,
-    "cv_f2_std": 0.007748070276307005,
-    "cv_recall": 0.972766217870257,
-    "cv_precision": 0.9507463102199946
+    "cv_f2": 0.9576466145419392,
+    "cv_f2_std": 0.006555692141507922,
+    "cv_recall": 0.969115472509746,
+    "cv_precision": 0.914397958499883
   },
   {
     "name": "tfidf_lsa",
     "classifier": "LogisticRegression",
     "n_features": 108,
-    "cv_f2": 0.9635571224457014,
-    "cv_f2_std": 0.0030079941901525083,
-    "cv_recall": 0.9980506822612085,
-    "cv_precision": 0.8465346534653465
+    "cv_f2": 0.9617522120794445,
+    "cv_f2_std": 0.0010639804117824794,
+    "cv_recall": 1.0,
+    "cv_precision": 0.8341514896232076
   },
   {
     "name": "tfidf_lsa",
     "classifier": "RandomForest",
     "n_features": 108,
-    "cv_f2": 0.9751271436812111,
-    "cv_f2_std": 0.004549421197898912,
-    "cv_recall": 0.9902760777913776,
-    "cv_precision": 0.9193333369363331
+    "cv_f2": 0.9710579468199335,
+    "cv_f2_std": 0.0014294083280846023,
+    "cv_recall": 0.9845521351436125,
+    "cv_precision": 0.9206429500547147
   },
   {
     "name": "tfidf_lsa",
     "classifier": "HistGradientBoosting",
     "n_features": 108,
-    "cv_f2": 0.9659594321487773,
-    "cv_f2_std": 0.009850590116306585,
-    "cv_recall": 0.9708395666168004,
-    "cv_precision": 0.9469249394673124
+    "cv_f2": 0.9580426414464034,
+    "cv_f2_std": 0.004506551622822468,
+    "cv_recall": 0.9613747367477706,
+    "cv_precision": 0.9451549736211775
   },
   {
     "name": "doc2vec",
     "classifier": "LogisticRegression",
     "n_features": 108,
-    "cv_f2": 0.937015503875969,
-    "cv_f2_std": 0.0024811132667140016,
-    "cv_recall": 0.9377464980280158,
-    "cv_precision": 0.9341085271317829
+    "cv_f2": 0.936844666430375,
+    "cv_f2_std": 0.009562968844765584,
+    "cv_recall": 0.934332571582202,
+    "cv_precision": 0.9471925655113033
   },
   {
     "name": "doc2vec",
     "classifier": "RandomForest",
     "n_features": 108,
-    "cv_f2": 0.9694120406646114,
-    "cv_f2_std": 0.003108469517597817,
-    "cv_recall": 0.9980506822612085,
-    "cv_precision": 0.8700841767992703
+    "cv_f2": 0.9644822463540687,
+    "cv_f2_std": 0.002693822813388719,
+    "cv_recall": 0.9961464354527938,
+    "cv_precision": 0.8557794203065626
   },
   {
     "name": "doc2vec",
     "classifier": "HistGradientBoosting",
     "n_features": 108,
-    "cv_f2": 0.9645783752012506,
-    "cv_f2_std": 0.004613758044903602,
-    "cv_recall": 0.974704202366381,
-    "cv_precision": 0.926559488033563
+    "cv_f2": 0.9536381155214171,
+    "cv_f2_std": 0.00466022188746874,
+    "cv_recall": 0.9690930680647041,
+    "cv_precision": 0.8968676122931442
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LogisticRegression",
     "n_features": 398,
-    "cv_f2": 0.9672157918899172,
-    "cv_f2_std": 0.004643424977356062,
-    "cv_recall": 0.9766308536198377,
-    "cv_precision": 0.9315616689212195
+    "cv_f2": 0.9598764707263804,
+    "cv_f2_std": 0.008203817040422112,
+    "cv_recall": 0.9710422547833489,
+    "cv_precision": 0.9182851078440551
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "RandomForest",
     "n_features": 398,
-    "cv_f2": 0.9766864215836529,
-    "cv_f2_std": 0.0028143660703312777,
-    "cv_recall": 0.9941633800262931,
-    "cv_precision": 0.9127152988855117
+    "cv_f2": 0.966758556707795,
+    "cv_f2_std": 0.004633820618643415,
+    "cv_recall": 0.9884281041358606,
+    "cv_precision": 0.8889992716527829
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "HistGradientBoosting",
     "n_features": 398,
-    "cv_f2": 0.96511888587874,
-    "cv_f2_std": 0.0015852313794565902,
-    "cv_recall": 0.9688789156353416,
-    "cv_precision": 0.9503886152162014
+    "cv_f2": 0.9617371984834312,
+    "cv_f2_std": 0.005298016929491299,
+    "cv_recall": 0.9710310525608281,
+    "cv_precision": 0.9264269887865394
   },
   {
     "name": "sentence_transformer_ner_proximity",
     "classifier": "LogisticRegression",
-    "n_features": 402,
-    "cv_f2": 0.9640275169232958,
-    "cv_f2_std": 0.009497578542617546,
-    "cv_recall": 0.9708055668887982,
-    "cv_precision": 0.9380257837195868
+    "n_features": 406,
+    "cv_f2": 0.9589597130113315,
+    "cv_f2_std": 0.007523355319679049,
+    "cv_recall": 0.9652731101850608,
+    "cv_precision": 0.934579656784951
   },
   {
     "name": "sentence_transformer_ner_proximity",
     "classifier": "RandomForest",
-    "n_features": 402,
-    "cv_f2": 0.9751723872172849,
-    "cv_f2_std": 0.006443163178413548,
-    "cv_recall": 0.9922253955301691,
-    "cv_precision": 0.9126595411006827
+    "n_features": 406,
+    "cv_f2": 0.9685706189340219,
+    "cv_f2_std": 0.00870902913848887,
+    "cv_recall": 0.9884281041358606,
+    "cv_precision": 0.8967412878154772
   },
   {
     "name": "sentence_transformer_ner_proximity",
     "classifier": "HistGradientBoosting",
-    "n_features": 402,
-    "cv_f2": 0.9701728073821098,
-    "cv_f2_std": 0.002053626463955496,
-    "cv_recall": 0.9747042023663811,
-    "cv_precision": 0.952477359804946
+    "n_features": 406,
+    "cv_f2": 0.9647529254867391,
+    "cv_f2_std": 0.009368773499688414,
+    "cv_recall": 0.972991441501994,
+    "cv_precision": 0.933490614597989
   }
 ]
