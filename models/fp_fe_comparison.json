@@ -57,28 +57,28 @@
     "name": "doc2vec",
     "classifier": "LogisticRegression",
     "n_features": 108,
-    "cv_f2": 0.9407345343390983,
-    "cv_f2_std": 0.006816364117133159,
-    "cv_recall": 0.939661816038805,
-    "cv_precision": 0.945675709997379
+    "cv_f2": 0.937015503875969,
+    "cv_f2_std": 0.0024811132667140016,
+    "cv_recall": 0.9377464980280158,
+    "cv_precision": 0.9341085271317829
   },
   {
     "name": "doc2vec",
     "classifier": "RandomForest",
     "n_features": 108,
-    "cv_f2": 0.9709352985823574,
-    "cv_f2_std": 0.004420108724307789,
-    "cv_recall": 1.0,
-    "cv_precision": 0.8700959860383944
+    "cv_f2": 0.9694120406646114,
+    "cv_f2_std": 0.003108469517597817,
+    "cv_recall": 0.9980506822612085,
+    "cv_precision": 0.8700841767992703
   },
   {
     "name": "doc2vec",
     "classifier": "HistGradientBoosting",
     "n_features": 108,
-    "cv_f2": 0.9633936358862769,
-    "cv_f2_std": 0.006281929790909317,
-    "cv_recall": 0.9727548846275896,
-    "cv_precision": 0.9277488048674489
+    "cv_f2": 0.9645783752012506,
+    "cv_f2_std": 0.004613758044903602,
+    "cv_recall": 0.974704202366381,
+    "cv_precision": 0.926559488033563
   },
   {
     "name": "sentence_transformer_ner",
@@ -106,5 +106,32 @@
     "cv_f2_std": 0.0015852313794565902,
     "cv_recall": 0.9688789156353416,
     "cv_precision": 0.9503886152162014
+  },
+  {
+    "name": "sentence_transformer_ner_proximity",
+    "classifier": "LogisticRegression",
+    "n_features": 402,
+    "cv_f2": 0.9640275169232958,
+    "cv_f2_std": 0.009497578542617546,
+    "cv_recall": 0.9708055668887982,
+    "cv_precision": 0.9380257837195868
+  },
+  {
+    "name": "sentence_transformer_ner_proximity",
+    "classifier": "RandomForest",
+    "n_features": 402,
+    "cv_f2": 0.9751723872172849,
+    "cv_f2_std": 0.006443163178413548,
+    "cv_recall": 0.9922253955301691,
+    "cv_precision": 0.9126595411006827
+  },
+  {
+    "name": "sentence_transformer_ner_proximity",
+    "classifier": "HistGradientBoosting",
+    "n_features": 402,
+    "cv_f2": 0.9701728073821098,
+    "cv_f2_std": 0.002053626463955496,
+    "cv_recall": 0.9747042023663811,
+    "cv_precision": 0.952477359804946
   }
 ]
