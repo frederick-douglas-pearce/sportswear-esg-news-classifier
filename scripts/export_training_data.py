@@ -150,6 +150,8 @@ def export_esg_prefilter_data(
             "title": article.title,
             "content": article.full_content or article.description or "",
             "brands": article.brands_mentioned or [],
+            "source_name": article.source_name,
+            "category": article.category or [],
             "has_esg": 1,
             "source": "labeled",
         })
@@ -168,6 +170,8 @@ def export_esg_prefilter_data(
             "title": article.title,
             "content": article.full_content or article.description or "",
             "brands": article.brands_mentioned or [],
+            "source_name": article.source_name,
+            "category": article.category or [],
             "has_esg": 0,
             "source": "skipped",
             "skip_reason": article.labeling_error,

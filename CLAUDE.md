@@ -40,6 +40,12 @@ uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01  #
 # Note: Requires jupyter notebook to view/run interactively
 # The notebook can also be executed as Python scripts using the fp1_nb module
 
+# ESG Pre-filter Classifier
+uv run python scripts/ep_train.py                              # Train EP classifier
+uv run python scripts/ep_predict.py --title "..." --content "..." # Predict single article
+uv run python scripts/ep_predict.py --input articles.json      # Predict from JSON file
+uv run python scripts/ep_predict.py --verbose --title "..." --content "..."  # Verbose output
+
 # Testing
 uv run pytest                              # Run all tests (190 tests)
 uv run pytest -v                           # Run with verbose output
@@ -203,6 +209,8 @@ with engine.connect() as conn:
 - `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
 - `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `setup_cron.sh` - Install/remove/status commands for cron management
+- `ep_train.py` - Train the ESG Pre-filter classifier
+- `ep_predict.py` - Predict ESG content using the trained EP classifier
 
 ### ML Classifier Notebooks (`notebooks/`)
 
@@ -212,6 +220,13 @@ with engine.connect() as conn:
 - `fp3_model_evaluation_deployment.ipynb` - Test evaluation & deployment export
 
 **Best Model:** Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 98.8%)
+
+**ESG Pre-filter Classifier Pipeline (3 notebooks):**
+- `ep1_EDA_FE.ipynb` - EDA & Feature Engineering (exports transformer)
+- `ep2_model_selection_tuning.ipynb` - Model selection & hyperparameter tuning
+- `ep3_model_evaluation_deployment.ipynb` - Test evaluation & deployment export
+
+**Best Model:** Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%)
 
 **Notebook Standards:**
 - All package imports MUST be placed in the Setup section at the beginning of the notebook
@@ -232,6 +247,20 @@ with engine.connect() as conn:
 - `overfitting_analysis.py` - Train-validation gap visualization, iteration performance
 
 **`src/fp3_nb/`** - Evaluation & deployment utilities:
+- `threshold_optimization.py` - Threshold tuning for target recall
+- `deployment.py` - Pipeline export utilities
+
+**`src/ep1_nb/`** - ESG Pre-filter EDA & feature engineering utilities:
+- `data_utils.py` - JSONL loading, target analysis, stratified train/val/test splitting
+- `eda_utils.py` - Text length analysis, brand distribution, word frequency analysis
+- `preprocessing.py` - Text cleaning, feature engineering
+- `feature_transformer.py` - EPFeatureTransformer with ESG-specific vocabularies
+- `modeling.py` - GridSearchCV utilities, model evaluation metrics, comparison plots
+
+**`src/ep2_nb/`** - ESG Pre-filter model selection & tuning utilities:
+- `overfitting_analysis.py` - Train-validation gap visualization, iteration performance
+
+**`src/ep3_nb/`** - ESG Pre-filter evaluation & deployment utilities:
 - `threshold_optimization.py` - Threshold tuning for target recall
 - `deployment.py` - Pipeline export utilities
 
@@ -307,7 +336,7 @@ Three classifiers to reduce Claude API costs while maintaining accuracy:
 
 1. **False Positive Brand Classifier** ✅ - Filter articles where brand names match non-sportswear entities (e.g., "Puma" animal, "Patagonia" region, "Black Diamond" power company). Binary classification using `--dataset fp` export. **Complete**: Random Forest with Test F2: 0.974.
 
-2. **ESG Pre-filter Classifier** - Quickly identify if an article contains ESG content before detailed classification. Binary classification using `--dataset esg-prefilter` export.
+2. **ESG Pre-filter Classifier** ✅ - Quickly identify if an article contains ESG content before detailed classification. Binary classification using `--dataset esg-prefilter` export. **Complete**: Logistic Regression with Test F2: 0.931, Recall: 100%.
 
 3. **ESG Multi-label Classifier** - Full ESG category classification with sentiment, replacing Claude for routine cases. Multi-label output using `--dataset esg-labels` export.
 
@@ -325,11 +354,13 @@ Three classifiers to reduce Claude API costs while maintaining accuracy:
 - OpenAI embeddings for semantic matching
 
 ### Phase 3: Model Development (Current)
-- Export labeled data for training (993 FP, 856 ESG-prefilter, 554 ESG-labels records)
+- Export labeled data for training (993 FP, 870 ESG-prefilter, 554 ESG-labels records)
 - False Positive Classifier: 3-notebook pipeline complete ✅
   - Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 98.8%)
   - Threshold optimized for 98% target recall
-- ESG Pre-filter Classifier: Planned
+- ESG Pre-filter Classifier: 3-notebook pipeline complete ✅
+  - Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%)
+  - Threshold optimized for 99% target recall
 - ESG Multi-label Classifier: Planned
 - Advanced: Fine-tuned DistilBERT/RoBERTa (future)
 

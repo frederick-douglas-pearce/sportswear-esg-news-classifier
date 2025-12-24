@@ -1,0 +1,17 @@
+{
+  "model_name": "LR_tuned",
+  "cv_f2": 0.9310836746786202,
+  "cv_recall": 1.0,
+  "cv_precision": 0.7298850574712644,
+  "cv_f1": 0.8438522268127361,
+  "cv_accuracy": 0.7298850574712644,
+  "cv_pr_auc": 0.9176954606856288,
+  "best_params": {
+    "C": 0.01,
+    "class_weight": null,
+    "penalty": "l2",
+    "solver": "lbfgs"
+  },
+  "transformer_method": "tfidf_lsa",
+  "n_folds": 3
+}
