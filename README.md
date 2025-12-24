@@ -115,13 +115,18 @@ sportswear-esg-news-classifier/
 │   ├── gdelt_backfill.py       # Historical backfill script (3 months)
 │   ├── cleanup_non_english.py  # Remove non-English articles from database
 │   ├── cleanup_false_positives.py # Identify/remove false positive brand matches
+│   ├── ep_train.py             # Train the ESG Pre-filter classifier
+│   ├── ep_predict.py           # Predict ESG content with EP classifier
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
 ├── notebooks/
-│   ├── fp1_EDA_FE.ipynb              # EDA & Feature Engineering (exports transformer)
-│   ├── fp2_model_selection_tuning.ipynb  # Model selection & hyperparameter tuning
-│   └── fp3_model_evaluation_deployment.ipynb  # Test evaluation & deployment export
+│   ├── fp1_EDA_FE.ipynb              # FP: EDA & Feature Engineering
+│   ├── fp2_model_selection_tuning.ipynb  # FP: Model selection & tuning
+│   ├── fp3_model_evaluation_deployment.ipynb  # FP: Test evaluation & deployment
+│   ├── ep1_EDA_FE.ipynb              # EP: EDA & Feature Engineering
+│   ├── ep2_model_selection_tuning.ipynb  # EP: Model selection & tuning
+│   └── ep3_model_evaluation_deployment.ipynb  # EP: Test evaluation & deployment
 ├── models/                     # Saved ML models (gitignored)
 ├── src/
 │   ├── data_collection/
@@ -155,6 +160,20 @@ sportswear-esg-news-classifier/
 │   │   ├── __init__.py
 │   │   └── overfitting_analysis.py  # Train-val gap visualization
 │   ├── fp3_nb/                 # FP classifier - evaluation & deployment
+│   │   ├── __init__.py
+│   │   ├── threshold_optimization.py  # Threshold tuning for target recall
+│   │   └── deployment.py       # Pipeline export utilities
+│   ├── ep1_nb/                 # EP classifier - EDA & feature engineering
+│   │   ├── __init__.py
+│   │   ├── data_utils.py       # Data loading, splitting, target analysis
+│   │   ├── eda_utils.py        # Text analysis, brand distribution
+│   │   ├── preprocessing.py    # Text cleaning, feature engineering
+│   │   ├── feature_transformer.py  # EPFeatureTransformer with ESG vocabularies
+│   │   └── modeling.py         # GridSearchCV, model evaluation
+│   ├── ep2_nb/                 # EP classifier - model selection & tuning
+│   │   ├── __init__.py
+│   │   └── overfitting_analysis.py  # Train-val gap visualization
+│   ├── ep3_nb/                 # EP classifier - evaluation & deployment
 │   │   ├── __init__.py
 │   │   ├── threshold_optimization.py  # Threshold tuning for target recall
 │   │   └── deployment.py       # Pipeline export utilities
@@ -487,12 +506,13 @@ The project is designed to train three progressively complex classifiers that ca
 - **Impact**: Prevents ~15% of articles from requiring expensive LLM labeling
 - **Best Model**: Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 0.988)
 
-**2. ESG Pre-filter Classifier**
+**2. ESG Pre-filter Classifier** ✅ (Complete)
 - **Purpose**: Quickly identify whether an article contains any ESG-relevant content before detailed classification
-- **Input**: Article title + content
+- **Input**: Article title + content + metadata
 - **Output**: Binary classification (has_esg: 0 or 1)
-- **Training Data**: 725 records from `--dataset esg-prefilter` export
+- **Training Data**: 870 records from `--dataset esg-prefilter` export (635 has ESG, 235 no ESG)
 - **Impact**: Skip detailed ESG labeling for articles with no ESG content
+- **Best Model**: Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%)
 
 **3. ESG Multi-label Classifier**
 - **Purpose**: Classify articles into specific ESG categories with sentiment, replacing Claude for routine classification
@@ -503,7 +523,11 @@ The project is designed to train three progressively complex classifiers that ca
 
 ### ML Classifier Notebooks
 
-The project includes a 3-notebook pipeline for developing and training the False Positive Brand Classifier. The notebooks use supporting utility modules in `src/fp1_nb/`, `src/fp2_nb/`, and `src/fp3_nb/` for consistent preprocessing and evaluation.
+The project includes 3-notebook pipelines for developing ML classifiers. Each pipeline follows the same structure with supporting utility modules for consistent preprocessing and evaluation.
+
+**Two complete classifier pipelines:**
+1. **False Positive (FP) Classifier**: Filters non-sportswear brand mentions (modules: `src/fp1_nb/`, `src/fp2_nb/`, `src/fp3_nb/`)
+2. **ESG Pre-filter (EP) Classifier**: Identifies articles with ESG content (modules: `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/`)
 
 #### Notebook Pipeline Overview
 
@@ -569,6 +593,44 @@ The Random Forest model shows training F2 = 1.0 across all hyperparameter combin
 - `src/fp1_nb/` - Data loading, EDA, feature transformer, NER analysis, modeling utilities
 - `src/fp2_nb/` - Train-validation gap analysis, overfitting visualization
 - `src/fp3_nb/` - Threshold optimization, deployment pipeline utilities
+
+#### ESG Pre-filter (EP) Classifier Pipeline
+
+The EP classifier follows the same 3-notebook structure as FP, with ESG-specific feature engineering.
+
+**ep1_EDA_FE.ipynb - EDA & Feature Engineering**
+- **Data Loading**: 870 articles (635 has ESG, 235 no ESG)
+- **EDA**: Text length distributions, brand distribution, word frequencies
+- **Feature Engineering**: TF-IDF + LSA with ESG-specific vocabulary features
+- **Hyperparameter Tuning**: Optimizes `lsa_n_components` for dimensionality reduction
+- **Exports**: EPFeatureTransformer and configuration for ep2
+
+**ep2_model_selection_tuning.ipynb - Model Selection & Tuning**
+- **Baseline Models**: LR, RF, HGB with 3-fold stratified CV
+- **Hyperparameter Tuning**: GridSearchCV optimizing F2 score
+- **Overfitting Analysis**: Train-validation gap visualization
+- **Best Model**: Logistic Regression with class_weight=None
+- **Exports**: Best classifier and CV metrics for ep3
+
+**ep3_model_evaluation_deployment.ipynb - Test Evaluation & Deployment**
+- **Test Evaluation**: Final held-out test set evaluation
+- **Threshold Optimization**: Find optimal threshold for 99% target recall
+- **Pipeline Export**: Complete sklearn Pipeline for deployment
+
+**Performance (Logistic Regression):**
+- CV F2: 0.931, Test F2: 0.931
+- Test Recall: 100%, Test Precision: 73%
+- Optimized threshold: 0.724 (at 99% recall)
+
+**EPFeatureTransformer Key Features:**
+- ESG-specific vocabularies: Environmental, Social, Governance, Digital keywords
+- TF-IDF with LSA dimensionality reduction (200 components)
+- Metadata features from source_name and category
+
+**Supporting Modules:**
+- `src/ep1_nb/` - Data loading, EDA, EPFeatureTransformer with ESG vocabularies
+- `src/ep2_nb/` - Train-validation gap analysis, overfitting visualization
+- `src/ep3_nb/` - Threshold optimization, deployment pipeline utilities
 
 ## FP Classifier Deployment
 
@@ -1013,7 +1075,12 @@ psql postgresql://postgres:postgres@localhost:5434/esg_news
   - fp3: Test evaluation + threshold optimization + deployment export
   - Random Forest achieves Test F2: 0.974, Recall: 98.8%
   - Supporting modules in `src/fp1_nb/`, `src/fp2_nb/`, `src/fp3_nb/`
-- [ ] ESG Pre-filter Classifier: Does the article contain ESG content?
+- [x] ESG Pre-filter Classifier - 3-notebook pipeline complete
+  - ep1: EDA + TF-IDF/LSA feature engineering with ESG vocabularies
+  - ep2: Model selection + hyperparameter tuning (3-fold CV)
+  - ep3: Test evaluation + threshold optimization + deployment export
+  - Logistic Regression achieves Test F2: 0.931, Recall: 100%
+  - Supporting modules in `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/`
 - [ ] ESG Multi-label Classifier: Category classification with sentiment
 - [ ] Advanced: Fine-tuned DistilBERT/RoBERTa
 
