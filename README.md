@@ -54,9 +54,61 @@ flowchart TB
     evidence --> training
 ```
 
+## Project Roadmap
+
+### Phase 1: Data Collection ✅
+- [x] NewsData.io API integration
+- [x] GDELT DOC 2.0 API integration (free, 3 months history)
+- [x] Article scraping with newspaper4k
+- [x] PostgreSQL + pgvector storage
+- [x] Automated cron scheduling (8x daily: 4 NewsData + 4 GDELT)
+- [x] Historical backfill script for GDELT
+- [x] Target: 1,000-2,000 articles over 10-14 days
+
+### Phase 2: Data Labeling ✅
+- [x] LLM-based labeling pipeline with Claude Sonnet
+- [x] Per-brand ESG category labels with ternary sentiment
+- [x] Article chunking for evidence extraction
+- [x] OpenAI embeddings for semantic evidence matching
+- [x] Evidence linking to source text chunks
+- [x] Labeling CLI with dry-run and batch support
+
+### Phase 3: Model Development (Current)
+- [x] Export labeled data for training (JSONL format for 3 classifier types)
+- [x] False positive brand detection and cleanup tools
+- [x] False Positive Classifier - 3-notebook pipeline complete
+  - fp1: EDA + sentence-transformer/NER feature engineering
+  - fp2: Model selection + hyperparameter tuning (3-fold CV)
+  - fp3: Test evaluation + threshold optimization + deployment export
+  - Random Forest achieves Test F2: 0.974, Recall: 98.8%
+  - Supporting modules in `src/fp1_nb/`, `src/fp2_nb/`, `src/fp3_nb/`
+- [x] ESG Pre-filter Classifier - 3-notebook pipeline complete
+  - ep1: EDA + TF-IDF/LSA feature engineering with ESG vocabularies
+  - ep2: Model selection + hyperparameter tuning (3-fold CV)
+  - ep3: Test evaluation + threshold optimization + deployment export
+  - Logistic Regression achieves Test F2: 0.931, Recall: 100%
+  - Supporting modules in `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/`
+- [ ] ESG Multi-label Classifier: Category classification with sentiment
+- [ ] Advanced: Fine-tuned DistilBERT/RoBERTa
+
+### Phase 4: Evaluation & Explainability
+- [ ] Per-category Precision, Recall, F1-score
+- [ ] Hamming Loss (multi-label specific)
+- [ ] SHAP values for model explainability
+
+### Phase 5: Deployment (Current)
+- [x] FastAPI REST API (`predict.py`)
+- [x] Production training script (`train.py`)
+- [x] Deployment module (`src/deployment/`)
+- [x] Multi-stage Dockerfile
+- [x] Docker Compose integration
+- [ ] Cloud deployment (Render/Railway/HuggingFace Spaces)
+- [ ] Streamlit dashboard (optional)
+
 ## Table of Contents
 
 - [System Architecture](#system-architecture)
+- [Project Roadmap](#project-roadmap)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
   - [1. Prerequisites](#1-prerequisites)
@@ -94,7 +146,6 @@ flowchart TB
 - [ESG Category Structure](#esg-category-structure)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
-- [Project Roadmap](#project-roadmap)
 
 ## Project Structure
 
@@ -1046,54 +1097,3 @@ docker logs esg_news_db
 # Test connection
 psql postgresql://postgres:postgres@localhost:5434/esg_news
 ```
-
-## Project Roadmap
-
-### Phase 1: Data Collection ✅
-- [x] NewsData.io API integration
-- [x] GDELT DOC 2.0 API integration (free, 3 months history)
-- [x] Article scraping with newspaper4k
-- [x] PostgreSQL + pgvector storage
-- [x] Automated cron scheduling (8x daily: 4 NewsData + 4 GDELT)
-- [x] Historical backfill script for GDELT
-- [x] Target: 1,000-2,000 articles over 10-14 days
-
-### Phase 2: Data Labeling ✅
-- [x] LLM-based labeling pipeline with Claude Sonnet
-- [x] Per-brand ESG category labels with ternary sentiment
-- [x] Article chunking for evidence extraction
-- [x] OpenAI embeddings for semantic evidence matching
-- [x] Evidence linking to source text chunks
-- [x] Labeling CLI with dry-run and batch support
-
-### Phase 3: Model Development (Current)
-- [x] Export labeled data for training (JSONL format for 3 classifier types)
-- [x] False positive brand detection and cleanup tools
-- [x] False Positive Classifier - 3-notebook pipeline complete
-  - fp1: EDA + sentence-transformer/NER feature engineering
-  - fp2: Model selection + hyperparameter tuning (3-fold CV)
-  - fp3: Test evaluation + threshold optimization + deployment export
-  - Random Forest achieves Test F2: 0.974, Recall: 98.8%
-  - Supporting modules in `src/fp1_nb/`, `src/fp2_nb/`, `src/fp3_nb/`
-- [x] ESG Pre-filter Classifier - 3-notebook pipeline complete
-  - ep1: EDA + TF-IDF/LSA feature engineering with ESG vocabularies
-  - ep2: Model selection + hyperparameter tuning (3-fold CV)
-  - ep3: Test evaluation + threshold optimization + deployment export
-  - Logistic Regression achieves Test F2: 0.931, Recall: 100%
-  - Supporting modules in `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/`
-- [ ] ESG Multi-label Classifier: Category classification with sentiment
-- [ ] Advanced: Fine-tuned DistilBERT/RoBERTa
-
-### Phase 4: Evaluation & Explainability
-- [ ] Per-category Precision, Recall, F1-score
-- [ ] Hamming Loss (multi-label specific)
-- [ ] SHAP values for model explainability
-
-### Phase 5: Deployment (Current)
-- [x] FastAPI REST API (`predict.py`)
-- [x] Production training script (`train.py`)
-- [x] Deployment module (`src/deployment/`)
-- [x] Multi-stage Dockerfile
-- [x] Docker Compose integration
-- [ ] Cloud deployment (Render/Railway/HuggingFace Spaces)
-- [ ] Streamlit dashboard (optional)
