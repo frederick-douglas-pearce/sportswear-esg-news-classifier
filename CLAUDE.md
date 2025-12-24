@@ -36,20 +36,15 @@ uv run python scripts/export_training_data.py --dataset esg-prefilter  # ESG pre
 uv run python scripts/export_training_data.py --dataset esg-labels     # Multi-label ESG data
 uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01  # Incremental export
 
-# ML Classifier Notebooks (run from project root)
-# Note: Requires jupyter notebook to view/run interactively
-# The notebook can also be executed as Python scripts using the fp1_nb module
+# ML Classifier Training
+uv run python scripts/train.py --classifier fp                 # Train FP classifier
+uv run python scripts/train.py --classifier ep                 # Train EP classifier
 
-# False Positive Brand Classifier
-uv run python scripts/fp_train.py                              # Train FP classifier
-uv run python scripts/fp_predict.py                            # Start FastAPI server
-uv run uvicorn scripts.fp_predict:app --host 0.0.0.0 --port 8000  # Start with uvicorn
-
-# ESG Pre-filter Classifier
-uv run python scripts/ep_train.py                              # Train EP classifier
-uv run python scripts/ep_predict.py --title "..." --content "..." # Predict single article
-uv run python scripts/ep_predict.py --input articles.json      # Predict from JSON file
-uv run python scripts/ep_predict.py --verbose --title "..." --content "..."  # Verbose output
+# ML Classifier API Service
+CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (port 8000)
+CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
+CLASSIFIER_TYPE=fp uv run uvicorn scripts.predict:app --port 8000  # FP with uvicorn
+CLASSIFIER_TYPE=ep uv run uvicorn scripts.predict:app --port 8001  # EP with uvicorn
 
 # Testing
 uv run pytest                              # Run all tests (190 tests)
@@ -214,10 +209,10 @@ with engine.connect() as conn:
 - `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
 - `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `setup_cron.sh` - Install/remove/status commands for cron management
-- `fp_train.py` - Train the FP Brand classifier
-- `fp_predict.py` - FastAPI service for FP classification
-- `ep_train.py` - Train the ESG Pre-filter classifier
-- `ep_predict.py` - Predict ESG content using the trained EP classifier
+- `train.py` - Unified training script for FP/EP classifiers
+- `predict.py` - Unified FastAPI service for all classifiers
+- `retrain.py` - Retrain models with version management
+- `monitor_drift.py` - Monitor prediction drift for deployed models
 
 ### ML Classifier Notebooks (`notebooks/`)
 
@@ -375,3 +370,69 @@ Three classifiers to reduce Claude API costs while maintaining accuracy:
 - Per-category Precision, Recall, F1-score
 - Hamming Loss (multi-label specific)
 - SHAP values for model explainability
+
+### Phase 4: Deployment & MLOps ✅
+- Unified FastAPI service for all classifiers (`scripts/predict.py`)
+- Docker multi-stage builds optimized per classifier type
+- GitHub Actions CI/CD to Google Cloud Run
+- Model registry with version tracking (`models/registry.json`)
+- Prediction logging for drift monitoring
+- Retraining pipeline with auto-promotion
+
+## Deployment
+
+### Running Locally with Docker
+
+```bash
+# Build and run FP classifier
+docker build --build-arg CLASSIFIER_TYPE=fp -t fp-classifier-api .
+docker run -p 8000:8000 -e CLASSIFIER_TYPE=fp fp-classifier-api
+
+# Build and run EP classifier
+docker build --build-arg CLASSIFIER_TYPE=ep -t ep-classifier-api .
+docker run -p 8001:8001 -e CLASSIFIER_TYPE=ep -e PORT=8001 ep-classifier-api
+
+# Or use docker-compose for both
+docker compose up fp-classifier ep-classifier
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check for container orchestration |
+| `/model/info` | GET | Model metadata and performance metrics |
+| `/predict` | POST | Classify single article |
+| `/predict/batch` | POST | Classify multiple articles |
+
+### CI/CD Deployment
+
+Automatic deployment to Google Cloud Run via GitHub Actions.
+
+**Required GitHub Secrets:**
+- `GCP_PROJECT_ID` - Google Cloud project ID
+- `GCP_SA_KEY` - Service account JSON key (Cloud Run Admin + Storage Admin roles)
+- `GCP_REGION` - (optional) Cloud Run region, defaults to us-central1
+
+See `.github/DEPLOYMENT_SETUP.md` for detailed setup instructions.
+
+### Model Management
+
+```bash
+# Train new model version
+uv run python scripts/train.py --classifier fp --data data/fp_training_data.jsonl
+
+# Retrain and auto-promote if better
+uv run python scripts/retrain.py --classifier fp --auto-promote
+
+# Monitor for drift
+uv run python scripts/monitor_drift.py --classifier fp --days 7
+```
+
+### Prediction Logging
+
+Predictions are logged to `logs/predictions/{classifier}_predictions_{date}.jsonl` for drift monitoring.
+
+Environment variables:
+- `ENABLE_PREDICTION_LOGGING` - Enable/disable logging (default: true)
+- `PREDICTION_LOGS_DIR` - Log directory (default: logs/predictions)

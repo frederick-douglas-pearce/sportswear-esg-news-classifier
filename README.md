@@ -97,12 +97,14 @@ flowchart TB
 - [ ] SHAP values for model explainability
 
 ### Phase 5: Deployment (Current)
-- [x] FastAPI REST API (`scripts/fp_predict.py`)
-- [x] Production training script (`scripts/fp_train.py`)
+- [x] Unified FastAPI REST API (`scripts/predict.py`)
+- [x] Unified training script (`scripts/train.py`)
 - [x] Deployment module (`src/deployment/`)
 - [x] Multi-stage Dockerfile
 - [x] Docker Compose integration
-- [ ] Cloud deployment (Render/Railway/HuggingFace Spaces)
+- [x] GitHub Actions CI/CD to Google Cloud Run
+- [x] Model registry with version tracking
+- [x] Prediction logging for drift monitoring
 - [ ] Streamlit dashboard (optional)
 
 ## Table of Contents
@@ -164,10 +166,10 @@ sportswear-esg-news-classifier/
 │   ├── gdelt_backfill.py       # Historical backfill script (3 months)
 │   ├── cleanup_non_english.py  # Remove non-English articles from database
 │   ├── cleanup_false_positives.py # Identify/remove false positive brand matches
-│   ├── fp_train.py             # Train the FP Brand classifier
-│   ├── fp_predict.py           # FastAPI service for FP classification
-│   ├── ep_train.py             # Train the ESG Pre-filter classifier
-│   ├── ep_predict.py           # Predict ESG content with EP classifier
+│   ├── train.py                # Unified training script for FP/EP classifiers
+│   ├── predict.py              # Unified FastAPI service for all classifiers
+│   ├── retrain.py              # Retrain models with version management
+│   ├── monitor_drift.py        # Monitor prediction drift for deployed models
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   └── setup_cron.sh           # User-friendly cron management
@@ -717,12 +719,15 @@ The False Positive Brand Classifier is deployed as a FastAPI REST API service.
 uv sync
 
 # Run training (optional - model already trained)
-uv run python scripts/fp_train.py --verbose
+uv run python scripts/train.py --classifier fp --verbose
 
-# Start API server
-uv run python scripts/fp_predict.py
+# Start FP API server
+CLASSIFIER_TYPE=fp uv run python scripts/predict.py
 # Or with uvicorn directly:
-uv run uvicorn scripts.fp_predict:app --host 0.0.0.0 --port 8000
+CLASSIFIER_TYPE=fp uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8000
+
+# Start EP API server (different port)
+CLASSIFIER_TYPE=ep uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8001
 
 # Access API docs
 open http://localhost:8000/docs
@@ -799,16 +804,22 @@ curl -X POST http://localhost:8000/predict/batch \
 ### Retraining the Model
 
 ```bash
-# Retrain with default settings
-uv run python scripts/fp_train.py --verbose
+# Train FP classifier with default settings
+uv run python scripts/train.py --classifier fp --verbose
 
-# Retrain with custom parameters
-uv run python scripts/fp_train.py \
+# Train EP classifier
+uv run python scripts/train.py --classifier ep --verbose
+
+# Train with custom parameters
+uv run python scripts/train.py \
+  --classifier fp \
   --data-path data/fp_training_data.jsonl \
   --target-recall 0.98 \
-  --transformer-method sentence_transformer_ner \
   --output-dir models \
   --verbose
+
+# Retrain and auto-promote if model improves
+uv run python scripts/retrain.py --classifier fp --auto-promote
 ```
 
 ## Environment Variables

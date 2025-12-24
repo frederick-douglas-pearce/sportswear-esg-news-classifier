@@ -1,18 +1,28 @@
-# FP Brand Classifier API - Multi-Stage Docker Build
+# Multi-Classifier API - Multi-Stage Docker Build
 #
-# Build: docker build -t fp-classifier-api .
-# Run:   docker run -p 8000:8000 fp-classifier-api
+# Build:
+#   docker build -t fp-classifier-api .                              # FP (default)
+#   docker build --build-arg CLASSIFIER_TYPE=ep -t ep-classifier-api .  # EP
 #
-# The image includes:
-# - Trained model pipeline (~110MB)
-# - Sentence-transformers for embeddings
-# - spaCy with en_core_web_sm model for NER
-# - FastAPI + uvicorn for serving
+# Run:
+#   docker run -p 8000:8000 fp-classifier-api
+#   docker run -p 8001:8000 ep-classifier-api
+#
+# Classifier Types:
+#   fp  - False Positive Brand Classifier (~220MB image, needs sentence-transformers + spaCy)
+#   ep  - ESG Pre-filter Classifier (~150MB image, TF-IDF only)
+#   esg - ESG Multi-label Classifier (future)
+
+# Build argument for classifier type
+ARG CLASSIFIER_TYPE=fp
 
 # ==============================================================================
 # Stage 1: Builder - Install dependencies and download models
 # ==============================================================================
 FROM python:3.12-slim AS builder
+
+# Re-declare ARG after FROM to make it available
+ARG CLASSIFIER_TYPE
 
 WORKDIR /app
 
@@ -30,19 +40,29 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 
 # Create virtual environment and install production dependencies
-# We use --no-dev to exclude development dependencies
 RUN uv sync --frozen --no-dev --no-editable
 
-# Download spaCy model
-RUN /app/.venv/bin/python -m spacy download en_core_web_sm
-
-# Download sentence-transformer model (cached in .cache)
-RUN /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# Download models conditionally based on classifier type
+# FP classifier needs spaCy and sentence-transformers
+# EP classifier only needs scikit-learn (already installed)
+# Always create .cache directory so COPY doesn't fail
+# Use uv pip install for spacy model since uv venvs don't include pip
+RUN mkdir -p /root/.cache && \
+    if [ "$CLASSIFIER_TYPE" = "fp" ]; then \
+        echo "Downloading models for FP classifier..." && \
+        uv pip install --python /app/.venv/bin/python en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl && \
+        /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"; \
+    else \
+        echo "Skipping spaCy/sentence-transformer download for ${CLASSIFIER_TYPE} classifier"; \
+    fi
 
 # ==============================================================================
 # Stage 2: Runtime - Minimal production image
 # ==============================================================================
 FROM python:3.12-slim
+
+# Re-declare ARG after FROM
+ARG CLASSIFIER_TYPE
 
 WORKDIR /app
 
@@ -58,6 +78,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy model cache from builder (sentence-transformers, spacy)
+# For EP classifier, this copies an empty directory (created in builder stage)
 COPY --from=builder /root/.cache /home/appuser/.cache
 
 # Set environment variables
@@ -65,18 +86,28 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV HF_HOME=/home/appuser/.cache/huggingface
+ENV CLASSIFIER_TYPE=${CLASSIFIER_TYPE}
 
-# Copy application code
-COPY scripts/fp_predict.py scripts/
+# Copy unified prediction script
+COPY scripts/predict.py scripts/
+
+# Copy deployment module (shared by all classifiers)
 COPY src/deployment/ src/deployment/
-COPY src/fp1_nb/ src/fp1_nb/
-COPY src/data_collection/config.py src/data_collection/config.py
 COPY src/__init__.py src/__init__.py
+
+# Copy classifier-specific modules
+# FP needs fp1_nb for feature transformer
+# EP needs ep1_nb for feature transformer
+RUN mkdir -p src/fp1_nb src/ep1_nb src/data_collection
+
+COPY src/fp1_nb/ src/fp1_nb/
+COPY src/ep1_nb/ src/ep1_nb/
+COPY src/data_collection/config.py src/data_collection/config.py
 COPY src/data_collection/__init__.py src/data_collection/__init__.py
 
-# Copy model artifacts
-COPY models/fp_classifier_pipeline.joblib models/
-COPY models/fp_classifier_config.json models/
+# Copy model artifacts for the specified classifier
+COPY models/${CLASSIFIER_TYPE}_classifier_pipeline.joblib models/
+COPY models/${CLASSIFIER_TYPE}_classifier_config.json models/
 
 # Set ownership for non-root user
 RUN chown -R appuser:appuser /app /home/appuser
@@ -91,5 +122,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the API
-CMD ["python", "scripts/fp_predict.py"]
+# Run the unified API with classifier type from environment
+CMD ["python", "scripts/predict.py"]

@@ -17,14 +17,19 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # FP (False Positive) Brand Classifier API
+  # Determines if articles are about sportswear brands or false positives
   fp-classifier-api:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        CLASSIFIER_TYPE: fp
     container_name: fp-classifier-api
     ports:
       - "8000:8000"
     environment:
+      - CLASSIFIER_TYPE=fp
       - PYTHONUNBUFFERED=1
       - PORT=8000
     healthcheck:
@@ -34,13 +39,71 @@ services:
       retries: 3
       start_period: 60s
     restart: unless-stopped
-    # Resource limits (adjust based on available resources)
+    # FP classifier needs more memory for sentence-transformers + spaCy
     deploy:
       resources:
         limits:
           memory: 4G
         reservations:
           memory: 2G
+
+  # EP (ESG Pre-filter) Classifier API
+  # Determines if articles contain ESG content
+  ep-classifier-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CLASSIFIER_TYPE: ep
+    container_name: ep-classifier-api
+    ports:
+      - "8001:8000"
+    environment:
+      - CLASSIFIER_TYPE=ep
+      - PYTHONUNBUFFERED=1
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s  # EP starts faster (no sentence-transformers)
+    restart: unless-stopped
+    # EP classifier is lighter (TF-IDF only)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  # ESG Multi-label Classifier API (future)
+  # esg-classifier-api:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     args:
+  #       CLASSIFIER_TYPE: esg
+  #   container_name: esg-classifier-api
+  #   ports:
+  #     - "8002:8000"
+  #   environment:
+  #     - CLASSIFIER_TYPE=esg
+  #     - PYTHONUNBUFFERED=1
+  #     - PORT=8000
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 45s
+  #   restart: unless-stopped
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
+  #       reservations:
+  #         memory: 1G
 
 volumes:
   postgres_data:

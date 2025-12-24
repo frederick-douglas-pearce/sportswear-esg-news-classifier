@@ -1,29 +1,96 @@
-"""Configuration management for FP Classifier deployment."""
+"""Configuration management for multi-classifier deployment."""
 
 import json
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-# Default configuration values
-DEFAULT_THRESHOLD = 0.605
-TARGET_RECALL = 0.98
-MODEL_NAME = "FP_Classifier"
 
-# Paths relative to project root
-PIPELINE_PATH = "models/fp_classifier_pipeline.joblib"
-CONFIG_PATH = "models/fp_classifier_config.json"
+class ClassifierType(Enum):
+    """Enumeration of available classifier types."""
 
-# Risk levels based on probability of being sportswear-related
-# Higher probability = higher confidence it's a true positive (sportswear)
-# Lower probability = higher risk of being a false positive
-RISK_LEVELS: Dict[str, Tuple[float, float]] = {
-    "low": (0.0, 0.3),      # Likely false positive
-    "medium": (0.3, 0.6),   # Uncertain
-    "high": (0.6, 1.0),     # Likely true sportswear article
+    FP = "fp"  # False Positive Brand Classifier
+    EP = "ep"  # ESG Pre-filter Classifier
+    ESG = "esg"  # ESG Multi-label Classifier (future)
+
+
+# Multi-classifier configuration
+CLASSIFIER_CONFIG: Dict[ClassifierType, Dict[str, Any]] = {
+    ClassifierType.FP: {
+        "pipeline_path": "models/fp_classifier_pipeline.joblib",
+        "config_path": "models/fp_classifier_config.json",
+        "default_threshold": 0.605,
+        "target_recall": 0.98,
+        "model_name": "FP_Classifier",
+        "description": "False Positive Brand Classifier - filters non-sportswear articles",
+    },
+    ClassifierType.EP: {
+        "pipeline_path": "models/ep_classifier_pipeline.joblib",
+        "config_path": "models/ep_classifier_config.json",
+        "default_threshold": 0.156,
+        "target_recall": 0.99,
+        "model_name": "EP_Classifier",
+        "description": "ESG Pre-filter Classifier - identifies ESG-related content",
+    },
+    ClassifierType.ESG: {
+        "pipeline_path": "models/esg_classifier_pipeline.joblib",
+        "config_path": "models/esg_classifier_config.json",
+        "default_threshold": 0.5,
+        "target_recall": 0.95,
+        "model_name": "ESG_Classifier",
+        "description": "ESG Multi-label Classifier - detailed ESG categorization",
+    },
 }
 
 
-def load_config(config_path: str = CONFIG_PATH) -> Dict[str, Any]:
+def get_classifier_config(classifier_type: ClassifierType) -> Dict[str, Any]:
+    """Get configuration for a specific classifier type.
+
+    Args:
+        classifier_type: The classifier type to get config for
+
+    Returns:
+        Dictionary containing classifier configuration
+
+    Raises:
+        ValueError: If classifier type is not recognized
+    """
+    if classifier_type not in CLASSIFIER_CONFIG:
+        raise ValueError(f"Unknown classifier type: {classifier_type}")
+    return CLASSIFIER_CONFIG[classifier_type]
+
+
+def get_classifier_paths(classifier_type: ClassifierType) -> Tuple[str, str]:
+    """Get pipeline and config paths for a classifier type.
+
+    Args:
+        classifier_type: The classifier type
+
+    Returns:
+        Tuple of (pipeline_path, config_path)
+    """
+    config = get_classifier_config(classifier_type)
+    return config["pipeline_path"], config["config_path"]
+
+
+# Legacy FP-specific exports (for backwards compatibility)
+DEFAULT_THRESHOLD = CLASSIFIER_CONFIG[ClassifierType.FP]["default_threshold"]
+TARGET_RECALL = CLASSIFIER_CONFIG[ClassifierType.FP]["target_recall"]
+MODEL_NAME = CLASSIFIER_CONFIG[ClassifierType.FP]["model_name"]
+PIPELINE_PATH = CLASSIFIER_CONFIG[ClassifierType.FP]["pipeline_path"]
+CONFIG_PATH = CLASSIFIER_CONFIG[ClassifierType.FP]["config_path"]
+
+# Risk levels for FP classifier (probability-based confidence levels)
+# Higher probability = higher confidence it's a true positive (sportswear)
+# Lower probability = higher risk of being a false positive
+RISK_LEVELS: Dict[str, Tuple[float, float]] = {
+    "low": (0.0, 0.3),  # Likely false positive
+    "medium": (0.3, 0.6),  # Uncertain
+    "high": (0.6, 1.0),  # Likely true sportswear article
+}
+
+
+def load_config(config_path: str) -> Dict[str, Any]:
     """Load classifier configuration from JSON file.
 
     Args:
@@ -47,7 +114,7 @@ def load_config(config_path: str = CONFIG_PATH) -> Dict[str, Any]:
 
 
 def get_risk_level(probability: float) -> str:
-    """Map probability to risk level category.
+    """Map probability to risk level category (FP classifier specific).
 
     The risk level indicates confidence that the article is about sportswear:
     - "high": High confidence it's a true sportswear article (prob >= 0.6)
@@ -81,6 +148,7 @@ def save_config(
     model_name: str = MODEL_NAME,
     transformer_method: str = "sentence_transformer_ner",
     best_params: Dict[str, Any] = None,
+    target_recall: float = None,
 ) -> None:
     """Save classifier configuration to JSON file.
 
@@ -91,10 +159,11 @@ def save_config(
         model_name: Name of the model
         transformer_method: Feature transformation method used
         best_params: Best hyperparameters from tuning
+        target_recall: Target recall used for threshold optimization
     """
     config = {
         "threshold": threshold,
-        "target_recall": TARGET_RECALL,
+        "target_recall": target_recall or TARGET_RECALL,
         "model_name": model_name,
         "transformer_method": transformer_method,
         "best_params": best_params or {},
