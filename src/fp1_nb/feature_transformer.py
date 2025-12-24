@@ -40,6 +40,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'tfidf_word',
         'tfidf_char',
         'tfidf_lsa',
+        'tfidf_lsa_ner',  # TF-IDF LSA + NER entity type features
         'tfidf_lsa_proximity',  # TF-IDF LSA + proximity features (positive + negative context)
         'tfidf_lsa_ner_proximity',  # TF-IDF LSA + NER + proximity features
         'tfidf_context',  # TF-IDF on context window around brand mentions
@@ -1051,6 +1052,23 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             )
             self._lsa.fit(tfidf_features)
 
+        elif self.method == 'tfidf_lsa_ner':
+            # TF-IDF LSA + NER entity type features
+            self._tfidf = self._create_tfidf_word()
+            tfidf_features = self._tfidf.fit_transform(texts)
+
+            # Fit LSA on TF-IDF features
+            self._lsa = TruncatedSVD(
+                n_components=self.lsa_n_components,
+                random_state=self.random_state
+            )
+            self._lsa.fit(tfidf_features)
+
+            # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+
         elif self.method == 'tfidf_lsa_proximity':
             # TF-IDF LSA + proximity features (positive + negative context)
             self._tfidf = self._create_tfidf_word()
@@ -1295,6 +1313,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         elif self.method == 'tfidf_lsa':
             tfidf_features = self._tfidf.transform(texts)
             features = self._lsa.transform(tfidf_features)
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
+
+        elif self.method == 'tfidf_lsa_ner':
+            # TF-IDF LSA + NER entity type features
+            # Note: _compute_ner_features uses class-level caching
+            tfidf_features = self._tfidf.transform(texts)
+            lsa_features = self._lsa.transform(tfidf_features)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            features = np.hstack([lsa_features, ner_scaled])
             if metadata_scaled is not None:
                 return np.hstack([features, metadata_scaled])
             return features

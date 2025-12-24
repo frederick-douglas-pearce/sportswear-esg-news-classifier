@@ -455,7 +455,7 @@ def evaluate_model(
 def plot_fe_comparison(
     fe_df: pd.DataFrame,
     classifiers: Optional[List[str]] = None,
-    figsize: Tuple[int, int] = (14, 6),
+    figsize: Tuple[int, int] = (18, 6),
     save_path: Optional[str] = None,
 ) -> None:
     """Plot feature engineering comparison for multiple classifiers.
@@ -465,12 +465,12 @@ def plot_fe_comparison(
 
     Args:
         fe_df: DataFrame with columns 'classifier', 'name', 'cv_f2', 'cv_recall'
-        classifiers: List of classifier names to display (default: LogisticRegression, HistGradientBoosting)
+        classifiers: List of classifier names to display (default: all three classifiers)
         figsize: Figure size tuple
         save_path: Optional path to save figure
     """
     if classifiers is None:
-        classifiers = ['LogisticRegression', 'HistGradientBoosting']
+        classifiers = ['LogisticRegression', 'RandomForest', 'HistGradientBoosting']
 
     fig, axes = plt.subplots(1, len(classifiers), figsize=figsize)
 

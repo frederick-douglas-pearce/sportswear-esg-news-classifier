@@ -79,32 +79,5 @@
     "cv_f2_std": 0.01414822211536762,
     "cv_recall": 0.9636015325670497,
     "cv_precision": 0.9332189701238766
-  },
-  {
-    "name": "sentence_transformer_ner_proximity",
-    "classifier": "LogisticRegression",
-    "n_features": 406,
-    "cv_f2": 0.96234733255161,
-    "cv_f2_std": 0.0015015399943139277,
-    "cv_recall": 0.9693486590038315,
-    "cv_precision": 0.9355751242911944
-  },
-  {
-    "name": "sentence_transformer_ner_proximity",
-    "classifier": "RandomForest",
-    "n_features": 406,
-    "cv_f2": 0.9658227500483462,
-    "cv_f2_std": 0.005164177775637632,
-    "cv_recall": 0.9846743295019157,
-    "cv_precision": 0.8974424595036461
-  },
-  {
-    "name": "sentence_transformer_ner_proximity",
-    "classifier": "HistGradientBoosting",
-    "n_features": 406,
-    "cv_f2": 0.957251000348598,
-    "cv_f2_std": 0.011837573248777671,
-    "cv_recall": 0.9616858237547893,
-    "cv_precision": 0.9403100312991212
   }
 ]
