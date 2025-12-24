@@ -1,5 +1,5 @@
 {
-  "threshold": 0.5332036770702857,
+  "threshold": 0.4408976305621197,
   "target_recall": 0.99,
   "model_name": "RF_tuned",
   "transformer_method": "sentence_transformer_ner",
@@ -7,16 +7,16 @@
     "class_weight": "balanced",
     "max_depth": 20,
     "min_samples_leaf": 1,
-    "min_samples_split": 8,
-    "n_estimators": 60
+    "min_samples_split": 10,
+    "n_estimators": 70
   },
-  "cv_f2": 0.9726896117847456,
-  "cv_recall": 0.9883104777956536,
-  "cv_precision": 0.9148526969140658,
-  "test_f2": 0.9781357882623706,
-  "test_recall": 0.9941520467836257,
-  "test_precision": 0.918918918918919,
-  "threshold_recall": 0.9941520467836257,
-  "threshold_precision": 0.9444444444444444,
-  "threshold_f2": 0.9837962962962963
+  "cv_f2": 0.9742534116867705,
+  "cv_recall": 0.9899425287356322,
+  "cv_precision": 0.9165503452365824,
+  "test_f2": 0.9738041002277904,
+  "test_recall": 0.9827586206896551,
+  "test_precision": 0.9395604395604396,
+  "threshold_recall": 0.9942528735632183,
+  "threshold_precision": 0.9057591623036649,
+  "threshold_f2": 0.9751972942502819
 }
