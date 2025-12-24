@@ -67,7 +67,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV HF_HOME=/home/appuser/.cache/huggingface
 
 # Copy application code
-COPY predict.py .
+COPY scripts/fp_predict.py scripts/
 COPY src/deployment/ src/deployment/
 COPY src/fp1_nb/ src/fp1_nb/
 COPY src/data_collection/config.py src/data_collection/config.py
@@ -92,4 +92,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the API
-CMD ["python", "predict.py"]
+CMD ["python", "scripts/fp_predict.py"]

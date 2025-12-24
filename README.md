@@ -97,8 +97,8 @@ flowchart TB
 - [ ] SHAP values for model explainability
 
 ### Phase 5: Deployment (Current)
-- [x] FastAPI REST API (`predict.py`)
-- [x] Production training script (`train.py`)
+- [x] FastAPI REST API (`scripts/fp_predict.py`)
+- [x] Production training script (`scripts/fp_train.py`)
 - [x] Deployment module (`src/deployment/`)
 - [x] Multi-stage Dockerfile
 - [x] Docker Compose integration
@@ -153,8 +153,6 @@ flowchart TB
 sportswear-esg-news-classifier/
 ├── docker-compose.yml          # PostgreSQL + FP Classifier API containers
 ├── Dockerfile                  # Multi-stage build for FP Classifier API
-├── predict.py                  # FastAPI service for FP classification
-├── train.py                    # Training script for FP classifier
 ├── pyproject.toml              # Project dependencies and metadata (uv/pip)
 ├── .env.example                # Environment variable template
 ├── .env                        # Local environment variables (not committed)
@@ -166,6 +164,8 @@ sportswear-esg-news-classifier/
 │   ├── gdelt_backfill.py       # Historical backfill script (3 months)
 │   ├── cleanup_non_english.py  # Remove non-English articles from database
 │   ├── cleanup_false_positives.py # Identify/remove false positive brand matches
+│   ├── fp_train.py             # Train the FP Brand classifier
+│   ├── fp_predict.py           # FastAPI service for FP classification
 │   ├── ep_train.py             # Train the ESG Pre-filter classifier
 │   ├── ep_predict.py           # Predict ESG content with EP classifier
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
@@ -717,12 +717,12 @@ The False Positive Brand Classifier is deployed as a FastAPI REST API service.
 uv sync
 
 # Run training (optional - model already trained)
-uv run python train.py --verbose
+uv run python scripts/fp_train.py --verbose
 
 # Start API server
-uv run python predict.py
+uv run python scripts/fp_predict.py
 # Or with uvicorn directly:
-uv run uvicorn predict:app --host 0.0.0.0 --port 8000
+uv run uvicorn scripts.fp_predict:app --host 0.0.0.0 --port 8000
 
 # Access API docs
 open http://localhost:8000/docs
@@ -800,10 +800,10 @@ curl -X POST http://localhost:8000/predict/batch \
 
 ```bash
 # Retrain with default settings
-uv run python train.py --verbose
+uv run python scripts/fp_train.py --verbose
 
 # Retrain with custom parameters
-uv run python train.py \
+uv run python scripts/fp_train.py \
   --data-path data/fp_training_data.jsonl \
   --target-recall 0.98 \
   --transformer-method sentence_transformer_ner \

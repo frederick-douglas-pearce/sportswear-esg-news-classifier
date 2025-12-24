@@ -4,9 +4,9 @@ Retrains the False Positive Brand Classifier from scratch using the same
 process as the notebooks but in script form.
 
 Usage:
-    uv run python train.py
-    uv run python train.py --data-path data/fp_training_data.jsonl
-    uv run python train.py --target-recall 0.98 --verbose
+    uv run python scripts/fp_train.py
+    uv run python scripts/fp_train.py --data-path data/fp_training_data.jsonl
+    uv run python scripts/fp_train.py --target-recall 0.98 --verbose
 
 The script will:
 1. Load training data from JSONL

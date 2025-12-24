@@ -40,6 +40,11 @@ uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01  #
 # Note: Requires jupyter notebook to view/run interactively
 # The notebook can also be executed as Python scripts using the fp1_nb module
 
+# False Positive Brand Classifier
+uv run python scripts/fp_train.py                              # Train FP classifier
+uv run python scripts/fp_predict.py                            # Start FastAPI server
+uv run uvicorn scripts.fp_predict:app --host 0.0.0.0 --port 8000  # Start with uvicorn
+
 # ESG Pre-filter Classifier
 uv run python scripts/ep_train.py                              # Train EP classifier
 uv run python scripts/ep_predict.py --title "..." --content "..." # Predict single article
@@ -209,6 +214,8 @@ with engine.connect() as conn:
 - `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
 - `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
 - `setup_cron.sh` - Install/remove/status commands for cron management
+- `fp_train.py` - Train the FP Brand classifier
+- `fp_predict.py` - FastAPI service for FP classification
 - `ep_train.py` - Train the ESG Pre-filter classifier
 - `ep_predict.py` - Predict ESG content using the trained EP classifier
 

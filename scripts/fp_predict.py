@@ -4,9 +4,9 @@ Provides REST API endpoints for classifying whether articles are about
 sportswear brands (true positive) or false positive brand mentions.
 
 Run locally:
-    uv run python predict.py
+    uv run python scripts/fp_predict.py
     # Or with uvicorn:
-    uv run uvicorn predict:app --host 0.0.0.0 --port 8000
+    uv run uvicorn scripts.fp_predict:app --host 0.0.0.0 --port 8000
 
 API Documentation:
     http://localhost:8000/docs (Swagger UI)
