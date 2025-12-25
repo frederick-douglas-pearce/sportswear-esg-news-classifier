@@ -6,7 +6,7 @@ and validation scores from GridSearchCV/RandomizedSearchCV results.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -531,6 +531,88 @@ def _plot_iteration_performance(
     plt.tight_layout()
     _save_figure(fig, save_path)
     plt.show()
+
+
+def get_top_hyperparameter_runs(
+    search_object: Union[GridSearchCV, RandomizedSearchCV],
+    n_top: int = 10,
+    metric: str = 'f2'
+) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Extract top n hyperparameter combinations from a GridSearchCV object.
+
+    Args:
+        search_object: Fitted GridSearchCV or RandomizedSearchCV object
+        n_top: Number of top results to return (default: 10)
+        metric: Metric to rank by (default: 'f2')
+
+    Returns:
+        Tuple of:
+        - DataFrame with top n results including rank, scores, gap, and parameters
+        - List of parameter names
+
+    Example:
+        >>> top_df, param_names = get_top_hyperparameter_runs(rf_search, n_top=10)
+        >>> print(top_df[['rank', 'val_f2', 'train_f2', 'gap'] + param_names])
+    """
+    cv_results = search_object.cv_results_
+
+    # Get parameter names (remove 'param_' prefix)
+    param_names = [k.replace('param_', '') for k in cv_results.keys() if k.startswith('param_')]
+
+    # Build dataframe with all results
+    results_data = []
+    for i in range(len(cv_results[f'mean_test_{metric}'])):
+        row = {
+            'rank': cv_results[f'rank_test_{metric}'][i],
+            f'val_{metric}': cv_results[f'mean_test_{metric}'][i],
+            f'val_{metric}_std': cv_results[f'std_test_{metric}'][i],
+            f'train_{metric}': cv_results[f'mean_train_{metric}'][i],
+            'gap': cv_results[f'mean_train_{metric}'][i] - cv_results[f'mean_test_{metric}'][i],
+        }
+        # Add parameter values
+        for param in param_names:
+            row[param] = cv_results[f'param_{param}'][i]
+        results_data.append(row)
+
+    df = pd.DataFrame(results_data)
+    df = df.sort_values('rank').head(n_top)
+
+    return df, param_names
+
+
+def display_top_hyperparameter_runs(
+    tuned_models: Dict[str, Union[GridSearchCV, RandomizedSearchCV]],
+    n_top: int = 10,
+    metric: str = 'f2'
+) -> None:
+    """
+    Display top hyperparameter combinations for multiple tuned models.
+
+    Args:
+        tuned_models: Dictionary mapping model names to fitted search objects
+        n_top: Number of top results to display per model (default: 10)
+        metric: Metric to rank by (default: 'f2')
+
+    Example:
+        >>> tuned_models = {'LR_tuned': lr_search, 'RF_tuned': rf_search}
+        >>> display_top_hyperparameter_runs(tuned_models, n_top=10, metric='f2')
+    """
+    for model_name, search in tuned_models.items():
+        print("=" * 80)
+        print(f"TOP {n_top} HYPERPARAMETER COMBINATIONS: {model_name}")
+        print("=" * 80)
+
+        top_df, param_names = get_top_hyperparameter_runs(search, n_top=n_top, metric=metric)
+
+        # Display with formatted output
+        display_cols = ['rank', f'val_{metric}', f'val_{metric}_std', f'train_{metric}', 'gap'] + param_names
+        print(top_df[display_cols].to_string(index=False))
+        print()
+
+        # Also show best parameters explicitly
+        print(f"Best parameters: {search.best_params_}")
+        print()
 
 
 def get_gap_summary(

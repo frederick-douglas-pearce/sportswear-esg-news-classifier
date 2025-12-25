@@ -1,13 +1,13 @@
 {
   "model_name": "LR_tuned",
-  "cv_f2": 0.9310836746786202,
+  "cv_f2": 0.9374041371305394,
   "cv_recall": 1.0,
-  "cv_precision": 0.7298850574712644,
-  "cv_f1": 0.8438522268127361,
-  "cv_accuracy": 0.7298850574712644,
-  "cv_pr_auc": 0.9176954606856288,
+  "cv_precision": 0.7497665732959851,
+  "cv_f1": 0.8569629870834691,
+  "cv_accuracy": 0.7545182111572153,
+  "cv_pr_auc": 0.9425799832020628,
   "best_params": {
-    "C": 0.01,
+    "C": 0.7,
     "class_weight": null,
     "penalty": "l2",
     "solver": "lbfgs"
