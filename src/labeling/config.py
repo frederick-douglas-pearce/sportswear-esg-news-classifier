@@ -225,7 +225,25 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 3. An article can have multiple categories if it covers multiple ESG topics.
 4. Different brands in the same article may have different categories and sentiments.
 5. If a brand is only briefly mentioned without substantive ESG-related content, do not assign categories for that brand.
-6. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0)."""
+6. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0).
+
+## CRITICAL: Tangential Brand Mentions (False Positives)
+
+Even when a brand name correctly refers to the sportswear company, you must verify the article is ACTUALLY ABOUT that brand's activities. Treat the following as FALSE POSITIVES (set `is_sportswear_brand: false`):
+
+**Biographical/Resume Mentions:**
+- Former executives now working at other companies (e.g., "John Smith, former VP at Nike, joins XYZ Corp")
+- Board member backgrounds listing prior company affiliations
+- Career histories in profiles about people who no longer work at the brand
+
+**Incidental/Tangential References:**
+- Articles about other companies that briefly mention a sportswear brand for comparison
+- News about acquisitions/investments where the brand is mentioned only as historical context
+- Industry reports where the brand appears in a list but has no substantive coverage
+
+**Key Test:** Ask yourself: Is this article primarily ABOUT the sportswear brand's current activities, products, or ESG initiatives? If the answer is NO - if the brand is only mentioned as background context, historical reference, or biographical detail - set `is_sportswear_brand: false` and explain in `not_sportswear_reason`.
+
+Example: An article titled 'Battery Company Appoints Former Skechers Executive to Board' is NOT about Skechers - it's about the battery company. Even though Skechers correctly refers to the sportswear brand, it should be marked as `is_sportswear_brand: false` with reason: 'Brand mentioned only as biographical context for an executive now working at a different company.'"""
 
 # Build the system prompt with the current brand list
 LABELING_SYSTEM_PROMPT = _LABELING_SYSTEM_PROMPT_TEMPLATE.format(

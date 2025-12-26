@@ -476,6 +476,21 @@ The LLM labeling pipeline processes articles through these steps:
 
 The labeled data is then exported to train ML classifiers that can handle routine classification at scale.
 
+### Data Labeling Scope
+
+Articles are only labeled if they are **primarily about** the sportswear brand's activities. The labeling pipeline filters out two types of false positives:
+
+**1. Brand Name Conflicts**: When a brand name refers to something other than the sportswear company:
+- "Puma" (the animal), "Patagonia" (the region), "Columbia" (the country/university)
+- "Vans" (vehicles), "Anta" (Indian political district), "Decathlon" (investment firms)
+
+**2. Tangential Brand Mentions**: When the brand name correctly refers to the sportswear company, but the article is not actually about that brand:
+- Former executives now working at other companies (e.g., "Ex-Nike VP joins Tech Startup")
+- Biographical context in profiles about people who no longer work at the brand
+- Articles about other companies that briefly mention a sportswear brand for comparison
+
+**Key Test**: Is this article primarily about the sportswear brand's current activities, products, or ESG initiatives? If the brand is only mentioned as background context, historical reference, or biographical detail, it should be marked as a false positive.
+
 ### Running the Labeling Pipeline
 
 ```bash
