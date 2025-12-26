@@ -436,3 +436,46 @@ Predictions are logged to `logs/predictions/{classifier}_predictions_{date}.json
 Environment variables:
 - `ENABLE_PREDICTION_LOGGING` - Enable/disable logging (default: true)
 - `PREDICTION_LOGS_DIR` - Log directory (default: logs/predictions)
+
+## Labeling Prompt Changelog
+
+### 2025-12-26: Added Tangential Brand Mention Guidance
+
+**Change**: Updated `src/labeling/config.py` to add guidance for identifying false positives where a brand name correctly refers to the sportswear company, but the article is not primarily about that brand.
+
+**New false positive categories added:**
+- Biographical/resume mentions (former executives at other companies)
+- Stock/financial articles with no substantive ESG content
+- Incidental references in articles about other companies
+
+**Potentially affected historical data:**
+- Articles labeled before 2025-12-26 00:13:57 UTC may include false positives under the new definition
+- Particularly affected: stock price/trading articles for Puma, Anta, 361 Degrees, etc.
+
+**Query to identify articles labeled before this change:**
+```sql
+SELECT COUNT(*), labeling_status
+FROM articles
+WHERE labeled_at < '2025-12-26 00:13:57+00'
+GROUP BY labeling_status;
+
+-- Find potentially mislabeled stock/financial articles
+SELECT a.title, a.source_name, bl.brand, a.labeled_at
+FROM articles a
+JOIN brand_labels bl ON bl.article_id = a.id
+WHERE a.labeled_at < '2025-12-26 00:13:57+00'
+AND (
+    a.title ILIKE '%stock%' OR
+    a.title ILIKE '%shares%' OR
+    a.title ILIKE '%trading%' OR
+    a.title ILIKE '%short interest%'
+)
+ORDER BY a.labeled_at DESC;
+```
+
+**To relabel historical articles** (will incur API costs):
+```bash
+# Reset specific articles to pending and relabel
+# First, update labeling_status to 'pending' for target articles
+# Then run: uv run python scripts/label_articles.py --batch-size N
+```
