@@ -449,9 +449,9 @@ Environment variables:
 - Incidental references in articles about other companies
 
 **Potentially affected historical data:**
-- Articles with `labeled` or `skipped` status before 2025-12-26 00:13:57 UTC may include false positives under the new definition
+- Articles with `labeled` status before 2025-12-26 00:13:57 UTC may include false positives under the new definition
 - `labeled` articles: May have ESG labels for articles that aren't primarily about the brand
-- `skipped` articles: May have been skipped (no ESG content) when they should be `false_positive`
+- `skipped` articles: All 244 have NULL `labeled_at` (timestamp not recorded for skips), so date filtering won't work - review all skipped articles if needed
 - Particularly affected: stock price/trading articles for Puma, Anta, 361 Degrees, etc.
 
 **Query to identify articles processed before this change:**
@@ -475,20 +475,21 @@ AND (
 )
 ORDER BY a.labeled_at DESC;
 
--- Find skipped articles that may be false positives
-SELECT a.title, a.source_name, a.brands_mentioned, a.labeled_at
+-- Find skipped articles that may be false positives (no date filter - labeled_at is NULL for skips)
+SELECT a.title, a.source_name, a.brands_mentioned
 FROM articles a
 WHERE a.labeling_status = 'skipped'
-AND a.labeled_at < '2025-12-26 00:13:57+00'
 AND (
     a.title ILIKE '%stock%' OR
     a.title ILIKE '%shares%' OR
     a.title ILIKE '%trading%' OR
     a.title ILIKE '%short interest%' OR
     a.title ILIKE '%former%' OR
-    a.title ILIKE '%ex-%'
+    a.title ILIKE '%ex-%' OR
+    a.title ILIKE '%appoints%' OR
+    a.title ILIKE '%joins%'
 )
-ORDER BY a.labeled_at DESC;
+ORDER BY a.created_at DESC;
 ```
 
 **To relabel historical articles** (will incur API costs):
