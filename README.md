@@ -1,6 +1,23 @@
 # ESG News Classifier for Sportswear Brands
 
-A multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for major sportswear brands including Nike, Adidas, Puma, Under Armour, Lululemon, Patagonia, Columbia Sportswear, New Balance, ASICS, and Reebok.
+A multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for major sportswear and outdoor apparel brands.
+
+## Target Brands (50)
+
+The system monitors news for the following sportswear and outdoor apparel brands:
+
+| Brand | Brand | Brand | Brand | Brand |
+|-------|-------|-------|-------|-------|
+| Nike | Adidas | Puma | Under Armour | Lululemon |
+| Patagonia | Columbia Sportswear | New Balance | ASICS | Reebok |
+| Skechers | Fila | The North Face | Vans | Converse |
+| Salomon | Mammut | Umbro | Anta | Li-Ning |
+| Brooks Running | Decathlon | Deckers | Yonex | Mizuno |
+| K-Swiss | Altra Running | Hoka | Saucony | Merrell |
+| Timberland | Spyder | On Running | Allbirds | Gymshark |
+| Everlast | Arc'teryx | Jack Wolfskin | Athleta | Vuori |
+| Cotopaxi | Prana | Eddie Bauer | 361 Degrees | Xtep |
+| Peak Sport | Mountain Hardwear | Black Diamond | Outdoor Voices | Diadora |
 
 ## System Architecture
 
