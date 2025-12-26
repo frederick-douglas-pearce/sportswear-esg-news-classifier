@@ -449,17 +449,20 @@ Environment variables:
 - Incidental references in articles about other companies
 
 **Potentially affected historical data:**
-- Articles labeled before 2025-12-26 00:13:57 UTC may include false positives under the new definition
+- Articles with `labeled` or `skipped` status before 2025-12-26 00:13:57 UTC may include false positives under the new definition
+- `labeled` articles: May have ESG labels for articles that aren't primarily about the brand
+- `skipped` articles: May have been skipped (no ESG content) when they should be `false_positive`
 - Particularly affected: stock price/trading articles for Puma, Anta, 361 Degrees, etc.
 
-**Query to identify articles labeled before this change:**
+**Query to identify articles processed before this change:**
 ```sql
+-- Count by status
 SELECT COUNT(*), labeling_status
 FROM articles
 WHERE labeled_at < '2025-12-26 00:13:57+00'
 GROUP BY labeling_status;
 
--- Find potentially mislabeled stock/financial articles
+-- Find potentially mislabeled stock/financial articles (labeled)
 SELECT a.title, a.source_name, bl.brand, a.labeled_at
 FROM articles a
 JOIN brand_labels bl ON bl.article_id = a.id
@@ -469,6 +472,21 @@ AND (
     a.title ILIKE '%shares%' OR
     a.title ILIKE '%trading%' OR
     a.title ILIKE '%short interest%'
+)
+ORDER BY a.labeled_at DESC;
+
+-- Find skipped articles that may be false positives
+SELECT a.title, a.source_name, a.brands_mentioned, a.labeled_at
+FROM articles a
+WHERE a.labeling_status = 'skipped'
+AND a.labeled_at < '2025-12-26 00:13:57+00'
+AND (
+    a.title ILIKE '%stock%' OR
+    a.title ILIKE '%shares%' OR
+    a.title ILIKE '%trading%' OR
+    a.title ILIKE '%short interest%' OR
+    a.title ILIKE '%former%' OR
+    a.title ILIKE '%ex-%'
 )
 ORDER BY a.labeled_at DESC;
 ```
