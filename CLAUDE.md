@@ -437,7 +437,27 @@ Environment variables:
 - `ENABLE_PREDICTION_LOGGING` - Enable/disable logging (default: true)
 - `PREDICTION_LOGS_DIR` - Log directory (default: logs/predictions)
 
-## Labeling Prompt Changelog
+## Labeling Pipeline Changelog
+
+### 2025-12-26: Added `skipped_at` Timestamp
+
+**Change**: Added `skipped_at` column to articles table to track when articles are marked as skipped.
+
+**Why**: Previously, skipped articles had NULL `labeled_at` timestamps, making it impossible to determine when they were processed. The new `skipped_at` field enables:
+- Tracking when articles were skipped for future relabeling
+- Filtering skipped articles by date if labeling criteria change
+- Better data lineage for ML training data
+
+**Files changed**:
+- `src/data_collection/models.py`: Added `skipped_at` column to Article model
+- `src/labeling/database.py`: Updated `update_article_labeling_status` to set `skipped_at`
+
+**Migration**: Run this SQL to add the column to existing databases:
+```sql
+ALTER TABLE articles ADD COLUMN skipped_at TIMESTAMP WITH TIME ZONE;
+```
+
+---
 
 ### 2025-12-26: Added Tangential Brand Mention Guidance
 

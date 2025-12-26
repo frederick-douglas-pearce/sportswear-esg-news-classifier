@@ -877,6 +877,9 @@ Stores article metadata from API + full scraped content + future embeddings:
 | `source_name` | String | News source name |
 | `brands_mentioned` | Array | Detected brand names |
 | `scrape_status` | String | pending/success/failed |
+| `labeling_status` | String | pending/labeled/skipped/false_positive/unlabelable |
+| `labeled_at` | DateTime | Timestamp when article was labeled |
+| `skipped_at` | DateTime | Timestamp when article was skipped (for future relabeling) |
 | `embedding` | Vector(1536) | For future semantic search |
 
 ### Collection Runs Table

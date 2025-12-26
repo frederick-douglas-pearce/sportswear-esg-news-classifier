@@ -64,6 +64,7 @@ class Article(Base):
     labeling_status = Column(String(20), default="pending")  # pending, chunked, embedded, labeled, reviewed, skipped
     labeling_error = Column(Text)
     labeled_at = Column(DateTime(timezone=True))
+    skipped_at = Column(DateTime(timezone=True))  # Timestamp when article was skipped (for future relabeling)
 
     # Relationships
     chunks = relationship("ArticleChunk", back_populates="article", cascade="all, delete-orphan")

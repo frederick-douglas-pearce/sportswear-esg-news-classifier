@@ -233,6 +233,8 @@ class LabelingDatabase:
             article.labeling_error = error
             if status == "labeled":
                 article.labeled_at = datetime.now(timezone.utc)
+            elif status == "skipped":
+                article.skipped_at = datetime.now(timezone.utc)
 
     def create_labeling_run(
         self, session: Session, config: dict[str, Any] | None = None
