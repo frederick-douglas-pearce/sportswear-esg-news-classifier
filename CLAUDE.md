@@ -451,7 +451,11 @@ Environment variables:
 - `is_sportswear_brand: false` → Brand name refers to something else (Puma animal, Patagonia region)
 - `is_sportswear_brand: true` (or omit) → Article is about the sportswear brand, even without ESG content
 
-**Database fix**: One Timberland boot sale article was corrected from `false_positive` to `skipped`.
+**Database fixes**:
+- Timberland boot sale article: `false_positive` → `skipped`
+- Black Diamond headlamp review: `false_positive` → `skipped`
+
+**Also fixed**: Black Diamond Equipment (climbing/outdoor gear) was incorrectly listed in BRAND_NAME_CONFLICTS as a false positive, but it IS the brand we're tracking. Updated to list only true false positives (power company, gemstone, ski run difficulty).
 
 ---
 
