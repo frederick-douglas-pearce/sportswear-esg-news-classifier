@@ -75,7 +75,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'Columbia Sportswear',  # Columbia University, Columbia Pictures
         'Black Diamond',  # Black Diamond power company, mining company
         'New Balance',  # "new balance" in political/diplomatic contexts
-        'Converse',   # "converse" as verb (to talk)
+        'Converse',   # "converse" as verb (to talk), Converse TX (city)
         'Timberland', # Timberland as wilderness/forest reference
     ]
 

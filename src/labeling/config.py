@@ -161,6 +161,11 @@ BRAND_NAME_CONFLICTS = {
         "Decathlon Management (investment management company)",
         "Only Decathlon (French sporting goods retailer) articles about stores, products, or sports equipment are valid",
     ],
+    "Converse": [
+        "converse (verb meaning to talk/communicate)",
+        "Converse, Texas (city near San Antonio)",
+        "Converse County (Wyoming)",
+    ],
 }
 
 # System prompt template for Claude labeling (brand list populated dynamically)
