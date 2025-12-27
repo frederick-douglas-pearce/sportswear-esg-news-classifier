@@ -227,23 +227,31 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 5. If a brand is only briefly mentioned without substantive ESG-related content, do not assign categories for that brand.
 6. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0).
 
-## CRITICAL: Tangential Brand Mentions (False Positives)
+## CRITICAL: Understanding is_sportswear_brand
 
-Even when a brand name correctly refers to the sportswear company, you must verify the article is ACTUALLY ABOUT that brand's activities. Treat the following as FALSE POSITIVES (set `is_sportswear_brand: false`):
+The `is_sportswear_brand` field indicates whether the brand name refers to the SPORTSWEAR/APPAREL COMPANY. This is about IDENTITY, not content.
 
-**Biographical/Resume Mentions:**
-- Former executives now working at other companies (e.g., "John Smith, former VP at Nike, joins XYZ Corp")
-- Board member backgrounds listing prior company affiliations
-- Career histories in profiles about people who no longer work at the brand
+**Set `is_sportswear_brand: false` ONLY when the brand name refers to something ELSE:**
+- Puma the animal (not Puma sportswear)
+- Patagonia the geographic region (not Patagonia outdoor apparel)
+- "Vans" meaning vehicles (not Vans footwear)
+- Black Diamond Equipment for climbing gear (not sportswear)
 
-**Incidental/Tangential References:**
-- Articles about other companies that briefly mention a sportswear brand for comparison
-- News about acquisitions/investments where the brand is mentioned only as historical context
-- Industry reports where the brand appears in a list but has no substantive coverage
+**Set `is_sportswear_brand: true` (or omit the brand) when the article IS about the sportswear brand:**
+- Product announcements, reviews, sales (→ true, but no ESG categories apply)
+- Store openings, sponsorships, athlete signings (→ true, but no ESG categories apply)
+- Financial articles ABOUT the sportswear company's business (→ true, check for governance content)
 
-**Key Test:** Ask yourself: Is this article primarily ABOUT the sportswear brand's current activities, products, or ESG initiatives? If the answer is NO - if the brand is only mentioned as background context, historical reference, or biographical detail - set `is_sportswear_brand: false` and explain in `not_sportswear_reason`.
+**Tangential Mentions (still set `is_sportswear_brand: false`):**
+- Former executives now at other companies (article is about the OTHER company)
+- Brand mentioned only as biographical context or comparison
+- Industry reports where brand appears in a list without substantive coverage
 
-Example: An article titled 'Battery Company Appoints Former Skechers Executive to Board' is NOT about Skechers - it's about the battery company. Even though Skechers correctly refers to the sportswear brand, it should be marked as `is_sportswear_brand: false` with reason: 'Brand mentioned only as biographical context for an executive now working at a different company.'"""
+**Key Distinction:**
+- "Timberland boots on sale" → `is_sportswear_brand: true` (it's about Timberland products), but omit from brand_analyses since no ESG content
+- "Timberland forests need protection" → `is_sportswear_brand: false` (referring to forests, not the brand)
+
+**When in doubt:** If the article is genuinely ABOUT the sportswear brand's products, stores, or business activities (even without ESG content), set `is_sportswear_brand: true` and either assign no ESG categories or omit the brand from the response. Reserve `is_sportswear_brand: false` for cases where the brand name refers to something completely different."""
 
 # Build the system prompt with the current brand list
 LABELING_SYSTEM_PROMPT = _LABELING_SYSTEM_PROMPT_TEMPLATE.format(
