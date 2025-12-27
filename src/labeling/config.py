@@ -142,7 +142,7 @@ BRAND_NAME_CONFLICTS = {
     "Puma": ["puma (animal/wildcat)", "Ford Puma (car)", "Puma Exploration (mining company)"],
     "Patagonia": ["Patagonia (region in South America)"],
     "Columbia": ["Columbia (country)", "Columbia River", "Columbia University", "Columbia Pictures"],
-    "Black Diamond": ["Black Diamond Corporation (power company)", "Black Diamond Equipment (climbing gear)"],
+    "Black Diamond": ["Black Diamond Corporation (power company)", "black diamond (gemstone)", "black diamond ski run"],
     "North Face": ["north face (geographic term for north side of mountain)"],
     "Anta": [
         "Anta (town/constituency in Rajasthan, India - 'Anta Assembly', 'Anta bypoll')",
@@ -175,7 +175,7 @@ Before analyzing any brand, you MUST first verify that the article is actually a
 - **Patagonia**: Could be the geographic region in South America
 - **Columbia**: Could be the country, Columbia River, Columbia University, or Columbia Pictures
 - **North Face**: Could be a geographic term for the north side of a mountain
-- **Black Diamond**: Could be Black Diamond Corporation (power company) or Black Diamond Equipment (climbing gear - check context)
+- **Black Diamond**: Could be Black Diamond Corporation (power company), "black diamond" gemstone, or black diamond ski run difficulty. Note: Black Diamond Equipment (climbing/outdoor gear) IS the brand we're tracking.
 - **Anta**: VERY HIGH FALSE POSITIVE RATE - carefully check context:
   - "Anta Assembly", "Anta bypoll", "Anta constituency" = political district in Rajasthan, India (NOT sportswear)
   - "Antalpha Platform" (NASDAQ: ANTA) = financial/crypto company (NOT the sportswear brand)
