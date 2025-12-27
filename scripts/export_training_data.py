@@ -126,8 +126,11 @@ def export_esg_prefilter_data(
     Returns records with:
     - article_id, title, content, has_esg (1/0)
 
-    Positive class (has_esg=1): Articles with labeling_status='labeled'
-    Negative class (has_esg=0): Articles with labeling_status='skipped'
+    Positive class (has_esg=1): Articles with labeling_status='labeled' AND at least
+        one brand_label with an ESG category (environmental, social, governance,
+        or digital_transformation = True)
+    Negative class (has_esg=0): Articles with labeling_status='skipped' OR
+        labeling_status='labeled' but no ESG categories assigned
     """
     records = []
 
@@ -136,7 +139,7 @@ def export_esg_prefilter_data(
     if since:
         base_filter = and_(base_filter, Article.created_at >= since)
 
-    # Positive examples: labeled articles (have ESG content)
+    # Get labeled articles
     labeled_articles = (
         session.query(Article)
         .filter(base_filter)
@@ -145,6 +148,22 @@ def export_esg_prefilter_data(
     )
 
     for article in labeled_articles:
+        # Check if article has any ESG categories assigned
+        has_esg_categories = (
+            session.query(BrandLabel)
+            .filter(BrandLabel.article_id == article.id)
+            .filter(
+                or_(
+                    BrandLabel.environmental == True,
+                    BrandLabel.social == True,
+                    BrandLabel.governance == True,
+                    BrandLabel.digital_transformation == True,
+                )
+            )
+            .first()
+            is not None
+        )
+
         records.append({
             "article_id": str(article.id),
             "title": article.title,
@@ -152,8 +171,8 @@ def export_esg_prefilter_data(
             "brands": article.brands_mentioned or [],
             "source_name": article.source_name,
             "category": article.category or [],
-            "has_esg": 1,
-            "source": "labeled",
+            "has_esg": 1 if has_esg_categories else 0,
+            "source": "labeled" if has_esg_categories else "labeled_no_esg",
         })
 
     # Negative examples: skipped articles (no ESG content)
@@ -271,8 +290,15 @@ def print_stats(records: list[dict], dataset: str) -> None:
     elif dataset == "esg-prefilter":
         has_esg = sum(1 for r in records if r["has_esg"] == 1)
         no_esg = sum(1 for r in records if r["has_esg"] == 0)
+        # Breakdown by source
+        from_labeled = sum(1 for r in records if r["source"] == "labeled")
+        from_labeled_no_esg = sum(1 for r in records if r["source"] == "labeled_no_esg")
+        from_skipped = sum(1 for r in records if r["source"] == "skipped")
         print(f"Has ESG (positive): {has_esg}")
+        print(f"  - from labeled: {from_labeled}")
         print(f"No ESG (negative): {no_esg}")
+        print(f"  - from labeled_no_esg: {from_labeled_no_esg}")
+        print(f"  - from skipped: {from_skipped}")
         print(f"Class ratio: {has_esg}:{no_esg}")
 
     elif dataset == "esg-labels":
