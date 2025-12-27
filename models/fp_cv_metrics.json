@@ -1,18 +1,17 @@
 {
-  "model_name": "HGB_tuned",
-  "cv_f2": 0.9769660231227567,
-  "cv_recall": 0.9814264578213076,
-  "cv_precision": 0.9597567063815858,
-  "cv_f1": 0.9703964607389156,
-  "cv_accuracy": 0.9504506762231745,
-  "cv_pr_auc": 0.9951734726750489,
+  "model_name": "RF_tuned",
+  "cv_f2": 0.9768988725644675,
+  "cv_recall": 0.9879248175497689,
+  "cv_precision": 0.9352876212426775,
+  "cv_f1": 0.9608417093093875,
+  "cv_accuracy": 0.9334809892949428,
+  "cv_pr_auc": 0.9955255919664108,
   "best_params": {
-    "class_weight": null,
-    "l2_regularization": 0.0,
-    "learning_rate": 0.12,
-    "max_depth": 4,
-    "max_iter": 150,
-    "min_samples_leaf": 7
+    "class_weight": "balanced",
+    "max_depth": 15,
+    "min_samples_leaf": 1,
+    "min_samples_split": 4,
+    "n_estimators": 300
   },
   "transformer_method": "tfidf_lsa_ner_proximity",
   "n_folds": 3

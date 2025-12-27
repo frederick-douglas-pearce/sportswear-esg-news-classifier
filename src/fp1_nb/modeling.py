@@ -623,13 +623,16 @@ def tune_feature_transformer(
     base_config: Dict[str, Any],
     param_name: str,
     param_values: List[Any],
-    X_train: pd.Series,
-    y_train: pd.Series,
+    X_fe: pd.Series,
     classifier: Any,
     cv: Any,
+    X_cv: pd.Series,
+    y_cv: np.ndarray,
     scorer: Any,
-    train_source_names: Optional[List[str]] = None,
-    train_categories: Optional[List[str]] = None,
+    fe_source_names: Optional[List[str]] = None,
+    fe_categories: Optional[List[str]] = None,
+    cv_source_names: Optional[List[str]] = None,
+    cv_categories: Optional[List[str]] = None,
     random_state: int = 42,
 ) -> pd.DataFrame:
     """Tune a single hyperparameter for a feature transformer.
@@ -637,18 +640,25 @@ def tune_feature_transformer(
     Evaluates different values of a hyperparameter using cross-validation
     with a specified classifier and scoring function.
 
+    To prevent data leakage, the feature transformer is fitted on training data
+    only, but cross-validation is performed on train+val combined for more
+    reliable estimates.
+
     Args:
         transformer_class: Feature transformer class (e.g., FPFeatureTransformer)
         base_config: Base configuration dictionary for the transformer
         param_name: Name of the hyperparameter to tune
         param_values: List of values to try for the hyperparameter
-        X_train: Training text features (pd.Series)
-        y_train: Training labels (pd.Series)
+        X_fe: Training text features for fitting transformer (pd.Series)
         classifier: Classifier to use for evaluation
         cv: Cross-validation splitter
+        X_cv: Train+val text features for CV evaluation
+        y_cv: Train+val labels for CV evaluation
         scorer: Scoring function (e.g., f2_scorer)
-        train_source_names: Optional source names for metadata features
-        train_categories: Optional categories for metadata features
+        fe_source_names: Optional source names for transformer fitting
+        fe_categories: Optional categories for transformer fitting
+        cv_source_names: Optional source names for CV transformation
+        cv_categories: Optional categories for CV transformation
         random_state: Random seed for reproducibility
 
     Returns:
@@ -663,15 +673,23 @@ def tune_feature_transformer(
         config = base_config.copy()
         config[param_name] = value
 
+        # Fit transformer on training data only (to prevent data leakage)
         transformer = transformer_class(**config, random_state=random_state)
-        X_transformed = transformer.fit_transform(
-            X_train,
-            source_names=train_source_names,
-            categories=train_categories
+        transformer.fit_transform(
+            X_fe,
+            source_names=fe_source_names,
+            categories=fe_categories
+        )
+
+        # Transform train+val data for CV evaluation
+        X_cv_transformed = transformer.transform(
+            X_cv,
+            source_names=cv_source_names,
+            categories=cv_categories
         )
 
         cv_scores = cross_validate(
-            classifier, X_transformed, y_train,
+            classifier, X_cv_transformed, y_cv,
             cv=cv,
             scoring={'f2': scorer, 'recall': 'recall', 'precision': 'precision'},
             return_train_score=False
