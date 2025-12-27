@@ -51,8 +51,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'doc2vec',
         'sentence_transformer',
         'sentence_transformer_ner',  # Sentence embeddings + NER entity type features
+        'sentence_transformer_ner_brands',  # Sentence + NER + brand indicator/summary features
         'sentence_transformer_ner_vocab',  # Sentence + NER + domain vocabulary features
         'sentence_transformer_ner_proximity',  # Sentence + NER + proximity features (corporate/outdoor vocab)
+        'tfidf_lsa_ner_proximity_brands',  # TF-IDF LSA + NER + proximity + brand indicator/summary features
         'hybrid',
     ]
 
@@ -1221,6 +1223,43 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._neg_context_scaler = StandardScaler()
             self._neg_context_scaler.fit(neg_context_features)
 
+        elif self.method == 'tfidf_lsa_ner_proximity_brands':
+            # TF-IDF LSA + NER + proximity + brand features (both indicators and summary)
+            # Enable brand features for this method
+            self.include_brand_indicators = True
+            self.include_brand_summary = True
+            # Fit brand scalers (done earlier, but ensure they're fitted)
+            if self._brand_indicator_scaler is None:
+                brand_indicators = self._compute_brand_indicators(texts)
+                self._brand_indicator_scaler = StandardScaler()
+                self._brand_indicator_scaler.fit(brand_indicators)
+            if self._brand_summary_scaler is None:
+                brand_summary = self._compute_brand_summary(texts)
+                self._brand_summary_scaler = StandardScaler()
+                self._brand_summary_scaler.fit(brand_summary)
+
+            # Same as tfidf_lsa_ner_proximity
+            self._tfidf = self._create_tfidf_word()
+            tfidf_features = self._tfidf.fit_transform(texts)
+
+            self._lsa = TruncatedSVD(
+                n_components=self.lsa_n_components,
+                random_state=self.random_state
+            )
+            self._lsa.fit(tfidf_features)
+
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+
+            proximity_features = self._compute_proximity_features(texts)
+            self._proximity_scaler = StandardScaler()
+            self._proximity_scaler.fit(proximity_features)
+
+            neg_context_features = self._compute_negative_context_features(texts)
+            self._neg_context_scaler = StandardScaler()
+            self._neg_context_scaler.fit(neg_context_features)
+
         elif self.method == 'tfidf_context':
             # Extract context windows around brand mentions
             context_texts = self._extract_all_context_windows(texts)
@@ -1276,6 +1315,26 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             # Sentence embeddings + NER entity type features
             self._fit_sentence_transformer()
             # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+
+        elif self.method == 'sentence_transformer_ner_brands':
+            # Sentence embeddings + NER + brand features (both indicators and summary)
+            # Enable brand features for this method
+            self.include_brand_indicators = True
+            self.include_brand_summary = True
+            # Fit brand scalers (done earlier, but ensure they're fitted)
+            if self._brand_indicator_scaler is None:
+                brand_indicators = self._compute_brand_indicators(texts)
+                self._brand_indicator_scaler = StandardScaler()
+                self._brand_indicator_scaler.fit(brand_indicators)
+            if self._brand_summary_scaler is None:
+                brand_summary = self._compute_brand_summary(texts)
+                self._brand_summary_scaler = StandardScaler()
+                self._brand_summary_scaler.fit(brand_summary)
+            # Fit sentence transformer and NER scaler
+            self._fit_sentence_transformer()
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
@@ -1479,6 +1538,20 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             features = np.hstack([lsa_features, ner_scaled, proximity_scaled, neg_context_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
+        elif self.method == 'tfidf_lsa_ner_proximity_brands':
+            # TF-IDF LSA + NER + proximity + brand features (53-dim)
+            # Brand features are added by _stack_optional_features since include_brand_* flags are True
+            tfidf_features = self._tfidf.transform(texts)
+            lsa_features = self._lsa.transform(tfidf_features)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            proximity_features = self._compute_proximity_features(texts)
+            proximity_scaled = self._proximity_scaler.transform(proximity_features)
+            neg_context_features = self._compute_negative_context_features(texts)
+            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+            features = np.hstack([lsa_features, ner_scaled, proximity_scaled, neg_context_scaled])
+            return _stack_optional_features(features, is_sparse=False)
+
         elif self.method == 'tfidf_context':
             # Extract context windows and transform
             context_texts = self._extract_all_context_windows(texts)
@@ -1527,6 +1600,15 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         elif self.method == 'sentence_transformer_ner':
             # Sentence embeddings (384-dim) + scaled NER features (6-dim)
+            sentence_features = self._transform_sentence_transformer(texts)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            features = np.hstack([sentence_features, ner_scaled])
+            return _stack_optional_features(features, is_sparse=False)
+
+        elif self.method == 'sentence_transformer_ner_brands':
+            # Sentence embeddings (384-dim) + scaled NER features (6-dim) + brand features (53-dim)
+            # Brand features are added by _stack_optional_features since include_brand_* flags are True
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
