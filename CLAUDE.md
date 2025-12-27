@@ -439,6 +439,22 @@ Environment variables:
 
 ## Labeling Pipeline Changelog
 
+### 2025-12-27: Clarified is_sportswear_brand Semantics
+
+**Change**: Updated `src/labeling/config.py` prompt to clarify that `is_sportswear_brand` is about IDENTITY (does the brand name refer to the sportswear company?), not CONTENT (does the article have ESG content?).
+
+**Why**: Articles about sportswear brand products (sales, reviews, announcements) were incorrectly marked as `false_positive` instead of `skipped`. This matters because:
+- `skipped` articles remain available for future labeling (e.g., if we add a "product" category)
+- `false_positive` articles are excluded from all future consideration
+
+**Correct classification:**
+- `is_sportswear_brand: false` → Brand name refers to something else (Puma animal, Patagonia region)
+- `is_sportswear_brand: true` (or omit) → Article is about the sportswear brand, even without ESG content
+
+**Database fix**: One Timberland boot sale article was corrected from `false_positive` to `skipped`.
+
+---
+
 ### 2025-12-26: Added `skipped_at` Timestamp
 
 **Change**: Added `skipped_at` column to articles table to track when articles are marked as skipped.
