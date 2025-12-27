@@ -63,6 +63,20 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
     # Sportswear indicators (organizations, products, financial terms)
     SW_ENTITY_TYPES = ['ORG', 'PRODUCT', 'MONEY', 'PERCENT', 'CARDINAL']
 
+    # Brands with high false positive rates due to name collisions
+    # These brands have names that commonly appear in non-sportswear contexts
+    PROBLEMATIC_BRANDS = [
+        'Vans',       # "vans" = vehicles (police vans, delivery vans, etc.)
+        'Anta',       # "Anta" substring of "Santa", "Santana", etc.
+        'Puma',       # Puma the animal, Ford Puma car, Puma helicopter
+        'Patagonia',  # Patagonia region in South America
+        'Columbia Sportswear',  # Columbia University, Columbia Pictures
+        'Black Diamond',  # Black Diamond power company, mining company
+        'New Balance',  # "new balance" in political/diplomatic contexts
+        'Converse',   # "converse" as verb (to talk)
+        'Timberland', # Timberland as wilderness/forest reference
+    ]
+
     # POS patterns that suggest sportswear context
     SPORTSWEAR_POS_PATTERNS = [
         ('VBG', 'NN'),   # "wearing shoes"
@@ -327,6 +341,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         # Metadata parameters
         include_metadata_in_text: bool = True,
         include_metadata_features: bool = True,
+        # Brand features
+        include_brand_indicators: bool = False,  # Multi-hot encoding per brand (50 features)
+        include_brand_summary: bool = False,  # Aggregate brand stats (3 features)
         # General
         random_state: int = 42,
     ):
@@ -355,6 +372,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             proximity_window_size: Words to check for keyword proximity
             include_metadata_in_text: Whether to prepend source/category to text
             include_metadata_features: Whether to add discrete metadata features
+            include_brand_indicators: Whether to add multi-hot brand encoding (50 features)
+            include_brand_summary: Whether to add aggregate brand stats (3 features)
             random_state: Random seed for reproducibility
         """
         self.method = method
@@ -379,6 +398,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self.proximity_window_size = proximity_window_size
         self.include_metadata_in_text = include_metadata_in_text
         self.include_metadata_features = include_metadata_features
+        self.include_brand_indicators = include_brand_indicators
+        self.include_brand_summary = include_brand_summary
         self.random_state = random_state
 
         # Fitted components (set during fit)
@@ -395,6 +416,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self._ner_scaler = None  # For scaling NER features
         self._pos_scaler = None  # For scaling POS features
         self._metadata_scaler = None  # For scaling metadata features
+        self._brand_indicator_scaler = None  # For scaling multi-hot brand indicators
+        self._brand_summary_scaler = None  # For scaling brand summary features
         self._is_fitted = False
 
     def _validate_method(self) -> None:
@@ -724,6 +747,74 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         return np.array(features_list)
 
+    def _compute_brand_indicators(self, texts: List[str]) -> np.ndarray:
+        """Compute multi-hot brand indicator features for all texts.
+
+        Creates a binary indicator for each brand in the BRANDS list,
+        allowing the model to learn brand-specific patterns.
+
+        Features computed (per sample):
+        - One indicator per brand in BRANDS list (50 binary features)
+
+        This is particularly useful for tree-based models that can learn
+        to apply different rules for problematic brands (Vans, Anta, Puma, etc.)
+        that have high false positive rates due to name collisions.
+
+        Args:
+            texts: List of text strings
+
+        Returns:
+            numpy array of shape (n_samples, len(BRANDS))
+        """
+        features_list = []
+
+        for text in texts:
+            # Extract brands mentioned in this text
+            mentioned_brands = set(self._extract_brands_from_text(text))
+
+            # Create multi-hot encoding for each brand
+            brand_indicators = [
+                1 if brand in mentioned_brands else 0
+                for brand in BRANDS
+            ]
+
+            features_list.append(brand_indicators)
+
+        return np.array(features_list)
+
+    def _compute_brand_summary(self, texts: List[str]) -> np.ndarray:
+        """Compute aggregate brand summary features for all texts.
+
+        Creates summary statistics about brand mentions:
+        - n_brands: Count of brands mentioned
+        - has_problematic_brand: Binary flag if any PROBLEMATIC_BRANDS mentioned
+        - n_problematic_brands: Count of problematic brands mentioned
+
+        This is a compact representation (3 features) that captures the
+        key brand-related signals without adding 50 dimensions.
+
+        Args:
+            texts: List of text strings
+
+        Returns:
+            numpy array of shape (n_samples, 3)
+        """
+        features_list = []
+
+        for text in texts:
+            # Extract brands mentioned in this text
+            mentioned_brands = set(self._extract_brands_from_text(text))
+
+            # Aggregate features
+            n_brands = len(mentioned_brands)
+            problematic_mentioned = mentioned_brands.intersection(set(self.PROBLEMATIC_BRANDS))
+            has_problematic = 1 if problematic_mentioned else 0
+            n_problematic = len(problematic_mentioned)
+
+            features_list.append([n_brands, has_problematic, n_problematic])
+
+        return np.array(features_list)
+
     def _load_spacy_model(self) -> None:
         """Load spaCy model for NER/POS features.
 
@@ -1033,6 +1124,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._metadata_scaler = StandardScaler()
             self._metadata_scaler.fit(metadata_features)
 
+        # Fit brand indicator scaler if enabled
+        if self.include_brand_indicators:
+            brand_indicators = self._compute_brand_indicators(texts)
+            self._brand_indicator_scaler = StandardScaler()
+            self._brand_indicator_scaler.fit(brand_indicators)
+
+        # Fit brand summary scaler if enabled
+        if self.include_brand_summary:
+            brand_summary = self._compute_brand_summary(texts)
+            self._brand_summary_scaler = StandardScaler()
+            self._brand_summary_scaler.fit(brand_summary)
+
         if self.method == 'tfidf_word':
             self._tfidf = self._create_tfidf_word()
             self._tfidf.fit(texts)
@@ -1298,24 +1401,49 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
                 )
             metadata_scaled = self._metadata_scaler.transform(metadata_features)
 
+        # Compute brand indicator features if enabled and scaler was fitted
+        brand_indicators_scaled = None
+        if self.include_brand_indicators and self._brand_indicator_scaler is not None:
+            brand_indicators = self._compute_brand_indicators(texts)
+            brand_indicators_scaled = self._brand_indicator_scaler.transform(brand_indicators)
+
+        # Compute brand summary features if enabled and scaler was fitted
+        brand_summary_scaled = None
+        if self.include_brand_summary and self._brand_summary_scaler is not None:
+            brand_summary = self._compute_brand_summary(texts)
+            brand_summary_scaled = self._brand_summary_scaler.transform(brand_summary)
+
+        # Helper to stack optional features (metadata + brand indicators + brand summary)
+        def _stack_optional_features(features, is_sparse=False):
+            """Stack metadata and brand features onto main features."""
+            optional_features = []
+            if metadata_scaled is not None:
+                optional_features.append(metadata_scaled)
+            if brand_indicators_scaled is not None:
+                optional_features.append(brand_indicators_scaled)
+            if brand_summary_scaled is not None:
+                optional_features.append(brand_summary_scaled)
+
+            if not optional_features:
+                return features
+
+            if is_sparse:
+                return sparse.hstack([features] + optional_features).tocsr()
+            else:
+                return np.hstack([features] + optional_features)
+
         if self.method == 'tfidf_word':
             features = self._tfidf.transform(texts)
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_char':
             features = self._tfidf_char.transform(texts)
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_lsa':
             tfidf_features = self._tfidf.transform(texts)
             features = self._lsa.transform(tfidf_features)
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner':
             # TF-IDF LSA + NER entity type features
@@ -1325,9 +1453,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
             features = np.hstack([lsa_features, ner_scaled])
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_proximity':
             # TF-IDF LSA + proximity features (positive + negative context)
@@ -1338,9 +1464,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
             features = np.hstack([lsa_features, proximity_scaled, neg_context_scaled])
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner_proximity':
             # TF-IDF LSA + NER + proximity features
@@ -1353,17 +1477,13 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
             features = np.hstack([lsa_features, ner_scaled, proximity_scaled, neg_context_scaled])
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_context':
             # Extract context windows and transform
             context_texts = self._extract_all_context_windows(texts)
             features = self._tfidf.transform(context_texts)
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_proximity':
             # TF-IDF + scaled proximity features
@@ -1371,9 +1491,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
             features = sparse.hstack([tfidf_features, proximity_scaled]).tocsr()
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_doc2vec':
             # TF-IDF + scaled Doc2Vec embeddings
@@ -1381,9 +1499,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             doc2vec_features = self._transform_doc2vec(texts)
             doc2vec_scaled = self._doc2vec_scaler.transform(doc2vec_features)
             features = sparse.hstack([tfidf_features, doc2vec_scaled]).tocsr()
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_ner':
             # TF-IDF + scaled NER entity type features
@@ -1391,9 +1507,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
             features = sparse.hstack([tfidf_features, ner_scaled]).tocsr()
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_pos':
             # TF-IDF + scaled POS pattern features
@@ -1401,21 +1515,15 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             pos_features = self._compute_pos_features(texts)
             pos_scaled = self._pos_scaler.transform(pos_features)
             features = sparse.hstack([tfidf_features, pos_scaled]).tocsr()
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'doc2vec':
             features = self._transform_doc2vec(texts)
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer':
             features = self._transform_sentence_transformer(texts)
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner':
             # Sentence embeddings (384-dim) + scaled NER features (6-dim)
@@ -1423,9 +1531,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
             features = np.hstack([sentence_features, ner_scaled])
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_vocab':
             # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled vocab features
@@ -1435,9 +1541,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             vocab_features = self._compute_vocab_features(texts)
             vocab_scaled = self._vocab_scaler.transform(vocab_features)
             features = np.hstack([sentence_features, ner_scaled, vocab_scaled])
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_proximity':
             # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled proximity (4-dim) + neg context (4-dim)
@@ -1449,15 +1553,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
             features = np.hstack([sentence_features, ner_scaled, proximity_scaled, neg_context_scaled])
-            if metadata_scaled is not None:
-                return np.hstack([features, metadata_scaled])
-            return features
+            return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'hybrid':
             features = self._transform_hybrid(texts)
-            if metadata_scaled is not None:
-                return sparse.hstack([features, metadata_scaled]).tocsr()
-            return features
+            return _stack_optional_features(features, is_sparse=True)
 
         raise ValueError(f"Unknown method: {self.method}")
 
@@ -1637,6 +1737,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             'proximity_window_size': self.proximity_window_size,
             'include_metadata_in_text': self.include_metadata_in_text,
             'include_metadata_features': self.include_metadata_features,
+            'include_brand_indicators': self.include_brand_indicators,
+            'include_brand_summary': self.include_brand_summary,
             'random_state': self.random_state,
         }
 
