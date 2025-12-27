@@ -1117,6 +1117,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         """
         self._validate_method()
 
+        # For *_brands methods, enable brand features before any processing
+        if self.method.endswith('_brands'):
+            self.include_brand_indicators = True
+            self.include_brand_summary = True
+
         # Preprocess texts
         texts = self._preprocess_texts(X)
 
@@ -1225,19 +1230,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         elif self.method == 'tfidf_lsa_ner_proximity_brands':
             # TF-IDF LSA + NER + proximity + brand features (both indicators and summary)
-            # Enable brand features for this method
-            self.include_brand_indicators = True
-            self.include_brand_summary = True
-            # Fit brand scalers (done earlier, but ensure they're fitted)
-            if self._brand_indicator_scaler is None:
-                brand_indicators = self._compute_brand_indicators(texts)
-                self._brand_indicator_scaler = StandardScaler()
-                self._brand_indicator_scaler.fit(brand_indicators)
-            if self._brand_summary_scaler is None:
-                brand_summary = self._compute_brand_summary(texts)
-                self._brand_summary_scaler = StandardScaler()
-                self._brand_summary_scaler.fit(brand_summary)
-
+            # Brand scalers are fitted at start of fit() due to endswith('_brands') check
             # Same as tfidf_lsa_ner_proximity
             self._tfidf = self._create_tfidf_word()
             tfidf_features = self._tfidf.fit_transform(texts)
@@ -1321,19 +1314,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         elif self.method == 'sentence_transformer_ner_brands':
             # Sentence embeddings + NER + brand features (both indicators and summary)
-            # Enable brand features for this method
-            self.include_brand_indicators = True
-            self.include_brand_summary = True
-            # Fit brand scalers (done earlier, but ensure they're fitted)
-            if self._brand_indicator_scaler is None:
-                brand_indicators = self._compute_brand_indicators(texts)
-                self._brand_indicator_scaler = StandardScaler()
-                self._brand_indicator_scaler.fit(brand_indicators)
-            if self._brand_summary_scaler is None:
-                brand_summary = self._compute_brand_summary(texts)
-                self._brand_summary_scaler = StandardScaler()
-                self._brand_summary_scaler.fit(brand_summary)
-            # Fit sentence transformer and NER scaler
+            # Brand scalers are fitted at start of fit() due to endswith('_brands') check
             self._fit_sentence_transformer()
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
@@ -1441,6 +1422,12 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         """
         if not self._is_fitted:
             raise ValueError("Transformer has not been fitted. Call fit() first.")
+
+        # For *_brands methods, ensure brand features are enabled
+        # (needed in case estimator was cloned by sklearn)
+        if self.method.endswith('_brands'):
+            self.include_brand_indicators = True
+            self.include_brand_summary = True
 
         # Preprocess texts
         texts = self._preprocess_texts(X)
