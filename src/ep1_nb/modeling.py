@@ -405,7 +405,7 @@ def evaluate_model(
         print(f"\nConfusion Matrix:")
         print(f"  TN: {tn:,}  FP: {fp:,}")
         print(f"  FN: {fn:,}  TP: {tp:,}")
-        print(f"\n{classification_report(y, y_pred, target_names=['Not Sportswear', 'Sportswear'])}")
+        print(f"\n{classification_report(y, y_pred, target_names=['No ESG', 'Has ESG'])}")
         print(f"{'='*60}")
 
     if plot and y_proba is not None:
@@ -437,8 +437,8 @@ def evaluate_model(
         # Confusion Matrix Heatmap
         import seaborn as sns
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[2],
-                   xticklabels=['Not Sportswear', 'Sportswear'],
-                   yticklabels=['Not Sportswear', 'Sportswear'])
+                   xticklabels=['No ESG', 'Has ESG'],
+                   yticklabels=['No ESG', 'Has ESG'])
         axes[2].set_xlabel('Predicted')
         axes[2].set_ylabel('Actual')
         axes[2].set_title('Confusion Matrix', fontsize=12, fontweight='bold')

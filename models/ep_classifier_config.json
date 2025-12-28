@@ -1,21 +1,21 @@
 {
-  "threshold": 0.5112626182423036,
+  "threshold": 0.5537987645147118,
   "target_recall": 0.99,
   "model_name": "LR_tuned",
   "transformer_method": "tfidf_lsa",
   "best_params": {
-    "C": 0.7,
+    "C": 0.01,
     "class_weight": null,
     "penalty": "l2",
     "solver": "lbfgs"
   },
-  "cv_f2": 0.9374041371305394,
+  "cv_f2": 0.8663658663658663,
   "cv_recall": 1.0,
-  "cv_precision": 0.7497665732959851,
-  "test_f2": 0.9366197183098591,
+  "cv_precision": 0.5645790172642763,
+  "test_f2": 0.8660130718954249,
   "test_recall": 1.0,
-  "test_precision": 0.7471910112359551,
-  "threshold_recall": 0.9924812030075187,
-  "threshold_precision": 0.7457627118644068,
-  "threshold_f2": 0.9308885754583921
+  "test_precision": 0.5638297872340425,
+  "threshold_recall": 0.9905660377358491,
+  "threshold_precision": 0.6287425149700598,
+  "threshold_f2": 0.8883248730964467
 }

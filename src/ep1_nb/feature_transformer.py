@@ -42,6 +42,7 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         'tfidf_lsa_ner',  # TF-IDF LSA + NER entity type features
         'tfidf_lsa_proximity',  # TF-IDF LSA + ESG keyword proximity
         'tfidf_lsa_ner_proximity',  # TF-IDF LSA + NER + proximity features
+        'tfidf_lsa_product',  # TF-IDF LSA + product detection features
         'tfidf_context',  # TF-IDF on context window around ESG keywords
         'tfidf_proximity',  # TF-IDF + keyword proximity features
         'tfidf_doc2vec',  # TF-IDF + Doc2Vec embeddings (lexical + semantic)
@@ -167,6 +168,29 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         # Financial news (non-ESG)
         'stock', 'shares', 'trading', 'earnings', 'revenue',
         'profit', 'quarterly', 'fiscal', 'guidance', 'outlook',
+    ]
+
+    # Product sale/release keywords - strong signal of non-ESG content
+    PRODUCT_SALE_KEYWORDS = [
+        # Sales & deals
+        'on sale', 'sale', 'discount', 'off', 'deal', 'deals',
+        'black friday', 'cyber monday', 'prime day', 'clearance',
+        'promo', 'coupon', 'save', 'savings',
+        # Product releases
+        'release', 'releases', 'release date', 'release info',
+        'launches', 'launch', 'drops', 'dropping', 'just dropped',
+        'new release', 'limited edition', 'exclusive',
+        # Shopping guidance
+        'where to buy', 'how to buy', 'how to get', 'in stock',
+        'available', 'sold out', 'restocked', 'shop now',
+        # Product reviews
+        'review', 'reviews', 'tested', 'rating',
+        'best', 'top', 'favorite', 'recommend',
+        # Sneaker/shoe specific
+        'sneaker', 'sneakers', 'shoe', 'shoes', 'colorway', 'colorways',
+        'running shoe', 'walking shoe', 'hiking boot',
+        # Retail/pricing
+        'retail', 'price', 'msrp', 'cost',
     ]
 
     # Publishers focused on ESG/sustainability content
@@ -352,6 +376,7 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         self._neg_context_scaler = None
         self._doc2vec_scaler = None
         self._ner_scaler = None
+        self._product_scaler = None
         self._metadata_scaler = None
         self._is_fitted = False
 
@@ -615,6 +640,92 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         return np.array(features_list)
 
+    def _compute_product_features(self, texts: List[str]) -> np.ndarray:
+        """Compute product sale/release detection features.
+
+        These features help distinguish product articles from ESG news.
+
+        For each text, computes:
+        - product_keyword_count: Count of PRODUCT_SALE_KEYWORDS found
+        - product_keyword_density: Product keywords per 100 words
+        - is_sale_article: Binary flag for sale-focused content
+        - is_release_article: Binary flag for product release content
+        - is_review_article: Binary flag for product review content
+        - is_shopping_guide: Binary flag for shopping guidance content
+        - product_score: Combined score (higher = more likely product article)
+        - esg_product_ratio: Ratio of ESG keywords to product keywords
+        """
+        features_list = []
+
+        # Pre-compute keyword sets for efficiency
+        sale_keywords = {'sale', 'on sale', 'discount', 'off', 'deal', 'deals',
+                        'black friday', 'cyber monday', 'prime day', 'clearance',
+                        'promo', 'coupon', 'save', 'savings'}
+        release_keywords = {'release', 'releases', 'release date', 'release info',
+                           'launches', 'launch', 'drops', 'dropping', 'just dropped',
+                           'new release', 'limited edition', 'exclusive'}
+        review_keywords = {'review', 'reviews', 'tested', 'rating',
+                          'best', 'top', 'favorite', 'recommend'}
+        shopping_keywords = {'where to buy', 'how to buy', 'how to get', 'in stock',
+                            'available', 'sold out', 'restocked', 'shop now'}
+        product_type_keywords = {'sneaker', 'sneakers', 'shoe', 'shoes',
+                                'colorway', 'colorways', 'running shoe',
+                                'walking shoe', 'hiking boot'}
+
+        esg_set = set(
+            kw.lower() for kw in
+            self.ENVIRONMENTAL_KEYWORDS + self.SOCIAL_KEYWORDS +
+            self.GOVERNANCE_KEYWORDS + self.DIGITAL_KEYWORDS
+        )
+
+        for text in texts:
+            text_lower = text.lower()
+            words = text_lower.split()
+
+            if not words:
+                features_list.append([0, 0.0, 0, 0, 0, 0, 0.0, 0.5])
+                continue
+
+            # Count product keywords (check for multi-word phrases first)
+            product_count = 0
+            for kw in self.PRODUCT_SALE_KEYWORDS:
+                if kw.lower() in text_lower:
+                    product_count += 1
+
+            # Count ESG keywords
+            esg_count = sum(1 for kw in esg_set if kw in text_lower)
+
+            # Density
+            product_density = (product_count / len(words)) * 100
+
+            # Category flags
+            is_sale = 1 if any(kw in text_lower for kw in sale_keywords) else 0
+            is_release = 1 if any(kw in text_lower for kw in release_keywords) else 0
+            is_review = 1 if any(kw in text_lower for kw in review_keywords) else 0
+            is_shopping = 1 if any(kw in text_lower for kw in shopping_keywords) else 0
+            has_product_type = 1 if any(kw in text_lower for kw in product_type_keywords) else 0
+
+            # Combined product score (weighted sum)
+            product_score = (
+                is_sale * 2 +       # Strong indicator
+                is_release * 1.5 +  # Moderate indicator
+                is_review * 1.5 +   # Moderate indicator
+                is_shopping * 2 +   # Strong indicator
+                has_product_type * 1  # Weak indicator
+            )
+
+            # ESG to product ratio
+            total = esg_count + product_count
+            ratio = esg_count / total if total > 0 else 0.5
+
+            features_list.append([
+                product_count, product_density,
+                is_sale, is_release, is_review, is_shopping,
+                product_score, ratio
+            ])
+
+        return np.array(features_list)
+
     def _load_spacy_model(self) -> None:
         """Load spaCy model for NER features."""
         if self._spacy_model is None:
@@ -811,6 +922,27 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._neg_context_scaler = StandardScaler()
             self._neg_context_scaler.fit(neg_context_features)
 
+        elif self.method == 'tfidf_lsa_product':
+            self._tfidf = self._create_tfidf_word()
+            tfidf_features = self._tfidf.fit_transform(texts)
+            self._lsa = TruncatedSVD(
+                n_components=self.lsa_n_components,
+                random_state=self.random_state
+            )
+            self._lsa.fit(tfidf_features)
+            product_features = self._compute_product_features(texts)
+            self._product_scaler = StandardScaler()
+            self._product_scaler.fit(product_features)
+            vocab_features = self._compute_vocab_features(texts)
+            self._vocab_scaler = StandardScaler()
+            self._vocab_scaler.fit(vocab_features)
+            proximity_features = self._compute_proximity_features(texts)
+            self._proximity_scaler = StandardScaler()
+            self._proximity_scaler.fit(proximity_features)
+            neg_context_features = self._compute_negative_context_features(texts)
+            self._neg_context_scaler = StandardScaler()
+            self._neg_context_scaler.fit(neg_context_features)
+
         elif self.method == 'tfidf_context':
             context_texts = self._extract_all_context_windows(texts)
             self._tfidf = self._create_tfidf_word()
@@ -994,6 +1126,25 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
             features = np.hstack([lsa_features, ner_scaled, proximity_scaled, neg_context_scaled])
+            if metadata_scaled is not None:
+                return np.hstack([features, metadata_scaled])
+            return features
+
+        elif self.method == 'tfidf_lsa_product':
+            tfidf_features = self._tfidf.transform(texts)
+            lsa_features = self._lsa.transform(tfidf_features)
+            product_features = self._compute_product_features(texts)
+            product_scaled = self._product_scaler.transform(product_features)
+            vocab_features = self._compute_vocab_features(texts)
+            vocab_scaled = self._vocab_scaler.transform(vocab_features)
+            proximity_features = self._compute_proximity_features(texts)
+            proximity_scaled = self._proximity_scaler.transform(proximity_features)
+            neg_context_features = self._compute_negative_context_features(texts)
+            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+            features = np.hstack([
+                lsa_features, product_scaled, vocab_scaled,
+                proximity_scaled, neg_context_scaled
+            ])
             if metadata_scaled is not None:
                 return np.hstack([features, metadata_scaled])
             return features

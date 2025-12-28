@@ -3,144 +3,144 @@
     "name": "tfidf_lsa",
     "classifier": "LogisticRegression",
     "n_features": 100,
-    "cv_f2": 0.9327077792211375,
-    "cv_f2_std": 0.006178053639871399,
-    "cv_recall": 0.9886791645266221,
-    "cv_precision": 0.760624974537014
+    "cv_f2": 0.8323438532634965,
+    "cv_f2_std": 0.022475718136659995,
+    "cv_recall": 0.8419238837278993,
+    "cv_precision": 0.7970913757741415
   },
   {
     "name": "tfidf_lsa",
     "classifier": "LinearSVM",
     "n_features": 100,
-    "cv_f2": 0.9173835930694824,
-    "cv_f2_std": 0.006955082964558272,
-    "cv_recall": 0.9471837014209896,
-    "cv_precision": 0.8150139810539905
+    "cv_f2": 0.8194581039659665,
+    "cv_f2_std": 0.021075181633131594,
+    "cv_recall": 0.8207471781040855,
+    "cv_precision": 0.8153581482639974
   },
   {
     "name": "tfidf_lsa",
     "classifier": "RandomForest",
     "n_features": 100,
-    "cv_f2": 0.9229402855144443,
-    "cv_f2_std": 0.011423170636500897,
-    "cv_recall": 0.9679207327512412,
-    "cv_precision": 0.7784762781258481
+    "cv_f2": 0.8113254190834024,
+    "cv_f2_std": 0.03614036469748756,
+    "cv_recall": 0.8041820663936337,
+    "cv_precision": 0.8461225931814167
   },
   {
     "name": "tfidf_lsa",
     "classifier": "HistGradientBoosting",
     "n_features": 100,
-    "cv_f2": 0.8975359859452774,
-    "cv_f2_std": 0.017401525267711635,
-    "cv_recall": 0.9226694915254238,
-    "cv_precision": 0.8095212762740897
+    "cv_f2": 0.804614924662934,
+    "cv_f2_std": 0.03650020387873409,
+    "cv_recall": 0.804148769686678,
+    "cv_precision": 0.8079918990496963
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "LogisticRegression",
     "n_features": 114,
-    "cv_f2": 0.9209252332229679,
-    "cv_f2_std": 0.003739066394077911,
-    "cv_recall": 0.9622710152371171,
-    "cv_precision": 0.7858950893880267
+    "cv_f2": 0.8038624467109169,
+    "cv_f2_std": 0.0352476910152636,
+    "cv_recall": 0.8065128358805315,
+    "cv_precision": 0.7954326975595901
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "LinearSVM",
     "n_features": 114,
-    "cv_f2": 0.9190378343208372,
-    "cv_f2_std": 0.0038759018903219674,
-    "cv_recall": 0.9509394795411744,
-    "cv_precision": 0.8104789141086782
+    "cv_f2": 0.8174910575554776,
+    "cv_f2_std": 0.02435811998188488,
+    "cv_recall": 0.8159857490094229,
+    "cv_precision": 0.8236201048411965
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "RandomForest",
     "n_features": 114,
-    "cv_f2": 0.9222826130358226,
-    "cv_f2_std": 0.011115286981190386,
-    "cv_recall": 0.9679100325286766,
-    "cv_precision": 0.7760788311247028
+    "cv_f2": 0.8289271520327631,
+    "cv_f2_std": 0.03594165031095902,
+    "cv_recall": 0.83012020111211,
+    "cv_precision": 0.8265730008195762
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "HistGradientBoosting",
     "n_features": 114,
-    "cv_f2": 0.9010265389584527,
-    "cv_f2_std": 0.012913861087378029,
-    "cv_recall": 0.9245313302516692,
-    "cv_precision": 0.8179955430448042
+    "cv_f2": 0.8144723455989599,
+    "cv_f2_std": 0.030818723561473912,
+    "cv_recall": 0.8136216828155695,
+    "cv_precision": 0.8197662697662698
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LogisticRegression",
     "n_features": 390,
-    "cv_f2": 0.9099212310700269,
-    "cv_f2_std": 0.004090632729207687,
-    "cv_recall": 0.9528334189351139,
-    "cv_precision": 0.7710587957267273
+    "cv_f2": 0.8267583183901176,
+    "cv_f2_std": 0.02916181169172051,
+    "cv_recall": 0.8324842673059635,
+    "cv_precision": 0.8061550496410347
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LinearSVM",
     "n_features": 390,
-    "cv_f2": 0.9079388199378894,
-    "cv_f2_std": 0.002873385669947566,
-    "cv_recall": 0.9377461051189865,
-    "cv_precision": 0.805802852541983
+    "cv_f2": 0.8259322695446092,
+    "cv_f2_std": 0.014581335441055037,
+    "cv_recall": 0.837245696400626,
+    "cv_precision": 0.7836601307189542
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "RandomForest",
     "n_features": 390,
-    "cv_f2": 0.9295775189550176,
-    "cv_f2_std": 0.0033214688082198224,
-    "cv_recall": 0.9811355076185585,
-    "cv_precision": 0.7681397048655696
+    "cv_f2": 0.8261289730163325,
+    "cv_f2_std": 0.02494080794615736,
+    "cv_recall": 0.8395764658875237,
+    "cv_precision": 0.7776424579493634
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "HistGradientBoosting",
     "n_features": 390,
-    "cv_f2": 0.8904535659681535,
-    "cv_f2_std": 0.003954429051590689,
-    "cv_recall": 0.9169876733436055,
-    "cv_precision": 0.7981205164992827
+    "cv_f2": 0.8025133410272344,
+    "cv_f2_std": 0.011170873085907255,
+    "cv_recall": 0.8113075616821496,
+    "cv_precision": 0.7700948909201374
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "LogisticRegression",
     "n_features": 401,
-    "cv_f2": 0.9051227527804602,
-    "cv_f2_std": 0.010972342926288401,
-    "cv_recall": 0.9396400445129259,
-    "cv_precision": 0.7892478791089218
+    "cv_f2": 0.8169597942036676,
+    "cv_f2_std": 0.0316368834625009,
+    "cv_recall": 0.8230779475909834,
+    "cv_precision": 0.7969751237371298
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "LinearSVM",
     "n_features": 401,
-    "cv_f2": 0.9130767854544679,
-    "cv_f2_std": 0.008360338606403936,
-    "cv_recall": 0.9471944016435542,
-    "cv_precision": 0.7982742751955821
+    "cv_f2": 0.8236029126120399,
+    "cv_f2_std": 0.026196480761376397,
+    "cv_recall": 0.8301035527586321,
+    "cv_precision": 0.8011560712086258
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "RandomForest",
     "n_features": 401,
-    "cv_f2": 0.9249433107427191,
-    "cv_f2_std": 0.011939808552906791,
-    "cv_recall": 0.9717300119842492,
-    "cv_precision": 0.7756256524387064
+    "cv_f2": 0.8277664817142089,
+    "cv_f2_std": 0.034053097516496905,
+    "cv_recall": 0.8371957513401925,
+    "cv_precision": 0.7947768281101615
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "HistGradientBoosting",
     "n_features": 401,
-    "cv_f2": 0.8952798457532062,
-    "cv_f2_std": 0.00895265934733158,
-    "cv_recall": 0.9226694915254238,
-    "cv_precision": 0.8003800615676059
+    "cv_f2": 0.8286930665337504,
+    "cv_f2_std": 0.020158886695698965,
+    "cv_recall": 0.8349315752672061,
+    "cv_precision": 0.8057993057993058
   }
 ]

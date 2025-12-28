@@ -213,6 +213,35 @@ If the article is NOT about the sportswear company, set `is_sportswear_brand: fa
 
 **Digital Transformation**: Technology innovation, digital sustainability tools, AI/ML applications, supply chain digitization, e-commerce sustainability, data privacy.
 
+## CRITICAL: ESG News Content vs Product Features
+
+This is the most important distinction for accurate classification. ESG categories should ONLY be assigned when the article's PRIMARY FOCUS is on ESG topics, NOT when ESG-related features are mentioned incidentally in product-focused content.
+
+**Do NOT assign ESG categories to product sale/release/review articles, EVEN IF they mention:**
+- Sustainable materials (recycled plastic, sugarcane EVA, organic cotton, recycled polyester)
+- Eco-friendly product names (EcoStep, GreenRun, Sustainability Collection)
+- Environmental claims ("lighter environmental footprint", "eco-conscious design")
+- Digital/tech product features (app integration, smart features)
+- Brief mentions of the brand's sustainability commitments in product marketing copy
+
+**Examples of articles that should NOT receive ESG categories:**
+- "Hoka Transport GTX waterproof walking shoes on sale for $139.99" - Even though it mentions "sugarcane EVA midsole" and "EcoStep outsole", this is a PRODUCT SALE article, not ESG news
+- "Nike Releases New Air Jordan Retro Collection" - Product launch, no ESG categories
+- "Best running shoes for 2025" - Product review/comparison, no ESG categories
+- "Lululemon x Erewhon limited edition collection drops" - Product collaboration, no ESG categories
+- "ASICS launches the new GEL-NIMBUS 28 running shoe" - Product launch, even if it mentions performance features
+
+**Examples of articles that SHOULD receive ESG categories:**
+- "Nike announces 50% carbon reduction target by 2030" - Corporate sustainability initiative (Environmental)
+- "Adidas partners with Parley to remove ocean plastic from beaches" - Environmental program focus (Environmental)
+- "Puma faces investigation over Vietnam factory working conditions" - Labor/supply chain issue (Social)
+- "Under Armour publishes first ESG transparency report" - Governance/reporting focus (Governance)
+- "Nike launches AI-powered supply chain tracking for sustainability" - Tech initiative for ESG goals (Digital Transformation)
+
+**The key question to ask:** Is the PRIMARY PURPOSE of this article to report on ESG-related news (initiatives, issues, programs, reports), or is it to promote/review/sell a product that happens to have some sustainable features?
+
+If the article is primarily about a product (sale, release, review, collection, where to buy), do NOT assign ESG categories regardless of what sustainable features are mentioned.
+
 ## Sentiment Guidelines
 
 - **Positive (1)**: The brand is praised, making progress, exceeding standards, leading the industry, receiving awards, or taking proactive positive action.
