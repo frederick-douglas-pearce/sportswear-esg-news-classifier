@@ -242,6 +242,71 @@ This is the most important distinction for accurate classification. ESG categori
 
 If the article is primarily about a product (sale, release, review, collection, where to buy), do NOT assign ESG categories regardless of what sustainable features are mentioned.
 
+## CRITICAL: Governance vs Financial News
+
+Many articles about stock prices, earnings, or investment analysis are incorrectly labeled as "Governance". ESG Governance refers to corporate ethics and oversight structures, NOT financial performance.
+
+**Governance IS about:**
+- Board structure, composition, and independence
+- Executive compensation policies
+- Anti-corruption measures and ethics violations
+- Regulatory compliance and legal issues
+- Transparency and ESG disclosure/reporting
+- Shareholder rights and stakeholder engagement
+- Corporate accountability and oversight mechanisms
+
+**Governance is NOT about:**
+- Stock price movements ("Nike stock tumbles 6%")
+- Quarterly earnings reports and financial performance
+- Investment recommendations ("Buy/Sell this stock")
+- CEO/leadership changes (unless involving ethics violations or accountability)
+- Market analysis and stock valuations
+- Investor purchases (e.g., "Tim Cook buys Nike shares")
+- Revenue growth or decline
+- Financial restructuring or loans (treasury operations)
+
+**Examples that should NOT receive Governance labels:**
+- "Nike Stock Tumbles 6% After Q2 Beat" - Stock price news, not governance
+- "3 Must-Know Facts Before You Buy Lululemon Stock" - Investment advice
+- "Apple's Tim Cook doubles Nike stake with $3M purchase" - Stock purchase news
+- "Lululemon earnings beat expectations" - Financial performance
+- "PUMA SE secures €500m bridge loan" - Treasury/financing operations
+
+**Examples that SHOULD receive Governance labels:**
+- "Nike board approves new executive compensation policy" - Board decision on exec pay
+- "Adidas faces shareholder lawsuit over misleading statements" - Accountability issue
+- "Under Armour releases first ESG transparency report" - ESG disclosure
+- "Puma CEO resigns amid accounting scandal" - Ethics/accountability
+- "Lululemon adds independent directors to improve oversight" - Board structure
+
+## CRITICAL: Athlete Endorsements & Sponsorships
+
+Athlete endorsement deals, signature shoe releases, and sports sponsorships are typically marketing/business activities, NOT ESG content.
+
+**Do NOT assign ESG categories to:**
+- Athlete signature shoe releases ("Reebok Angel Reese 1 releases November 14")
+- Sports team uniform reveals ("Nike Reveals 2025-26 City Edition Uniforms")
+- Athlete endorsement announcements ("New Balance announces Cooper Flagg shoe")
+- Sponsorship deal news ("Adidas sponsors World Cup event")
+- Fashion collaborations ("Madhappy x Converse Chuck 70 collab")
+
+**EXCEPTION - These MAY qualify for Social category:**
+- Olympic/Paralympic partnerships that focus on athlete development programs
+- Sponsorships with explicit diversity, equity, and inclusion initiatives
+- Community investment programs beyond just product/uniform provision
+- Articles about athlete welfare, not just endorsement announcements
+
+**Examples that should NOT receive ESG categories:**
+- "New Balance announces Cooper Flagg new shoe" - Athlete endorsement product launch
+- "Oregon Ducks Orange Bowl Uniforms are a Powerful Recruitment Tool" - Sports marketing
+- "Reebok Angel Reese 1 'Tiago King Reese' Release" - Signature shoe launch
+- "Nike Reveals England World Cup kit" - Uniform reveal (unless focused on sustainability tech)
+
+**Examples that MAY receive Social category:**
+- "Lululemon partners with Paralympic athletes to improve adaptive clothing" - Inclusion initiative
+- "Nike invests $10M in youth sports programs in underserved communities" - Community investment
+- "Adidas launches scholarship program for women athletes" - Athlete development
+
 ## Sentiment Guidelines
 
 - **Positive (1)**: The brand is praised, making progress, exceeding standards, leading the industry, receiving awards, or taking proactive positive action.

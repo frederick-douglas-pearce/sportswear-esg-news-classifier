@@ -1,21 +1,20 @@
 {
-  "threshold": 0.5537987645147118,
+  "threshold": 0.014965281413936715,
   "target_recall": 0.99,
-  "model_name": "LR_tuned",
-  "transformer_method": "tfidf_lsa",
+  "model_name": "SVM_tuned",
+  "transformer_method": "tfidf_lsa_product",
   "best_params": {
-    "C": 0.01,
-    "class_weight": null,
-    "penalty": "l2",
-    "solver": "lbfgs"
+    "C": 0.08,
+    "class_weight": "balanced",
+    "max_iter": 2000
   },
-  "cv_f2": 0.8663658663658663,
-  "cv_recall": 1.0,
-  "cv_precision": 0.5645790172642763,
-  "test_f2": 0.8660130718954249,
-  "test_recall": 1.0,
-  "test_precision": 0.5638297872340425,
-  "threshold_recall": 0.9905660377358491,
-  "threshold_precision": 0.6287425149700598,
-  "threshold_f2": 0.8883248730964467
+  "cv_f2": 0.856303746853977,
+  "cv_recall": 0.8790560471976402,
+  "cv_precision": 0.7759923904860729,
+  "test_f2": 0.8275862068965517,
+  "test_recall": 0.8470588235294118,
+  "test_precision": 0.7578947368421053,
+  "threshold_recall": 1.0,
+  "threshold_precision": 0.46195652173913043,
+  "threshold_f2": 0.8110687022900763
 }

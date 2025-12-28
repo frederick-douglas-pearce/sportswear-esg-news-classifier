@@ -193,6 +193,33 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         'retail', 'price', 'msrp', 'cost',
     ]
 
+    # Sponsorship/endorsement keywords - strong signal of non-ESG content
+    SPONSORSHIP_KEYWORDS = [
+        # Athlete endorsements
+        'signature shoe', 'signature line', 'signature collection',
+        'endorsement', 'endorsement deal', 'endorses', 'endorsed by',
+        'brand ambassador', 'ambassador', 'face of',
+        'athlete', 'star athlete', 'sponsored athlete',
+        # Sponsorship deals
+        'sponsor', 'sponsors', 'sponsorship', 'sponsored',
+        'multi-year deal', 'lifetime deal', 'signed with',
+        'signs with', 'inks deal', 'partnership deal',
+        # Team/uniform sponsorships
+        'jersey', 'kit', 'uniform', 'uniforms',
+        'team jersey', 'city edition', 'home kit', 'away kit',
+        'official partner', 'official sponsor', 'official supplier',
+        # Fashion collaborations
+        'collab', 'collaboration', 'collaborates', 'x ', ' x ',
+        'capsule collection', 'limited collection', 'special edition',
+        'designer collaboration', 'fashion collab',
+        # Sports events (sponsorship context)
+        'world cup', 'olympics', 'nba', 'nfl', 'mlb', 'premier league',
+        'champions league', 'euro ', 'copa ',
+        # Celebrity/influencer
+        'celebrity', 'star', 'influencer', 'celeb',
+        'wears', 'wearing', 'spotted in', 'seen in',
+    ]
+
     # Publishers focused on ESG/sustainability content
     ESG_PUBLISHERS = [
         # ESG/sustainability focused
@@ -641,9 +668,9 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         return np.array(features_list)
 
     def _compute_product_features(self, texts: List[str]) -> np.ndarray:
-        """Compute product sale/release detection features.
+        """Compute product sale/release and sponsorship detection features.
 
-        These features help distinguish product articles from ESG news.
+        These features help distinguish product/sponsorship articles from ESG news.
 
         For each text, computes:
         - product_keyword_count: Count of PRODUCT_SALE_KEYWORDS found
@@ -654,6 +681,11 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         - is_shopping_guide: Binary flag for shopping guidance content
         - product_score: Combined score (higher = more likely product article)
         - esg_product_ratio: Ratio of ESG keywords to product keywords
+        - sponsorship_keyword_count: Count of SPONSORSHIP_KEYWORDS found
+        - is_sponsorship_article: Binary flag for sponsorship/endorsement content
+        - is_athlete_article: Binary flag for athlete-focused content
+        - is_collab_article: Binary flag for collaboration/fashion content
+        - combined_non_esg_score: Total score combining product + sponsorship signals
         """
         features_list = []
 
@@ -672,6 +704,25 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
                                 'colorway', 'colorways', 'running shoe',
                                 'walking shoe', 'hiking boot'}
 
+        # Sponsorship keyword sets
+        endorsement_keywords = {'signature shoe', 'signature line', 'signature collection',
+                               'endorsement', 'endorsement deal', 'endorses', 'endorsed by',
+                               'brand ambassador', 'ambassador', 'face of'}
+        sponsorship_keywords = {'sponsor', 'sponsors', 'sponsorship', 'sponsored',
+                               'multi-year deal', 'lifetime deal', 'signed with',
+                               'signs with', 'inks deal', 'partnership deal',
+                               'official partner', 'official sponsor', 'official supplier'}
+        athlete_keywords = {'athlete', 'star athlete', 'sponsored athlete',
+                           'jersey', 'kit', 'uniform', 'uniforms',
+                           'team jersey', 'city edition', 'home kit', 'away kit',
+                           'world cup', 'olympics', 'nba', 'nfl', 'mlb',
+                           'premier league', 'champions league'}
+        collab_keywords = {'collab', 'collaboration', 'collaborates',
+                          'capsule collection', 'limited collection', 'special edition',
+                          'designer collaboration', 'fashion collab',
+                          'celebrity', 'star', 'influencer', 'celeb',
+                          'wears', 'wearing', 'spotted in', 'seen in'}
+
         esg_set = set(
             kw.lower() for kw in
             self.ENVIRONMENTAL_KEYWORDS + self.SOCIAL_KEYWORDS +
@@ -683,7 +734,7 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
             words = text_lower.split()
 
             if not words:
-                features_list.append([0, 0.0, 0, 0, 0, 0, 0.0, 0.5])
+                features_list.append([0, 0.0, 0, 0, 0, 0, 0.0, 0.5, 0, 0, 0, 0, 0.0])
                 continue
 
             # Count product keywords (check for multi-word phrases first)
@@ -692,18 +743,30 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
                 if kw.lower() in text_lower:
                     product_count += 1
 
+            # Count sponsorship keywords
+            sponsorship_count = 0
+            for kw in self.SPONSORSHIP_KEYWORDS:
+                if kw.lower() in text_lower:
+                    sponsorship_count += 1
+
             # Count ESG keywords
             esg_count = sum(1 for kw in esg_set if kw in text_lower)
 
             # Density
             product_density = (product_count / len(words)) * 100
 
-            # Category flags
+            # Product category flags
             is_sale = 1 if any(kw in text_lower for kw in sale_keywords) else 0
             is_release = 1 if any(kw in text_lower for kw in release_keywords) else 0
             is_review = 1 if any(kw in text_lower for kw in review_keywords) else 0
             is_shopping = 1 if any(kw in text_lower for kw in shopping_keywords) else 0
             has_product_type = 1 if any(kw in text_lower for kw in product_type_keywords) else 0
+
+            # Sponsorship category flags
+            is_endorsement = 1 if any(kw in text_lower for kw in endorsement_keywords) else 0
+            is_sponsorship = 1 if any(kw in text_lower for kw in sponsorship_keywords) else 0
+            is_athlete = 1 if any(kw in text_lower for kw in athlete_keywords) else 0
+            is_collab = 1 if any(kw in text_lower for kw in collab_keywords) else 0
 
             # Combined product score (weighted sum)
             product_score = (
@@ -714,14 +777,31 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
                 has_product_type * 1  # Weak indicator
             )
 
-            # ESG to product ratio
-            total = esg_count + product_count
+            # Combined sponsorship score
+            sponsorship_score = (
+                is_endorsement * 2 +   # Strong indicator
+                is_sponsorship * 2 +   # Strong indicator
+                is_athlete * 1.5 +     # Moderate indicator
+                is_collab * 1.5        # Moderate indicator
+            )
+
+            # Combined non-ESG score
+            combined_non_esg_score = product_score + sponsorship_score
+
+            # ESG to (product + sponsorship) ratio
+            total_non_esg = product_count + sponsorship_count
+            total = esg_count + total_non_esg
             ratio = esg_count / total if total > 0 else 0.5
+
+            # Aggregate sponsorship flag (any sponsorship-related content)
+            is_sponsorship_article = 1 if (is_endorsement or is_sponsorship) else 0
 
             features_list.append([
                 product_count, product_density,
                 is_sale, is_release, is_review, is_shopping,
-                product_score, ratio
+                product_score, ratio,
+                sponsorship_count, is_sponsorship_article, is_athlete, is_collab,
+                combined_non_esg_score
             ])
 
         return np.array(features_list)

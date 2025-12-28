@@ -29,6 +29,14 @@ from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, cross_vali
 # F2 scorer for recall-focused optimization
 f2_scorer = make_scorer(fbeta_score, beta=2)
 
+# PR-AUC scorer that works with both predict_proba and decision_function
+# Uses decision_function for LinearSVC, predict_proba for other models
+# This is mathematically equivalent since only ranking matters for AUC metrics
+pr_auc_threshold_scorer = make_scorer(
+    average_precision_score,
+    response_method=('decision_function', 'predict_proba')  # Try decision_function first, fall back to predict_proba
+)
+
 
 def _save_figure(fig: plt.Figure, save_path: Optional[str], dpi: int = 150) -> None:
     """Save figure to path if provided."""
@@ -68,13 +76,15 @@ def create_search_object(
         Configured search object
     """
     if scoring is None:
+        # Use threshold-based PR-AUC scorer that works with decision_function
+        # This allows LinearSVC to be used without CalibratedClassifierCV during CV
         scoring = {
             'accuracy': 'accuracy',
             'f1': 'f1',
             'f2': f2_scorer,
             'precision': 'precision',
             'recall': 'recall',
-            'average_precision': 'average_precision',
+            'average_precision': pr_auc_threshold_scorer,
         }
 
     common_params = {
@@ -366,7 +376,14 @@ def evaluate_model(
     """
     # Get predictions
     y_pred = model.predict(X)
-    y_proba = model.predict_proba(X)[:, 1] if hasattr(model, 'predict_proba') else None
+    # Get probability scores for AUC metrics
+    # Prefer predict_proba, but fall back to decision_function for LinearSVC
+    if hasattr(model, 'predict_proba'):
+        y_proba = model.predict_proba(X)[:, 1]
+    elif hasattr(model, 'decision_function'):
+        y_proba = model.decision_function(X)
+    else:
+        y_proba = None
 
     # Calculate metrics
     metrics = {
