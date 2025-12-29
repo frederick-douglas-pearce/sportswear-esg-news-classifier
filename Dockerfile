@@ -9,9 +9,16 @@
 #   docker run -p 8001:8000 ep-classifier-api
 #
 # Classifier Types:
-#   fp  - False Positive Brand Classifier (~220MB image, needs sentence-transformers + spaCy)
-#   ep  - ESG Pre-filter Classifier (~150MB image, TF-IDF only)
+#   fp  - False Positive Brand Classifier (~150MB image)
+#   ep  - ESG Pre-filter Classifier (~150MB image)
 #   esg - ESG Multi-label Classifier (future)
+#
+# Dependency Detection:
+#   The build automatically detects which dependencies are needed by reading
+#   the transformer_method from {classifier}_classifier_config.json:
+#   - Methods containing "ner" → spaCy (en_core_web_sm)
+#   - Methods containing "sentence_transformer" → sentence-transformers + spaCy
+#   - Methods with only "tfidf"/"lsa" → scikit-learn only (no extra downloads)
 
 # Build argument for classifier type
 ARG CLASSIFIER_TYPE=fp
@@ -42,19 +49,28 @@ COPY pyproject.toml uv.lock ./
 # Create virtual environment and install production dependencies
 RUN uv sync --frozen --no-dev --no-editable
 
-# Download models conditionally based on classifier type
-# FP classifier needs spaCy and sentence-transformers
-# EP classifier only needs scikit-learn (already installed)
+# Copy config file to detect transformer method
+COPY models/${CLASSIFIER_TYPE}_classifier_config.json /tmp/config.json
+
+# Download dependencies based on transformer_method in config
+# - Methods containing "ner" need spaCy
+# - Methods containing "sentence_transformer" need sentence-transformers + spaCy
+# - Methods with only "tfidf"/"lsa" need nothing extra (scikit-learn already installed)
 # Always create .cache directory so COPY doesn't fail
-# Use uv pip install for spacy model since uv venvs don't include pip
 RUN mkdir -p /root/.cache && \
-    if [ "$CLASSIFIER_TYPE" = "fp" ]; then \
-        echo "Downloading models for FP classifier..." && \
+    TRANSFORMER_METHOD=$(python -c "import json; print(json.load(open('/tmp/config.json'))['transformer_method'])") && \
+    echo "Detected transformer method: ${TRANSFORMER_METHOD}" && \
+    if echo "$TRANSFORMER_METHOD" | grep -q "sentence_transformer"; then \
+        echo "Installing spaCy + sentence-transformers for ${TRANSFORMER_METHOD}..." && \
         uv pip install --python /app/.venv/bin/python en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl && \
         /app/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"; \
+    elif echo "$TRANSFORMER_METHOD" | grep -q "ner"; then \
+        echo "Installing spaCy for ${TRANSFORMER_METHOD}..." && \
+        uv pip install --python /app/.venv/bin/python en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl; \
     else \
-        echo "Skipping spaCy/sentence-transformer download for ${CLASSIFIER_TYPE} classifier"; \
-    fi
+        echo "No extra dependencies needed for ${TRANSFORMER_METHOD}"; \
+    fi && \
+    rm /tmp/config.json
 
 # ==============================================================================
 # Stage 2: Runtime - Minimal production image
@@ -77,7 +93,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy virtual environment from builder (includes all dependencies)
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy model cache from builder (sentence-transformers, spacy)
+# Copy model cache from builder (spacy models for FP)
 # For EP classifier, this copies an empty directory (created in builder stage)
 COPY --from=builder /root/.cache /home/appuser/.cache
 

@@ -782,7 +782,7 @@ docker logs fp-classifier-api
 docker compose down fp-classifier-api
 ```
 
-**Note**: The Docker image is ~1-2GB due to sentence-transformers and spaCy models.
+**Note**: Docker image size depends on the transformer method (~150MB for TF-IDF/NER, ~1GB with sentence-transformers). The build auto-detects dependencies from the model config.
 
 ### API Endpoints
 
@@ -853,6 +853,51 @@ uv run python scripts/train.py \
 # Retrain and auto-promote if model improves
 uv run python scripts/retrain.py --classifier fp --auto-promote
 ```
+
+### Model Registry & Deployment Workflow
+
+The model registry (`models/registry.json`) tracks all model versions and their metadata. When deploying, the Dockerfile automatically reads the transformer method from the model config to install only the required dependencies.
+
+**Transformer Method → Dependencies:**
+| Method Pattern | Dependencies | Image Size |
+|----------------|--------------|------------|
+| `tfidf_lsa` | scikit-learn only | ~150MB |
+| `*_ner*` | spaCy (en_core_web_sm) | ~150MB |
+| `sentence_transformer*` | spaCy + sentence-transformers | ~1GB |
+
+**Promoting a new model version:**
+
+```bash
+# After training, promote to registry
+uv run python scripts/promote_model.py --classifier fp --version v3 --production
+
+# Dry run to preview changes
+uv run python scripts/promote_model.py --classifier fp --version v3 --dry-run
+
+# The script will:
+# 1. Read transformer_method from models/fp_classifier_config.json
+# 2. Create version entry with metrics in models/registry.json
+# 3. Set as production version (if --production flag used)
+```
+
+**Build will auto-detect dependencies:**
+
+```bash
+# Build reads fp_classifier_config.json and installs only what's needed
+docker build -t fp-classifier-api .
+
+# Build log will show:
+# "Detected transformer method: tfidf_lsa_ner_proximity_brands"
+# "Installing spaCy for tfidf_lsa_ner_proximity_brands..."
+```
+
+**Manual workflow (if not using promote_model.py):**
+
+1. Train model via notebooks or `scripts/train.py`
+2. Verify artifacts exist: `models/{classifier}_classifier_config.json`, `models/{classifier}_classifier_pipeline.joblib`
+3. Update `models/registry.json` with new version entry
+4. Commit changes: `git add models/ && git commit -m "Promote model"`
+5. Build Docker image - dependencies auto-detected from config
 
 ## Environment Variables
 
