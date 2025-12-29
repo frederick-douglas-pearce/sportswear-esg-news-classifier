@@ -115,111 +115,122 @@ class LabelingPipeline:
             self._fp_client_initialized = True
         return self.fp_client
 
-    def _run_fp_prefilter(
+    def _run_fp_prefilter_batch(
         self,
-        article: dict[str, Any],
+        articles: list[dict[str, Any]],
         dry_run: bool = False,
-    ) -> tuple[bool, ClassifierPredictionRecord | None]:
-        """Run FP classifier pre-filter on an article.
+    ) -> dict[UUID, tuple[bool, ClassifierPredictionRecord | None]]:
+        """Run FP classifier pre-filter on a batch of articles.
 
         Args:
-            article: Article dict with id, title, full_content, description,
-                     brands_mentioned, source_name, category
-            dry_run: If True, don't save prediction to database
+            articles: List of article dicts with id, title, full_content, etc.
+            dry_run: If True, don't save predictions to database
 
         Returns:
-            Tuple of (should_continue, prediction_record):
-            - should_continue: True if article should proceed to LLM labeling
-            - prediction_record: ClassifierPredictionRecord for tracking
+            Dict mapping article_id to (should_continue, prediction_record)
         """
         fp_client = self._ensure_fp_client()
         if fp_client is None:
-            return True, None
+            # FP classifier not enabled - all articles continue
+            return {article["id"]: (True, None) for article in articles}
 
-        article_id = article["id"]
-        title = article.get("title", "")
-        content = article.get("full_content") or article.get("description") or ""
-        brands = article.get("brands_mentioned") or []
-        source_name = article.get("source_name")
-        category = article.get("category") or []
+        if not articles:
+            return {}
 
-        # Ensure category is a list
-        if isinstance(category, str):
-            category = [category]
+        # Prepare batch request
+        batch_articles = []
+        article_ids = []
+        for article in articles:
+            article_id = article["id"]
+            article_ids.append(article_id)
+
+            content = article.get("full_content") or article.get("description") or ""
+            category = article.get("category") or []
+            if isinstance(category, str):
+                category = [category]
+
+            batch_articles.append({
+                "title": article.get("title", ""),
+                "content": content,
+                "brands": article.get("brands_mentioned") or [],
+                "source_name": article.get("source_name"),
+                "category": category,
+            })
+
+        results: dict[UUID, tuple[bool, ClassifierPredictionRecord | None]] = {}
 
         try:
-            # Call FP classifier API
-            result = fp_client.predict_fp(
-                title=title,
-                content=content,
-                brands=brands,
-                source_name=source_name,
-                category=category,
-            )
+            # Single batch API call
+            fp_results = fp_client.predict_fp_batch(batch_articles)
 
-            # Determine action based on threshold
-            threshold = labeling_settings.fp_skip_llm_threshold
-            should_continue = result.probability >= threshold
-
-            if should_continue:
-                action = "continued_to_llm"
-                skip_reason = None
-                logger.debug(
-                    f"Article {article_id}: FP probability {result.probability:.3f} >= "
-                    f"threshold {threshold}, continuing to LLM"
-                )
-            else:
-                action = "skipped_llm"
-                skip_reason = (
-                    f"High-confidence false positive: probability {result.probability:.3f} "
-                    f"< threshold {threshold}"
-                )
-                logger.info(
-                    f"Article {article_id}: Skipping LLM - {skip_reason}"
-                )
-
-            # Get model info for version tracking
+            # Get model info once for all predictions
             model_info = fp_client.get_model_info()
             model_version = model_info.get("version", "unknown")
+            threshold = labeling_settings.fp_skip_llm_threshold
 
-            prediction = ClassifierPredictionRecord(
-                classifier_type="fp",
-                model_version=model_version,
-                probability=result.probability,
-                prediction=result.is_sportswear,
-                threshold_used=threshold,
-                action_taken=action,
-                risk_level=result.risk_level,
-                skip_reason=skip_reason,
+            # Process each result
+            for article_id, result in zip(article_ids, fp_results):
+                should_continue = result.probability >= threshold
+
+                if should_continue:
+                    action = "continued_to_llm"
+                    skip_reason = None
+                    logger.debug(
+                        f"Article {article_id}: FP probability {result.probability:.3f} >= "
+                        f"threshold {threshold}, continuing to LLM"
+                    )
+                else:
+                    action = "skipped_llm"
+                    skip_reason = (
+                        f"High-confidence false positive: probability {result.probability:.3f} "
+                        f"< threshold {threshold}"
+                    )
+                    logger.info(f"Article {article_id}: Skipping LLM - {skip_reason}")
+
+                prediction = ClassifierPredictionRecord(
+                    classifier_type="fp",
+                    model_version=model_version,
+                    probability=result.probability,
+                    prediction=result.is_sportswear,
+                    threshold_used=threshold,
+                    action_taken=action,
+                    risk_level=result.risk_level,
+                    skip_reason=skip_reason,
+                )
+
+                if not dry_run:
+                    self._save_classifier_prediction(article_id, prediction)
+
+                results[article_id] = (should_continue, prediction)
+
+            logger.info(
+                f"FP classifier batch: {len(articles)} articles processed in single API call"
             )
-
-            # Save to database
-            if not dry_run:
-                self._save_classifier_prediction(article_id, prediction)
-
-            return should_continue, prediction
 
         except Exception as e:
             logger.warning(
-                f"FP classifier failed for article {article_id}: {e}. "
-                f"Continuing to LLM (graceful degradation)."
+                f"FP classifier batch failed: {e}. "
+                f"Continuing all articles to LLM (graceful degradation)."
             )
 
-            prediction = ClassifierPredictionRecord(
-                classifier_type="fp",
-                model_version="unknown",
-                probability=0.0,
-                prediction=False,
-                threshold_used=labeling_settings.fp_skip_llm_threshold,
-                action_taken="failed",
-                error_message=str(e),
-            )
+            # Graceful degradation: all articles continue to LLM
+            for article_id in article_ids:
+                prediction = ClassifierPredictionRecord(
+                    classifier_type="fp",
+                    model_version="unknown",
+                    probability=0.0,
+                    prediction=False,
+                    threshold_used=labeling_settings.fp_skip_llm_threshold,
+                    action_taken="failed",
+                    error_message=str(e),
+                )
 
-            if not dry_run:
-                self._save_classifier_prediction(article_id, prediction)
+                if not dry_run:
+                    self._save_classifier_prediction(article_id, prediction)
 
-            # Graceful degradation: continue to LLM on classifier failure
-            return True, prediction
+                results[article_id] = (True, prediction)
+
+        return results
 
     def _save_classifier_prediction(
         self,
@@ -322,13 +333,20 @@ class LabelingPipeline:
 
             logger.info(f"Processing {len(article_data)} articles")
 
+            # Run FP classifier batch pre-filter (single API call for all articles)
+            fp_prefilter_results = self._run_fp_prefilter_batch(article_data, dry_run)
+
             for article in article_data:
                 try:
+                    # Get precomputed FP result for this article
+                    fp_result = fp_prefilter_results.get(article["id"])
+
                     result = self._process_article(
                         article,
                         dry_run=dry_run,
                         skip_chunking=skip_chunking,
                         skip_embedding=skip_embedding,
+                        fp_prefilter_result=fp_result,
                     )
 
                     stats.articles_processed += 1
@@ -424,8 +442,16 @@ class LabelingPipeline:
         dry_run: bool = False,
         skip_chunking: bool = False,
         skip_embedding: bool = False,
+        fp_prefilter_result: tuple[bool, ClassifierPredictionRecord | None] | None = None,
     ) -> dict[str, Any]:
         """Process a single article through the labeling pipeline.
+
+        Args:
+            article: Article dict with id, title, full_content, etc.
+            dry_run: If True, don't save to database
+            skip_chunking: Skip chunking for already-chunked articles
+            skip_embedding: Skip embedding generation
+            fp_prefilter_result: Precomputed FP classifier result from batch call
 
         Returns:
             Dict with processing results
@@ -475,8 +501,13 @@ class LabelingPipeline:
             result["skipped"] = True
             return result
 
-        # FP Classifier Pre-filter (before expensive chunking/embedding/LLM)
-        should_continue, fp_prediction = self._run_fp_prefilter(article, dry_run)
+        # FP Classifier Pre-filter (use precomputed batch result)
+        if fp_prefilter_result is not None:
+            should_continue, fp_prediction = fp_prefilter_result
+        else:
+            # Fallback: no precomputed result (shouldn't happen in normal flow)
+            should_continue, fp_prediction = True, None
+
         if fp_prediction is not None:
             result["fp_classifier_called"] = True
             if fp_prediction.action_taken == "skipped_llm":
