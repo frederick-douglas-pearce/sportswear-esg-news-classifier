@@ -737,7 +737,7 @@ The False Positive Brand Classifier is deployed as a FastAPI REST API service.
 │              │               │                                   │
 │              ▼               ▼                                   │
 │         /predict         Threshold                               │
-│         /predict/batch   (0.605)                                 │
+│         /predict/batch   (set in .env)                                 │
 │         /health                                                  │
 │         /model/info                                              │
 │                                                                  │

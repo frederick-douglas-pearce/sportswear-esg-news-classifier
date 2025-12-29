@@ -119,7 +119,8 @@ RUN mkdir -p src/fp1_nb src/ep1_nb src/data_collection
 COPY src/fp1_nb/ src/fp1_nb/
 COPY src/ep1_nb/ src/ep1_nb/
 COPY src/data_collection/config.py src/data_collection/config.py
-COPY src/data_collection/__init__.py src/data_collection/__init__.py
+# Create minimal __init__.py (avoids importing models which needs SQLAlchemy)
+RUN echo 'from .config import settings' > src/data_collection/__init__.py
 
 # Copy model artifacts for the specified classifier
 COPY models/${CLASSIFIER_TYPE}_classifier_pipeline.joblib models/
@@ -133,10 +134,6 @@ USER appuser
 
 # Expose API port
 EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the unified API with classifier type from environment
 CMD ["python", "scripts/predict.py"]
