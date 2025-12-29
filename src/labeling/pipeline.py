@@ -6,9 +6,10 @@ from typing import Any
 from uuid import UUID
 
 from src.data_collection.database import db
-from src.data_collection.models import Article
+from src.data_collection.models import Article, ClassifierPrediction
 
 from .chunker import ArticleChunker, Chunk
+from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
 from .config import labeling_settings
 from .database import LabelingDatabase, labeling_db
 from .embedder import OpenAIEmbedder
@@ -36,6 +37,11 @@ class LabelingStats:
     input_tokens: int = 0
     output_tokens: int = 0
     errors: list[str] = field(default_factory=list)
+    # FP classifier stats
+    fp_classifier_calls: int = 0
+    fp_classifier_skipped: int = 0
+    fp_classifier_continued: int = 0
+    fp_classifier_errors: int = 0
 
 
 class LabelingPipeline:
@@ -56,6 +62,7 @@ class LabelingPipeline:
         chunker: ArticleChunker | None = None,
         embedder: OpenAIEmbedder | None = None,
         labeler: ArticleLabeler | None = None,
+        fp_client: ClassifierClient | None = None,
     ):
         """Initialize the pipeline.
 
@@ -64,15 +71,18 @@ class LabelingPipeline:
             chunker: Article chunker
             embedder: OpenAI embedder
             labeler: Claude article labeler
+            fp_client: FP classifier HTTP client
         """
         self.database = database or labeling_db
         self.chunker = chunker or ArticleChunker()
         self.embedder = embedder
         self.labeler = labeler
+        self.fp_client = fp_client
 
         # Lazy initialization of API clients
         self._embedder_initialized = embedder is not None
         self._labeler_initialized = labeler is not None
+        self._fp_client_initialized = fp_client is not None
 
     def _ensure_embedder(self) -> OpenAIEmbedder:
         """Ensure embedder is initialized."""
@@ -87,6 +97,157 @@ class LabelingPipeline:
             self.labeler = ArticleLabeler()
             self._labeler_initialized = True
         return self.labeler
+
+    def _ensure_fp_client(self) -> ClassifierClient | None:
+        """Ensure FP classifier client is initialized if enabled.
+
+        Returns:
+            ClassifierClient if FP classifier is enabled, None otherwise.
+        """
+        if not labeling_settings.fp_classifier_enabled:
+            return None
+
+        if not self._fp_client_initialized:
+            self.fp_client = ClassifierClient(
+                base_url=labeling_settings.fp_classifier_url,
+                timeout=labeling_settings.fp_classifier_timeout,
+            )
+            self._fp_client_initialized = True
+        return self.fp_client
+
+    def _run_fp_prefilter(
+        self,
+        article: dict[str, Any],
+        dry_run: bool = False,
+    ) -> tuple[bool, ClassifierPredictionRecord | None]:
+        """Run FP classifier pre-filter on an article.
+
+        Args:
+            article: Article dict with id, title, full_content, description,
+                     brands_mentioned, source_name, category
+            dry_run: If True, don't save prediction to database
+
+        Returns:
+            Tuple of (should_continue, prediction_record):
+            - should_continue: True if article should proceed to LLM labeling
+            - prediction_record: ClassifierPredictionRecord for tracking
+        """
+        fp_client = self._ensure_fp_client()
+        if fp_client is None:
+            return True, None
+
+        article_id = article["id"]
+        title = article.get("title", "")
+        content = article.get("full_content") or article.get("description") or ""
+        brands = article.get("brands_mentioned") or []
+        source_name = article.get("source_name")
+        category = article.get("category") or []
+
+        # Ensure category is a list
+        if isinstance(category, str):
+            category = [category]
+
+        try:
+            # Call FP classifier API
+            result = fp_client.predict_fp(
+                title=title,
+                content=content,
+                brands=brands,
+                source_name=source_name,
+                category=category,
+            )
+
+            # Determine action based on threshold
+            threshold = labeling_settings.fp_skip_llm_threshold
+            should_continue = result.probability >= threshold
+
+            if should_continue:
+                action = "continued_to_llm"
+                skip_reason = None
+                logger.debug(
+                    f"Article {article_id}: FP probability {result.probability:.3f} >= "
+                    f"threshold {threshold}, continuing to LLM"
+                )
+            else:
+                action = "skipped_llm"
+                skip_reason = (
+                    f"High-confidence false positive: probability {result.probability:.3f} "
+                    f"< threshold {threshold}"
+                )
+                logger.info(
+                    f"Article {article_id}: Skipping LLM - {skip_reason}"
+                )
+
+            # Get model info for version tracking
+            model_info = fp_client.get_model_info()
+            model_version = model_info.get("version", "unknown")
+
+            prediction = ClassifierPredictionRecord(
+                classifier_type="fp",
+                model_version=model_version,
+                probability=result.probability,
+                prediction=result.is_sportswear,
+                threshold_used=threshold,
+                action_taken=action,
+                risk_level=result.risk_level,
+                skip_reason=skip_reason,
+            )
+
+            # Save to database
+            if not dry_run:
+                self._save_classifier_prediction(article_id, prediction)
+
+            return should_continue, prediction
+
+        except Exception as e:
+            logger.warning(
+                f"FP classifier failed for article {article_id}: {e}. "
+                f"Continuing to LLM (graceful degradation)."
+            )
+
+            prediction = ClassifierPredictionRecord(
+                classifier_type="fp",
+                model_version="unknown",
+                probability=0.0,
+                prediction=False,
+                threshold_used=labeling_settings.fp_skip_llm_threshold,
+                action_taken="failed",
+                error_message=str(e),
+            )
+
+            if not dry_run:
+                self._save_classifier_prediction(article_id, prediction)
+
+            # Graceful degradation: continue to LLM on classifier failure
+            return True, prediction
+
+    def _save_classifier_prediction(
+        self,
+        article_id: UUID,
+        prediction: ClassifierPredictionRecord,
+    ) -> None:
+        """Save classifier prediction to database.
+
+        Args:
+            article_id: UUID of the article
+            prediction: ClassifierPredictionRecord to save
+        """
+        with self.database.db.get_session() as session:
+            db_prediction = ClassifierPrediction(
+                article_id=article_id,
+                classifier_type=prediction.classifier_type,
+                model_version=prediction.model_version,
+                probability=prediction.probability,
+                prediction=prediction.prediction,
+                threshold_used=prediction.threshold_used,
+                risk_level=prediction.risk_level,
+                esg_categories=prediction.esg_categories,
+                action_taken=prediction.action_taken,
+                skip_reason=prediction.skip_reason,
+                error_message=prediction.error_message,
+            )
+            session.add(db_prediction)
+            session.commit()
 
     def label_articles(
         self,
@@ -154,6 +315,7 @@ class LabelingPipeline:
                         "brands_mentioned": a.brands_mentioned or [],
                         "published_at": a.published_at,
                         "source_name": a.source_name,
+                        "category": a.category or [],
                     }
                     for a in articles
                 ]
@@ -193,6 +355,16 @@ class LabelingPipeline:
                     stats.llm_calls += result.get("llm_calls", 0)
                     stats.input_tokens += result.get("input_tokens", 0)
                     stats.output_tokens += result.get("output_tokens", 0)
+
+                    # FP classifier stats
+                    if result.get("fp_classifier_called"):
+                        stats.fp_classifier_calls += 1
+                        if result.get("fp_classifier_skipped"):
+                            stats.fp_classifier_skipped += 1
+                        elif result.get("fp_classifier_continued"):
+                            stats.fp_classifier_continued += 1
+                        elif result.get("fp_classifier_error"):
+                            stats.fp_classifier_errors += 1
 
                 except Exception as e:
                     logger.error(f"Failed to process article {article['id']}: {e}")
@@ -274,6 +446,11 @@ class LabelingPipeline:
             "llm_calls": 0,
             "input_tokens": 0,
             "output_tokens": 0,
+            # FP classifier tracking
+            "fp_classifier_called": False,
+            "fp_classifier_skipped": False,
+            "fp_classifier_continued": False,
+            "fp_classifier_error": False,
         }
 
         # Check for content
@@ -296,6 +473,35 @@ class LabelingPipeline:
                         session, article_id, "skipped", "No brands mentioned"
                     )
             result["skipped"] = True
+            return result
+
+        # FP Classifier Pre-filter (before expensive chunking/embedding/LLM)
+        should_continue, fp_prediction = self._run_fp_prefilter(article, dry_run)
+        if fp_prediction is not None:
+            result["fp_classifier_called"] = True
+            if fp_prediction.action_taken == "skipped_llm":
+                result["fp_classifier_skipped"] = True
+            elif fp_prediction.action_taken == "continued_to_llm":
+                result["fp_classifier_continued"] = True
+            elif fp_prediction.action_taken == "failed":
+                result["fp_classifier_error"] = True
+
+        if not should_continue:
+            # High-confidence false positive - skip LLM labeling
+            logger.info(
+                f"Article {article_id} marked as false_positive by FP classifier"
+            )
+            if not dry_run:
+                with self.database.db.get_session() as session:
+                    skip_reason = (
+                        fp_prediction.skip_reason
+                        if fp_prediction
+                        else "FP classifier pre-filter"
+                    )
+                    self.database.update_article_labeling_status(
+                        session, article_id, "false_positive", skip_reason
+                    )
+            result["false_positive"] = True
             return result
 
         # Step 1: Chunk the article

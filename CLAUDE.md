@@ -195,9 +195,10 @@ with engine.connect() as conn:
 - `chunker.py` - Paragraph-based article chunking with tiktoken token counting
 - `embedder.py` - OpenAI embedding wrapper with batch processing
 - `labeler.py` - Claude Sonnet wrapper for ESG classification
+- `classifier_client.py` - HTTP client for FP/EP classifier APIs (pre-filter integration)
 - `evidence_matcher.py` - Links evidence excerpts to chunks via exact/fuzzy/embedding similarity
 - `database.py` - Labeling-specific DB operations
-- `pipeline.py` - Orchestrates chunking → embedding → labeling → evidence matching
+- `pipeline.py` - Orchestrates FP pre-filter → chunking → embedding → labeling → evidence matching
 
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
@@ -286,6 +287,7 @@ with engine.connect() as conn:
 - **brand_labels**: Per-brand ESG labels with sentiment (-1/0/+1) and confidence
 - **label_evidence**: Supporting excerpts linked to chunks via similarity matching
 - **labeling_runs**: Tracks labeling batches with cost estimates
+- **classifier_predictions**: Stores ML classifier predictions (FP/EP/ESG) for audit trail
 
 ### Environment Variables
 - `NEWSDATA_API_KEY` - Required for NewsData.io collection (not needed for GDELT)
@@ -299,6 +301,10 @@ with engine.connect() as conn:
 - `LABELING_MODEL` - Claude model for labeling (default: claude-sonnet-4-20250514)
 - `EMBEDDING_MODEL` - OpenAI embedding model (default: text-embedding-3-small)
 - `LABELING_BATCH_SIZE` - Articles per labeling batch (default: 10)
+- `FP_CLASSIFIER_ENABLED` - Enable FP classifier pre-filter (default: false)
+- `FP_CLASSIFIER_URL` - FP classifier API URL (default: http://localhost:8000)
+- `FP_SKIP_LLM_THRESHOLD` - Probability threshold to skip LLM (default: 0.3)
+- `FP_CLASSIFIER_TIMEOUT` - FP classifier API timeout in seconds (default: 30.0)
 
 ## Search Keywords
 
@@ -438,6 +444,40 @@ Environment variables:
 - `PREDICTION_LOGS_DIR` - Log directory (default: logs/predictions)
 
 ## Labeling Pipeline Changelog
+
+### 2025-12-28: FP Classifier Pre-filter Integration
+
+**Change**: Integrated FP (False Positive) classifier as an optional pre-filter in the labeling pipeline to reduce LLM costs by skipping high-confidence false positives before calling Claude.
+
+**New flow:**
+```
+Articles → FP Classifier → [if probability < threshold] → Mark false_positive, skip LLM
+                         → [if probability >= threshold] → Continue to LLM labeling
+```
+
+**Configuration:**
+- `FP_CLASSIFIER_ENABLED=true` - Enable pre-filter
+- `FP_CLASSIFIER_URL=http://localhost:8000` - FP classifier API URL
+- `FP_SKIP_LLM_THRESHOLD=0.3` - Skip LLM for articles with <30% sportswear probability
+
+**Files created:**
+- `migrations/002_classifier_predictions.sql` - New table for audit trail
+- `src/labeling/classifier_client.py` - HTTP client for classifier APIs
+
+**Files modified:**
+- `src/data_collection/models.py` - Added `ClassifierPrediction` model
+- `src/labeling/config.py` - Added FP classifier settings
+- `src/labeling/pipeline.py` - Added FP pre-filter integration
+- `scripts/label_articles.py` - Added FP classifier stats output
+
+**Migration**: Run the SQL migration to create the classifier_predictions table:
+```bash
+psql $DATABASE_URL -f migrations/002_classifier_predictions.sql
+```
+
+**Graceful degradation**: If FP classifier is unavailable or returns an error, the pipeline continues to LLM labeling (no article is lost due to classifier failure).
+
+---
 
 ### 2025-12-27: Clarified is_sportswear_brand Semantics
 

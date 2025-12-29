@@ -182,6 +182,24 @@ def main() -> int:
         print(f"Input tokens:           {stats.input_tokens}")
         print(f"Output tokens:          {stats.output_tokens}")
 
+        # FP Classifier stats
+        if stats.fp_classifier_calls > 0:
+            print("\n=== FP Classifier Pre-filter ===")
+            print(f"FP classifier calls:    {stats.fp_classifier_calls}")
+            print(f"Skipped LLM:            {stats.fp_classifier_skipped}")
+            print(f"Continued to LLM:       {stats.fp_classifier_continued}")
+            if stats.fp_classifier_errors > 0:
+                print(f"Classifier errors:      {stats.fp_classifier_errors}")
+            # Calculate cost savings estimate
+            if stats.fp_classifier_skipped > 0:
+                # Estimate ~1500 input tokens and ~500 output tokens per skipped article
+                saved_input = stats.fp_classifier_skipped * 1500
+                saved_output = stats.fp_classifier_skipped * 500
+                saved_input_cost = (saved_input / 1_000_000) * 3.00
+                saved_output_cost = (saved_output / 1_000_000) * 15.00
+                saved_cost = saved_input_cost + saved_output_cost
+                print(f"Est. LLM cost saved:    ${saved_cost:.4f}")
+
         # Cost estimate
         if stats.input_tokens > 0 or stats.output_tokens > 0:
             input_cost = (stats.input_tokens / 1_000_000) * 3.00

@@ -62,6 +62,20 @@ class LabelingSettings(BaseModel):
         )
     )
 
+    # FP Classifier Pre-filter Settings
+    fp_classifier_enabled: bool = Field(
+        default_factory=lambda: os.getenv("FP_CLASSIFIER_ENABLED", "false").lower() == "true"
+    )
+    fp_classifier_url: str = Field(
+        default_factory=lambda: os.getenv("FP_CLASSIFIER_URL", "http://localhost:8000")
+    )
+    fp_skip_llm_threshold: float = Field(
+        default_factory=lambda: float(os.getenv("FP_SKIP_LLM_THRESHOLD", "0.3"))
+    )
+    fp_classifier_timeout: float = Field(
+        default_factory=lambda: float(os.getenv("FP_CLASSIFIER_TIMEOUT", "30.0"))
+    )
+
     model_config = ConfigDict(frozen=True)
 
 

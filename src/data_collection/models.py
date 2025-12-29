@@ -69,6 +69,9 @@ class Article(Base):
     # Relationships
     chunks = relationship("ArticleChunk", back_populates="article", cascade="all, delete-orphan")
     brand_labels = relationship("BrandLabel", back_populates="article", cascade="all, delete-orphan")
+    classifier_predictions = relationship(
+        "ClassifierPrediction", back_populates="article", cascade="all, delete-orphan"
+    )
 
     def __repr__(self) -> str:
         return f"<Article(article_id={self.article_id!r}, title={self.title[:50]!r}...)>"
@@ -221,3 +224,64 @@ class LabelingRun(Base):
 
     def __repr__(self) -> str:
         return f"<LabelingRun(id={self.id!r}, status={self.status!r})>"
+
+
+# =============================================================================
+# ML Classifier Predictions
+# =============================================================================
+
+
+class ClassifierPrediction(Base):
+    """ML classifier predictions for audit trail and analysis.
+
+    Stores predictions from FP (False Positive), EP (ESG Pre-filter), and
+    ESG (Multi-label) classifiers. Used to track which articles were filtered
+    by ML classifiers vs sent to LLM for labeling.
+    """
+
+    __tablename__ = "classifier_predictions"
+    __table_args__ = (
+        Index("ix_classifier_predictions_article_id", "article_id"),
+        Index("ix_classifier_predictions_classifier_type", "classifier_type"),
+        Index("ix_classifier_predictions_created_at", "created_at"),
+        Index("ix_classifier_predictions_action_taken", "action_taken"),
+        Index("ix_classifier_predictions_type_action", "classifier_type", "action_taken"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    article_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("articles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Classifier identification
+    classifier_type = Column(String(20), nullable=False)  # 'fp', 'ep', 'esg'
+    model_version = Column(String(100))  # e.g., 'RF_tuned_v1'
+
+    # Prediction result
+    probability = Column(Float, nullable=False)  # Raw probability from model (0.0-1.0)
+    prediction = Column(Boolean, nullable=False)  # Binary prediction result
+    threshold_used = Column(Float, nullable=False)  # Threshold used for this prediction
+
+    # FP-specific fields (nullable for other classifiers)
+    risk_level = Column(String(20))  # 'low', 'medium', 'high' for FP classifier
+
+    # EP/ESG-specific fields (nullable for FP)
+    esg_categories = Column(JSON)  # For ESG multi-label predictions
+
+    # Decision tracking
+    action_taken = Column(String(50), nullable=False)  # 'skipped_llm', 'continued_to_llm', 'failed'
+    skip_reason = Column(String(255))  # Reason for skipping LLM (if applicable)
+
+    # Error handling
+    error_message = Column(Text)  # If prediction failed
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    article = relationship("Article", back_populates="classifier_predictions")
+
+    def __repr__(self) -> str:
+        return f"<ClassifierPrediction(type={self.classifier_type!r}, action={self.action_taken!r})>"
