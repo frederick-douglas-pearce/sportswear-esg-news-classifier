@@ -70,7 +70,7 @@ class LabelingSettings(BaseModel):
         default_factory=lambda: os.getenv("FP_CLASSIFIER_URL", "http://localhost:8000")
     )
     fp_skip_llm_threshold: float = Field(
-        default_factory=lambda: float(os.getenv("FP_SKIP_LLM_THRESHOLD", "0.3"))
+        default_factory=lambda: float(os.getenv("FP_SKIP_LLM_THRESHOLD", "0.5"))
     )
     fp_classifier_timeout: float = Field(
         default_factory=lambda: float(os.getenv("FP_CLASSIFIER_TIMEOUT", "30.0"))

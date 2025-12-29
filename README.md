@@ -719,7 +719,7 @@ The EP classifier follows the same 3-notebook structure as FP, with ESG-specific
 
 ## FP Classifier Deployment
 
-The False Positive Brand Classifier is deployed as a FastAPI REST API service.
+The False Positive Brand Classifier is deployed as a FastAPI REST API service. It integrates with the labeling pipeline as an optional pre-filter to reduce LLM costs by skipping high-confidence false positives before calling Claude.
 
 ### Deployment Architecture
 
@@ -783,6 +783,25 @@ docker compose down fp-classifier-api
 ```
 
 **Note**: Docker image size depends on the transformer method (~150MB for TF-IDF/NER, ~1GB with sentence-transformers). The build auto-detects dependencies from the model config.
+
+### Labeling Pipeline Integration
+
+Enable the FP classifier as a pre-filter in the labeling pipeline to reduce LLM costs:
+
+```bash
+# 1. Start the FP classifier API
+docker compose up -d fp-classifier-api
+
+# 2. Enable pre-filter in .env
+FP_CLASSIFIER_ENABLED=true
+FP_CLASSIFIER_URL=http://localhost:8000
+FP_SKIP_LLM_THRESHOLD=0.5  # Skip LLM for articles <50% sportswear probability
+
+# 3. Run labeling - FP classifier automatically filters false positives
+uv run python scripts/label_articles.py --batch-size 20
+```
+
+The pipeline uses batch API calls for efficiency (1 call per batch, not per article). Articles below the threshold are marked as `false_positive` and skip LLM labeling, saving ~$0.01-0.02 per article.
 
 ### API Endpoints
 
@@ -920,6 +939,10 @@ docker build -t fp-classifier-api .
 | `TARGET_CHUNK_TOKENS` | Target tokens per chunk | `500` |
 | `MAX_CHUNK_TOKENS` | Maximum tokens per chunk | `800` |
 | `MIN_CHUNK_TOKENS` | Minimum tokens per chunk | `100` |
+| `FP_CLASSIFIER_ENABLED` | Enable FP classifier pre-filter in labeling pipeline | `false` |
+| `FP_CLASSIFIER_URL` | FP classifier API URL | `http://localhost:8000` |
+| `FP_SKIP_LLM_THRESHOLD` | Skip LLM for articles below this probability | `0.5` |
+| `FP_CLASSIFIER_TIMEOUT` | FP classifier API timeout (seconds) | `30.0` |
 
 ## Database Schema
 

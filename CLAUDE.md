@@ -303,7 +303,7 @@ with engine.connect() as conn:
 - `LABELING_BATCH_SIZE` - Articles per labeling batch (default: 10)
 - `FP_CLASSIFIER_ENABLED` - Enable FP classifier pre-filter (default: false)
 - `FP_CLASSIFIER_URL` - FP classifier API URL (default: http://localhost:8000)
-- `FP_SKIP_LLM_THRESHOLD` - Probability threshold to skip LLM (default: 0.3)
+- `FP_SKIP_LLM_THRESHOLD` - Probability threshold to skip LLM (default: 0.5, matches trained model threshold of 0.5356)
 - `FP_CLASSIFIER_TIMEOUT` - FP classifier API timeout in seconds (default: 30.0)
 
 ## Search Keywords
@@ -445,6 +445,29 @@ Environment variables:
 
 ## Labeling Pipeline Changelog
 
+### 2025-12-29: FP Classifier Batch API & Docker Fixes
+
+**Change 1**: Optimized FP classifier pre-filter to use batch API calls instead of per-article calls.
+
+**Before**: N articles → N API calls to FP classifier
+**After**: N articles → 1 API call to FP classifier
+
+**Files modified:**
+- `src/labeling/pipeline.py` - Added `_run_fp_prefilter_batch()` method, updated `label_articles()` to call batch upfront
+
+**Change 2**: Fixed Docker deployment issues for classifier API.
+
+**Fixes:**
+- Removed redundant `HEALTHCHECK` from Dockerfile (docker-compose.yml handles healthchecks)
+- Fixed `ModuleNotFoundError` by creating minimal `__init__.py` in container that doesn't import SQLAlchemy models
+
+**Files modified:**
+- `Dockerfile` - Removed HEALTHCHECK, changed `COPY __init__.py` to `RUN echo` for minimal init
+
+**Change 3**: Updated default `FP_SKIP_LLM_THRESHOLD` from 0.3 to 0.5 to match the trained model's optimal threshold (0.5356 for 99% recall).
+
+---
+
 ### 2025-12-28: FP Classifier Pre-filter Integration
 
 **Change**: Integrated FP (False Positive) classifier as an optional pre-filter in the labeling pipeline to reduce LLM costs by skipping high-confidence false positives before calling Claude.
@@ -458,7 +481,7 @@ Articles → FP Classifier → [if probability < threshold] → Mark false_posit
 **Configuration:**
 - `FP_CLASSIFIER_ENABLED=true` - Enable pre-filter
 - `FP_CLASSIFIER_URL=http://localhost:8000` - FP classifier API URL
-- `FP_SKIP_LLM_THRESHOLD=0.3` - Skip LLM for articles with <30% sportswear probability
+- `FP_SKIP_LLM_THRESHOLD=0.5` - Skip LLM for articles with <50% sportswear probability (matches trained model threshold)
 
 **Files created:**
 - `migrations/002_classifier_predictions.sql` - New table for audit trail
