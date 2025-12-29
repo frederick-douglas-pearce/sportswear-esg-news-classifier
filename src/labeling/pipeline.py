@@ -232,6 +232,27 @@ class LabelingPipeline:
 
         return results
 
+    def _run_fp_prefilter(
+        self,
+        article: dict[str, Any],
+        dry_run: bool = False,
+    ) -> tuple[bool, ClassifierPredictionRecord | None]:
+        """Run FP classifier pre-filter on a single article.
+
+        This is a convenience wrapper around _run_fp_prefilter_batch for
+        backward compatibility and single-article processing.
+
+        Args:
+            article: Article dict with id, title, full_content, etc.
+            dry_run: If True, don't save predictions to database
+
+        Returns:
+            Tuple of (should_continue, prediction_record)
+        """
+        results = self._run_fp_prefilter_batch([article], dry_run=dry_run)
+        article_id = article["id"]
+        return results.get(article_id, (True, None))
+
     def _save_classifier_prediction(
         self,
         article_id: UUID,

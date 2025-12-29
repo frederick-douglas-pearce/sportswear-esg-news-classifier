@@ -303,12 +303,14 @@ class TestFPPrefilter:
                 mock_settings.fp_skip_llm_threshold = 0.3
 
                 mock_fp_client = MagicMock()
-                mock_fp_client.predict_fp.return_value = FPPredictionResult(
-                    is_sportswear=False,
-                    probability=0.05,  # Very low - definitely not sportswear
-                    risk_level="high",
-                    threshold=0.3,
-                )
+                mock_fp_client.predict_fp_batch.return_value = [
+                    FPPredictionResult(
+                        is_sportswear=False,
+                        probability=0.05,  # Very low - definitely not sportswear
+                        risk_level="high",
+                        threshold=0.3,
+                    )
+                ]
                 mock_fp_client.get_model_info.return_value = {"version": "1.0"}
 
                 pipeline = LabelingPipeline(fp_client=mock_fp_client)
@@ -335,12 +337,14 @@ class TestFPPrefilter:
                 mock_settings.fp_skip_llm_threshold = 0.3
 
                 mock_fp_client = MagicMock()
-                mock_fp_client.predict_fp.return_value = FPPredictionResult(
-                    is_sportswear=True,
-                    probability=0.95,  # High - definitely sportswear
-                    risk_level="low",
-                    threshold=0.3,
-                )
+                mock_fp_client.predict_fp_batch.return_value = [
+                    FPPredictionResult(
+                        is_sportswear=True,
+                        probability=0.95,  # High - definitely sportswear
+                        risk_level="low",
+                        threshold=0.3,
+                    )
+                ]
                 mock_fp_client.get_model_info.return_value = {"version": "1.0"}
 
                 pipeline = LabelingPipeline(fp_client=mock_fp_client)
@@ -378,7 +382,7 @@ class TestFPPrefilter:
                 mock_settings.fp_skip_llm_threshold = 0.3
 
                 mock_fp_client = MagicMock()
-                mock_fp_client.predict_fp.side_effect = Exception("Connection refused")
+                mock_fp_client.predict_fp_batch.side_effect = Exception("Connection refused")
 
                 pipeline = LabelingPipeline(fp_client=mock_fp_client)
 
@@ -401,25 +405,29 @@ class TestFPPrefilter:
                 mock_settings.fp_skip_llm_threshold = 0.3
 
                 mock_fp_client = MagicMock()
-                mock_fp_client.predict_fp.return_value = FPPredictionResult(
-                    is_sportswear=True,
-                    probability=0.8,
-                    risk_level="low",
-                    threshold=0.3,
-                )
+                mock_fp_client.predict_fp_batch.return_value = [
+                    FPPredictionResult(
+                        is_sportswear=True,
+                        probability=0.8,
+                        risk_level="low",
+                        threshold=0.3,
+                    )
+                ]
                 mock_fp_client.get_model_info.return_value = {"version": "1.0"}
 
                 pipeline = LabelingPipeline(fp_client=mock_fp_client)
                 pipeline._run_fp_prefilter(mock_article, dry_run=True)
 
-                # Verify all fields are passed
-                mock_fp_client.predict_fp.assert_called_once()
-                call_kwargs = mock_fp_client.predict_fp.call_args[1]
-                assert call_kwargs["title"] == mock_article["title"]
-                assert call_kwargs["content"] == mock_article["full_content"]
-                assert call_kwargs["brands"] == mock_article["brands_mentioned"]
-                assert call_kwargs["source_name"] == mock_article["source_name"]
-                assert call_kwargs["category"] == mock_article["category"]
+                # Verify batch API is called with article data
+                mock_fp_client.predict_fp_batch.assert_called_once()
+                call_args = mock_fp_client.predict_fp_batch.call_args[0][0]
+                assert len(call_args) == 1
+                article_data = call_args[0]
+                assert article_data["title"] == mock_article["title"]
+                assert article_data["content"] == mock_article["full_content"]
+                assert article_data["brands"] == mock_article["brands_mentioned"]
+                assert article_data["source_name"] == mock_article["source_name"]
+                assert article_data["category"] == mock_article["category"]
 
     def test_fp_prefilter_handles_string_category(self):
         """Should handle string category as well as list."""
@@ -440,20 +448,22 @@ class TestFPPrefilter:
                 mock_settings.fp_skip_llm_threshold = 0.3
 
                 mock_fp_client = MagicMock()
-                mock_fp_client.predict_fp.return_value = FPPredictionResult(
-                    is_sportswear=True,
-                    probability=0.8,
-                    risk_level="low",
-                    threshold=0.3,
-                )
+                mock_fp_client.predict_fp_batch.return_value = [
+                    FPPredictionResult(
+                        is_sportswear=True,
+                        probability=0.8,
+                        risk_level="low",
+                        threshold=0.3,
+                    )
+                ]
                 mock_fp_client.get_model_info.return_value = {"version": "1.0"}
 
                 pipeline = LabelingPipeline(fp_client=mock_fp_client)
                 pipeline._run_fp_prefilter(article, dry_run=True)
 
                 # Should convert string to list
-                call_kwargs = mock_fp_client.predict_fp.call_args[1]
-                assert call_kwargs["category"] == ["sports"]
+                call_args = mock_fp_client.predict_fp_batch.call_args[0][0]
+                assert call_args[0]["category"] == ["sports"]
 
     def test_fp_prefilter_uses_description_when_no_full_content(self):
         """Should fall back to description when full_content is None."""
@@ -475,17 +485,19 @@ class TestFPPrefilter:
                 mock_settings.fp_skip_llm_threshold = 0.3
 
                 mock_fp_client = MagicMock()
-                mock_fp_client.predict_fp.return_value = FPPredictionResult(
-                    is_sportswear=True,
-                    probability=0.8,
-                    risk_level="low",
-                    threshold=0.3,
-                )
+                mock_fp_client.predict_fp_batch.return_value = [
+                    FPPredictionResult(
+                        is_sportswear=True,
+                        probability=0.8,
+                        risk_level="low",
+                        threshold=0.3,
+                    )
+                ]
                 mock_fp_client.get_model_info.return_value = {"version": "1.0"}
 
                 pipeline = LabelingPipeline(fp_client=mock_fp_client)
                 pipeline._run_fp_prefilter(article, dry_run=True)
 
                 # Should use description as content
-                call_kwargs = mock_fp_client.predict_fp.call_args[1]
-                assert call_kwargs["content"] == "This is the description"
+                call_args = mock_fp_client.predict_fp_batch.call_args[0][0]
+                assert call_args[0]["content"] == "This is the description"

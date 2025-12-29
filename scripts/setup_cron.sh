@@ -11,6 +11,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLLECT_SCRIPT="$SCRIPT_DIR/cron_collect.sh"
 SCRAPE_SCRIPT="$SCRIPT_DIR/cron_scrape.sh"
+MONITOR_SCRIPT="$SCRIPT_DIR/cron_monitor.sh"
 
 # Collection: runs at midnight, 6am, noon, 6pm (4x daily)
 COLLECT_SCHEDULE="0 0,6,12,18 * * *"
@@ -21,6 +22,11 @@ COLLECT_COMMENT="# ESG News Collector - API fetch + scrape (4x daily)"
 SCRAPE_SCHEDULE="0 3,9,15,21 * * *"
 SCRAPE_ENTRY="$SCRAPE_SCHEDULE $SCRAPE_SCRIPT"
 SCRAPE_COMMENT="# ESG News GDELT - collect from GDELT + scrape (4x daily)"
+
+# Monitoring: runs daily at 6am UTC
+MONITOR_SCHEDULE="0 6 * * *"
+MONITOR_ENTRY="$MONITOR_SCHEDULE $MONITOR_SCRIPT"
+MONITOR_COMMENT="# ESG Classifier Monitoring - drift detection (daily)"
 
 install_collect() {
     if crontab -l 2>/dev/null | grep -q "$COLLECT_SCRIPT"; then
@@ -58,6 +64,24 @@ remove_scrape() {
     fi
 }
 
+install_monitor() {
+    if crontab -l 2>/dev/null | grep -q "$MONITOR_SCRIPT"; then
+        echo "Monitoring job already installed."
+    else
+        (crontab -l 2>/dev/null || true; echo "$MONITOR_COMMENT"; echo "$MONITOR_ENTRY") | crontab -
+        echo "✓ Monitoring job installed (daily at 6am UTC)"
+    fi
+}
+
+remove_monitor() {
+    if crontab -l 2>/dev/null | grep -q "$MONITOR_SCRIPT"; then
+        crontab -l | grep -v "$MONITOR_SCRIPT" | grep -v "ESG Classifier Monitoring" | crontab -
+        echo "✓ Monitoring job removed."
+    else
+        echo "No monitoring job found."
+    fi
+}
+
 case "$1" in
     install)
         install_collect
@@ -73,15 +97,22 @@ case "$1" in
     install-scrape)
         install_scrape
         ;;
+    install-monitor)
+        install_monitor
+        ;;
     remove)
         remove_collect
         remove_scrape
+        remove_monitor
         ;;
     remove-collect)
         remove_collect
         ;;
     remove-scrape)
         remove_scrape
+        ;;
+    remove-monitor)
+        remove_monitor
         ;;
     status)
         echo "ESG News Cron Jobs Status"
@@ -97,6 +128,11 @@ case "$1" in
         else
             echo "GDELT:      NOT INSTALLED"
         fi
+        if crontab -l 2>/dev/null | grep -q "$MONITOR_SCRIPT"; then
+            echo "Monitoring: ACTIVE (daily at 6am UTC)"
+        else
+            echo "Monitoring: NOT INSTALLED"
+        fi
         echo ""
         echo "Current crontab:"
         crontab -l 2>/dev/null | grep -E "(ESG|cron_)" || echo "(no ESG jobs)"
@@ -107,17 +143,20 @@ case "$1" in
         echo "Usage: $0 {install|remove|status}"
         echo ""
         echo "Commands:"
-        echo "  install          - Add both cron jobs"
-        echo "  remove           - Remove both cron jobs"
+        echo "  install          - Add collection cron jobs"
+        echo "  remove           - Remove all cron jobs"
         echo "  status           - Show current cron status"
-        echo "  install-collect  - Add collection job only"
-        echo "  install-scrape   - Add scrape job only"
-        echo "  remove-collect   - Remove collection job only"
-        echo "  remove-scrape    - Remove scrape job only"
+        echo "  install-collect  - Add NewsData collection job"
+        echo "  install-scrape   - Add GDELT collection job"
+        echo "  install-monitor  - Add monitoring job"
+        echo "  remove-collect   - Remove collection job"
+        echo "  remove-scrape    - Remove scrape job"
+        echo "  remove-monitor   - Remove monitoring job"
         echo ""
         echo "Schedule:"
         echo "  NewsData (API + scrape):   midnight, 6am, noon, 6pm"
         echo "  GDELT (free API + scrape): 3am, 9am, 3pm, 9pm"
+        echo "  Monitoring (drift check):  6am UTC daily"
         exit 1
         ;;
 esac

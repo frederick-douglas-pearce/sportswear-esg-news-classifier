@@ -152,6 +152,11 @@ flowchart TB
   - [Docker Deployment](#docker-deployment)
   - [API Endpoints](#api-endpoints)
   - [Retraining the Model](#retraining-the-model)
+- [MLOps: Experiment Tracking & Monitoring](#mlops-experiment-tracking--monitoring)
+  - [MLflow Experiment Tracking](#mlflow-experiment-tracking)
+  - [Evidently AI Drift Monitoring](#evidently-ai-drift-monitoring)
+  - [Automated Monitoring](#automated-monitoring)
+  - [Webhook Alerts](#webhook-alerts)
 - [Environment Variables](#environment-variables)
 - [Database Schema](#database-schema)
   - [Articles Table](#articles-table)
@@ -189,6 +194,7 @@ sportswear-esg-news-classifier/
 │   ├── monitor_drift.py        # Monitor prediction drift for deployed models
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
+│   ├── cron_monitor.sh         # Cron wrapper for drift monitoring
 │   └── setup_cron.sh           # User-friendly cron management
 ├── notebooks/
 │   ├── fp1_EDA_FE.ipynb              # FP: EDA & Feature Engineering
@@ -247,12 +253,19 @@ sportswear-esg-news-classifier/
 │   │   ├── __init__.py
 │   │   ├── threshold_optimization.py  # Threshold tuning for target recall
 │   │   └── deployment.py       # Pipeline export utilities
-│   └── deployment/             # Production deployment module
+│   ├── deployment/             # Production deployment module
+│   │   ├── __init__.py
+│   │   ├── config.py           # Configuration and risk level mapping
+│   │   ├── data.py             # Data loading and splitting utilities
+│   │   ├── preprocessing.py    # Text preprocessing for API
+│   │   └── prediction.py       # FPClassifier wrapper class
+│   └── mlops/                  # MLOps module for tracking & monitoring
 │       ├── __init__.py
-│       ├── config.py           # Configuration and risk level mapping
-│       ├── data.py             # Data loading and splitting utilities
-│       ├── preprocessing.py    # Text preprocessing for API
-│       └── prediction.py       # FPClassifier wrapper class
+│       ├── config.py           # MLOps settings (MLflow, Evidently, alerts)
+│       ├── tracking.py         # MLflow experiment tracking wrapper
+│       ├── monitoring.py       # Evidently drift detection
+│       ├── reference_data.py   # Reference dataset management
+│       └── alerts.py           # Webhook notifications (Slack/Discord)
 └── tests/
     ├── conftest.py             # Shared pytest fixtures
     ├── test_api_client.py      # NewsData.io client unit tests
@@ -917,6 +930,203 @@ docker build -t fp-classifier-api .
 3. Update `models/registry.json` with new version entry
 4. Commit changes: `git add models/ && git commit -m "Promote model"`
 5. Build Docker image - dependencies auto-detected from config
+
+## MLOps: Experiment Tracking & Monitoring
+
+The project includes optional MLOps features for experiment tracking and production monitoring. All features use **graceful degradation** - they work when disabled with no code changes required.
+
+### MLflow Experiment Tracking
+
+Track training experiments with hyperparameters, metrics, and model artifacts.
+
+**Enable MLflow:**
+
+```bash
+# In .env
+MLFLOW_ENABLED=true
+MLFLOW_TRACKING_URI=file:./mlruns  # Local file-based tracking
+# Or use a remote server:
+# MLFLOW_TRACKING_URI=http://mlflow-server:5000
+```
+
+**Training with MLflow:**
+
+```bash
+# Train with automatic MLflow logging
+uv run python scripts/train.py --classifier fp --verbose
+
+# View experiments in MLflow UI
+uv run mlflow ui --backend-store-uri ./mlruns
+# Open http://localhost:5000
+```
+
+**What gets logged:**
+- Training parameters (model type, hyperparameters, target recall)
+- Metrics (test F2, recall, precision, threshold)
+- Artifacts (pipeline, config JSON)
+- Run metadata (timestamp, classifier type)
+
+**Programmatic Usage:**
+
+```python
+from src.mlops import ExperimentTracker
+
+tracker = ExperimentTracker("fp")
+with tracker.start_run(run_name="fp-v1.2.0"):
+    # Your training code...
+    tracker.log_params({"n_estimators": 200, "max_depth": 20})
+    tracker.log_metrics({"test_f2": 0.974, "test_recall": 0.988})
+    tracker.log_artifact("models/fp_classifier_pipeline.joblib")
+```
+
+### Evidently AI Drift Monitoring
+
+Detect prediction drift and data quality issues in production.
+
+**Enable Evidently:**
+
+```bash
+# In .env
+EVIDENTLY_ENABLED=true
+DRIFT_THRESHOLD=0.1  # Alert if drift score > 10%
+```
+
+**Running Drift Monitoring:**
+
+```bash
+# Basic drift check (last 7 days)
+uv run python scripts/monitor_drift.py --classifier fp
+
+# Extended analysis with HTML report
+uv run python scripts/monitor_drift.py --classifier fp --days 30 --html-report
+
+# Create reference dataset from historical data
+uv run python scripts/monitor_drift.py --classifier fp --create-reference --days 30
+
+# Check reference dataset stats
+uv run python scripts/monitor_drift.py --classifier fp --reference-stats
+```
+
+**Monitor Output:**
+
+```
+============================================================
+DRIFT MONITORING REPORT - FP
+============================================================
+
+Timestamp: 2025-12-29 10:30:45
+Drift Detected: NO
+Drift Score: 0.0523 (threshold: 0.1000)
+
+HTML Report: reports/monitoring/fp/drift_report_20251229_103045.html
+
+============================================================
+✅ Status: Healthy - no significant drift detected
+```
+
+**What gets monitored:**
+- Probability distribution drift (KS test or Evidently)
+- Prediction rate shifts
+- Data quality issues (missing values, outliers)
+
+### Automated Monitoring
+
+Set up daily drift monitoring with cron or GitHub Actions.
+
+**Local Cron Setup:**
+
+```bash
+# Install monitoring cron job (runs daily at 6am UTC)
+./scripts/setup_cron.sh install-monitor
+
+# Check status
+./scripts/setup_cron.sh status
+
+# Remove monitoring job
+./scripts/setup_cron.sh remove-monitor
+
+# View logs
+tail -f logs/monitoring/fp_monitoring_$(date +%Y%m%d).log
+```
+
+**GitHub Actions:**
+
+The project includes `.github/workflows/monitoring.yml` for automated drift monitoring:
+
+```yaml
+# Runs daily at 6am UTC
+# Monitors FP and EP classifiers
+# Uploads HTML reports as artifacts
+# Sends alerts via webhook if drift detected
+```
+
+**Required GitHub Secrets:**
+- `ALERT_WEBHOOK_URL` - Slack/Discord webhook for alerts
+
+**Manual Workflow Trigger:**
+
+```bash
+# Trigger via GitHub CLI
+gh workflow run monitoring.yml --field classifier=fp --field days=7
+```
+
+### Webhook Alerts
+
+Receive Slack or Discord notifications when drift is detected.
+
+**Configure Alerts:**
+
+```bash
+# In .env
+ALERT_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+ALERT_ON_DRIFT=true
+ALERT_ON_TRAINING=false  # Optional: alert after training
+```
+
+**Alert Example (Slack):**
+
+```
+⚠️ ESG Classifier Alert
+━━━━━━━━━━━━━━━━━━━━━━━━
+Drift Detected
+Drift detected! Score: 0.1523 (threshold: 0.1000)
+
+Classifier: fp | 2025-12-29 10:30:45
+
+Drift Score: 0.1523
+Threshold: 0.1000
+Reference Size: 1000
+Current Size: 250
+```
+
+**Programmatic Alerts:**
+
+```python
+from src.mlops import send_drift_alert
+
+send_drift_alert(
+    classifier_type="fp",
+    drift_score=0.15,
+    threshold=0.10,
+    details={"reference_size": 1000, "current_size": 250}
+)
+```
+
+### MLOps Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MLFLOW_ENABLED` | Enable MLflow experiment tracking | `false` |
+| `MLFLOW_TRACKING_URI` | MLflow server URI or local path | `file:./mlruns` |
+| `MLFLOW_EXPERIMENT_PREFIX` | Prefix for experiment names | `esg-classifier` |
+| `EVIDENTLY_ENABLED` | Enable Evidently drift detection | `false` |
+| `EVIDENTLY_REPORTS_DIR` | Directory for HTML reports | `reports/monitoring` |
+| `DRIFT_THRESHOLD` | Drift score threshold for alerts | `0.1` |
+| `REFERENCE_DATA_DIR` | Directory for reference datasets | `data/reference` |
+| `REFERENCE_WINDOW_DAYS` | Days of data for reference | `30` |
+| `ALERT_WEBHOOK_URL` | Slack/Discord webhook URL | - |
+| `ALERT_ON_DRIFT` | Send alert on drift detection | `true` |
+| `ALERT_ON_TRAINING` | Send alert after training | `false` |
 
 ## Environment Variables
 

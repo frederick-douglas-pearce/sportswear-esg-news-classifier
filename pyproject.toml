@@ -35,6 +35,9 @@ dependencies = [
     # API dependencies
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
+    # MLOps dependencies
+    "mlflow>=2.10",
+    "evidently>=0.4.15",
 ]
 
 [project.optional-dependencies]

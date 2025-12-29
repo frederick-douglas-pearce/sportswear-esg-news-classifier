@@ -1,0 +1,148 @@
+name: Model Drift Monitoring
+
+on:
+  schedule:
+    # Run daily at 6am UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      classifier:
+        description: 'Classifier to monitor (fp, ep, or all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - fp
+          - ep
+      days:
+        description: 'Number of days to analyze'
+        required: false
+        default: '7'
+        type: string
+
+env:
+  PYTHON_VERSION: '3.12'
+  EVIDENTLY_ENABLED: 'true'
+
+jobs:
+  monitor-drift:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        classifier: ${{ github.event.inputs.classifier == 'all' && fromJson('["fp", "ep"]') || fromJson(format('["{0}"]', github.event.inputs.classifier || 'fp')) }}
+      fail-fast: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: 'latest'
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Download prediction logs
+        run: |
+          # Create logs directory
+          mkdir -p logs/predictions
+
+          # In a real setup, download logs from your production system
+          # For example, from Google Cloud Storage:
+          # gsutil -m cp "gs://${{ secrets.GCS_BUCKET }}/predictions/${{ matrix.classifier }}_predictions_*.jsonl" logs/predictions/
+
+          # Or from an artifact store:
+          # This is a placeholder - implement based on your log storage
+
+          echo "Note: Prediction logs should be downloaded from production storage"
+          echo "Configure this step based on your infrastructure"
+
+      - name: Download reference data
+        continue-on-error: true
+        run: |
+          # Create reference data directory
+          mkdir -p data/reference
+
+          # Download reference data if stored remotely
+          # gsutil cp "gs://${{ secrets.GCS_BUCKET }}/reference/${{ matrix.classifier }}_reference.parquet" data/reference/
+
+          echo "Note: Reference data should be downloaded from production storage"
+
+      - name: Run drift monitoring
+        id: drift
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          DAYS=${{ github.event.inputs.days || '7' }}
+
+          uv run python scripts/monitor_drift.py \
+            --classifier ${{ matrix.classifier }} \
+            --days $DAYS \
+            --html-report \
+            --output reports/monitoring/${{ matrix.classifier }}/drift_report.json \
+            --verbose || echo "DRIFT_DETECTED=true" >> $GITHUB_OUTPUT
+
+      - name: Upload monitoring reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monitoring-reports-${{ matrix.classifier }}
+          path: |
+            reports/monitoring/${{ matrix.classifier }}/
+            logs/monitoring/
+          retention-days: 30
+
+      - name: Send alert on drift
+        if: steps.drift.outputs.DRIFT_DETECTED == 'true'
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          if [ -n "$ALERT_WEBHOOK_URL" ]; then
+            echo "Drift detected for ${{ matrix.classifier }} classifier"
+            # Alert is sent by the monitor script when --alert flag is used
+            # This step is for additional notifications if needed
+          fi
+
+  summary:
+    needs: monitor-drift
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: all-reports
+
+      - name: Generate summary
+        run: |
+          echo "## Drift Monitoring Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Classifier | Status | Drift Score |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|-------------|" >> $GITHUB_STEP_SUMMARY
+
+          for classifier in fp ep; do
+            REPORT="all-reports/monitoring-reports-${classifier}/drift_report.json"
+            if [ -f "$REPORT" ]; then
+              DRIFT=$(jq -r '.drift_detected' "$REPORT")
+              SCORE=$(jq -r '.drift_score' "$REPORT")
+              if [ "$DRIFT" = "true" ]; then
+                echo "| $classifier | ⚠️ Drift Detected | $SCORE |" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "| $classifier | ✅ Healthy | $SCORE |" >> $GITHUB_STEP_SUMMARY
+              fi
+            else
+              echo "| $classifier | ❓ No Report | - |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Reports are available as workflow artifacts." >> $GITHUB_STEP_SUMMARY

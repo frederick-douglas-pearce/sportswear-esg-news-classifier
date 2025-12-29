@@ -57,8 +57,20 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requi
 ./scripts/setup_cron.sh status             # Check cron status
 ./scripts/setup_cron.sh remove             # Remove both cron jobs
 ./scripts/setup_cron.sh install-scrape     # Add GDELT collection job
+./scripts/setup_cron.sh install-monitor    # Add drift monitoring job (daily)
 tail -f logs/collection_$(date +%Y%m%d).log  # View NewsData logs
 tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
+
+# MLOps - Drift Monitoring
+uv run python scripts/monitor_drift.py --classifier fp              # Basic drift check (7 days)
+uv run python scripts/monitor_drift.py --classifier fp --days 30    # Extended analysis
+uv run python scripts/monitor_drift.py --classifier fp --html-report  # Generate Evidently HTML report
+uv run python scripts/monitor_drift.py --classifier fp --create-reference --days 30  # Create reference dataset
+uv run python scripts/monitor_drift.py --classifier fp --reference-stats  # View reference stats
+uv run python scripts/monitor_drift.py --classifier fp --alert      # Send webhook alert if drift
+
+# MLOps - MLflow Experiment Tracking (when MLFLOW_ENABLED=true)
+uv run mlflow ui --backend-store-uri ./mlruns  # Start MLflow UI (http://localhost:5000)
 ```
 
 ## Data Collection Status Reporting
@@ -209,11 +221,19 @@ with engine.connect() as conn:
 - `cleanup_false_positives.py` - Identify/remove false positive brand matches
 - `cron_collect.sh` - NewsData.io collection + scraping (runs 4x daily at 12am, 6am, 12pm, 6pm)
 - `cron_scrape.sh` - GDELT collection + scraping (runs 4x daily at 3am, 9am, 3pm, 9pm)
+- `cron_monitor.sh` - Drift monitoring wrapper (runs daily at 6am UTC)
 - `setup_cron.sh` - Install/remove/status commands for cron management
-- `train.py` - Unified training script for FP/EP classifiers
+- `train.py` - Unified training script for FP/EP classifiers (with MLflow integration)
 - `predict.py` - Unified FastAPI service for all classifiers
 - `retrain.py` - Retrain models with version management
-- `monitor_drift.py` - Monitor prediction drift for deployed models
+- `monitor_drift.py` - Monitor prediction drift with Evidently AI
+
+### MLOps Module (`src/mlops/`)
+- `config.py` - MLOps settings (MLflow, Evidently, alerts) from environment variables
+- `tracking.py` - MLflow experiment tracking wrapper with graceful degradation
+- `monitoring.py` - Evidently-based drift detection (falls back to KS test when disabled)
+- `reference_data.py` - Reference dataset management for drift comparison
+- `alerts.py` - Webhook notifications for Slack/Discord
 
 ### ML Classifier Notebooks (`notebooks/`)
 
@@ -305,6 +325,17 @@ with engine.connect() as conn:
 - `FP_CLASSIFIER_URL` - FP classifier API URL (default: http://localhost:8000)
 - `FP_SKIP_LLM_THRESHOLD` - Probability threshold to skip LLM (default: 0.5, matches trained model threshold of 0.5356)
 - `FP_CLASSIFIER_TIMEOUT` - FP classifier API timeout in seconds (default: 30.0)
+- `MLFLOW_ENABLED` - Enable MLflow experiment tracking (default: false)
+- `MLFLOW_TRACKING_URI` - MLflow server URI or local path (default: file:./mlruns)
+- `MLFLOW_EXPERIMENT_PREFIX` - Prefix for experiment names (default: esg-classifier)
+- `EVIDENTLY_ENABLED` - Enable Evidently drift detection (default: false)
+- `EVIDENTLY_REPORTS_DIR` - Directory for HTML reports (default: reports/monitoring)
+- `DRIFT_THRESHOLD` - Drift score threshold for alerts (default: 0.1)
+- `REFERENCE_DATA_DIR` - Directory for reference datasets (default: data/reference)
+- `REFERENCE_WINDOW_DAYS` - Days of data for reference (default: 30)
+- `ALERT_WEBHOOK_URL` - Slack/Discord webhook URL for alerts
+- `ALERT_ON_DRIFT` - Send alert on drift detection (default: true)
+- `ALERT_ON_TRAINING` - Send alert after training (default: false)
 
 ## Search Keywords
 
@@ -444,6 +475,54 @@ Environment variables:
 - `PREDICTION_LOGS_DIR` - Log directory (default: logs/predictions)
 
 ## Labeling Pipeline Changelog
+
+### 2025-12-29: MLOps Improvements - MLflow & Evidently AI
+
+**Change**: Added MLOps module for experiment tracking and production monitoring.
+
+**New features:**
+- **MLflow integration**: Automatic logging of training hyperparameters, metrics, and artifacts
+- **Evidently AI monitoring**: Drift detection with HTML reports and legacy KS test fallback
+- **Webhook alerts**: Slack/Discord notifications when drift is detected
+- **Automated monitoring**: Daily cron job and GitHub Actions workflow
+
+**New module**: `src/mlops/`
+- `config.py` - Configuration from environment variables
+- `tracking.py` - MLflow experiment tracking wrapper
+- `monitoring.py` - Evidently-based drift detection
+- `reference_data.py` - Reference dataset management
+- `alerts.py` - Webhook notifications
+
+**New scripts:**
+- `scripts/cron_monitor.sh` - Daily drift monitoring automation
+
+**Files modified:**
+- `scripts/train.py` - Added MLflow tracking integration
+- `scripts/monitor_drift.py` - Rewritten with Evidently support
+- `scripts/setup_cron.sh` - Added `install-monitor` / `remove-monitor` commands
+- `.env.example` - Added MLOps environment variables
+- `pyproject.toml` - Added mlflow>=2.10 and evidently>=0.4.15 dependencies
+
+**Usage:**
+```bash
+# Enable features in .env
+MLFLOW_ENABLED=true
+EVIDENTLY_ENABLED=true
+ALERT_WEBHOOK_URL=https://hooks.slack.com/...
+
+# Train with MLflow tracking
+uv run python scripts/train.py --classifier fp --verbose
+
+# Run drift monitoring
+uv run python scripts/monitor_drift.py --classifier fp --html-report
+
+# Set up daily monitoring
+./scripts/setup_cron.sh install-monitor
+```
+
+**Graceful degradation**: All features work when disabled - no code changes required.
+
+---
 
 ### 2025-12-29: FP Classifier Batch API & Docker Fixes
 

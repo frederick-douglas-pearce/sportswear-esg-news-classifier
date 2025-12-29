@@ -38,6 +38,7 @@ from sklearn.pipeline import Pipeline
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.deployment import ClassifierType
+from src.mlops import ExperimentTracker
 from src.deployment.data import load_training_data, split_data
 from src.fp1_nb.preprocessing import create_text_features as fp_create_text_features, clean_text as fp_clean_text
 from src.ep1_nb.preprocessing import create_text_features as ep_create_text_features, clean_text as ep_clean_text
@@ -173,6 +174,7 @@ def train_fp_classifier(
     target_recall: float,
     random_state: int,
     verbose: bool,
+    tracker: ExperimentTracker | None = None,
 ) -> Dict[str, Any]:
     """Train the FP (False Positive) classifier.
 
@@ -196,6 +198,17 @@ def train_fp_classifier(
         print(f"\nData path: {data_path}")
         print(f"Output dir: {output_dir}")
         print(f"Target recall: {target_recall}")
+
+    # Log training parameters to MLflow
+    if tracker:
+        tracker.log_params({
+            "data_path": data_path,
+            "target_recall": target_recall,
+            "random_state": random_state,
+            "model_type": "RandomForest",
+            "transformer_method": "sentence_transformer_ner",
+            **best_params,
+        })
 
     # Load data
     if verbose:
@@ -336,6 +349,21 @@ def train_fp_classifier(
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
+    # Log metrics and artifacts to MLflow
+    if tracker:
+        tracker.log_metrics({
+            "test_f2": test_f2,
+            "test_recall": test_recall,
+            "test_precision": test_precision,
+            "threshold": optimal_threshold,
+            "threshold_recall": threshold_metrics["threshold_recall"],
+            "threshold_precision": threshold_metrics["threshold_precision"],
+            "threshold_f2": threshold_metrics["threshold_f2"],
+            "n_samples": len(df),
+        })
+        tracker.log_artifact(pipeline_path)
+        tracker.log_model_config(config)
+
     if verbose:
         print("\n" + "=" * 60)
         print("TRAINING COMPLETE")
@@ -350,6 +378,7 @@ def train_ep_classifier(
     target_recall: float,
     random_state: int,
     verbose: bool,
+    tracker: ExperimentTracker | None = None,
 ) -> Dict[str, Any]:
     """Train the EP (ESG Pre-filter) classifier.
 
@@ -365,6 +394,17 @@ def train_ep_classifier(
         print(f"\nData path: {data_path}")
         print(f"Output dir: {output_dir}")
         print(f"Target recall: {target_recall}")
+
+    # Log initial training parameters to MLflow
+    if tracker:
+        tracker.log_params({
+            "data_path": data_path,
+            "target_recall": target_recall,
+            "random_state": random_state,
+            "model_type": "LogisticRegression",
+            "transformer_method": "tfidf_lsa",
+            "n_folds": n_folds,
+        })
 
     # Load data
     if verbose:
@@ -520,6 +560,24 @@ def train_ep_classifier(
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
+    # Log metrics and artifacts to MLflow
+    if tracker:
+        # Log best hyperparameters from grid search
+        tracker.log_params({f"best_{k}": v for k, v in grid_search.best_params_.items()})
+        tracker.log_metrics({
+            "cv_f2": grid_search.best_score_,
+            "test_f2": test_f2,
+            "test_recall": test_recall,
+            "test_precision": test_precision,
+            "threshold": optimal_threshold,
+            "threshold_recall": threshold_metrics["threshold_recall"],
+            "threshold_precision": threshold_metrics["threshold_precision"],
+            "threshold_f2": threshold_metrics["threshold_f2"],
+            "n_samples": len(df),
+        })
+        tracker.log_artifact(pipeline_path)
+        tracker.log_model_config(config)
+
     if verbose:
         print(f"\nSaved pipeline to {pipeline_path}")
         print(f"Saved config to {config_path}")
@@ -545,32 +603,40 @@ def main() -> int:
         print(f"Error: Data file not found: {data_path}")
         return 1
 
-    # Train appropriate classifier
-    try:
-        if classifier_type == ClassifierType.FP:
-            config = train_fp_classifier(
-                data_path=data_path,
-                output_dir=args.output_dir,
-                target_recall=target_recall,
-                random_state=args.random_state,
-                verbose=args.verbose,
-            )
-        elif classifier_type == ClassifierType.EP:
-            config = train_ep_classifier(
-                data_path=data_path,
-                output_dir=args.output_dir,
-                target_recall=target_recall,
-                random_state=args.random_state,
-                verbose=args.verbose,
-            )
-        elif classifier_type == ClassifierType.ESG:
-            print("Error: ESG classifier training not yet implemented")
-            return 1
+    # Create experiment tracker (gracefully degrades when disabled)
+    tracker = ExperimentTracker(classifier_type.value)
 
-        if args.verbose:
-            print(f"\nFinal metrics:")
-            print(f"  Test F2: {config.get('test_f2', 'N/A'):.4f}")
-            print(f"  Threshold: {config.get('threshold', 'N/A'):.4f}")
+    # Train appropriate classifier with MLflow tracking
+    try:
+        with tracker.start_run(tags={"target_recall": str(target_recall)}):
+            if classifier_type == ClassifierType.FP:
+                config = train_fp_classifier(
+                    data_path=data_path,
+                    output_dir=args.output_dir,
+                    target_recall=target_recall,
+                    random_state=args.random_state,
+                    verbose=args.verbose,
+                    tracker=tracker,
+                )
+            elif classifier_type == ClassifierType.EP:
+                config = train_ep_classifier(
+                    data_path=data_path,
+                    output_dir=args.output_dir,
+                    target_recall=target_recall,
+                    random_state=args.random_state,
+                    verbose=args.verbose,
+                    tracker=tracker,
+                )
+            elif classifier_type == ClassifierType.ESG:
+                print("Error: ESG classifier training not yet implemented")
+                return 1
+
+            if args.verbose:
+                print(f"\nFinal metrics:")
+                print(f"  Test F2: {config.get('test_f2', 'N/A'):.4f}")
+                print(f"  Threshold: {config.get('threshold', 'N/A'):.4f}")
+                if tracker.enabled:
+                    print(f"  MLflow run ID: {tracker.get_run_id()}")
 
         return 0
 
