@@ -3,180 +3,180 @@
     "name": "tfidf_lsa",
     "classifier": "LogisticRegression",
     "n_features": 100,
-    "cv_f2": 0.8144786784492667,
-    "cv_f2_std": 0.014485385834621022,
-    "cv_recall": 0.8053097345132744,
-    "cv_precision": 0.8537715516056421
+    "cv_f2": 0.7843952900352814,
+    "cv_f2_std": 0.055648590118853515,
+    "cv_recall": 0.7714899342752161,
+    "cv_precision": 0.8419900454940886
   },
   {
     "name": "tfidf_lsa",
     "classifier": "LinearSVM",
     "n_features": 100,
-    "cv_f2": 0.8392607808637186,
-    "cv_f2_std": 0.008684302612551688,
-    "cv_recall": 0.8407079646017698,
-    "cv_precision": 0.8344516594516594
+    "cv_f2": 0.8250051649359543,
+    "cv_f2_std": 0.034378558845906536,
+    "cv_recall": 0.8183253118045851,
+    "cv_precision": 0.8530161427357689
   },
   {
     "name": "tfidf_lsa",
     "classifier": "RandomForest",
     "n_features": 100,
-    "cv_f2": 0.8028583003394619,
-    "cv_f2_std": 0.0061340398541735045,
-    "cv_recall": 0.7905604719764012,
-    "cv_precision": 0.8563148529852193
+    "cv_f2": 0.8183433739330352,
+    "cv_f2_std": 0.03215575879467192,
+    "cv_recall": 0.8095275060808363,
+    "cv_precision": 0.8572426211158964
   },
   {
     "name": "tfidf_lsa",
     "classifier": "HistGradientBoosting",
     "n_features": 100,
-    "cv_f2": 0.8045684547284999,
-    "cv_f2_std": 0.009326901936445243,
-    "cv_recall": 0.799410029498525,
-    "cv_precision": 0.8270357459935602
+    "cv_f2": 0.8108805467545194,
+    "cv_f2_std": 0.04343805151794217,
+    "cv_recall": 0.803679552864462,
+    "cv_precision": 0.8432211158526948
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "LogisticRegression",
     "n_features": 114,
-    "cv_f2": 0.7824656173698027,
-    "cv_f2_std": 0.047505003234674256,
-    "cv_recall": 0.7787610619469026,
-    "cv_precision": 0.7991554493897982
+    "cv_f2": 0.7937419866667615,
+    "cv_f2_std": 0.03952018787286892,
+    "cv_recall": 0.7890079180251514,
+    "cv_precision": 0.8147717225303434
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "LinearSVM",
     "n_features": 114,
-    "cv_f2": 0.8441441640596926,
-    "cv_f2_std": 0.022609108681965133,
-    "cv_recall": 0.8436578171091446,
-    "cv_precision": 0.8463173481642124
+    "cv_f2": 0.8195776312722671,
+    "cv_f2_std": 0.02534282928425086,
+    "cv_recall": 0.8153495833980231,
+    "cv_precision": 0.8371913580246914
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "RandomForest",
     "n_features": 114,
-    "cv_f2": 0.8214494521975647,
-    "cv_f2_std": 0.008403533385429738,
-    "cv_recall": 0.8141592920353982,
-    "cv_precision": 0.8524258760107818
+    "cv_f2": 0.8193471584109528,
+    "cv_f2_std": 0.0398424325176819,
+    "cv_recall": 0.812477358588211,
+    "cv_precision": 0.8498631636562671
   },
   {
     "name": "tfidf_lsa_ner_proximity",
     "classifier": "HistGradientBoosting",
     "n_features": 114,
-    "cv_f2": 0.8001230795348443,
-    "cv_f2_std": 0.004876701975333777,
-    "cv_recall": 0.7935103244837758,
-    "cv_precision": 0.8277268093781855
+    "cv_f2": 0.8037911868232629,
+    "cv_f2_std": 0.04677401011102114,
+    "cv_recall": 0.7919318946333386,
+    "cv_precision": 0.8563337799383414
   },
   {
     "name": "tfidf_lsa_product",
     "classifier": "LogisticRegression",
     "n_features": 132,
-    "cv_f2": 0.8152419985697082,
-    "cv_f2_std": 0.0038737596366182347,
-    "cv_recall": 0.8200589970501474,
-    "cv_precision": 0.7974746934611264
+    "cv_f2": 0.7963756536486016,
+    "cv_f2_std": 0.021614305526994282,
+    "cv_recall": 0.8036019251668995,
+    "cv_precision": 0.7709616174055829
   },
   {
     "name": "tfidf_lsa_product",
     "classifier": "LinearSVM",
     "n_features": 132,
-    "cv_f2": 0.8464884106165184,
-    "cv_f2_std": 0.014545650392380805,
-    "cv_recall": 0.8495575221238938,
-    "cv_precision": 0.8351360606938701
+    "cv_f2": 0.8287897338933403,
+    "cv_f2_std": 0.029046081804331304,
+    "cv_recall": 0.827123117528334,
+    "cv_precision": 0.8369439518926837
   },
   {
     "name": "tfidf_lsa_product",
     "classifier": "RandomForest",
     "n_features": 132,
-    "cv_f2": 0.8210231090048771,
-    "cv_f2_std": 0.016491963099670416,
-    "cv_recall": 0.8141592920353983,
-    "cv_precision": 0.8503383731569986
+    "cv_f2": 0.8267353425935801,
+    "cv_f2_std": 0.026762541424153265,
+    "cv_recall": 0.8241991409201471,
+    "cv_precision": 0.8403330731199584
   },
   {
     "name": "tfidf_lsa_product",
     "classifier": "HistGradientBoosting",
     "n_features": 132,
-    "cv_f2": 0.8273865188802206,
-    "cv_f2_std": 0.014615910052204554,
-    "cv_recall": 0.8259587020648967,
-    "cv_precision": 0.8332543069385174
+    "cv_f2": 0.8249112759207192,
+    "cv_f2_std": 0.020000997994765433,
+    "cv_recall": 0.8212234125135849,
+    "cv_precision": 0.8412450994976931
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LogisticRegression",
     "n_features": 390,
-    "cv_f2": 0.8233762782626224,
-    "cv_f2_std": 0.04778954980101969,
-    "cv_recall": 0.8289085545722713,
-    "cv_precision": 0.8022796339174638
+    "cv_f2": 0.7944503436513529,
+    "cv_f2_std": 0.07962120930527986,
+    "cv_recall": 0.7979092273456502,
+    "cv_precision": 0.787180815737135
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "LinearSVM",
     "n_features": 390,
-    "cv_f2": 0.8341306285178871,
-    "cv_f2_std": 0.025236772370402234,
-    "cv_recall": 0.8407079646017698,
-    "cv_precision": 0.8095737753716209
+    "cv_f2": 0.7959888951118487,
+    "cv_f2_std": 0.05621712691960598,
+    "cv_recall": 0.7978057237489002,
+    "cv_precision": 0.7927869508007145
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "RandomForest",
     "n_features": 390,
-    "cv_f2": 0.7971339299901842,
-    "cv_f2_std": 0.03240393258527791,
-    "cv_recall": 0.7935103244837759,
-    "cv_precision": 0.8123999463399364
+    "cv_f2": 0.7647931972547233,
+    "cv_f2_std": 0.054741164750647275,
+    "cv_recall": 0.7538425710293432,
+    "cv_precision": 0.8151515151515151
   },
   {
     "name": "sentence_transformer_ner",
     "classifier": "HistGradientBoosting",
     "n_features": 390,
-    "cv_f2": 0.8106572919475673,
-    "cv_f2_std": 0.011384901354595363,
-    "cv_recall": 0.8112094395280236,
-    "cv_precision": 0.8092138403732606
+    "cv_f2": 0.7924589223791297,
+    "cv_f2_std": 0.04683134356372983,
+    "cv_recall": 0.791854266935776,
+    "cv_precision": 0.7993951384963256
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "LogisticRegression",
     "n_features": 401,
-    "cv_f2": 0.8042350949227282,
-    "cv_f2_std": 0.042615003043427024,
-    "cv_recall": 0.8112094395280236,
-    "cv_precision": 0.7785589559783107
+    "cv_f2": 0.7848924901167581,
+    "cv_f2_std": 0.03268136633765495,
+    "cv_recall": 0.7890079180251514,
+    "cv_precision": 0.7710836324956789
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "LinearSVM",
     "n_features": 401,
-    "cv_f2": 0.8312709898213096,
-    "cv_f2_std": 0.016880715337684832,
-    "cv_recall": 0.831858407079646,
-    "cv_precision": 0.8294945392965674
+    "cv_f2": 0.8053374199159015,
+    "cv_f2_std": 0.03272912376839714,
+    "cv_recall": 0.8065000258758991,
+    "cv_precision": 0.8015708752683214
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "RandomForest",
     "n_features": 401,
-    "cv_f2": 0.8015556010896829,
-    "cv_f2_std": 0.04319630302219225,
-    "cv_recall": 0.7964601769911503,
-    "cv_precision": 0.8232587933845795
+    "cv_f2": 0.756264626323532,
+    "cv_f2_std": 0.06144864761197827,
+    "cv_recall": 0.7480204937121565,
+    "cv_precision": 0.7967498201207653
   },
   {
     "name": "sentence_transformer_ner_vocab",
     "classifier": "HistGradientBoosting",
     "n_features": 401,
-    "cv_f2": 0.8234141744780042,
-    "cv_f2_std": 0.017689770146416414,
-    "cv_recall": 0.8259587020648969,
-    "cv_precision": 0.8140873015873016
+    "cv_f2": 0.8030855021859754,
+    "cv_f2_std": 0.03660706481281036,
+    "cv_recall": 0.8006779485587124,
+    "cv_precision": 0.8150600432846694
   }
 ]

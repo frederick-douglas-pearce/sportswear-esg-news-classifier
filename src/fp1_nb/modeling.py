@@ -708,6 +708,275 @@ def tune_feature_transformer(
     return pd.DataFrame(results)
 
 
+def evaluate_feature_engineering(
+    fe_configs: Dict[str, Dict[str, Any]],
+    classifiers: Dict[str, Dict[str, Any]],
+    transformer_class: Any,
+    X_train: pd.Series,
+    X_trainval: pd.Series,
+    y_trainval: np.ndarray,
+    cv: Any,
+    scorer: Any = None,
+    train_source_names: Optional[List[str]] = None,
+    train_categories: Optional[List[str]] = None,
+    trainval_source_names: Optional[List[str]] = None,
+    trainval_categories: Optional[List[str]] = None,
+    random_state: int = 42,
+    verbose: bool = True,
+) -> List[Dict[str, Any]]:
+    """Evaluate multiple feature engineering approaches with multiple classifiers.
+
+    Fits each transformer on training data only (to prevent data leakage),
+    then evaluates with cross-validation on train+val combined.
+
+    Args:
+        fe_configs: Dictionary mapping FE method names to config dictionaries.
+            Each config should contain 'method' and other transformer parameters.
+        classifiers: Dictionary mapping classifier names to config dictionaries.
+            Each config should contain 'model' (sklearn estimator) and
+            'requires_dense' (bool indicating if dense arrays are needed).
+        transformer_class: Feature transformer class (e.g., FPFeatureTransformer)
+        X_train: Training text features for fitting transformer (pd.Series)
+        X_trainval: Train+val text features for CV evaluation (pd.Series)
+        y_trainval: Train+val labels for CV evaluation (np.ndarray)
+        cv: Cross-validation splitter (e.g., StratifiedKFold)
+        scorer: Scoring function for F2 (default: f2_scorer)
+        train_source_names: Optional source names for transformer fitting
+        train_categories: Optional categories for transformer fitting
+        trainval_source_names: Optional source names for CV transformation
+        trainval_categories: Optional categories for CV transformation
+        random_state: Random seed for reproducibility
+        verbose: Whether to print progress
+
+    Returns:
+        List of result dictionaries, each containing:
+            - name: FE method name
+            - classifier: Classifier name
+            - n_features: Number of features
+            - cv_f2: Mean CV F2 score
+            - cv_f2_std: Std of CV F2 score
+            - cv_recall: Mean CV recall
+            - cv_precision: Mean CV precision
+
+    Example:
+        >>> fe_configs = {
+        ...     'tfidf_lsa': {'method': 'tfidf_lsa', 'max_features': 10000},
+        ...     'sentence_transformer': {'method': 'sentence_transformer_ner'},
+        ... }
+        >>> classifiers = {
+        ...     'LogisticRegression': {
+        ...         'model': LogisticRegression(max_iter=2000),
+        ...         'requires_dense': False,
+        ...     },
+        ...     'RandomForest': {
+        ...         'model': RandomForestClassifier(n_estimators=100),
+        ...         'requires_dense': False,
+        ...     },
+        ... }
+        >>> results = evaluate_feature_engineering(
+        ...     fe_configs, classifiers, FPFeatureTransformer,
+        ...     X_train, X_trainval, y_trainval, cv
+        ... )
+    """
+    from scipy import sparse
+
+    if scorer is None:
+        scorer = f2_scorer
+
+    fe_results = []
+
+    for name, config in fe_configs.items():
+        if verbose:
+            print(f"Evaluating {name}...")
+
+        # Create transformer
+        transformer = transformer_class(**config, random_state=random_state)
+
+        # Fit transformer on TRAINING data only (to prevent data leakage)
+        transformer.fit_transform(
+            X_train,
+            source_names=train_source_names,
+            categories=train_categories
+        )
+
+        # Transform train+val data for CV evaluation
+        X_trainval_fe = transformer.transform(
+            X_trainval,
+            source_names=trainval_source_names,
+            categories=trainval_categories
+        )
+
+        if verbose:
+            print(f"  Feature shape: {X_trainval_fe.shape}, sparse: {sparse.issparse(X_trainval_fe)}")
+
+        # Evaluate with each classifier
+        for clf_name, clf_info in classifiers.items():
+            clf = clf_info['model']
+
+            # Convert to dense if classifier requires it
+            if clf_info['requires_dense'] and sparse.issparse(X_trainval_fe):
+                X_for_cv = X_trainval_fe.toarray()
+            else:
+                X_for_cv = X_trainval_fe
+
+            # Cross-validation on train+val combined
+            cv_scores = cross_validate(
+                clf, X_for_cv, y_trainval,
+                cv=cv,
+                scoring={
+                    'f2': scorer,
+                    'recall': 'recall',
+                    'precision': 'precision',
+                },
+                return_train_score=False
+            )
+
+            result = {
+                'name': name,
+                'classifier': clf_name,
+                'n_features': X_trainval_fe.shape[1],
+                'cv_f2': cv_scores['test_f2'].mean(),
+                'cv_f2_std': cv_scores['test_f2'].std(),
+                'cv_recall': cv_scores['test_recall'].mean(),
+                'cv_precision': cv_scores['test_precision'].mean(),
+            }
+            fe_results.append(result)
+
+            if verbose:
+                print(f"  [{clf_name}] CV F2: {result['cv_f2']:.4f} (+/- {result['cv_f2_std']:.4f})")
+
+    return fe_results
+
+
+def run_transformer_tuning(
+    best_fe: str,
+    best_clf: str,
+    fe_configs: Dict[str, Dict[str, Any]],
+    tuning_configs: Dict[str, Dict[str, Any]],
+    classifiers: Dict[str, Dict[str, Any]],
+    transformer_class: Any,
+    X_train: pd.Series,
+    X_trainval: pd.Series,
+    y_trainval: np.ndarray,
+    cv: Any,
+    scorer: Any,
+    images_dir: Path,
+    train_source_names: Optional[List[str]] = None,
+    train_categories: Optional[List[str]] = None,
+    trainval_source_names: Optional[List[str]] = None,
+    trainval_categories: Optional[List[str]] = None,
+    random_state: int = 42,
+    n_folds: int = 3,
+) -> Tuple[Optional[pd.DataFrame], Optional[Any], Optional[float]]:
+    """Run hyperparameter tuning for the best feature transformer.
+
+    Tunes the key hyperparameter for the best-performing feature engineering
+    method using cross-validation.
+
+    Args:
+        best_fe: Name of the best feature engineering method
+        best_clf: Name of the best classifier
+        fe_configs: Feature engineering configurations dictionary
+        tuning_configs: Tuning configurations dictionary with param_name, param_values, description
+        classifiers: Classifiers dictionary with 'model' and 'requires_dense' keys
+        transformer_class: Feature transformer class (e.g., FPFeatureTransformer)
+        X_train: Training text features for fitting transformer
+        X_trainval: Train+val text features for CV evaluation
+        y_trainval: Train+val labels for CV evaluation
+        cv: Cross-validation splitter
+        scorer: Scoring function for optimization
+        images_dir: Directory to save tuning plots
+        train_source_names: Optional source names for transformer fitting (FP only)
+        train_categories: Optional categories for transformer fitting (FP only)
+        trainval_source_names: Optional source names for CV transformation (FP only)
+        trainval_categories: Optional categories for CV transformation (FP only)
+        random_state: Random seed for reproducibility
+        n_folds: Number of CV folds (for display only)
+
+    Returns:
+        Tuple of (tuning_df, optimal_param_value, best_tuned_f2)
+        Returns (None, None, None) if no tuning config exists for best_fe
+    """
+    # Get the baseline classifier
+    baseline_clf = classifiers[best_clf]['model']
+
+    # Check if tuning configuration exists for the best method
+    if best_fe not in tuning_configs:
+        print(f"No tuning configuration defined for {best_fe}")
+        print("No tuning was performed.")
+        return None, None, None
+
+    tuning_config = tuning_configs[best_fe]
+    param_name = tuning_config['param_name']
+    param_values = tuning_config['param_values']
+    description = tuning_config['description']
+
+    print("=" * 70)
+    print(f"TUNING {param_name.upper()} FOR {best_fe}")
+    print("=" * 70)
+    print(f"\nTesting values: {param_values}")
+    print(f"Classifier: {best_clf} (baseline)")
+    print(f"Transformer fitted on: TRAINING data only ({len(X_train)} samples)")
+    print(f"CV evaluated on: TRAIN+VAL combined ({len(X_trainval)} samples)")
+    print(f"CV: {n_folds}-fold stratified\n")
+
+    # Build kwargs for tune_feature_transformer
+    tune_kwargs = {
+        'transformer_class': transformer_class,
+        'base_config': fe_configs[best_fe],
+        'param_name': param_name,
+        'param_values': param_values,
+        'X_fe': X_train,
+        'classifier': baseline_clf,
+        'cv': cv,
+        'X_cv': X_trainval,
+        'y_cv': y_trainval,
+        'scorer': scorer,
+        'random_state': random_state,
+    }
+
+    # Add optional source_names and categories if provided (FP transformer)
+    if train_source_names is not None:
+        tune_kwargs['fe_source_names'] = train_source_names
+    if train_categories is not None:
+        tune_kwargs['fe_categories'] = train_categories
+    if trainval_source_names is not None:
+        tune_kwargs['cv_source_names'] = trainval_source_names
+    if trainval_categories is not None:
+        tune_kwargs['cv_categories'] = trainval_categories
+
+    # Run tuning
+    tuning_df = tune_feature_transformer(**tune_kwargs)
+
+    print("\n" + "=" * 70)
+
+    if tuning_df is None:
+        return None, None, None
+
+    # Analyze tuning results
+    default_value = fe_configs[best_fe].get(param_name)
+    optimal_param_value, best_tuned_f2 = analyze_tuning_results(
+        tuning_df=tuning_df,
+        param_name=param_name,
+        default_value=default_value,
+    )
+
+    # Plot the tuning results
+    # Determine prefix based on transformer class name
+    prefix = 'fp' if 'FP' in transformer_class.__name__ else 'ep'
+    plot_tuning_results(
+        tuning_df=tuning_df,
+        param_name=param_name,
+        param_values=param_values,
+        optimal_param_value=optimal_param_value,
+        method_name=best_fe,
+        description=description,
+        save_path=images_dir / f'{prefix}_tuning_{best_fe}.png',
+    )
+
+    return tuning_df, optimal_param_value, best_tuned_f2
+
+
 def compare_val_test_performance(
     val_metrics: Dict[str, Any],
     test_metrics: Dict[str, Any],
