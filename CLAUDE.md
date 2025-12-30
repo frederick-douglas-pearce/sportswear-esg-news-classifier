@@ -70,7 +70,7 @@ uv run python scripts/monitor_drift.py --classifier fp --reference-stats  # View
 uv run python scripts/monitor_drift.py --classifier fp --alert      # Send webhook alert if drift
 
 # MLOps - MLflow Experiment Tracking (when MLFLOW_ENABLED=true)
-uv run mlflow ui --backend-store-uri ./mlruns  # Start MLflow UI (http://localhost:5000)
+uv run mlflow ui --backend-store-uri sqlite:///mlruns.db  # Start MLflow UI (http://localhost:5000)
 ```
 
 ## Data Collection Status Reporting
@@ -326,7 +326,7 @@ with engine.connect() as conn:
 - `FP_SKIP_LLM_THRESHOLD` - Probability threshold to skip LLM (default: 0.5, matches trained model threshold of 0.5356)
 - `FP_CLASSIFIER_TIMEOUT` - FP classifier API timeout in seconds (default: 30.0)
 - `MLFLOW_ENABLED` - Enable MLflow experiment tracking (default: false)
-- `MLFLOW_TRACKING_URI` - MLflow server URI or local path (default: file:./mlruns)
+- `MLFLOW_TRACKING_URI` - MLflow server URI or local path (default: sqlite:///mlruns.db)
 - `MLFLOW_EXPERIMENT_PREFIX` - Prefix for experiment names (default: esg-classifier)
 - `EVIDENTLY_ENABLED` - Enable Evidently drift detection (default: false)
 - `EVIDENTLY_REPORTS_DIR` - Directory for HTML reports (default: reports/monitoring)

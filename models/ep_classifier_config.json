@@ -1,20 +1,22 @@
 {
-  "threshold": 0.014965281413936715,
+  "threshold": 0.13668606820910667,
   "target_recall": 0.99,
-  "model_name": "SVM_tuned",
+  "model_name": "RF_tuned",
   "transformer_method": "tfidf_lsa_product",
   "best_params": {
-    "C": 0.08,
     "class_weight": "balanced",
-    "max_iter": 2000
+    "max_depth": 10,
+    "min_samples_leaf": 1,
+    "min_samples_split": 10,
+    "n_estimators": 180
   },
-  "cv_f2": 0.856303746853977,
-  "cv_recall": 0.8790560471976402,
-  "cv_precision": 0.7759923904860729,
-  "test_f2": 0.8275862068965517,
-  "test_recall": 0.8470588235294118,
-  "test_precision": 0.7578947368421053,
+  "cv_f2": 0.8515141460689136,
+  "cv_recall": 0.8593903638151424,
+  "cv_precision": 0.8247228648544437,
+  "test_f2": 0.8741258741258742,
+  "test_recall": 0.8823529411764706,
+  "test_precision": 0.8426966292134831,
   "threshold_recall": 1.0,
-  "threshold_precision": 0.46195652173913043,
-  "threshold_f2": 0.8110687022900763
+  "threshold_precision": 0.5862068965517241,
+  "threshold_f2": 0.8762886597938144
 }

@@ -14,7 +14,7 @@ class MLOpsSettings:
         default_factory=lambda: os.getenv("MLFLOW_ENABLED", "false").lower() == "true"
     )
     mlflow_tracking_uri: str = field(
-        default_factory=lambda: os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+        default_factory=lambda: os.getenv("MLFLOW_TRACKING_URI", "sqlite:///mlruns.db")
     )
     mlflow_experiment_prefix: str = field(
         default_factory=lambda: os.getenv("MLFLOW_EXPERIMENT_PREFIX", "esg-classifier")

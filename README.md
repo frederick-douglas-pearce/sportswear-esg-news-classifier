@@ -944,7 +944,7 @@ Track training experiments with hyperparameters, metrics, and model artifacts.
 ```bash
 # In .env
 MLFLOW_ENABLED=true
-MLFLOW_TRACKING_URI=file:./mlruns  # Local file-based tracking
+MLFLOW_TRACKING_URI=sqlite:///mlruns.db  # Local SQLite tracking
 # Or use a remote server:
 # MLFLOW_TRACKING_URI=http://mlflow-server:5000
 ```
@@ -956,7 +956,7 @@ MLFLOW_TRACKING_URI=file:./mlruns  # Local file-based tracking
 uv run python scripts/train.py --classifier fp --verbose
 
 # View experiments in MLflow UI
-uv run mlflow ui --backend-store-uri ./mlruns
+uv run mlflow ui --backend-store-uri sqlite:///mlruns.db
 # Open http://localhost:5000
 ```
 
@@ -1117,7 +1117,7 @@ send_drift_alert(
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MLFLOW_ENABLED` | Enable MLflow experiment tracking | `false` |
-| `MLFLOW_TRACKING_URI` | MLflow server URI or local path | `file:./mlruns` |
+| `MLFLOW_TRACKING_URI` | MLflow server URI or local path | `sqlite:///mlruns.db` |
 | `MLFLOW_EXPERIMENT_PREFIX` | Prefix for experiment names | `esg-classifier` |
 | `EVIDENTLY_ENABLED` | Enable Evidently drift detection | `false` |
 | `EVIDENTLY_REPORTS_DIR` | Directory for HTML reports | `reports/monitoring` |

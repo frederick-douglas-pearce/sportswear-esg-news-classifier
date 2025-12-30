@@ -29,12 +29,16 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from dotenv import load_dotenv
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import fbeta_score, precision_recall_curve
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
+
+# Load environment variables from .env file (before importing modules that use them)
+load_dotenv()
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
