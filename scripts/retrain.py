@@ -4,16 +4,32 @@
 This script retrains a classifier model with new data and compares
 its performance to the current production model before promoting.
 
+Semantic Versioning:
+    - Major (v2.0.0): Breaking changes, new model architecture, schema changes
+    - Minor (v1.1.0): New training data, hyperparameter tuning, improvements
+    - Patch (v1.0.1): Bug fixes, threshold adjustments, config corrections
+
 Usage:
+    # Daily retraining (default: minor version bump)
     uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl
-    uv run python scripts/retrain.py --classifier ep --data data/ep_training_data.jsonl --auto-promote
+
+    # Major version bump (new model architecture)
+    uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --major
+
+    # Patch version bump (threshold fix)
+    uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --patch
+
+    # Auto-promote if better
+    uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --auto-promote
 """
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -28,20 +44,113 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.mlops import ExperimentTracker, STAGE_PRODUCTION
 
 
-def get_next_version(classifier: str, registry_path: Path) -> str:
-    """Get the next version number for a classifier."""
+@dataclass
+class SemanticVersion:
+    """Semantic version representation (major.minor.patch)."""
+
+    major: int
+    minor: int
+    patch: int
+
+    def __str__(self) -> str:
+        return f"v{self.major}.{self.minor}.{self.patch}"
+
+    @classmethod
+    def parse(cls, version_str: str) -> "SemanticVersion":
+        """Parse a version string into a SemanticVersion.
+
+        Supports formats:
+            - v1.2.3 (semantic)
+            - v1 (legacy, treated as v1.0.0)
+        """
+        if not version_str:
+            return cls(0, 0, 0)
+
+        # Remove 'v' prefix if present
+        version_str = version_str.lstrip("v")
+
+        # Try semantic version pattern
+        match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", version_str)
+        if match:
+            return cls(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+        # Try legacy single-number pattern (v1 -> v1.0.0)
+        match = re.match(r"^(\d+)$", version_str)
+        if match:
+            return cls(int(match.group(1)), 0, 0)
+
+        raise ValueError(f"Invalid version format: {version_str}")
+
+    def bump_major(self) -> "SemanticVersion":
+        """Increment major version, reset minor and patch."""
+        return SemanticVersion(self.major + 1, 0, 0)
+
+    def bump_minor(self) -> "SemanticVersion":
+        """Increment minor version, reset patch."""
+        return SemanticVersion(self.major, self.minor + 1, 0)
+
+    def bump_patch(self) -> "SemanticVersion":
+        """Increment patch version."""
+        return SemanticVersion(self.major, self.minor, self.patch + 1)
+
+    def __gt__(self, other: "SemanticVersion") -> bool:
+        return (self.major, self.minor, self.patch) > (other.major, other.minor, other.patch)
+
+    def __ge__(self, other: "SemanticVersion") -> bool:
+        return (self.major, self.minor, self.patch) >= (other.major, other.minor, other.patch)
+
+
+def get_current_version(classifier: str, registry_path: Path) -> SemanticVersion | None:
+    """Get the current production version for a classifier."""
     if not registry_path.exists():
-        return "v1"
+        return None
 
     with open(registry_path) as f:
         registry = json.load(f)
 
-    if classifier not in registry or not registry[classifier]["versions"]:
-        return "v1"
+    if classifier not in registry:
+        return None
 
-    versions = list(registry[classifier]["versions"].keys())
-    max_version = max(int(v[1:]) for v in versions)
-    return f"v{max_version + 1}"
+    prod_version = registry[classifier].get("production")
+    if not prod_version:
+        # No production version, find the highest version
+        versions = list(registry[classifier].get("versions", {}).keys())
+        if not versions:
+            return None
+        # Parse all versions and find the highest
+        parsed = [SemanticVersion.parse(v) for v in versions]
+        return max(parsed, key=lambda v: (v.major, v.minor, v.patch))
+
+    return SemanticVersion.parse(prod_version)
+
+
+def get_next_version(
+    classifier: str,
+    registry_path: Path,
+    bump_type: str = "minor",
+) -> str:
+    """Get the next version number for a classifier.
+
+    Args:
+        classifier: Classifier type (fp, ep, esg)
+        registry_path: Path to the registry JSON file
+        bump_type: One of 'major', 'minor', 'patch'
+
+    Returns:
+        Next version string (e.g., 'v1.1.0')
+    """
+    current = get_current_version(classifier, registry_path)
+
+    if current is None:
+        # First version
+        return "v1.0.0"
+
+    if bump_type == "major":
+        return str(current.bump_major())
+    elif bump_type == "patch":
+        return str(current.bump_patch())
+    else:  # minor (default)
+        return str(current.bump_minor())
 
 
 def train_new_version(
@@ -235,7 +344,24 @@ def promote_version(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Retrain classifier with new data and compare to production"
+        description="Retrain classifier with new data and compare to production",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Semantic Versioning:
+  --major    Breaking changes, new model architecture, schema changes
+  --minor    New training data, hyperparameter tuning (default)
+  --patch    Bug fixes, threshold adjustments, config corrections
+
+Examples:
+  # Daily retraining with new data (minor bump)
+  uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl
+
+  # New model architecture (major bump)
+  uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --major
+
+  # Threshold fix (patch bump)
+  uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --patch
+        """,
     )
     parser.add_argument(
         "--classifier",
@@ -261,6 +387,25 @@ def main():
         default=Path("models"),
         help="Directory for production models",
     )
+
+    # Version bump type (mutually exclusive)
+    version_group = parser.add_mutually_exclusive_group()
+    version_group.add_argument(
+        "--major",
+        action="store_true",
+        help="Major version bump (breaking changes, new architecture)",
+    )
+    version_group.add_argument(
+        "--minor",
+        action="store_true",
+        help="Minor version bump (new data, tuning) - default",
+    )
+    version_group.add_argument(
+        "--patch",
+        action="store_true",
+        help="Patch version bump (bug fixes, threshold adjustments)",
+    )
+
     parser.add_argument(
         "--auto-promote",
         action="store_true",
@@ -274,16 +419,26 @@ def main():
 
     args = parser.parse_args()
 
+    # Determine version bump type
+    if args.major:
+        bump_type = "major"
+    elif args.patch:
+        bump_type = "patch"
+    else:
+        bump_type = "minor"  # default
+
     registry_path = args.models_dir / "registry.json"
 
-    # Get next version
-    version = get_next_version(args.classifier, registry_path)
+    # Get current and next version
+    current_version = get_current_version(args.classifier, registry_path)
+    version = get_next_version(args.classifier, registry_path, bump_type)
     output_dir = args.models_dir / args.classifier / version
 
     print(f"=" * 60)
     print(f"Retraining {args.classifier.upper()} Classifier")
     print(f"=" * 60)
-    print(f"New version: {version}")
+    print(f"Current version: {current_version or 'None'}")
+    print(f"New version:     {version} ({bump_type} bump)")
 
     # Train new version
     training_result = train_new_version(

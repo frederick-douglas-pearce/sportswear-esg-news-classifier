@@ -152,6 +152,14 @@ flowchart TB
   - [Docker Deployment](#docker-deployment)
   - [API Endpoints](#api-endpoints)
   - [Retraining the Model](#retraining-the-model)
+- [Model Deployment Workflow](#model-deployment-workflow)
+  - [Workflow Overview](#workflow-overview)
+  - [Phase 1: Development (Notebooks)](#phase-1-development-notebooks)
+  - [Phase 2: Training (train.py)](#phase-2-training-trainpy)
+  - [Phase 3: Evaluation (Decide to Promote)](#phase-3-evaluation-decide-to-promote)
+  - [Phase 4: Promotion (retrain.py)](#phase-4-promotion-retrainpy)
+  - [Semantic Versioning](#semantic-versioning)
+  - [Daily Retraining Workflow](#daily-retraining-workflow)
 - [MLOps: Experiment Tracking & Monitoring](#mlops-experiment-tracking--monitoring)
   - [MLflow Experiment Tracking](#mlflow-experiment-tracking)
   - [Evidently AI Drift Monitoring](#evidently-ai-drift-monitoring)
@@ -930,6 +938,257 @@ docker build -t fp-classifier-api .
 3. Update `models/registry.json` with new version entry
 4. Commit changes: `git add models/ && git commit -m "Promote model"`
 5. Build Docker image - dependencies auto-detected from config
+
+## Model Deployment Workflow
+
+This section describes the complete workflow for developing, training, evaluating, and deploying model updates. Follow this process when you have new training data or want to improve model performance.
+
+### Workflow Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. DEVELOP: Run notebooks with new data                         │
+│    fp1 → fp2 → fp3 (or ep1 → ep2 → ep3)                        │
+│    Exports: feature transformer, training config, CV metrics    │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 2. TRAIN: Run train.py                                          │
+│    → Trains model using notebook config                         │
+│    → Registers in MLflow Model Registry (if enabled)            │
+│    → Saves artifacts to models/                                 │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 3. EVALUATE: Compare to production                              │
+│    - Check F2, recall, precision vs current production          │
+│    - Review MLflow UI for metrics comparison                    │
+│    - Decide if improvement justifies promotion                  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ 4. PROMOTE: Move to production (retrain.py)                     │
+│    → Archives old production model                              │
+│    → Updates models/registry.json                               │
+│    → Promotes in MLflow Model Registry                          │
+│    → Redeploy API service                                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Phase 1: Development (Notebooks)
+
+When you have new training data or want to experiment with model improvements:
+
+```bash
+# Export new training data
+uv run python scripts/export_training_data.py --dataset fp
+
+# Run the 3-notebook pipeline
+# 1. fp1_EDA_FE.ipynb - EDA and feature engineering
+# 2. fp2_model_selection_tuning.ipynb - Model selection and tuning
+# 3. fp3_model_evaluation_deployment.ipynb - Final evaluation
+```
+
+**Notebook outputs (saved to `models/`):**
+- `fp_feature_transformer.joblib` - Fitted feature transformer
+- `fp_training_config.json` - Model type, hyperparameters, feature method
+- `fp_cv_metrics.json` - Cross-validation metrics
+- `fp_best_classifier.joblib` - Best classifier from CV
+
+### Phase 2: Training (train.py)
+
+After running notebooks, use `train.py` to train the final model:
+
+```bash
+# Train using config exported from notebooks
+uv run python scripts/train.py --classifier fp --verbose
+
+# With custom data path
+uv run python scripts/train.py --classifier fp --data-path data/fp_training_data.jsonl --verbose
+```
+
+**What train.py does:**
+1. Loads training config from `models/fp_training_config.json`
+2. Fits feature transformer on training data only (prevents leakage)
+3. Trains classifier on train+val combined
+4. Optimizes threshold for target recall (default: 99%)
+5. Logs to MLflow (if `MLFLOW_ENABLED=true`)
+6. Registers model in MLflow Model Registry
+7. Saves pipeline and config to `models/`
+
+**Output:**
+```
+============================================================
+FP CLASSIFIER TRAINING
+============================================================
+...
+Final metrics:
+  Test F2: 0.9835
+  Threshold: 0.5356
+  MLflow run ID: e48416f28cb6407f956d71da09705526
+  MLflow model version: 2
+  Registered model: esg-classifier-fp
+```
+
+### Phase 3: Evaluation (Decide to Promote)
+
+Before promoting, compare the new model to production:
+
+**Promotion Criteria:**
+
+| Criterion | Threshold | Check |
+|-----------|-----------|-------|
+| Test F2 Score | ≥ production F2 | Compare train.py output to registry |
+| Test Recall | ≥ target (99% FP, 98% EP) | train.py output |
+| No regression | F2 decrease < 1% | Manual comparison |
+
+**Quick comparison:**
+
+```bash
+# View current production metrics
+cat models/registry.json | python -m json.tool
+
+# Or use MLflow UI
+uv run mlflow ui --backend-store-uri sqlite:///mlruns.db
+# Open http://localhost:5000 → Compare runs
+```
+
+**When NOT to promote:**
+- F2 score decreased by more than 1%
+- Recall dropped below target threshold
+- Training data had quality issues
+- Model shows overfitting (large train-test gap)
+
+### Phase 4: Promotion (retrain.py)
+
+Use `retrain.py` to promote models with semantic versioning:
+
+```bash
+# Daily retraining with new data (minor version bump, e.g., v1.0.0 → v1.1.0)
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl
+
+# Major version bump for new architecture (v1.x.x → v2.0.0)
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --major
+
+# Patch version bump for threshold fix (v1.0.0 → v1.0.1)
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --patch
+
+# Auto-promote if metrics improve
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --auto-promote
+
+# Force promote regardless of metrics
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --force-promote
+```
+
+**What retrain.py does:**
+1. Determines next version based on bump type (major/minor/patch)
+2. Runs `train.py` to train new model
+3. Compares metrics to current production
+4. Prompts for confirmation (or auto-promotes with `--auto-promote`)
+5. Copies model to production location
+6. Updates `models/registry.json`
+7. Promotes in MLflow Model Registry (if enabled)
+
+**Output:**
+```
+============================================================
+Retraining FP Classifier
+============================================================
+Current version: v1.0.0
+New version:     v1.1.0 (minor bump)
+
+Training completed successfully!
+  Test F2: 0.9850
+  MLflow model version: 3
+
+============================================================
+Version Comparison
+============================================================
+Production F2:  0.9835
+New version F2: 0.9850
+Difference:     +0.0015 (+0.15%)
+
+Verdict: F2 change: +0.0015 (+0.15%)
+
+Promote v1.1.0 to production? [y/N]: y
+
+Promoting FP v1.1.0 to production...
+  Copied pipeline to: models/fp_classifier_pipeline.joblib
+  Copied config to: models/fp_classifier_config.json
+  Updated registry: models/registry.json
+  Promoted MLflow model version 3 to Production stage
+
+FP v1.1.0 is now in production!
+```
+
+### Semantic Versioning
+
+The project uses semantic versioning for model releases:
+
+| Version Type | When to Use | Example |
+|--------------|-------------|---------|
+| **Major** (`--major`) | Breaking changes: new model architecture, different features, schema changes | RandomForest → XGBoost, new feature transformer |
+| **Minor** (default) | Improvements: new training data, hyperparameter tuning, threshold adjustments | Daily retraining with fresh data |
+| **Patch** (`--patch`) | Bug fixes: config corrections, minor threshold tweaks | Fix threshold from 0.53 to 0.54 |
+
+**Version format:** `vMAJOR.MINOR.PATCH` (e.g., `v1.2.3`)
+
+**Examples:**
+```bash
+# You collected more training data → minor bump
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl
+# v1.0.0 → v1.1.0
+
+# You switched from RandomForest to XGBoost → major bump
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --major
+# v1.1.0 → v2.0.0
+
+# You fixed a threshold bug → patch bump
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --patch
+# v2.0.0 → v2.0.1
+```
+
+### Daily Retraining Workflow
+
+For automated daily retraining as new articles are collected:
+
+```bash
+# 1. Export fresh training data (includes new labeled articles)
+uv run python scripts/export_training_data.py --dataset fp
+
+# 2. Retrain with auto-promote (promotes if F2 improves)
+uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --auto-promote
+
+# 3. Rebuild and redeploy Docker container (if promoted)
+docker compose build fp-classifier-api
+docker compose up -d fp-classifier-api
+```
+
+**Automation with cron:**
+```bash
+# Add to crontab for daily retraining at 2am
+0 2 * * * cd /path/to/project && ./scripts/retrain_daily.sh fp >> logs/retrain.log 2>&1
+```
+
+### Post-Deployment Verification
+
+After promoting a new model:
+
+```bash
+# 1. Check API health
+curl http://localhost:8000/health
+
+# 2. Verify model info
+curl http://localhost:8000/model/info
+
+# 3. Test prediction
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Nike sustainability report", "content": "...", "brands": ["Nike"]}'
+
+# 4. Monitor for drift (next day)
+uv run python scripts/monitor_drift.py --classifier fp --days 1
+```
 
 ## MLOps: Experiment Tracking & Monitoring
 
