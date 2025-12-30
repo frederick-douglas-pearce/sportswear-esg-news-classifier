@@ -17,6 +17,16 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (before importing modules that use them)
+load_dotenv()
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.mlops import ExperimentTracker, STAGE_PRODUCTION
+
 
 def get_next_version(classifier: str, registry_path: Path) -> str:
     """Get the next version number for a classifier."""
@@ -72,10 +82,17 @@ def train_new_version(
     with open(config_path) as f:
         config = json.load(f)
 
+    # Get the latest MLflow model version (registered during training)
+    mlflow_version = None
+    tracker = ExperimentTracker(classifier)
+    if tracker.enabled:
+        mlflow_version = tracker.get_latest_model_version()
+
     return {
         "success": True,
         "config_path": str(config_path),
         "pipeline_path": str(output_dir / f"{classifier}_classifier_pipeline.joblib"),
+        "mlflow_version": mlflow_version,
         "metrics": {
             "test_f2": config.get("test_f2"),
             "test_recall": config.get("test_recall"),
@@ -143,8 +160,23 @@ def promote_version(
     output_dir: Path,
     models_dir: Path,
     registry_path: Path,
+    mlflow_version: str | None = None,
 ) -> bool:
-    """Promote new version to production."""
+    """Promote new version to production.
+
+    Args:
+        classifier: Classifier type (fp, ep, esg)
+        version: Version string (e.g., 'v1', 'v2')
+        new_metrics: Performance metrics from training
+        data_path: Path to training data used
+        output_dir: Directory containing trained artifacts
+        models_dir: Production models directory
+        registry_path: Path to JSON registry file
+        mlflow_version: MLflow Model Registry version to promote (optional)
+
+    Returns:
+        True if promotion succeeded
+    """
     print(f"\nPromoting {classifier.upper()} {version} to production...")
 
     # Copy model files to production location
@@ -156,7 +188,7 @@ def promote_version(
     shutil.copy(src_pipeline, dst_pipeline)
     shutil.copy(src_config, dst_config)
 
-    # Update registry
+    # Update JSON registry
     if registry_path.exists():
         with open(registry_path) as f:
             registry = json.load(f)
@@ -176,6 +208,7 @@ def promote_version(
             "test_recall": new_metrics.get("test_recall"),
             "test_precision": new_metrics.get("test_precision"),
         },
+        "mlflow_version": mlflow_version,
     }
 
     with open(registry_path, "w") as f:
@@ -184,6 +217,17 @@ def promote_version(
     print(f"  Copied pipeline to: {dst_pipeline}")
     print(f"  Copied config to: {dst_config}")
     print(f"  Updated registry: {registry_path}")
+
+    # Promote in MLflow Model Registry
+    if mlflow_version:
+        tracker = ExperimentTracker(classifier)
+        if tracker.enabled:
+            promoted = tracker.promote_to_production(mlflow_version)
+            if promoted:
+                print(f"  Promoted MLflow model version {mlflow_version} to Production stage")
+            else:
+                print(f"  Warning: Failed to promote MLflow model version {mlflow_version}")
+
     print(f"\n{classifier.upper()} {version} is now in production!")
 
     return True
@@ -253,6 +297,12 @@ def main():
         print(f"\nTraining failed: {training_result.get('error', 'Unknown error')}")
         return 1
 
+    # Show training result
+    print(f"\nTraining completed successfully!")
+    print(f"  Test F2: {training_result['metrics'].get('test_f2', 'N/A'):.4f}")
+    if training_result.get("mlflow_version"):
+        print(f"  MLflow model version: {training_result['mlflow_version']}")
+
     # Compare to production
     print("\n" + "=" * 60)
     print("Version Comparison")
@@ -293,9 +343,12 @@ def main():
             output_dir,
             args.models_dir,
             registry_path,
+            mlflow_version=training_result.get("mlflow_version"),
         )
     else:
         print(f"\nNew version saved to: {output_dir}")
+        if training_result.get("mlflow_version"):
+            print(f"MLflow model version: {training_result['mlflow_version']}")
         print("Run with --force-promote to promote anyway")
 
     return 0

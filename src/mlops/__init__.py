@@ -1,7 +1,13 @@
 """MLOps module for experiment tracking and production monitoring."""
 
 from .config import mlops_settings
-from .tracking import ExperimentTracker
+from .tracking import (
+    ExperimentTracker,
+    STAGE_NONE,
+    STAGE_STAGING,
+    STAGE_PRODUCTION,
+    STAGE_ARCHIVED,
+)
 from .monitoring import DriftMonitor, DriftReport, run_drift_analysis
 from .alerts import AlertSender, AlertType, send_drift_alert, send_training_alert
 from .reference_data import (
@@ -16,6 +22,11 @@ __all__ = [
     "mlops_settings",
     # Tracking
     "ExperimentTracker",
+    # Model Registry Stages
+    "STAGE_NONE",
+    "STAGE_STAGING",
+    "STAGE_PRODUCTION",
+    "STAGE_ARCHIVED",
     # Monitoring
     "DriftMonitor",
     "DriftReport",

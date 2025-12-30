@@ -1,7 +1,7 @@
 {
-  "threshold": 0.13668606820910667,
-  "target_recall": 0.99,
-  "model_name": "RF_tuned",
+  "threshold": 0.1617597252317938,
+  "target_recall": 0.98,
+  "model_name": "RandomForest_tuned",
   "transformer_method": "tfidf_lsa_product",
   "best_params": {
     "class_weight": "balanced",
@@ -10,13 +10,19 @@
     "min_samples_split": 10,
     "n_estimators": 180
   },
-  "cv_f2": 0.8515141460689136,
-  "cv_recall": 0.8593903638151424,
-  "cv_precision": 0.8247228648544437,
-  "test_f2": 0.8741258741258742,
-  "test_recall": 0.8823529411764706,
-  "test_precision": 0.8426966292134831,
-  "threshold_recall": 1.0,
-  "threshold_precision": 0.5862068965517241,
-  "threshold_f2": 0.8762886597938144
+  "calibrated": false,
+  "test_f2": 0.8953488372093024,
+  "test_recall": 0.9058823529411765,
+  "test_precision": 0.8555555555555555,
+  "threshold_recall": 0.9882352941176471,
+  "threshold_precision": 0.6176470588235294,
+  "threshold_f2": 0.8823529411764706,
+  "true_positives": 84,
+  "false_positives": 52,
+  "true_negatives": 55,
+  "false_negatives": 1,
+  "trained_at": "2025-12-29T20:31:28.400820",
+  "data_path": "data/ep_training_data.jsonl",
+  "n_samples": 957,
+  "training_config": "ep2_model_selection_tuning.ipynb"
 }

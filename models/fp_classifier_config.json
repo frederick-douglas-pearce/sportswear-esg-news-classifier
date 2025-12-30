@@ -21,7 +21,7 @@
   "false_positives": 10,
   "true_negatives": 34,
   "false_negatives": 1,
-  "trained_at": "2025-12-29T18:35:06.438542",
+  "trained_at": "2025-12-29T20:30:00.822468",
   "data_path": "data/fp_training_data.jsonl",
   "n_samples": 1176,
   "training_config": "fp2_model_selection_tuning.ipynb"

@@ -11,6 +11,12 @@ from .config import mlops_settings
 
 logger = logging.getLogger(__name__)
 
+# MLflow Model Registry stage constants
+STAGE_NONE = "None"
+STAGE_STAGING = "Staging"
+STAGE_PRODUCTION = "Production"
+STAGE_ARCHIVED = "Archived"
+
 
 class ExperimentTracker:
     """Wrapper for MLflow experiment tracking with graceful degradation.
@@ -240,3 +246,299 @@ class ExperimentTracker:
                 # Convert value to string for MLflow
                 items.append((new_key, str(v)))
         return dict(items)
+
+    # =========================================================================
+    # Model Registry Methods
+    # =========================================================================
+
+    def get_registered_model_name(self) -> str:
+        """Get the registered model name for this classifier type.
+
+        Returns:
+            Model name for the Model Registry (e.g., 'esg-classifier-fp')
+        """
+        return f"{mlops_settings.mlflow_experiment_prefix}-{self.classifier_type}"
+
+    def register_model(
+        self,
+        model_uri: str | None = None,
+        model_name: str | None = None,
+        tags: dict[str, str] | None = None,
+        description: str | None = None,
+    ) -> str | None:
+        """Register a model in the MLflow Model Registry.
+
+        If model_uri is not provided, uses the model logged in the current run.
+
+        Args:
+            model_uri: URI to the model artifact (e.g., 'runs:/<run_id>/model')
+            model_name: Name for the registered model (defaults to classifier name)
+            tags: Optional tags to add to the model version
+            description: Optional description for the model version
+
+        Returns:
+            The model version number if successful, None otherwise
+        """
+        if not self.enabled:
+            return None
+
+        if model_name is None:
+            model_name = self.get_registered_model_name()
+
+        # If no URI provided, construct from current run
+        if model_uri is None:
+            run_id = self.get_run_id()
+            if run_id is None:
+                logger.warning("No active run - cannot register model without URI")
+                return None
+            model_uri = f"runs:/{run_id}/model"
+
+        try:
+            # Register the model
+            result = self._mlflow.register_model(model_uri, model_name)
+            version = result.version
+
+            logger.info(f"Registered model '{model_name}' version {version}")
+
+            # Add tags if provided
+            if tags:
+                client = self._mlflow.tracking.MlflowClient()
+                for key, value in tags.items():
+                    client.set_model_version_tag(model_name, version, key, value)
+
+            # Add description if provided
+            if description:
+                client = self._mlflow.tracking.MlflowClient()
+                client.update_model_version(
+                    name=model_name,
+                    version=version,
+                    description=description,
+                )
+
+            return version
+
+        except Exception as e:
+            logger.warning(f"Failed to register model: {e}")
+            return None
+
+    def transition_model_stage(
+        self,
+        version: str,
+        stage: str,
+        model_name: str | None = None,
+        archive_existing: bool = True,
+    ) -> bool:
+        """Transition a model version to a new stage.
+
+        Args:
+            version: Model version to transition
+            stage: Target stage (Staging, Production, Archived, None)
+            model_name: Name of registered model (defaults to classifier name)
+            archive_existing: If True, archive existing models in target stage
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.enabled:
+            return False
+
+        if model_name is None:
+            model_name = self.get_registered_model_name()
+
+        valid_stages = {STAGE_NONE, STAGE_STAGING, STAGE_PRODUCTION, STAGE_ARCHIVED}
+        if stage not in valid_stages:
+            logger.warning(f"Invalid stage '{stage}'. Must be one of: {valid_stages}")
+            return False
+
+        try:
+            client = self._mlflow.tracking.MlflowClient()
+
+            # Archive existing models in target stage if requested
+            if archive_existing and stage in (STAGE_STAGING, STAGE_PRODUCTION):
+                existing = self.get_model_versions_by_stage(stage, model_name)
+                for existing_version in existing:
+                    if existing_version != version:
+                        client.transition_model_version_stage(
+                            name=model_name,
+                            version=existing_version,
+                            stage=STAGE_ARCHIVED,
+                        )
+                        logger.info(
+                            f"Archived '{model_name}' version {existing_version}"
+                        )
+
+            # Transition the model
+            client.transition_model_version_stage(
+                name=model_name,
+                version=version,
+                stage=stage,
+            )
+
+            logger.info(f"Transitioned '{model_name}' version {version} to {stage}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to transition model stage: {e}")
+            return False
+
+    def get_latest_model_version(
+        self,
+        model_name: str | None = None,
+        stages: list[str] | None = None,
+    ) -> str | None:
+        """Get the latest version of a registered model.
+
+        Args:
+            model_name: Name of registered model (defaults to classifier name)
+            stages: List of stages to filter by (default: all stages)
+
+        Returns:
+            Latest version number if found, None otherwise
+        """
+        if not self.enabled:
+            return None
+
+        if model_name is None:
+            model_name = self.get_registered_model_name()
+
+        try:
+            client = self._mlflow.tracking.MlflowClient()
+
+            # Get all versions
+            versions = client.search_model_versions(f"name='{model_name}'")
+
+            if not versions:
+                return None
+
+            # Filter by stages if specified
+            if stages:
+                versions = [v for v in versions if v.current_stage in stages]
+
+            if not versions:
+                return None
+
+            # Return the highest version number
+            return str(max(int(v.version) for v in versions))
+
+        except Exception as e:
+            logger.warning(f"Failed to get latest model version: {e}")
+            return None
+
+    def get_model_versions_by_stage(
+        self,
+        stage: str,
+        model_name: str | None = None,
+    ) -> list[str]:
+        """Get all model versions in a specific stage.
+
+        Args:
+            stage: Stage to filter by (Staging, Production, Archived, None)
+            model_name: Name of registered model (defaults to classifier name)
+
+        Returns:
+            List of version numbers in the specified stage
+        """
+        if not self.enabled:
+            return []
+
+        if model_name is None:
+            model_name = self.get_registered_model_name()
+
+        try:
+            client = self._mlflow.tracking.MlflowClient()
+            versions = client.search_model_versions(f"name='{model_name}'")
+
+            return [v.version for v in versions if v.current_stage == stage]
+
+        except Exception as e:
+            logger.warning(f"Failed to get model versions by stage: {e}")
+            return []
+
+    def get_production_model_version(
+        self,
+        model_name: str | None = None,
+    ) -> str | None:
+        """Get the current production model version.
+
+        Args:
+            model_name: Name of registered model (defaults to classifier name)
+
+        Returns:
+            Production version number if found, None otherwise
+        """
+        versions = self.get_model_versions_by_stage(STAGE_PRODUCTION, model_name)
+        return versions[0] if versions else None
+
+    def promote_to_production(
+        self,
+        version: str,
+        model_name: str | None = None,
+    ) -> bool:
+        """Promote a model version to production.
+
+        This is a convenience method that:
+        1. Archives any existing production models
+        2. Transitions the specified version to Production
+
+        Args:
+            version: Model version to promote
+            model_name: Name of registered model (defaults to classifier name)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        return self.transition_model_stage(
+            version=version,
+            stage=STAGE_PRODUCTION,
+            model_name=model_name,
+            archive_existing=True,
+        )
+
+    def get_model_info(
+        self,
+        version: str | None = None,
+        model_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Get information about a registered model version.
+
+        Args:
+            version: Model version (default: latest production or latest overall)
+            model_name: Name of registered model (defaults to classifier name)
+
+        Returns:
+            Dictionary with model information or None if not found
+        """
+        if not self.enabled:
+            return None
+
+        if model_name is None:
+            model_name = self.get_registered_model_name()
+
+        if version is None:
+            # Try production first, then latest
+            version = self.get_production_model_version(model_name)
+            if version is None:
+                version = self.get_latest_model_version(model_name)
+            if version is None:
+                return None
+
+        try:
+            client = self._mlflow.tracking.MlflowClient()
+            model_version = client.get_model_version(model_name, version)
+
+            return {
+                "name": model_version.name,
+                "version": model_version.version,
+                "stage": model_version.current_stage,
+                "status": model_version.status,
+                "run_id": model_version.run_id,
+                "source": model_version.source,
+                "description": model_version.description,
+                "tags": dict(model_version.tags) if model_version.tags else {},
+                "creation_timestamp": model_version.creation_timestamp,
+                "last_updated_timestamp": model_version.last_updated_timestamp,
+            }
+
+        except Exception as e:
+            logger.warning(f"Failed to get model info: {e}")
+            return None

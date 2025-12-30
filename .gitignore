@@ -52,3 +52,5 @@ uv.lock
 
 # VS Code
 *.code-workspace
+mlruns/
+mlruns.db

@@ -575,6 +575,9 @@ def train_classifier(
         tracker.log_artifact(pipeline_path)
         tracker.log_model_config(config)
 
+        # Log sklearn model for Model Registry
+        tracker.log_sklearn_model(pipeline, artifact_path="model")
+
     if verbose:
         print("\n" + "=" * 60)
         print("TRAINING COMPLETE")
@@ -633,12 +636,27 @@ def main() -> int:
                 print("Error: ESG classifier training not yet implemented")
                 return 1
 
+            # Register model in MLflow Model Registry
+            model_version = None
+            if tracker.enabled:
+                model_version = tracker.register_model(
+                    description=f"Trained on {data_path} with target recall {target_recall}",
+                    tags={
+                        "test_f2": str(config.get("test_f2", "")),
+                        "test_recall": str(config.get("test_recall", "")),
+                        "threshold": str(config.get("threshold", "")),
+                    },
+                )
+
             if args.verbose:
                 print(f"\nFinal metrics:")
                 print(f"  Test F2: {config.get('test_f2', 'N/A'):.4f}")
                 print(f"  Threshold: {config.get('threshold', 'N/A'):.4f}")
                 if tracker.enabled:
                     print(f"  MLflow run ID: {tracker.get_run_id()}")
+                    if model_version:
+                        print(f"  MLflow model version: {model_version}")
+                        print(f"  Registered model: {tracker.get_registered_model_name()}")
 
         return 0
 
