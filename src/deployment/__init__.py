@@ -45,6 +45,16 @@ from .data import (
     split_data,
 )
 from .preprocessing import clean_text, prepare_input, truncate_text
+from .training_config import (
+    TrainingConfig,
+    FeatureEngineeringConfig,
+    ModelConfig,
+    CVMetrics,
+    load_training_config,
+    training_config_exists,
+    get_training_config_path,
+    SUPPORTED_MODELS,
+)
 
 # Import classifiers
 from .fp import FPClassifier
@@ -90,6 +100,15 @@ __all__ = [
     "CLASSIFIER_CONFIG",
     "get_classifier_config",
     "get_classifier_paths",
+    # Training config (from notebooks)
+    "TrainingConfig",
+    "FeatureEngineeringConfig",
+    "ModelConfig",
+    "CVMetrics",
+    "load_training_config",
+    "training_config_exists",
+    "get_training_config_path",
+    "SUPPORTED_MODELS",
     # Legacy FP-specific (backwards compatibility)
     "DEFAULT_THRESHOLD",
     "MODEL_NAME",
