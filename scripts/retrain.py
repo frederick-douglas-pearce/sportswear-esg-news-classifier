@@ -44,6 +44,64 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.mlops import ExperimentTracker, STAGE_PRODUCTION
 
 
+def trigger_deploy_workflow(
+    classifier: str,
+    version: str,
+    bump_type: str,
+) -> bool:
+    """Trigger GitHub Actions deploy workflow for major/minor versions.
+
+    Args:
+        classifier: Classifier type (fp, ep)
+        version: Version string (e.g., 'v1.2.0')
+        bump_type: One of 'major', 'minor', 'patch'
+
+    Returns:
+        True if workflow was triggered successfully, False otherwise
+    """
+    # Skip deployment for patch versions
+    if bump_type == "patch":
+        print(f"  Skipping deployment trigger for patch version")
+        return True
+
+    # Check if gh CLI is available
+    try:
+        result = subprocess.run(
+            ["gh", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print("  Warning: GitHub CLI (gh) not available - skipping deployment trigger")
+            return False
+    except FileNotFoundError:
+        print("  Warning: GitHub CLI (gh) not installed - skipping deployment trigger")
+        return False
+
+    # Trigger the deploy workflow
+    print(f"\n  Triggering deployment workflow for {classifier} {version}...")
+    cmd = [
+        "gh", "workflow", "run", "deploy.yml",
+        "-f", f"classifier={classifier}",
+        "-f", f"version={version}",
+        "-f", f"bump_type={bump_type}",
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        # Check if workflow is disabled or doesn't exist
+        if "could not find any workflows" in result.stderr.lower():
+            print("  Warning: deploy.yml workflow not found or disabled - skipping deployment")
+        else:
+            print(f"  Warning: Failed to trigger deployment: {result.stderr}")
+        return False
+
+    print(f"  Deployment workflow triggered successfully")
+    print(f"  View status: gh run list --workflow=deploy.yml")
+    return True
+
+
 @dataclass
 class SemanticVersion:
     """Semantic version representation (major.minor.patch)."""
@@ -270,6 +328,7 @@ def promote_version(
     models_dir: Path,
     registry_path: Path,
     mlflow_version: str | None = None,
+    bump_type: str = "minor",
 ) -> bool:
     """Promote new version to production.
 
@@ -282,6 +341,7 @@ def promote_version(
         models_dir: Production models directory
         registry_path: Path to JSON registry file
         mlflow_version: MLflow Model Registry version to promote (optional)
+        bump_type: Version bump type ('major', 'minor', 'patch') for deployment trigger
 
     Returns:
         True if promotion succeeded
@@ -338,6 +398,9 @@ def promote_version(
                 print(f"  Warning: Failed to promote MLflow model version {mlflow_version}")
 
     print(f"\n{classifier.upper()} {version} is now in production!")
+
+    # Trigger deployment workflow for major/minor versions
+    trigger_deploy_workflow(classifier, version, bump_type)
 
     return True
 
@@ -499,6 +562,7 @@ Examples:
             args.models_dir,
             registry_path,
             mlflow_version=training_result.get("mlflow_version"),
+            bump_type=bump_type,
         )
     else:
         print(f"\nNew version saved to: {output_dir}")

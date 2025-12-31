@@ -184,6 +184,26 @@ jobs:
           echo "- **Version**: ${{ inputs.version || github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ✅ Healthy" >> $GITHUB_STEP_SUMMARY
 
+      - name: Cleanup old images
+        run: |
+          echo "Cleaning up old FP classifier images..."
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/fp-classifier-api"
+
+          # Get all digests except latest (keep latest for rollback)
+          OLD_DIGESTS=$(gcloud container images list-tags $IMAGE \
+            --filter="NOT tags:latest" \
+            --format="get(digest)" \
+            --sort-by="~timestamp" \
+            --limit=999 | tail -n +2)  # Skip the most recent non-latest
+
+          # Delete old images
+          for DIGEST in $OLD_DIGESTS; do
+            echo "Deleting: $IMAGE@$DIGEST"
+            gcloud container images delete "$IMAGE@$DIGEST" --force-delete-tags --quiet || true
+          done
+
+          echo "✅ Cleanup complete - kept :latest and one previous version"
+
   # Deploy EP Classifier
   deploy-ep:
     needs: check-deployment
@@ -254,6 +274,26 @@ jobs:
           echo "- **URL**: ${{ steps.verify.outputs.service_url }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: ${{ inputs.version || github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Status**: ✅ Healthy" >> $GITHUB_STEP_SUMMARY
+
+      - name: Cleanup old images
+        run: |
+          echo "Cleaning up old EP classifier images..."
+          IMAGE="gcr.io/${{ secrets.GCP_PROJECT_ID }}/ep-classifier-api"
+
+          # Get all digests except latest (keep latest for rollback)
+          OLD_DIGESTS=$(gcloud container images list-tags $IMAGE \
+            --filter="NOT tags:latest" \
+            --format="get(digest)" \
+            --sort-by="~timestamp" \
+            --limit=999 | tail -n +2)  # Skip the most recent non-latest
+
+          # Delete old images
+          for DIGEST in $OLD_DIGESTS; do
+            echo "Deleting: $IMAGE@$DIGEST"
+            gcloud container images delete "$IMAGE@$DIGEST" --force-delete-tags --quiet || true
+          done
+
+          echo "✅ Cleanup complete - kept :latest and one previous version"
 
   # Summary job
   deployment-summary:

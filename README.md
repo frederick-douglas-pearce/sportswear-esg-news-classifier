@@ -1,6 +1,49 @@
 # ESG News Classifier for Sportswear Brands
 
-A multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for major sportswear and outdoor apparel brands.
+> **ML Zoomcamp Capstone Project** - A production-ready multi-label text classification system that monitors sustainability news in the sportswear and outdoor apparel industry.
+
+## Problem Description
+
+### The Challenge
+
+As someone interested in sustainable clothing and the outdoor wear industry, I want to stay informed about ESG (Environmental, Social, Governance) and Digital Transformation (DT) developments from major sportswear and outdoor apparel brands. However, manually tracking sustainability news across 50+ brands is impractical:
+
+- **Information overload**: Thousands of articles mention these brands daily
+- **Signal vs. noise**: Most articles are product announcements, not ESG-related
+- **False positives**: Brand names like "Puma" (animal), "Patagonia" (region), and "Columbia" (university) appear in unrelated contexts
+- **Cost of analysis**: Using LLMs like Claude to classify every article costs ~$15/1000 articles
+
+### The Solution
+
+This project builds an **automated ESG news monitoring pipeline** that:
+
+1. **Collects news** from NewsData.io and GDELT APIs (8x daily automated collection)
+2. **Filters false positives** using an ML classifier (Random Forest, F2: 0.974) - articles where brand names refer to non-sportswear entities
+3. **Pre-filters ESG content** using a second ML classifier (Logistic Regression, F2: 0.931) - identifies articles with sustainability content
+4. **Labels articles** with detailed ESG categories, sentiment, and extracted ESG content chunks using Claude Sonnet (only for articles that pass both filters)
+5. **Reduces costs by 40-50%** by using ML classifiers as pre-filters before expensive LLM calls
+
+### Real-World Application
+
+The end goal is to generate a **curated ESG news feed** for my personal website ([frederick-douglas-pearce.github.io](https://frederick-douglas-pearce.github.io/)) that tracks sustainability developments in the sportswear/outdoorwear industry. This could be implemented as:
+
+- An RSS feed for news aggregators
+- A dedicated sustainability news page
+- Email digest summaries
+
+The ML classifiers enable cost-effective continuous monitoring that would be prohibitively expensive with LLM-only approaches.
+
+### Dataset
+
+The training data was collected and labeled specifically for this project:
+
+- **Source**: NewsData.io API + GDELT DOC 2.0 API (free, 3 months history)
+- **Collection period**: December 2024 - January 2025
+- **Articles collected**: ~3,000 articles mentioning target brands
+- **Labeled articles**: 993 for FP classifier, 870 for EP classifier
+- **Labeling method**: Claude Sonnet with structured JSON output + manual review
+
+Training data is exported to JSONL format in `data/` directory using `scripts/export_training_data.py`.
 
 ## Target Brands (50)
 
@@ -274,18 +317,24 @@ sportswear-esg-news-classifier/
 │       ├── monitoring.py       # Evidently drift detection
 │       ├── reference_data.py   # Reference dataset management
 │       └── alerts.py           # Webhook notifications (Slack/Discord)
-└── tests/
+└── tests/                      # 504 tests
     ├── conftest.py             # Shared pytest fixtures
-    ├── test_api_client.py      # NewsData.io client unit tests
-    ├── test_gdelt_client.py    # GDELT client unit tests
-    ├── test_scraper.py         # Scraper and language detection tests
-    ├── test_collector.py       # Collector unit tests
-    ├── test_database.py        # Database integration tests
-    ├── test_chunker.py         # Article chunker unit tests
-    ├── test_labeler.py         # LLM labeling and response parsing tests
-    ├── test_embedder.py        # OpenAI embedder unit tests
-    ├── test_evidence_matcher.py # Evidence matching unit tests
-    └── test_labeling_pipeline.py # Labeling pipeline unit tests
+    ├── test_api_client.py      # NewsData.io client unit tests (23 tests)
+    ├── test_gdelt_client.py    # GDELT client unit tests (31 tests)
+    ├── test_scraper.py         # Scraper and language detection tests (19 tests)
+    ├── test_collector.py       # Collector unit tests (13 tests)
+    ├── test_database.py        # Database integration tests (12 tests)
+    ├── test_chunker.py         # Article chunker unit tests (21 tests)
+    ├── test_labeler.py         # LLM labeling and response parsing tests (33 tests)
+    ├── test_embedder.py        # OpenAI embedder unit tests (15 tests)
+    ├── test_evidence_matcher.py # Evidence matching unit tests (24 tests)
+    ├── test_labeling_pipeline.py # Labeling pipeline unit tests (13 tests)
+    ├── test_deployment.py      # Deployment module tests (64 tests)
+    ├── test_explainability.py  # Model explainability tests (28 tests)
+    ├── test_mlops_tracking.py  # MLflow tracking tests (27 tests)
+    ├── test_mlops_monitoring.py # Drift monitoring tests (26 tests)
+    ├── test_retrain.py         # Retraining pipeline tests (38 tests)
+    └── test_integration.py     # End-to-end pipeline tests (12 tests)
 ```
 
 ## Quick Start
@@ -1613,7 +1662,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with 190 tests covering data collection and labeling pipelines (72% code coverage).
+The project includes a comprehensive test suite with **504 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, and MLOps modules.
 
 ```bash
 # Run all tests
@@ -1633,7 +1682,17 @@ uv run pytest tests/test_api_client.py
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 ```
 
-**Test Coverage:**
+**Test Coverage by Module:**
+
+| Module | Coverage | Description |
+|--------|----------|-------------|
+| `src/deployment/` | 83-100% | Classifier deployment, config, preprocessing |
+| `src/mlops/` | 50-91% | MLflow tracking, Evidently monitoring |
+| `src/fp3_nb/explainability.py` | 90% | LIME, SHAP, prototype explanations |
+| `src/labeling/` | 69-100% | LLM labeling pipeline |
+| `src/data_collection/` | 76-95% | API clients, scraper, collector |
+
+**Test Files:**
 
 | Test File | Tests | Description |
 |-----------|-------|-------------|
@@ -1647,6 +1706,12 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 | `test_embedder.py` | 15 | OpenAI embedder, batching, retry logic |
 | `test_evidence_matcher.py` | 24 | Evidence matching, fuzzy/exact/embedding similarity |
 | `test_labeling_pipeline.py` | 13 | Pipeline orchestration, statistics tracking |
+| `test_deployment.py` | 64 | FP/EP classifiers, config, data loading, preprocessing |
+| `test_explainability.py` | 28 | LIME, SHAP feature groups, prototype explanations |
+| `test_mlops_tracking.py` | 27 | MLflow experiment tracking, graceful degradation |
+| `test_mlops_monitoring.py` | 26 | Evidently drift detection, legacy KS tests |
+| `test_retrain.py` | 38 | Retraining pipeline, semantic versioning, deployment triggers |
+| `test_integration.py` | 12 | End-to-end classifier pipeline tests |
 
 ## Troubleshooting
 
