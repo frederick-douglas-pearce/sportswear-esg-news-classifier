@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import Any
 from uuid import UUID
 
@@ -19,6 +20,10 @@ from .models import LabelingResponse
 
 logger = logging.getLogger(__name__)
 
+# Title similarity threshold for deduplication (0.0-1.0)
+# 0.9 means titles must be 90% similar to be considered duplicates
+TITLE_SIMILARITY_THRESHOLD = 0.90
+
 
 @dataclass
 class LabelingStats:
@@ -29,6 +34,7 @@ class LabelingStats:
     articles_skipped: int = 0
     articles_false_positive: int = 0
     articles_failed: int = 0
+    articles_deduplicated: int = 0  # Articles skipped as title duplicates
     brands_labeled: int = 0
     false_positive_brands: int = 0
     chunks_created: int = 0
@@ -114,6 +120,87 @@ class LabelingPipeline:
             )
             self._fp_client_initialized = True
         return self.fp_client
+
+    def _deduplicate_by_title(
+        self,
+        articles: list[dict[str, Any]],
+        threshold: float = TITLE_SIMILARITY_THRESHOLD,
+        dry_run: bool = False,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Deduplicate articles by title similarity using difflib.
+
+        Uses SequenceMatcher to find articles with similar titles (likely the same
+        story from different sources). Keeps the first occurrence and marks
+        duplicates as skipped.
+
+        Args:
+            articles: List of article dicts with id, title, etc.
+            threshold: Similarity ratio (0.0-1.0) above which titles are duplicates
+            dry_run: If True, don't update database
+
+        Returns:
+            Tuple of (unique_articles, duplicate_articles)
+        """
+        if not articles or len(articles) <= 1:
+            return articles, []
+
+        unique_articles: list[dict[str, Any]] = []
+        duplicate_articles: list[dict[str, Any]] = []
+        seen_titles: list[tuple[str, UUID]] = []  # (normalized_title, article_id)
+
+        def normalize_title(title: str) -> str:
+            """Normalize title for comparison."""
+            if not title:
+                return ""
+            # Lowercase and strip whitespace
+            return " ".join(title.lower().split())
+
+        for article in articles:
+            article_id = article["id"]
+            title = article.get("title", "")
+            normalized = normalize_title(title)
+
+            if not normalized:
+                # No title - keep the article
+                unique_articles.append(article)
+                continue
+
+            # Check against seen titles
+            is_duplicate = False
+            duplicate_of = None
+
+            for seen_title, seen_id in seen_titles:
+                ratio = SequenceMatcher(None, normalized, seen_title).ratio()
+                if ratio >= threshold:
+                    is_duplicate = True
+                    duplicate_of = seen_id
+                    logger.info(
+                        f"Title duplicate detected: '{title[:50]}...' "
+                        f"(similarity: {ratio:.2f}) - duplicate of article {seen_id}"
+                    )
+                    break
+
+            if is_duplicate:
+                duplicate_articles.append(article)
+
+                # Mark as deduplicated in database (distinct from 'skipped' to exclude from exports)
+                if not dry_run:
+                    with self.database.db.get_session() as session:
+                        skip_reason = f"Duplicate title (similar to article {duplicate_of})"
+                        self.database.update_article_labeling_status(
+                            session, article_id, "deduplicated", skip_reason
+                        )
+            else:
+                unique_articles.append(article)
+                seen_titles.append((normalized, article_id))
+
+        if duplicate_articles:
+            logger.info(
+                f"Title deduplication: {len(unique_articles)} unique, "
+                f"{len(duplicate_articles)} duplicates skipped"
+            )
+
+        return unique_articles, duplicate_articles
 
     def _run_fp_prefilter_batch(
         self,
@@ -352,7 +439,15 @@ class LabelingPipeline:
                     for a in articles
                 ]
 
-            logger.info(f"Processing {len(article_data)} articles")
+            logger.info(f"Fetched {len(article_data)} articles for processing")
+
+            # Deduplicate by title similarity (reduces redundant LLM calls)
+            article_data, duplicates = self._deduplicate_by_title(
+                article_data, dry_run=dry_run
+            )
+            stats.articles_deduplicated = len(duplicates)
+
+            logger.info(f"Processing {len(article_data)} articles after deduplication")
 
             # Run FP classifier batch pre-filter (single API call for all articles)
             fp_prefilter_results = self._run_fp_prefilter_batch(article_data, dry_run)
@@ -431,7 +526,7 @@ class LabelingPipeline:
             logger.info(
                 f"Labeling complete: {stats.articles_labeled} labeled, "
                 f"{stats.articles_skipped} skipped, {stats.articles_false_positive} false positives, "
-                f"{stats.articles_failed} failed"
+                f"{stats.articles_deduplicated} deduplicated, {stats.articles_failed} failed"
             )
 
         except Exception as e:

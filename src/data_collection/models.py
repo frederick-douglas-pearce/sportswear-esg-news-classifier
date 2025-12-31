@@ -61,7 +61,8 @@ class Article(Base):
     embedding = Column(Vector(1536))
 
     # Labeling status tracking
-    labeling_status = Column(String(20), default="pending")  # pending, chunked, embedded, labeled, reviewed, skipped
+    # Valid statuses: pending, chunked, embedded, labeled, skipped, false_positive, unlabelable, deduplicated
+    labeling_status = Column(String(20), default="pending")
     labeling_error = Column(Text)
     labeled_at = Column(DateTime(timezone=True))
     skipped_at = Column(DateTime(timezone=True))  # Timestamp when article was skipped (for future relabeling)

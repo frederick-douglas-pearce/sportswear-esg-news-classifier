@@ -264,6 +264,67 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
     # Categories less likely to have ESG content
     NON_ESG_CATEGORIES = ['sports', 'entertainment', 'lifestyle', 'fashion']
 
+    # Source reputation scores (based on observed ESG rate from labeling data)
+    # Higher score = more likely to publish ESG content
+    SOURCE_REPUTATION_SCORES = {
+        # ESG-focused sources (score: 0.8-1.0)
+        'sustainablebrands.com': 0.95,
+        'greenbiz.com': 0.95,
+        'esgtoday.com': 0.95,
+        'just-style.com': 0.85,
+        'sourcingjournal.com': 0.85,
+        'ecotextile.com': 0.90,
+        # Business news with ESG coverage (score: 0.5-0.7)
+        'reuters.com': 0.65,
+        'bloomberg.com': 0.60,
+        'ft.com': 0.55,
+        'wsj.com': 0.55,
+        'theguardian.com': 0.60,
+        'bbc.com': 0.50,
+        'businesswire.com': 0.45,
+        'prnewswire.com': 0.45,
+        # Fashion/style sources (lower ESG rate, score: 0.2-0.4)
+        'vogue.com': 0.30,
+        'elle.com': 0.25,
+        'wwd.com': 0.40,
+        'fashionista.com': 0.35,
+        'footwearnews.com': 0.35,
+        # Sneaker/streetwear culture (rarely ESG, score: 0.1-0.2)
+        'hypebeast.com': 0.15,
+        'highsnobiety.com': 0.15,
+        'sneakernews.com': 0.10,
+        'solecollector.com': 0.10,
+        'nicekicks.com': 0.10,
+        # Sports news (rarely ESG, score: 0.1-0.2)
+        'espn.com': 0.15,
+        'si.com': 0.15,
+        'bleacherreport.com': 0.10,
+        # Deal/coupon sites (almost never ESG, score: 0.0-0.1)
+        'slickdeals.net': 0.05,
+        'techradar.com': 0.10,
+        'tomsguide.com': 0.10,
+    }
+
+    # Headline patterns that suggest non-ESG content (sales, deals, releases)
+    HEADLINE_SALE_PATTERNS = [
+        r'\bsale\b', r'\bdeal\b', r'\bdeals\b', r'\bdiscount\b',
+        r'\b\d+%\s*off\b', r'\bsave\b', r'\bclearance\b',
+        r'\bblack friday\b', r'\bcyber monday\b',
+        r'\bprime day\b', r'\bbogo\b',
+    ]
+
+    HEADLINE_RELEASE_PATTERNS = [
+        r'\brelease\b', r'\breleases\b', r'\bdrops\b', r'\bdropping\b',
+        r'\blaunch\b', r'\blaunches\b', r'\bcoming\b', r'\bsneak peek\b',
+        r'\bfirst look\b', r'\breview\b', r'\bunboxing\b',
+    ]
+
+    HEADLINE_ATHLETE_PATTERNS = [
+        r'\bsigns\b', r'\bsigned\b', r'\bendorses\b', r'\bwears\b',
+        r'\bsponsored\b', r'\bsponsor\b', r'\bambassador\b',
+        r'\bworld cup\b', r'\bolympics\b', r'\bnba\b', r'\bnfl\b',
+    ]
+
     # Class-level caches to avoid redundant computation across instances
     _embedding_cache: ClassVar[Dict[str, np.ndarray]] = {}
     _ner_cache: ClassVar[Dict[str, np.ndarray]] = {}
@@ -873,6 +934,7 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         - has_lifestyle_category: 1 if 'lifestyle' in categories
         - n_esg_categories: count of ESG-related categories
         - n_non_esg_categories: count of non-ESG categories
+        - source_reputation_score: numeric ESG likelihood score (0.0-1.0)
         """
         features_list = []
 
@@ -888,6 +950,13 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
                 pub in source_lower for pub in self.NON_ESG_PUBLISHERS
             ) else 0
 
+            # Source reputation score (0.0-1.0, default 0.35 for unknown sources)
+            reputation_score = 0.35  # Default for unknown sources
+            for domain, score in self.SOURCE_REPUTATION_SCORES.items():
+                if domain in source_lower:
+                    reputation_score = score
+                    break
+
             # Category features
             has_business = 1 if 'business' in cats_lower else 0
             has_environment = 1 if 'environment' in cats_lower else 0
@@ -902,6 +971,74 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
                 is_esg_pub, is_non_esg_pub,
                 has_business, has_environment, has_sports, has_lifestyle,
                 n_esg_cats, n_non_esg_cats,
+                reputation_score,
+            ])
+
+        return np.array(features_list)
+
+    def _compute_headline_features(
+        self,
+        titles: List[Optional[str]],
+    ) -> np.ndarray:
+        """Compute features from article headlines/titles.
+
+        Analyzes title patterns to detect non-ESG content indicators:
+        - sale/deal patterns (discount, % off, clearance)
+        - product release patterns (drops, launch, release)
+        - athlete/sponsorship patterns (signs, endorses, sponsored)
+
+        Features computed:
+        - has_sale_pattern: 1 if title contains sale/deal patterns
+        - has_release_pattern: 1 if title contains release patterns
+        - has_athlete_pattern: 1 if title contains athlete/sponsorship patterns
+        - n_non_esg_patterns: count of non-ESG patterns found
+        - headline_esg_keywords: count of ESG keywords in title
+        - headline_non_esg_ratio: ratio of non-ESG to total patterns
+        """
+        features_list = []
+
+        for title in titles:
+            title_lower = title.lower() if title else ""
+
+            # Check for non-ESG patterns
+            has_sale = 0
+            has_release = 0
+            has_athlete = 0
+
+            if title_lower:
+                has_sale = 1 if any(
+                    re.search(pattern, title_lower)
+                    for pattern in self.HEADLINE_SALE_PATTERNS
+                ) else 0
+
+                has_release = 1 if any(
+                    re.search(pattern, title_lower)
+                    for pattern in self.HEADLINE_RELEASE_PATTERNS
+                ) else 0
+
+                has_athlete = 1 if any(
+                    re.search(pattern, title_lower)
+                    for pattern in self.HEADLINE_ATHLETE_PATTERNS
+                ) else 0
+
+            # Count ESG keywords in title
+            esg_keywords = (
+                self.ENVIRONMENTAL_KEYWORDS +
+                self.SOCIAL_KEYWORDS +
+                self.GOVERNANCE_KEYWORDS
+            )
+            esg_count = sum(1 for kw in esg_keywords if kw.lower() in title_lower)
+
+            # Total non-ESG patterns
+            n_non_esg = has_sale + has_release + has_athlete
+
+            # Calculate ratio
+            total = esg_count + n_non_esg
+            non_esg_ratio = n_non_esg / total if total > 0 else 0.5
+
+            features_list.append([
+                has_sale, has_release, has_athlete,
+                n_non_esg, esg_count, non_esg_ratio
             ])
 
         return np.array(features_list)
@@ -1369,6 +1506,7 @@ class EPFeatureTransformer(BaseEstimator, TransformerMixin):
         'meta_has_lifestyle_category',
         'meta_n_esg_categories',
         'meta_n_non_esg_categories',
+        'meta_source_reputation_score',
     ]
 
     def get_feature_names_out(self) -> Optional[np.ndarray]:

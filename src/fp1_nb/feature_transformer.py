@@ -60,10 +60,31 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
     # NER entity types that suggest false positives vs sportswear
     # Original intuitive categories (best performing in experiments)
-    # False positive indicators (locations, facilities, groups, events)
-    FP_ENTITY_TYPES = ['GPE', 'LOC', 'FAC', 'NORP', 'EVENT']
+    # False positive indicators (locations, facilities, groups, events, persons)
+    # PERSON added to catch false positives like "Manor Salomon" (soccer player)
+    FP_ENTITY_TYPES = ['GPE', 'LOC', 'FAC', 'NORP', 'EVENT', 'PERSON']
     # Sportswear indicators (organizations, products, financial terms)
     SW_ENTITY_TYPES = ['ORG', 'PRODUCT', 'MONEY', 'PERCENT', 'CARDINAL']
+
+    # Brands with person-name collisions (require PERSON NER detection)
+    # These brand names are also common first/last names
+    PERSON_NAME_BRANDS = [
+        'Salomon',       # Salomon (person's last name, e.g., "Manor Salomon" soccer player)
+        'Jordan',        # Jordan (common first name) - note: "Michael Jordan" IS sportswear-related
+        'Brooks',        # Brooks (common last name)
+    ]
+
+    # Brands with geographic-name collisions (require GPE/LOC NER detection)
+    # These brand names are also geographic regions
+    GEOGRAPHIC_BRANDS = [
+        'Patagonia',            # Patagonia region in South America
+        'Columbia Sportswear',  # Columbia River, Columbia University, DC, etc.
+    ]
+
+    # Brands that need lowercase detection (lowercase = non-sportswear)
+    LOWERCASE_BRANDS = [
+        'Vans',  # "vans" lowercase = vehicles (police vans, delivery vans)
+    ]
 
     # Brands with high false positive rates due to name collisions
     # These brands have names that commonly appear in non-sportswear contexts
@@ -420,6 +441,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self._metadata_scaler = None  # For scaling metadata features
         self._brand_indicator_scaler = None  # For scaling multi-hot brand indicators
         self._brand_summary_scaler = None  # For scaling brand summary features
+        self._brand_ner_scaler = None  # For scaling brand-specific NER features
         self._is_fitted = False
 
     def _validate_method(self) -> None:
@@ -924,6 +946,147 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
         return result
 
+    def _compute_brand_specific_ner_features(self, texts: List[str]) -> np.ndarray:
+        """Compute brand-specific NER features to catch name collisions.
+
+        This method detects specific false positive patterns for problematic brands:
+        - PERSON entities near person-name brands (Salomon, Jordan, Brooks)
+        - GPE/LOC entities near geographic brands (Patagonia, Columbia)
+        - Lowercase occurrences of brands that are also common words (Vans)
+
+        Features computed (8 features):
+        - person_near_person_brand: 1 if PERSON entity near a person-name brand mention
+        - location_near_geo_brand: 1 if GPE/LOC entity near a geographic brand mention
+        - has_lowercase_vans: 1 if "vans" appears lowercase (likely vehicles, not footwear)
+        - person_brand_mentioned: 1 if any person-name brand is mentioned
+        - geo_brand_mentioned: 1 if any geographic brand is mentioned
+        - lowercase_brand_mentioned: 1 if any lowercase-prone brand is mentioned
+        - n_person_ner_near_brand: count of PERSON entities near brand mentions
+        - brand_is_part_of_person_name: 1 if brand appears to be part of person's full name
+
+        Args:
+            texts: List of text strings
+
+        Returns:
+            numpy array of shape (n_samples, 8)
+        """
+        self._load_spacy_model()
+        features_list = []
+
+        # Normalize brand lists for matching
+        person_brands_lower = [b.lower() for b in self.PERSON_NAME_BRANDS]
+        geo_brands_lower = [b.lower() for b in self.GEOGRAPHIC_BRANDS]
+        # For geographic brands, also check partial match (e.g., "Columbia" matches "Columbia Sportswear")
+        geo_brand_stems = ['patagonia', 'columbia']
+        lowercase_brands_lower = [b.lower() for b in self.LOWERCASE_BRANDS]
+
+        for text in texts:
+            text_lower = text.lower()
+            brands = self._extract_brands_from_text(text)
+
+            # Initialize features with defaults
+            person_near_person_brand = 0
+            location_near_geo_brand = 0
+            has_lowercase_vans = 0
+            person_brand_mentioned = 0
+            geo_brand_mentioned = 0
+            lowercase_brand_mentioned = 0
+            n_person_ner_near_brand = 0
+            brand_is_part_of_person_name = 0
+
+            if not brands or not text.strip():
+                features_list.append([
+                    person_near_person_brand, location_near_geo_brand, has_lowercase_vans,
+                    person_brand_mentioned, geo_brand_mentioned, lowercase_brand_mentioned,
+                    n_person_ner_near_brand, brand_is_part_of_person_name
+                ])
+                continue
+
+            # Check which brand types are mentioned
+            brands_lower = [b.lower() for b in brands]
+            person_brand_mentioned = 1 if any(b in person_brands_lower for b in brands_lower) else 0
+            geo_brand_mentioned = 1 if any(
+                any(stem in b for stem in geo_brand_stems) for b in brands_lower
+            ) else 0
+            lowercase_brand_mentioned = 1 if any(b in lowercase_brands_lower for b in brands_lower) else 0
+
+            # Check for lowercase "vans" (vehicles, not Vans footwear)
+            # Look for "vans" that's NOT at start of sentence and NOT all caps
+            if 'vans' in brands_lower:
+                # Find all occurrences of "vans" in original text
+                vans_pattern = r'(?<![A-Z])\bvans\b(?![A-Z])'  # lowercase "vans"
+                if re.search(vans_pattern, text):
+                    has_lowercase_vans = 1
+
+            # Process text with spaCy for NER
+            doc = self._spacy_model(text[:100000])
+
+            # Find brand character positions for proximity check
+            window_chars = self.proximity_window_size * 6  # Approx chars per word
+            brand_positions = {}  # brand_lower -> list of (start, end) positions
+
+            for brand in brands:
+                brand_lower = brand.lower()
+                brand_positions[brand_lower] = []
+                start_pos = 0
+                while True:
+                    pos = text_lower.find(brand_lower, start_pos)
+                    if pos == -1:
+                        break
+                    brand_positions[brand_lower].append((pos, pos + len(brand_lower)))
+                    start_pos = pos + len(brand_lower)
+
+            # Check NER entities
+            for ent in doc.ents:
+                ent_start = ent.start_char
+                ent_end = ent.end_char
+
+                # Count PERSON entities near any brand mention
+                if ent.label_ == 'PERSON':
+                    for brand_lower, positions in brand_positions.items():
+                        for brand_start, brand_end in positions:
+                            if (abs(ent_start - brand_end) <= window_chars or
+                                abs(ent_end - brand_start) <= window_chars):
+                                n_person_ner_near_brand += 1
+
+                                # Check if brand is part of the PERSON entity
+                                # (e.g., "Manor Salomon" where "Salomon" is both brand and person's name)
+                                ent_text_lower = ent.text.lower()
+                                if brand_lower in ent_text_lower:
+                                    brand_is_part_of_person_name = 1
+
+                                # Check if this is a person-name brand
+                                if brand_lower in person_brands_lower:
+                                    person_near_person_brand = 1
+                                break
+
+                # Check GPE/LOC entities near geographic brands
+                elif ent.label_ in ('GPE', 'LOC'):
+                    for brand_lower, positions in brand_positions.items():
+                        # Check if brand is a geographic brand
+                        is_geo_brand = any(stem in brand_lower for stem in geo_brand_stems)
+                        if is_geo_brand:
+                            for brand_start, brand_end in positions:
+                                if (abs(ent_start - brand_end) <= window_chars or
+                                    abs(ent_end - brand_start) <= window_chars):
+                                    location_near_geo_brand = 1
+
+                                    # Check if brand is part of the location entity
+                                    ent_text_lower = ent.text.lower()
+                                    if any(stem in ent_text_lower for stem in geo_brand_stems):
+                                        # The geographic entity itself contains the brand name
+                                        # This is a strong signal of false positive
+                                        location_near_geo_brand = 1
+                                    break
+
+            features_list.append([
+                person_near_person_brand, location_near_geo_brand, has_lowercase_vans,
+                person_brand_mentioned, geo_brand_mentioned, lowercase_brand_mentioned,
+                n_person_ner_near_brand, brand_is_part_of_person_name
+            ])
+
+        return np.array(features_list)
+
     def _compute_pos_features(self, texts: List[str]) -> np.ndarray:
         """Compute POS-based features for all texts.
 
@@ -1179,6 +1342,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
 
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
+
         elif self.method == 'tfidf_lsa_proximity':
             # TF-IDF LSA + proximity features (positive + negative context)
             self._tfidf = self._create_tfidf_word()
@@ -1218,6 +1386,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
 
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
+
             # Fit scaler on proximity features (uses combined vocabulary)
             proximity_features = self._compute_proximity_features(texts)
             self._proximity_scaler = StandardScaler()
@@ -1244,6 +1417,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
+
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
 
             proximity_features = self._compute_proximity_features(texts)
             self._proximity_scaler = StandardScaler()
@@ -1288,6 +1466,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
 
         elif self.method == 'tfidf_pos':
             # TF-IDF + POS pattern features
@@ -1311,6 +1493,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
 
         elif self.method == 'sentence_transformer_ner_brands':
             # Sentence embeddings + NER + brand features (both indicators and summary)
@@ -1319,6 +1505,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
 
         elif self.method == 'sentence_transformer_ner_vocab':
             # Sentence embeddings + NER + domain vocabulary features
@@ -1327,6 +1517,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
             # Fit scaler on vocab features
             vocab_features = self._compute_vocab_features(texts)
             self._vocab_scaler = StandardScaler()
@@ -1339,6 +1533,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             ner_features = self._compute_ner_features(texts)
             self._ner_scaler = StandardScaler()
             self._ner_scaler.fit(ner_features)
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
             # Fit scaler on proximity features (uses combined vocabulary)
             proximity_features = self._compute_proximity_features(texts)
             self._proximity_scaler = StandardScaler()
@@ -1492,13 +1690,15 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner':
-            # TF-IDF LSA + NER entity type features
+            # TF-IDF LSA + NER entity type features + brand-specific NER features
             # Note: _compute_ner_features uses class-level caching
             tfidf_features = self._tfidf.transform(texts)
             lsa_features = self._lsa.transform(tfidf_features)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
-            features = np.hstack([lsa_features, ner_scaled])
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
+            features = np.hstack([lsa_features, ner_scaled, brand_ner_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_proximity':
@@ -1513,30 +1713,34 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner_proximity':
-            # TF-IDF LSA + NER + proximity features
+            # TF-IDF LSA + NER + proximity features + brand-specific NER
             tfidf_features = self._tfidf.transform(texts)
             lsa_features = self._lsa.transform(tfidf_features)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
-            features = np.hstack([lsa_features, ner_scaled, proximity_scaled, neg_context_scaled])
+            features = np.hstack([lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner_proximity_brands':
-            # TF-IDF LSA + NER + proximity + brand features (53-dim)
+            # TF-IDF LSA + NER + proximity + brand features (53-dim) + brand-specific NER
             # Brand features are added by _stack_optional_features since include_brand_* flags are True
             tfidf_features = self._tfidf.transform(texts)
             lsa_features = self._lsa.transform(tfidf_features)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
-            features = np.hstack([lsa_features, ner_scaled, proximity_scaled, neg_context_scaled])
+            features = np.hstack([lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_context':
@@ -1562,11 +1766,13 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_ner':
-            # TF-IDF + scaled NER entity type features
+            # TF-IDF + scaled NER entity type features + brand-specific NER
             tfidf_features = self._tfidf.transform(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
-            features = sparse.hstack([tfidf_features, ner_scaled]).tocsr()
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
+            features = sparse.hstack([tfidf_features, ner_scaled, brand_ner_scaled]).tocsr()
             return _stack_optional_features(features, is_sparse=True)
 
         elif self.method == 'tfidf_pos':
@@ -1586,42 +1792,50 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner':
-            # Sentence embeddings (384-dim) + scaled NER features (6-dim)
+            # Sentence embeddings (384-dim) + scaled NER features (6-dim) + brand-specific NER (8-dim)
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
-            features = np.hstack([sentence_features, ner_scaled])
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
+            features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_brands':
-            # Sentence embeddings (384-dim) + scaled NER features (6-dim) + brand features (53-dim)
+            # Sentence embeddings (384-dim) + scaled NER features (6-dim) + brand-specific NER (8-dim) + brand features (53-dim)
             # Brand features are added by _stack_optional_features since include_brand_* flags are True
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
-            features = np.hstack([sentence_features, ner_scaled])
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
+            features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_vocab':
-            # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled vocab features
+            # Sentence embeddings (384-dim) + scaled NER (6-dim) + brand-specific NER (8-dim) + scaled vocab features
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             vocab_features = self._compute_vocab_features(texts)
             vocab_scaled = self._vocab_scaler.transform(vocab_features)
-            features = np.hstack([sentence_features, ner_scaled, vocab_scaled])
+            features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled, vocab_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_proximity':
-            # Sentence embeddings (384-dim) + scaled NER (6-dim) + scaled proximity (4-dim) + neg context (4-dim)
+            # Sentence embeddings (384-dim) + scaled NER (6-dim) + brand-specific NER (8-dim) + scaled proximity (4-dim) + neg context (4-dim)
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
-            features = np.hstack([sentence_features, ner_scaled, proximity_scaled, neg_context_scaled])
+            features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'hybrid':
