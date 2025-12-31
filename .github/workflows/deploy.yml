@@ -1,0 +1,296 @@
+# Deploy Classifiers to Google Cloud Run
+#
+# This workflow deploys classifier containers to Google Cloud Run.
+# It is triggered only on major/minor version updates via retrain.py or manual dispatch.
+#
+# Triggers:
+#   - workflow_dispatch: Manual trigger or called by retrain.py after major/minor promotion
+#   - workflow_call: Can be called from other workflows
+#
+# Required GitHub Secrets:
+#   - GCP_PROJECT_ID: Google Cloud project ID
+#   - GCP_SA_KEY: Service account JSON key with Cloud Run Admin + Storage Admin roles
+#   - GCP_REGION: (optional) Cloud Run region, defaults to us-central1
+#
+# Usage from retrain.py (after promotion):
+#   gh workflow run deploy.yml -f classifier=fp -f version=v1.2.0 -f bump_type=minor
+
+name: Deploy Classifiers
+
+on:
+  # Manual trigger via GitHub UI or gh CLI
+  workflow_dispatch:
+    inputs:
+      classifier:
+        description: 'Classifier to deploy (fp, ep, or all)'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - fp
+          - ep
+          - all
+      version:
+        description: 'Version being deployed (e.g., v1.2.0)'
+        required: false
+        type: string
+      bump_type:
+        description: 'Version bump type (major, minor, patch)'
+        required: false
+        default: 'minor'
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+
+  # Allow other workflows to call this one
+  workflow_call:
+    inputs:
+      classifier:
+        description: 'Classifier to deploy'
+        required: true
+        type: string
+      version:
+        description: 'Version being deployed'
+        required: false
+        type: string
+      bump_type:
+        description: 'Version bump type'
+        required: false
+        type: string
+        default: 'minor'
+
+env:
+  REGION: ${{ secrets.GCP_REGION || 'us-central1' }}
+
+jobs:
+  # Gate: Skip deployment for patch versions (unless forced)
+  check-deployment:
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.check.outputs.should_deploy }}
+      deploy_fp: ${{ steps.check.outputs.deploy_fp }}
+      deploy_ep: ${{ steps.check.outputs.deploy_ep }}
+    steps:
+      - name: Check if deployment should proceed
+        id: check
+        run: |
+          BUMP_TYPE="${{ inputs.bump_type || 'minor' }}"
+          CLASSIFIER="${{ inputs.classifier || 'all' }}"
+          VERSION="${{ inputs.version || 'unknown' }}"
+
+          echo "Classifier: $CLASSIFIER"
+          echo "Version: $VERSION"
+          echo "Bump type: $BUMP_TYPE"
+
+          # Only deploy on major or minor versions (skip patch)
+          if [ "$BUMP_TYPE" = "patch" ]; then
+            echo "⚠️ Skipping deployment for patch version"
+            echo "Patch versions don't require redeployment - the model files are updated but the container doesn't need rebuilding."
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "deploy_fp=false" >> $GITHUB_OUTPUT
+            echo "deploy_ep=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "✅ Proceeding with deployment for $BUMP_TYPE version"
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+
+          # Determine which classifiers to deploy
+          case "$CLASSIFIER" in
+            fp)
+              echo "deploy_fp=true" >> $GITHUB_OUTPUT
+              echo "deploy_ep=false" >> $GITHUB_OUTPUT
+              ;;
+            ep)
+              echo "deploy_fp=false" >> $GITHUB_OUTPUT
+              echo "deploy_ep=true" >> $GITHUB_OUTPUT
+              ;;
+            all)
+              echo "deploy_fp=true" >> $GITHUB_OUTPUT
+              echo "deploy_ep=true" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+  # Deploy FP Classifier
+  deploy-fp:
+    needs: check-deployment
+    if: needs.check-deployment.outputs.should_deploy == 'true' && needs.check-deployment.outputs.deploy_fp == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      - name: Build FP classifier image
+        run: |
+          VERSION="${{ inputs.version || github.sha }}"
+          docker build \
+            --build-arg CLASSIFIER_TYPE=fp \
+            -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/fp-classifier-api:${VERSION} \
+            -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/fp-classifier-api:latest \
+            .
+
+      - name: Push to Container Registry
+        run: |
+          VERSION="${{ inputs.version || github.sha }}"
+          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/fp-classifier-api:${VERSION}
+          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/fp-classifier-api:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          VERSION="${{ inputs.version || github.sha }}"
+          gcloud run deploy fp-classifier-api \
+            --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/fp-classifier-api:${VERSION} \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --memory 2Gi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --timeout 300s \
+            --concurrency 10 \
+            --allow-unauthenticated \
+            --set-env-vars="CLASSIFIER_TYPE=fp"
+
+      - name: Verify deployment
+        id: verify
+        run: |
+          URL=$(gcloud run services describe fp-classifier-api \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "FP Classifier deployed to: $URL"
+          echo "service_url=$URL" >> $GITHUB_OUTPUT
+          echo "Testing health endpoint..."
+          curl -s -o /dev/null -w "%{http_code}" "$URL/health" | grep -q "200" && echo "✅ Health check passed!" || exit 1
+
+      - name: Output deployment URL
+        run: |
+          echo "### FP Classifier Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: ${{ steps.verify.outputs.service_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ inputs.version || github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Healthy" >> $GITHUB_STEP_SUMMARY
+
+  # Deploy EP Classifier
+  deploy-ep:
+    needs: check-deployment
+    if: needs.check-deployment.outputs.should_deploy == 'true' && needs.check-deployment.outputs.deploy_ep == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      - name: Build EP classifier image
+        run: |
+          VERSION="${{ inputs.version || github.sha }}"
+          docker build \
+            --build-arg CLASSIFIER_TYPE=ep \
+            -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/ep-classifier-api:${VERSION} \
+            -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/ep-classifier-api:latest \
+            .
+
+      - name: Push to Container Registry
+        run: |
+          VERSION="${{ inputs.version || github.sha }}"
+          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/ep-classifier-api:${VERSION}
+          docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/ep-classifier-api:latest
+
+      - name: Deploy to Cloud Run
+        run: |
+          VERSION="${{ inputs.version || github.sha }}"
+          gcloud run deploy ep-classifier-api \
+            --image gcr.io/${{ secrets.GCP_PROJECT_ID }}/ep-classifier-api:${VERSION} \
+            --region ${{ env.REGION }} \
+            --platform managed \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --timeout 60s \
+            --concurrency 10 \
+            --allow-unauthenticated \
+            --set-env-vars="CLASSIFIER_TYPE=ep"
+
+      - name: Verify deployment
+        id: verify
+        run: |
+          URL=$(gcloud run services describe ep-classifier-api \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "EP Classifier deployed to: $URL"
+          echo "service_url=$URL" >> $GITHUB_OUTPUT
+          echo "Testing health endpoint..."
+          curl -s -o /dev/null -w "%{http_code}" "$URL/health" | grep -q "200" && echo "✅ Health check passed!" || exit 1
+
+      - name: Output deployment URL
+        run: |
+          echo "### EP Classifier Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: ${{ steps.verify.outputs.service_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: ${{ inputs.version || github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ✅ Healthy" >> $GITHUB_STEP_SUMMARY
+
+  # Summary job
+  deployment-summary:
+    needs: [check-deployment, deploy-fp, deploy-ep]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deployment Summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Classifier | Deployed | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|----------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.check-deployment.outputs.should_deploy }}" != "true" ]; then
+            echo "| All | Skipped (patch version) | - |" >> $GITHUB_STEP_SUMMARY
+            echo ""
+            echo "ℹ️ Deployment skipped for patch version"
+            exit 0
+          fi
+
+          if [ "${{ needs.check-deployment.outputs.deploy_fp }}" = "true" ]; then
+            if [ "${{ needs.deploy-fp.result }}" = "success" ]; then
+              echo "| FP | Yes | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| FP | Yes | ❌ ${{ needs.deploy-fp.result }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| FP | No (not selected) | - |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.check-deployment.outputs.deploy_ep }}" = "true" ]; then
+            if [ "${{ needs.deploy-ep.result }}" = "success" ]; then
+              echo "| EP | Yes | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| EP | Yes | ❌ ${{ needs.deploy-ep.result }} |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| EP | No (not selected) | - |" >> $GITHUB_STEP_SUMMARY
+          fi
