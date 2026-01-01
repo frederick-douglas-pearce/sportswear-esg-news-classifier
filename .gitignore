@@ -48,7 +48,7 @@ notebooks/images/
 notebooks/models/
 
 # uv
-uv.lock
+# Note: uv.lock is NOT ignored - it should be committed for reproducible CI builds
 
 # VS Code
 *.code-workspace
