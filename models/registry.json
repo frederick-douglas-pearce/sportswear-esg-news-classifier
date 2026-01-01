@@ -1,8 +1,8 @@
 {
   "fp": {
-    "production": "v3",
+    "production": "v2.1.0",
     "versions": {
-      "v1": {
+      "v1.0.0": {
         "created_at": "2024-12-23T00:00:00Z",
         "trained_on": "data/fp_training_data.jsonl",
         "model_name": "RF_tuned",
@@ -17,7 +17,7 @@
           "test_precision": 0.9396
         }
       },
-      "v2": {
+      "v2.0.0": {
         "created_at": "2024-12-28T00:00:00Z",
         "trained_on": "data/fp_training_data.jsonl",
         "model_name": "RF_tuned",
@@ -31,9 +31,9 @@
           "test_recall": 0.9948,
           "test_precision": 0.9409
         },
-        "notes": "Lighter model - no sentence-transformers dependency"
+        "notes": "Major architecture change - switched from sentence-transformers to TF-IDF LSA, no heavy dependencies"
       },
-      "v3": {
+      "v2.1.0": {
         "created_at": "2025-01-01T00:00:00Z",
         "trained_on": "data/fp_training_data.jsonl",
         "model_name": "RF_tuned",
@@ -52,9 +52,9 @@
     }
   },
   "ep": {
-    "production": "v1",
+    "production": "v1.0.0",
     "versions": {
-      "v1": {
+      "v1.0.0": {
         "created_at": "2024-12-23T00:00:00Z",
         "trained_on": "data/ep_training_data.jsonl",
         "model_name": "LR_tuned",

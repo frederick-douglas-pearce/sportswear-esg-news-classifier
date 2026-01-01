@@ -17,9 +17,12 @@ __pycache__/
 logs/*.log
 models/logs/
 
-# Saved models
+# Saved models (intermediate artifacts)
 models/*.joblib
 models/*.pkl
+# Exception: classifier pipelines are needed for deployment
+!models/fp_classifier_pipeline.joblib
+!models/ep_classifier_pipeline.joblib
 
 # Data
 *.db
