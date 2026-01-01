@@ -10,20 +10,23 @@ This script analyzes prediction logs to detect:
 Uses Evidently AI when enabled, falls back to legacy KS test otherwise.
 
 Usage:
-    # Basic drift check (last 7 days)
-    uv run python scripts/monitor_drift.py --classifier fp
+    # Basic drift check from database (recommended for production)
+    uv run python scripts/monitor_drift.py --classifier fp --from-db
 
     # Extended analysis period
-    uv run python scripts/monitor_drift.py --classifier ep --days 30
+    uv run python scripts/monitor_drift.py --classifier fp --from-db --days 30
 
     # Generate HTML report (requires EVIDENTLY_ENABLED=true)
-    uv run python scripts/monitor_drift.py --classifier fp --html-report
+    uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report
 
-    # Create reference dataset from historical data
-    uv run python scripts/monitor_drift.py --classifier fp --create-reference --days 30
+    # Create reference dataset from database predictions
+    uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30
 
     # Send alert if drift detected
-    uv run python scripts/monitor_drift.py --classifier fp --alert
+    uv run python scripts/monitor_drift.py --classifier fp --from-db --alert
+
+    # Legacy: Load from log files (for local API testing)
+    uv run python scripts/monitor_drift.py --classifier fp --logs-dir logs/predictions
 """
 
 import argparse
@@ -31,6 +34,11 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -96,7 +104,12 @@ def main() -> int:
         "--logs-dir",
         type=Path,
         default=Path("logs/predictions"),
-        help="Directory containing prediction logs",
+        help="Directory containing prediction logs (ignored if --from-db is used)",
+    )
+    parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Load predictions from database instead of log files (recommended for production)",
     )
     parser.add_argument(
         "--html-report",
@@ -133,12 +146,14 @@ def main() -> int:
 
     # Handle reference dataset operations
     if args.create_reference:
-        print(f"Creating reference dataset for {args.classifier}...")
+        source = "database" if args.from_db else f"logs in {args.logs_dir}"
+        print(f"Creating reference dataset for {args.classifier} from {source}...")
         try:
             path = create_reference_dataset(
                 classifier_type=args.classifier,
                 logs_dir=args.logs_dir,
                 days=args.days,
+                from_database=args.from_db,
             )
             print(f"Reference dataset created: {path}")
             return 0
@@ -163,7 +178,9 @@ def main() -> int:
 
     # Run drift analysis
     if args.verbose:
+        source = "database" if args.from_db else f"log files in {args.logs_dir}"
         print(f"Analyzing {args.classifier} predictions from last {args.days} days...")
+        print(f"Data source: {source}")
         print(f"Evidently enabled: {mlops_settings.evidently_enabled}")
 
     try:
@@ -172,6 +189,7 @@ def main() -> int:
             days=args.days,
             save_report=args.html_report,
             send_alert=False,  # Handle alert separately
+            from_database=args.from_db,
         )
     except Exception as e:
         print(f"Error running drift analysis: {e}")

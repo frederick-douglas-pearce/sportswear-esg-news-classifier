@@ -61,13 +61,14 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requi
 tail -f logs/collection_$(date +%Y%m%d).log  # View NewsData logs
 tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
 
-# MLOps - Drift Monitoring
-uv run python scripts/monitor_drift.py --classifier fp              # Basic drift check (7 days)
-uv run python scripts/monitor_drift.py --classifier fp --days 30    # Extended analysis
-uv run python scripts/monitor_drift.py --classifier fp --html-report  # Generate Evidently HTML report
-uv run python scripts/monitor_drift.py --classifier fp --create-reference --days 30  # Create reference dataset
+# MLOps - Drift Monitoring (use --from-db for production predictions stored in database)
+uv run python scripts/monitor_drift.py --classifier fp --from-db              # Production drift check (7 days)
+uv run python scripts/monitor_drift.py --classifier fp --from-db --days 30    # Extended analysis
+uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report  # Generate Evidently HTML report
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30  # Create reference dataset
 uv run python scripts/monitor_drift.py --classifier fp --reference-stats  # View reference stats
-uv run python scripts/monitor_drift.py --classifier fp --alert      # Send webhook alert if drift
+uv run python scripts/monitor_drift.py --classifier fp --from-db --alert      # Send webhook alert if drift
+uv run python scripts/monitor_drift.py --classifier fp --logs-dir logs/predictions  # Legacy: from local log files
 
 # MLOps - MLflow Experiment Tracking (when MLFLOW_ENABLED=true)
 # NOTE: MLflow uses SQLite backend (mlruns.db). File-based backend (mlruns/) is deprecated.
@@ -475,13 +476,14 @@ uv run python scripts/train.py --classifier fp --data data/fp_training_data.json
 # Retrain and auto-promote if better
 uv run python scripts/retrain.py --classifier fp --auto-promote
 
-# Monitor for drift
-uv run python scripts/monitor_drift.py --classifier fp --days 7
+# Monitor for drift (--from-db for production, or --logs-dir for local)
+uv run python scripts/monitor_drift.py --classifier fp --from-db --days 7
 ```
 
 ### Prediction Logging
 
-Predictions are logged to `logs/predictions/{classifier}_predictions_{date}.jsonl` for drift monitoring.
+Production predictions (from Cloud Run) are logged to the `classifier_predictions` database table.
+Local API predictions are logged to `logs/predictions/{classifier}_predictions_{date}.jsonl`.
 
 Environment variables:
 - `ENABLE_PREDICTION_LOGGING` - Enable/disable logging (default: true)
@@ -526,8 +528,8 @@ ALERT_WEBHOOK_URL=https://hooks.slack.com/...
 # Train with MLflow tracking
 uv run python scripts/train.py --classifier fp --verbose
 
-# Run drift monitoring
-uv run python scripts/monitor_drift.py --classifier fp --html-report
+# Run drift monitoring (from production database)
+uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report
 
 # Set up daily monitoring
 ./scripts/setup_cron.sh install-monitor

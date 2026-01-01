@@ -76,6 +76,7 @@ class DriftMonitor:
         reference_data: pd.DataFrame | None = None,
         days: int = 7,
         save_report: bool = True,
+        from_database: bool = False,
     ) -> DriftReport:
         """Check for prediction drift.
 
@@ -84,6 +85,7 @@ class DriftMonitor:
             reference_data: Reference data (loads from file if None)
             days: Days of current data to analyze
             save_report: Whether to save HTML report
+            from_database: If True, load predictions from database instead of files
 
         Returns:
             DriftReport with results
@@ -93,6 +95,7 @@ class DriftMonitor:
             current_data = load_prediction_logs(
                 self.classifier_type,
                 days=days,
+                from_database=from_database,
             )
 
         if reference_data is None:
@@ -282,6 +285,7 @@ def run_drift_analysis(
     days: int = 7,
     save_report: bool = True,
     send_alert: bool = True,
+    from_database: bool = False,
 ) -> DriftReport:
     """Run drift analysis for a classifier.
 
@@ -290,12 +294,13 @@ def run_drift_analysis(
         days: Days of current data to analyze
         save_report: Whether to save HTML report
         send_alert: Whether to send alert if drift detected
+        from_database: If True, load predictions from database instead of files
 
     Returns:
         DriftReport with results
     """
     monitor = DriftMonitor(classifier_type)
-    report = monitor.check_drift(days=days, save_report=save_report)
+    report = monitor.check_drift(days=days, save_report=save_report, from_database=from_database)
 
     if report.drift_detected and send_alert:
         from .alerts import send_drift_alert

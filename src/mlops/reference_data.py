@@ -2,7 +2,8 @@
 
 import json
 import logging
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +23,91 @@ PREDICTION_LOG_COLUMNS = [
 ]
 
 
+def load_predictions_from_database(
+    classifier_type: str,
+    days: int | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> pd.DataFrame:
+    """Load prediction data from the classifier_predictions database table.
+
+    Args:
+        classifier_type: Type of classifier (fp, ep, esg)
+        days: Number of days to load (from today)
+        start_date: Start date for loading predictions
+        end_date: End date for loading predictions
+
+    Returns:
+        DataFrame with prediction data
+    """
+    from sqlalchemy import create_engine, text
+
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        logger.warning("DATABASE_URL not set, cannot load from database")
+        return pd.DataFrame()
+
+    # Determine date range
+    if days is not None:
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+    elif start_date is None and end_date is None:
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=30)
+
+    try:
+        engine = create_engine(database_url)
+        query = text("""
+            SELECT
+                cp.created_at as timestamp,
+                cp.probability,
+                cp.prediction,
+                cp.threshold_used as threshold,
+                cp.risk_level,
+                cp.action_taken,
+                cp.model_version,
+                LENGTH(a.title || ' ' || COALESCE(a.full_content, '')) as text_length
+            FROM classifier_predictions cp
+            JOIN articles a ON cp.article_id = a.id
+            WHERE cp.classifier_type = :classifier_type
+              AND cp.created_at >= :start_date
+              AND cp.created_at <= :end_date
+            ORDER BY cp.created_at
+        """)
+
+        with engine.connect() as conn:
+            result = conn.execute(
+                query,
+                {
+                    "classifier_type": classifier_type,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
+            rows = result.fetchall()
+            columns = result.keys()
+
+        if not rows:
+            logger.warning(f"No predictions found for {classifier_type} in date range")
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows, columns=columns)
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        logger.info(f"Loaded {len(df)} predictions from database for {classifier_type}")
+        return df
+
+    except Exception as e:
+        logger.error(f"Error loading predictions from database: {e}")
+        return pd.DataFrame()
+
+
 def load_prediction_logs(
     classifier_type: str,
     logs_dir: str | Path = "logs/predictions",
     days: int | None = None,
     start_date: datetime | None = None,
     end_date: datetime | None = None,
+    from_database: bool = False,
 ) -> pd.DataFrame:
     """Load prediction logs for a classifier.
 
@@ -37,10 +117,20 @@ def load_prediction_logs(
         days: Number of days to load (from today)
         start_date: Start date for loading logs
         end_date: End date for loading logs
+        from_database: If True, load from classifier_predictions table instead of files
 
     Returns:
         DataFrame with prediction data
     """
+    # Load from database if requested
+    if from_database:
+        return load_predictions_from_database(
+            classifier_type=classifier_type,
+            days=days,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
     logs_path = Path(logs_dir)
     if not logs_path.exists():
         logger.warning(f"Logs directory not found: {logs_path}")
@@ -112,6 +202,7 @@ def create_reference_dataset(
     logs_dir: str | Path = "logs/predictions",
     days: int | None = None,
     output_path: Path | None = None,
+    from_database: bool = False,
 ) -> Path:
     """Create a reference dataset from historical predictions.
 
@@ -120,6 +211,7 @@ def create_reference_dataset(
         logs_dir: Directory containing prediction logs
         days: Number of days to use (default from settings)
         output_path: Output path (default from settings)
+        from_database: If True, load from database instead of log files
 
     Returns:
         Path to saved reference dataset
@@ -128,7 +220,7 @@ def create_reference_dataset(
     output_path = output_path or mlops_settings.get_reference_data_path(classifier_type)
 
     # Load predictions
-    df = load_prediction_logs(classifier_type, logs_dir, days=days)
+    df = load_prediction_logs(classifier_type, logs_dir, days=days, from_database=from_database)
 
     if df.empty:
         raise ValueError(f"No prediction data found for {classifier_type}")
