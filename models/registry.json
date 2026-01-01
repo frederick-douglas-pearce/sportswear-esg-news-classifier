@@ -1,6 +1,6 @@
 {
   "fp": {
-    "production": "v2",
+    "production": "v3",
     "versions": {
       "v1": {
         "created_at": "2024-12-23T00:00:00Z",
@@ -32,6 +32,22 @@
           "test_precision": 0.9409
         },
         "notes": "Lighter model - no sentence-transformers dependency"
+      },
+      "v3": {
+        "created_at": "2025-01-01T00:00:00Z",
+        "trained_on": "data/fp_training_data.jsonl",
+        "model_name": "RF_tuned",
+        "transformer_method": "tfidf_lsa_ner_proximity_brands",
+        "threshold": 0.4753,
+        "metrics": {
+          "cv_f2": 0.9840,
+          "cv_recall": 0.9961,
+          "cv_precision": 0.9386,
+          "test_f2": 0.9804,
+          "test_recall": 0.9896,
+          "test_precision": 0.9453
+        },
+        "notes": "Added brand-specific NER features: person-name detection (Salomon, Jordan, Brooks), geographic detection (Patagonia, Columbia), lowercase detection (Vans)"
       }
     }
   },
