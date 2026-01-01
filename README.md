@@ -80,38 +80,77 @@ flowchart TB
         articles[("articles<br/><i>metadata, full_content</i>")]
         chunks[("article_chunks<br/><i>text, embeddings</i>")]
         labels[("brand_labels<br/><i>ESG categories, sentiment</i>")]
-        evidence[("label_evidence<br/><i>excerpts, similarity</i>")]
+        predictions[("classifier_predictions<br/><i>audit trail</i>")]
     end
 
-    subgraph labeling["Phase 2: LLM Labeling"]
+    subgraph prefilter["Phase 2: ML Pre-filters"]
+        fp_api["FP Classifier API<br/><i>Cloud Run / Local</i>"]
+        ep_api["EP Classifier API<br/><i>Cloud Run / Local</i>"]
+    end
+
+    subgraph labeling["Phase 3: LLM Labeling"]
         chunker["Article Chunker<br/><i>~500 tokens/chunk</i>"]
         embedder["OpenAI Embedder<br/><i>text-embedding-3-small</i>"]
         claude["Claude Sonnet<br/><i>ESG classification</i>"]
-        matcher["Evidence Matcher<br/><i>exact/fuzzy/semantic</i>"]
     end
 
-    subgraph output["Output"]
-        training["Training Data<br/><i>Per-brand ESG labels</i>"]
+    subgraph training["Phase 4: Model Training"]
+        export["Export Training Data<br/><i>JSONL format</i>"]
+        notebooks["Jupyter Notebooks<br/><i>EDA, tuning, evaluation</i>"]
+        train["train.py<br/><i>Pipeline training</i>"]
     end
 
+    subgraph deployment["Phase 5: Deployment"]
+        registry["Model Registry<br/><i>registry.json + MLflow</i>"]
+        docker["Docker Build<br/><i>Auto-detect dependencies</i>"]
+        cloudrun["Google Cloud Run<br/><i>FP + EP APIs</i>"]
+    end
+
+    subgraph monitoring["Phase 6: MLOps Monitoring"]
+        pred_logs["Prediction Logging<br/><i>Database + files</i>"]
+        drift["Drift Monitor<br/><i>Evidently AI</i>"]
+        alerts["Webhook Alerts<br/><i>Slack/Discord</i>"]
+    end
+
+    %% Data Collection Flow
     newsdata --> api_client
     gdelt --> api_client
     api_client --> scraper
     scraper --> articles
 
-    articles --> chunker
+    %% Pre-filter Flow
+    articles --> fp_api
+    fp_api -->|"sportswear"| ep_api
+    fp_api -->|"false positive"| predictions
+    ep_api -->|"has ESG"| chunker
+    ep_api -->|"no ESG"| predictions
+
+    %% Labeling Flow
     chunker --> chunks
     chunks --> embedder
-    embedder --> chunks
-
     articles --> claude
     claude --> labels
-    claude --> matcher
-    chunks --> matcher
-    matcher --> evidence
 
-    labels --> training
-    evidence --> training
+    %% Training Flow
+    labels --> export
+    predictions --> export
+    export --> notebooks
+    notebooks --> train
+    train --> registry
+
+    %% Deployment Flow
+    registry --> docker
+    docker --> cloudrun
+    cloudrun --> fp_api
+    cloudrun --> ep_api
+
+    %% Monitoring Flow
+    fp_api --> pred_logs
+    ep_api --> pred_logs
+    pred_logs --> predictions
+    predictions --> drift
+    drift -->|"drift detected"| alerts
+    drift -->|"retrain signal"| train
 ```
 
 ## Project Roadmap
