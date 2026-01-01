@@ -38,7 +38,7 @@ The ML classifiers enable cost-effective continuous monitoring that would be pro
 The training data was collected and labeled specifically for this project:
 
 - **Source**: NewsData.io API + GDELT DOC 2.0 API (free, 3 months history)
-- **Collection period**: December 2024 - January 2025
+- **Collection period**: December 2025 - January 2026
 - **Articles collected**: ~3,000 articles mentioning target brands
 - **Labeled articles**: 993 for FP classifier, 870 for EP classifier
 - **Labeling method**: Claude Sonnet with structured JSON output + manual review
@@ -317,7 +317,7 @@ sportswear-esg-news-classifier/
 │       ├── monitoring.py       # Evidently drift detection
 │       ├── reference_data.py   # Reference dataset management
 │       └── alerts.py           # Webhook notifications (Slack/Discord)
-└── tests/                      # 504 tests
+└── tests/                      # 528 tests
     ├── conftest.py             # Shared pytest fixtures
     ├── test_api_client.py      # NewsData.io client unit tests (23 tests)
     ├── test_gdelt_client.py    # GDELT client unit tests (31 tests)
@@ -1302,18 +1302,25 @@ DRIFT_THRESHOLD=0.1  # Alert if drift score > 10%
 **Running Drift Monitoring:**
 
 ```bash
-# Basic drift check (last 7 days)
-uv run python scripts/monitor_drift.py --classifier fp
+# Production drift check from database (recommended)
+uv run python scripts/monitor_drift.py --classifier fp --from-db
 
 # Extended analysis with HTML report
-uv run python scripts/monitor_drift.py --classifier fp --days 30 --html-report
+uv run python scripts/monitor_drift.py --classifier fp --from-db --days 30 --html-report
 
-# Create reference dataset from historical data
-uv run python scripts/monitor_drift.py --classifier fp --create-reference --days 30
+# Create reference dataset from production data
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30
 
 # Check reference dataset stats
 uv run python scripts/monitor_drift.py --classifier fp --reference-stats
+
+# Legacy: from local log files (for local API testing)
+uv run python scripts/monitor_drift.py --classifier fp --logs-dir logs/predictions
 ```
+
+**Data Sources:**
+- `--from-db`: Load predictions from `classifier_predictions` database table (recommended for production)
+- `--logs-dir`: Load from local JSONL log files (for local API development)
 
 **Monitor Output:**
 
@@ -1662,7 +1669,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with **504 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, and MLOps modules.
+The project includes a comprehensive test suite with **528 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, and MLOps modules.
 
 ```bash
 # Run all tests
@@ -1687,7 +1694,7 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 | Module | Coverage | Description |
 |--------|----------|-------------|
 | `src/deployment/` | 83-100% | Classifier deployment, config, preprocessing |
-| `src/mlops/` | 50-91% | MLflow tracking, Evidently monitoring |
+| `src/mlops/` | 56-91% | MLflow tracking, Evidently monitoring, reference data |
 | `src/fp3_nb/explainability.py` | 90% | LIME, SHAP, prototype explanations |
 | `src/labeling/` | 69-100% | LLM labeling pipeline |
 | `src/data_collection/` | 76-95% | API clients, scraper, collector |
@@ -1709,7 +1716,8 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 | `test_deployment.py` | 64 | FP/EP classifiers, config, data loading, preprocessing |
 | `test_explainability.py` | 28 | LIME, SHAP feature groups, prototype explanations |
 | `test_mlops_tracking.py` | 27 | MLflow experiment tracking, graceful degradation |
-| `test_mlops_monitoring.py` | 26 | Evidently drift detection, legacy KS tests |
+| `test_mlops_monitoring.py` | 28 | Evidently drift detection, legacy KS tests |
+| `test_mlops_reference_data.py` | 22 | Reference data loading, database predictions |
 | `test_retrain.py` | 38 | Retraining pipeline, semantic versioning, deployment triggers |
 | `test_integration.py` | 12 | End-to-end classifier pipeline tests |
 

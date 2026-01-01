@@ -47,7 +47,7 @@ CLASSIFIER_TYPE=fp uv run uvicorn scripts.predict:app --port 8000  # FP with uvi
 CLASSIFIER_TYPE=ep uv run uvicorn scripts.predict:app --port 8001  # EP with uvicorn
 
 # Testing
-uv run pytest                              # Run all tests (504 tests)
+uv run pytest                              # Run all tests (528 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -295,7 +295,7 @@ with engine.connect() as conn:
 - `threshold_optimization.py` - Threshold tuning for target recall
 - `deployment.py` - Pipeline export utilities
 
-### Test Suite (`tests/`) - 504 tests
+### Test Suite (`tests/`) - 528 tests
 - `conftest.py` - Shared pytest fixtures
 - `test_api_client.py` - NewsData.io brand extraction, article parsing, query generation (23 tests)
 - `test_gdelt_client.py` - GDELT article parsing, query generation, date handling (31 tests)
@@ -310,7 +310,8 @@ with engine.connect() as conn:
 - `test_deployment.py` - FP/EP classifiers, config, data loading, preprocessing (64 tests)
 - `test_explainability.py` - LIME, SHAP feature groups, prototype explanations (28 tests)
 - `test_mlops_tracking.py` - MLflow experiment tracking, graceful degradation (27 tests)
-- `test_mlops_monitoring.py` - Evidently drift detection, legacy KS tests (26 tests)
+- `test_mlops_monitoring.py` - Evidently drift detection, legacy KS tests (28 tests)
+- `test_mlops_reference_data.py` - Reference data loading, database predictions (22 tests)
 - `test_retrain.py` - Retraining pipeline, semantic versioning, deployment triggers (38 tests)
 - `test_integration.py` - End-to-end classifier pipeline tests (12 tests)
 
