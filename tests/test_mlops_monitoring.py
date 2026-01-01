@@ -295,7 +295,27 @@ class TestCheckDrift:
             monitor = DriftMonitor("fp")
             report = monitor.check_drift(days=7)
 
-            mock_load_logs.assert_called_once_with("fp", days=7)
+            mock_load_logs.assert_called_once_with("fp", days=7, from_database=False)
+            mock_load_ref.assert_called_once_with("fp")
+
+    def test_check_drift_loads_from_database_when_specified(self, mock_mlops_settings_disabled):
+        """Test that check_drift loads from database when from_database=True."""
+        with patch('src.mlops.monitoring.load_prediction_logs') as mock_load_logs, \
+             patch('src.mlops.monitoring.load_reference_dataset') as mock_load_ref:
+
+            mock_load_logs.return_value = pd.DataFrame({
+                "probability": [0.5, 0.6, 0.7, 0.8],
+                "prediction": [0, 1, 1, 1],
+            })
+            mock_load_ref.return_value = pd.DataFrame({
+                "probability": [0.4, 0.5, 0.6, 0.7],
+                "prediction": [0, 0, 1, 1],
+            })
+
+            monitor = DriftMonitor("fp")
+            report = monitor.check_drift(days=7, from_database=True)
+
+            mock_load_logs.assert_called_once_with("fp", days=7, from_database=True)
             mock_load_ref.assert_called_once_with("fp")
 
     def test_check_drift_splits_data_when_no_reference(self, mock_mlops_settings_disabled):
@@ -494,6 +514,26 @@ class TestRunDriftAnalysis:
 
                 # Alert should not be called even with drift
                 mock_alert.assert_not_called()
+
+    def test_run_drift_analysis_passes_from_database(self, mock_mlops_settings_disabled):
+        """Test that run_drift_analysis passes from_database to check_drift."""
+        with patch('src.mlops.monitoring.DriftMonitor.check_drift') as mock_check:
+            mock_check.return_value = DriftReport(
+                classifier_type="fp",
+                timestamp=datetime.now(),
+                drift_detected=False,
+                drift_score=0.05,
+                threshold=0.1,
+                details={},
+            )
+
+            report = run_drift_analysis(
+                "fp", days=7, save_report=False, send_alert=False, from_database=True
+            )
+
+            mock_check.assert_called_once_with(
+                days=7, save_report=False, from_database=True
+            )
 
 
 # ============================================================================
