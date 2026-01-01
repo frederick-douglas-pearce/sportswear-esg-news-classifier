@@ -41,6 +41,8 @@ dependencies = [
     # Explainability dependencies
     "lime>=0.2",
     "shap>=0.44",
+    # Feed generation dependencies
+    "feedgen>=1.0.0",
 ]
 
 [project.optional-dependencies]

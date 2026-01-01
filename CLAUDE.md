@@ -78,6 +78,14 @@ uv run mlflow ui --backend-store-uri sqlite:///mlruns.db  # Start MLflow UI (htt
 uv run python scripts/register_model.py --classifier fp --version v2.2.0  # Register in MLflow
 uv run python scripts/register_model.py --classifier fp --bump minor --update-registry  # Auto-version + update registry.json
 uv run python scripts/register_model.py --classifier fp --register-model  # Also add to MLflow Model Registry
+
+# Website Feed Export (for Jekyll/al-folio GitHub Pages)
+uv run python scripts/export_website_feed.py --format json -o ~/website/_data/esg_news.json  # JSON export
+uv run python scripts/export_website_feed.py --format atom -o ~/website/assets/feeds/esg_news.atom  # Atom feed
+uv run python scripts/export_website_feed.py --format both \
+  --json-output ~/website/_data/esg_news.json \
+  --atom-output ~/website/assets/feeds/esg_news.atom  # Export both formats
+uv run python scripts/export_website_feed.py --format json --limit 100 --dry-run  # Preview export
 ```
 
 ## Data Collection Status Reporting
@@ -235,6 +243,7 @@ with engine.connect() as conn:
 - `retrain.py` - Retrain models with version management
 - `register_model.py` - Register models in MLflow without retraining (for notebook workflows)
 - `monitor_drift.py` - Monitor prediction drift with Evidently AI
+- `export_website_feed.py` - Export labeled articles as JSON/Atom feeds for website display
 
 ### MLOps Module (`src/mlops/`)
 - `config.py` - MLOps settings (MLflow, Evidently, alerts) from environment variables
@@ -489,6 +498,76 @@ Local API predictions are logged to `logs/predictions/{classifier}_predictions_{
 Environment variables:
 - `ENABLE_PREDICTION_LOGGING` - Enable/disable logging (default: true)
 - `PREDICTION_LOGS_DIR` - Log directory (default: logs/predictions)
+
+## Website Feed Export
+
+Export labeled ESG news articles for display on a Jekyll/al-folio static website.
+
+### JSON Schema
+
+```json
+{
+  "generated_at": "2025-01-01T12:00:00Z",
+  "total_articles": 150,
+  "brands": ["Nike", "Adidas", ...],
+  "categories": ["environmental", "social", "governance", "digital_transformation"],
+  "articles": [
+    {
+      "id": "uuid",
+      "title": "Article headline",
+      "url": "https://source.com/article",
+      "source_name": "Reuters",
+      "published_at": "2025-01-15T10:30:00Z",
+      "published_date": "2025-01-15",
+      "brands": ["Nike"],
+      "categories": ["environmental", "governance"],
+      "brand_details": [
+        {
+          "brand": "Nike",
+          "categories": {
+            "environmental": {"applies": true, "sentiment": 1, "sentiment_label": "positive"},
+            "social": {"applies": false, "sentiment": null, "sentiment_label": null}
+          },
+          "evidence": [
+            {"category": "environmental", "excerpt": "Quote from article...", "relevance_score": 0.95}
+          ],
+          "confidence": 0.92,
+          "reasoning": "LLM explanation"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Update Workflow
+
+```bash
+# 1. In ML project: Run export script
+cd sportswear-esg-news-classifier
+uv run python scripts/export_website_feed.py --format both \
+  --json-output ~/website/_data/esg_news.json \
+  --atom-output ~/website/assets/feeds/esg_news.atom
+
+# 2. In website repo: Commit and push
+cd ~/website
+git add _data/esg_news.json assets/feeds/esg_news.atom
+git commit -m "Update ESG news - $(date +%Y-%m-%d)"
+git push
+```
+
+### Website Integration Files
+
+The export creates data for a Jekyll/al-folio site. Required website files (created separately in website repo):
+
+| File | Purpose |
+|------|---------|
+| `_data/esg_news.json` | Generated news data |
+| `_pages/esg-news.md` | News feed page with filters |
+| `_projects/esg-classifier.md` | Project description |
+| `_includes/esg_news_card.html` | Card template |
+| `assets/js/esg_news_filter.js` | Client-side filtering |
+| `assets/feeds/esg_news.atom` | Atom feed for subscribers |
 
 ## Labeling Pipeline Changelog
 
