@@ -70,7 +70,13 @@ uv run python scripts/monitor_drift.py --classifier fp --reference-stats  # View
 uv run python scripts/monitor_drift.py --classifier fp --alert      # Send webhook alert if drift
 
 # MLOps - MLflow Experiment Tracking (when MLFLOW_ENABLED=true)
+# NOTE: MLflow uses SQLite backend (mlruns.db). File-based backend (mlruns/) is deprecated.
 uv run mlflow ui --backend-store-uri sqlite:///mlruns.db  # Start MLflow UI (http://localhost:5000)
+
+# Model Registration (after notebook training, without retraining)
+uv run python scripts/register_model.py --classifier fp --version v2.2.0  # Register in MLflow
+uv run python scripts/register_model.py --classifier fp --bump minor --update-registry  # Auto-version + update registry.json
+uv run python scripts/register_model.py --classifier fp --register-model  # Also add to MLflow Model Registry
 ```
 
 ## Data Collection Status Reporting
@@ -226,6 +232,7 @@ with engine.connect() as conn:
 - `train.py` - Unified training script for FP/EP classifiers (with MLflow integration)
 - `predict.py` - Unified FastAPI service for all classifiers
 - `retrain.py` - Retrain models with version management
+- `register_model.py` - Register models in MLflow without retraining (for notebook workflows)
 - `monitor_drift.py` - Monitor prediction drift with Evidently AI
 
 ### MLOps Module (`src/mlops/`)
@@ -332,7 +339,7 @@ with engine.connect() as conn:
 - `FP_SKIP_LLM_THRESHOLD` - Probability threshold to skip LLM (default: 0.5, matches trained model threshold of 0.5356)
 - `FP_CLASSIFIER_TIMEOUT` - FP classifier API timeout in seconds (default: 30.0)
 - `MLFLOW_ENABLED` - Enable MLflow experiment tracking (default: false)
-- `MLFLOW_TRACKING_URI` - MLflow server URI or local path (default: sqlite:///mlruns.db)
+- `MLFLOW_TRACKING_URI` - MLflow tracking URI (default: sqlite:///mlruns.db). Note: File-based backend (file:./mlruns) is deprecated.
 - `MLFLOW_EXPERIMENT_PREFIX` - Prefix for experiment names (default: esg-classifier)
 - `EVIDENTLY_ENABLED` - Enable Evidently drift detection (default: false)
 - `EVIDENTLY_REPORTS_DIR` - Directory for HTML reports (default: reports/monitoring)

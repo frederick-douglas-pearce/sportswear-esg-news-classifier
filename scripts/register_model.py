@@ -17,6 +17,14 @@ Usage:
     # Add notes for the version
     uv run python scripts/register_model.py --classifier fp --version v2.2.0 --update-registry \
         --notes "Added new feature X"
+
+    # Register and add to MLflow Model Registry
+    uv run python scripts/register_model.py --classifier fp --version v2.2.0 --register-model
+
+Note:
+    MLflow uses SQLite backend (mlruns.db) by default. The file-based backend
+    (mlruns/) is deprecated and will be removed in a future MLflow release.
+    To view the UI: uv run mlflow ui --backend-store-uri sqlite:///mlruns.db
 """
 
 import argparse
@@ -51,15 +59,21 @@ def register_mlflow(
     notes: str = "",
     pipeline_path: Path = None,
     config_path: Path = None,
-) -> str:
-    """Register model run in MLflow."""
+    register_model: bool = False,
+) -> tuple[str, str]:
+    """Register model run in MLflow.
+
+    Returns:
+        Tuple of (run_id, model_version) or (None, None) if failed.
+    """
     try:
         import mlflow
     except ImportError:
         print("⚠️  MLflow not installed, skipping MLflow registration")
-        return None
+        return None, None
 
-    mlflow.set_tracking_uri("file:./mlruns")
+    # Use SQLite backend (file-based backend is deprecated)
+    mlflow.set_tracking_uri("sqlite:///mlruns.db")
     mlflow.set_experiment(f"esg-classifier-{classifier}")
 
     run_name = f"{classifier}-{version}"
@@ -100,7 +114,33 @@ def register_mlflow(
         if notes:
             mlflow.set_tag("notes", notes)
 
-        return run.info.run_id
+        run_id = run.info.run_id
+        model_version = None
+
+        # Register in Model Registry if requested
+        if register_model and pipeline_path and pipeline_path.exists():
+            client = mlflow.tracking.MlflowClient()
+            model_name = f"{classifier}-classifier"
+
+            # Create registered model if it doesn't exist
+            try:
+                client.create_registered_model(
+                    model_name,
+                    description=f"{classifier.upper()} Classifier for ESG News"
+                )
+            except mlflow.exceptions.MlflowException:
+                pass  # Model already exists
+
+            # Register this version
+            mv = client.create_model_version(
+                name=model_name,
+                source=f"{run.info.artifact_uri}/{pipeline_path.name}",
+                run_id=run_id,
+                description=f"{version} - {notes}" if notes else version,
+            )
+            model_version = mv.version
+
+        return run_id, model_version
 
 
 def update_registry(
@@ -179,6 +219,11 @@ def main():
         help="Notes about this version",
     )
     parser.add_argument(
+        "--register-model",
+        action="store_true",
+        help="Also register in MLflow Model Registry",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show what would be done without making changes",
@@ -227,7 +272,9 @@ def main():
         print(f"   Test F2: {config.get('test_f2', 'N/A')}")
         if args.notes:
             print(f"   Notes: {args.notes}")
-        print(f"\n   MLflow: Would register run")
+        print(f"\n   MLflow: Would register run (sqlite:///mlruns.db)")
+        if args.register_model:
+            print(f"   MLflow Model Registry: Would register {args.classifier}-classifier")
         if args.update_registry:
             print(f"   Registry: Would update {registry_path}")
         if args.set_production:
@@ -236,16 +283,19 @@ def main():
 
     # Register in MLflow
     print(f"\n📊 Registering {args.classifier} classifier {version} in MLflow...")
-    run_id = register_mlflow(
+    run_id, model_version = register_mlflow(
         classifier=args.classifier,
         config=config,
         version=version,
         notes=args.notes,
         pipeline_path=pipeline_path,
         config_path=config_path,
+        register_model=args.register_model,
     )
     if run_id:
         print(f"   ✅ MLflow run: {run_id[:8]}...")
+    if model_version:
+        print(f"   ✅ Model Registry: {args.classifier}-classifier version {model_version}")
 
     # Update registry if requested
     if args.update_registry:
