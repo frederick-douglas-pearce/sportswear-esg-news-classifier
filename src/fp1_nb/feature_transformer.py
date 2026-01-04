@@ -54,6 +54,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'sentence_transformer_ner_brands',  # Sentence + NER + brand indicator/summary features
         'sentence_transformer_ner_vocab',  # Sentence + NER + domain vocabulary features
         'sentence_transformer_ner_proximity',  # Sentence + NER + proximity features (corporate/outdoor vocab)
+        'sentence_transformer_ner_fp_indicators',  # Sentence + NER + FP indicator features (stock tickers, company suffixes, etc.)
         'tfidf_lsa_ner_proximity_brands',  # TF-IDF LSA + NER + proximity + brand indicator/summary features
         'hybrid',
     ]
@@ -258,6 +259,169 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
     # Categories that may indicate false positives
     FP_CATEGORIES = ['environment', 'science', 'world', 'crime']
 
+    # Stock ticker patterns that indicate financial articles about different companies
+    # These patterns help identify articles about companies with similar names
+    # e.g., "NASDAQ:ANTA" (Antalpha Platform) vs "ANTA Sports"
+    STOCK_TICKER_PATTERNS = [
+        r'\bNASDAQ\s*:\s*ANTA\b',  # Antalpha Platform (not Anta Sports)
+        r'\bTSE\s*:\s*BDI\b',       # Black Diamond Group (mining)
+        r'\bNASDAQ\s*:\s*BIRD\b',   # Could be confused but usually is Allbirds
+        r'\bASX\s*:\s*PL3\b',       # Patagonia Lithium
+        r'\bOTCMKTS\s*:',           # OTC markets often have FP companies
+    ]
+
+    # Company suffixes that indicate non-sportswear entities
+    # When brand name is followed by these, it's likely a different company
+    COMPANY_SUFFIX_PATTERNS = [
+        # Investment/finance
+        (r'Salomon\s*&\s*Ludwin', 'Salomon'),  # Investment firm
+        (r'Salomon\s+LLC', 'Salomon'),
+        (r'Salomon\s+Capital', 'Salomon'),
+        # Lumber/forestry
+        (r'Timberland\s+Lumber', 'Timberland'),
+        (r'Timberland\s+Company', 'Timberland'),  # Not the boot brand
+        (r'Timberland\s+Corp', 'Timberland'),
+        # Mining/resources
+        (r'Black\s+Diamond\s+Group', 'Black Diamond'),
+        (r'Black\s+Diamond\s+Power', 'Black Diamond'),
+        (r'Black\s+Diamond\s+Therapeutics', 'Black Diamond'),
+        (r'Patagonia\s+Lithium', 'Patagonia'),
+        (r'Patagonia\s+Gold', 'Patagonia'),
+        (r'Puma\s+Exploration', 'Puma'),
+        (r'Puma\s+Biotechnology', 'Puma'),
+        # Tech/platform
+        (r'Antalpha\s+Platform', 'Anta'),  # NASDAQ:ANTA crypto company
+        # Generic suffixes that may indicate different companies
+        (r'(\w+)\s+LLC\b', None),  # Matches any brand + LLC
+        (r'(\w+)\s+Ltd\.?\b', None),
+        (r'(\w+)\s+Inc\.?\b', None),
+        (r'(\w+)\s+Corp\.?\b', None),
+        (r'(\w+)\s+Capital\b', None),
+        (r'(\w+)\s+Partners\b', None),
+        (r'(\w+)\s+Holdings\b', None),
+        (r'(\w+)\s+Therapeutics\b', None),
+        (r'(\w+)\s+Biotechnology\b', None),
+    ]
+
+    # Vehicle brand patterns that indicate automotive context
+    # These patterns help identify articles about cars/vehicles, not sportswear
+    VEHICLE_BRAND_PATTERNS = [
+        # Ford Puma (car)
+        r'\bFord\s+Puma\b',
+        r'\bPuma\s+(?:EV|Gen-E|ST|Titanium|Trend|hybrid)\b',
+        r'\bPuma\s+(?:hatchback|crossover|SUV)\b',
+        # Ford Vans
+        r'\bFord\s+(?:Transit|E-Transit)\s+(?:van|vans|Courier)\b',
+        # Generic vehicle patterns for Vans
+        r'\b(?:delivery|cargo|commercial|police|prison|container|mobile|forensic)\s+vans?\b',
+        r'\bvans?\s+(?:and\s+)?(?:trucks?|lorr(?:y|ies))\b',
+        r'\b(?:seized|stolen|intercept(?:ed)?)\s+vans?\b',
+        # Puma helicopter (military)
+        r'\bPuma\s+helicopter\b',
+        r'\bSA\s*330\s*Puma\b',  # Puma helicopter model
+    ]
+
+    # Animal context keywords for Puma (the animal)
+    # These keywords near "Puma" suggest it's about the animal, not the brand
+    ANIMAL_CONTEXT_KEYWORDS = [
+        'mountain lion', 'cougar', 'big cat', 'feline', 'predator', 'prey',
+        'wildlife', 'wild', 'spotted', 'sighting', 'tracking', 'hunt',
+        'penguin', 'penguins', 'guanaco', 'guanacos',  # Puma prey in Patagonia
+        'population', 'populations', 'species', 'habitat', 'conservation',
+        'attack', 'attacked', 'kill', 'killed', 'eating', 'feeding',
+        'territory', 'territories', 'range', 'cub', 'cubs', 'den',
+    ]
+
+    # Geographic context keywords for Patagonia (the region)
+    # These keywords near "Patagonia" suggest it's about the region, not the brand
+    GEOGRAPHIC_CONTEXT_KEYWORDS = [
+        # Geographic features
+        'region', 'province', 'territory', 'glacier', 'glaciers', 'fjord', 'fjords',
+        'torres del paine', 'tierra del fuego', 'andes', 'steppe',
+        # Countries/areas
+        'chile', 'chilean', 'argentina', 'argentine', 'south america',
+        # Activities in the region (not brand-sponsored)
+        'expedition', 'voyage', 'sailing', 'sailed', 'cruise', 'cruising',
+        'lodge', 'ranch', 'estancia',
+        # Political/administrative
+        'mayor', 'governor', 'municipal', 'province',
+        # Mining (Patagonia Lithium, etc.)
+        'lithium', 'mining', 'exploration', 'drill', 'drilling',
+    ]
+
+    # Person name patterns for brands that are also names
+    # e.g., "Manor Salomon" (soccer player)
+    PERSON_NAME_PATTERNS = [
+        (r'\bManor\s+Salomon\b', 'Salomon'),  # Soccer player
+        (r'\bSalomon\s+Kalou\b', 'Salomon'),  # Soccer player
+        (r'\bSalomon\s+Rondon\b', 'Salomon'),  # Soccer player
+        (r'\bMichael\s+(?:Lavie\s+)?Salomon\b', 'Salomon'),  # Business person
+    ]
+
+    # Financial jargon patterns indicating stock-only articles
+    # These help identify articles that are purely about financial metrics
+    FINANCIAL_JARGON_PATTERNS = [
+        r'\bshort\s+interest\b',
+        r'\bmoving\s+average\b',
+        r'\bSEC\s+filing\b',
+        r'\bquarterly\s+report\b',
+        r'\bearnings\s+call\b',
+        r'\binstitutional\s+ownership\b',
+        r'\bhedge\s+fund\b',
+        r'\bshares\s+(?:traded|outstanding)\b',
+        r'\bmarket\s+cap(?:italization)?\b',
+        r'\bprice\s+target\b',
+        r'\banalyst\s+(?:rating|recommendation)s?\b',
+        r'\bGet\s+Free\s+Report\b',  # Common in financial article templates
+    ]
+
+    # Institution patterns that indicate non-sportswear entities
+    # Universities, resorts, hospitals, housing societies
+    INSTITUTION_PATTERNS = [
+        # Universities/Colleges
+        (r'\bColumbia\s+University\b', 'Columbia'),
+        (r'\bColumbia\s+(?:College|Institute|School)\b', 'Columbia'),
+        # Resorts/Hotels
+        (r'\bTimberland\s+(?:Highlands?\s+)?Resort\b', 'Timberland'),
+        (r'\bTimberland\s+(?:Lodge|Hotel|Inn)\b', 'Timberland'),
+        # Housing
+        (r'\b(?:Godrej\s+)?Prana\s+(?:Society|Housing|Apartments?)\b', 'Prana'),
+        # Medical/Health
+        (r'\bPrana\s+(?:Hyperbaric|Oxygen|Therapy|Clinic|Hospital)\b', 'Prana'),
+        # Sports networks (not the gear brand)
+        (r'\bBlack\s+Diamond\s+(?:Sports?\s+)?Network\b', 'Black Diamond'),
+    ]
+
+    # Phrase patterns where brand names are used as common phrases
+    # These patterns detect when the "brand" is actually a phrase
+    PHRASE_NOT_BRAND_PATTERNS = [
+        # New Balance as phrase
+        (r'\bnew\s+balance\s+of\s+(?:power|trade|forces|payments?)\b', 'New Balance'),
+        (r'\bstrike\s+a\s+new\s+balance\b', 'New Balance'),
+        (r'\bfind(?:ing)?\s+(?:a\s+)?new\s+balance\b', 'New Balance'),
+        # On Running as phrase
+        (r'\b(?:keep|kept|keeps)\s+on\s+running\b', 'On Running'),
+        (r'\bfocus(?:ed|ing)?\s+on\s+running\b', 'On Running'),
+        (r'\bon\s+running\s+the\s+(?:ball|offense|game)\b', 'On Running'),
+        (r'\bstrong\s+focus\s+on\s+running\b', 'On Running'),
+    ]
+
+    # Product/Project disambiguation patterns
+    # Brands that match food products, mining projects, etc.
+    PRODUCT_DISAMBIGUATION_PATTERNS = [
+        # Food products
+        (r'\bBlack\s+Diamond\s+Cheese\b', 'Black Diamond'),
+        (r'\bBlack\s+Diamond\s+(?:cheddar|aged|slices?)\b', 'Black Diamond'),
+        # Mining/Gold projects
+        (r'\bConverse\s+(?:Gold\s+)?Project\b', 'Converse'),
+        (r'\bConverse\s+(?:mine|mining|exploration)\b', 'Converse'),
+        # Audio/Music equipment
+        (r'\bPrana\s+(?:Pedal|Guitar|Audio)\b', 'Prana'),
+        (r'\bAum\s+Guitar\s+Prana\b', 'Prana'),
+        # Decathlon Capital (investment firm, not retailer)
+        (r'\bDecathlon\s+Capital\s+Partners?\b', 'Decathlon'),
+    ]
+
     # Class-level caches to avoid redundant computation across instances
     # These are shared across all FPFeatureTransformer instances
     _embedding_cache: ClassVar[Dict[str, np.ndarray]] = {}
@@ -367,6 +531,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         # Brand features
         include_brand_indicators: bool = False,  # Multi-hot encoding per brand (50 features)
         include_brand_summary: bool = False,  # Aggregate brand stats (3 features)
+        # FP indicator features
+        include_fp_indicators: bool = True,  # FP detection patterns (8 features)
         # General
         random_state: int = 42,
     ):
@@ -397,6 +563,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             include_metadata_features: Whether to add discrete metadata features
             include_brand_indicators: Whether to add multi-hot brand encoding (50 features)
             include_brand_summary: Whether to add aggregate brand stats (3 features)
+            include_fp_indicators: Whether to add FP indicator features (8 features)
             random_state: Random seed for reproducibility
         """
         self.method = method
@@ -423,6 +590,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self.include_metadata_features = include_metadata_features
         self.include_brand_indicators = include_brand_indicators
         self.include_brand_summary = include_brand_summary
+        self.include_fp_indicators = include_fp_indicators
         self.random_state = random_state
 
         # Fitted components (set during fit)
@@ -836,6 +1004,195 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             n_problematic = len(problematic_mentioned)
 
             features_list.append([n_brands, has_problematic, n_problematic])
+
+        return np.array(features_list)
+
+    def _compute_fp_indicator_features(self, texts: List[str]) -> np.ndarray:
+        """Compute false positive indicator features for all texts.
+
+        Detects patterns that strongly indicate false positives:
+        - Stock tickers for different companies (NASDAQ:ANTA, TSE:BDI, etc.)
+        - Company suffixes indicating different entities (LLC, Ltd, etc.)
+        - Vehicle brand patterns (Ford Puma, delivery vans, etc.)
+        - Animal context keywords near Puma
+        - Geographic context keywords near Patagonia
+        - Person name patterns (Manor Salomon, etc.)
+        - Financial jargon (short interest, SEC filing, etc.)
+        - Institution patterns (University, Resort, Hospital, etc.)
+        - Phrase patterns where brand is used as phrase (new balance of power)
+        - Product disambiguation (Black Diamond Cheese, Converse Gold Project)
+
+        Features computed (per sample):
+        - has_stock_ticker: Binary flag if stock ticker pattern found
+        - has_company_suffix: Binary flag if company suffix pattern found
+        - has_vehicle_pattern: Binary flag if vehicle pattern found
+        - has_animal_context: Binary flag if animal keywords near Puma
+        - has_geographic_context: Binary flag if geographic keywords near Patagonia
+        - has_person_name: Binary flag if person name pattern found
+        - has_financial_jargon: Binary flag if stock-only article jargon found
+        - has_institution: Binary flag if institution pattern found
+        - has_phrase_not_brand: Binary flag if brand used as common phrase
+        - has_product_disambiguation: Binary flag if brand matches other product
+        - fp_indicator_count: Total count of FP indicators
+        - fp_indicator_score: Weighted score of FP indicators
+
+        Args:
+            texts: List of text strings
+
+        Returns:
+            numpy array of shape (n_samples, 12)
+        """
+        features_list = []
+
+        # Compile regex patterns once
+        stock_ticker_patterns = [re.compile(p, re.IGNORECASE) for p in self.STOCK_TICKER_PATTERNS]
+        company_suffix_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.COMPANY_SUFFIX_PATTERNS]
+        vehicle_patterns = [re.compile(p, re.IGNORECASE) for p in self.VEHICLE_BRAND_PATTERNS]
+        person_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.PERSON_NAME_PATTERNS]
+        financial_jargon_patterns = [re.compile(p, re.IGNORECASE) for p in self.FINANCIAL_JARGON_PATTERNS]
+        institution_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.INSTITUTION_PATTERNS]
+        phrase_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.PHRASE_NOT_BRAND_PATTERNS]
+        product_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.PRODUCT_DISAMBIGUATION_PATTERNS]
+
+        animal_keywords_set = set(kw.lower() for kw in self.ANIMAL_CONTEXT_KEYWORDS)
+        geographic_keywords_set = set(kw.lower() for kw in self.GEOGRAPHIC_CONTEXT_KEYWORDS)
+
+        for text in texts:
+            text_lower = text.lower()
+            brands = self._extract_brands_from_text(text)
+
+            # Check stock ticker patterns
+            has_stock_ticker = 0
+            for pattern in stock_ticker_patterns:
+                if pattern.search(text):
+                    has_stock_ticker = 1
+                    break
+
+            # Check company suffix patterns
+            has_company_suffix = 0
+            for pattern, brand in company_suffix_patterns:
+                if pattern.search(text):
+                    # If brand is specified, check if that brand is mentioned
+                    if brand is None or brand in brands:
+                        has_company_suffix = 1
+                        break
+
+            # Check vehicle patterns
+            has_vehicle_pattern = 0
+            for pattern in vehicle_patterns:
+                if pattern.search(text):
+                    has_vehicle_pattern = 1
+                    break
+
+            # Check animal context (only if Puma is mentioned)
+            has_animal_context = 0
+            if 'Puma' in brands:
+                words = text_lower.split()
+                for word in words:
+                    word_clean = word.strip('.,!?;:\'"()[]{}')
+                    if word_clean in animal_keywords_set:
+                        has_animal_context = 1
+                        break
+                # Also check multi-word phrases
+                for phrase in ['mountain lion', 'big cat']:
+                    if phrase in text_lower:
+                        has_animal_context = 1
+                        break
+
+            # Check geographic context (only if Patagonia is mentioned)
+            has_geographic_context = 0
+            if 'Patagonia' in brands:
+                words = text_lower.split()
+                for word in words:
+                    word_clean = word.strip('.,!?;:\'"()[]{}')
+                    if word_clean in geographic_keywords_set:
+                        has_geographic_context = 1
+                        break
+                # Also check multi-word phrases
+                for phrase in ['torres del paine', 'tierra del fuego', 'south america']:
+                    if phrase in text_lower:
+                        has_geographic_context = 1
+                        break
+
+            # Check person name patterns
+            has_person_name = 0
+            for pattern, brand in person_patterns:
+                if pattern.search(text):
+                    if brand in brands:
+                        has_person_name = 1
+                        break
+
+            # Check financial jargon (stock-only article indicators)
+            has_financial_jargon = 0
+            financial_match_count = 0
+            for pattern in financial_jargon_patterns:
+                if pattern.search(text):
+                    financial_match_count += 1
+                    # Require at least 2 matches for confidence
+                    if financial_match_count >= 2:
+                        has_financial_jargon = 1
+                        break
+
+            # Check institution patterns
+            has_institution = 0
+            for pattern, brand in institution_patterns:
+                if pattern.search(text):
+                    if brand in brands:
+                        has_institution = 1
+                        break
+
+            # Check phrase-not-brand patterns
+            has_phrase_not_brand = 0
+            for pattern, brand in phrase_patterns:
+                if pattern.search(text):
+                    if brand in brands:
+                        has_phrase_not_brand = 1
+                        break
+
+            # Check product disambiguation patterns
+            has_product_disambiguation = 0
+            for pattern, brand in product_patterns:
+                if pattern.search(text):
+                    if brand in brands:
+                        has_product_disambiguation = 1
+                        break
+
+            # Aggregate features
+            fp_indicator_count = (
+                has_stock_ticker + has_company_suffix + has_vehicle_pattern +
+                has_animal_context + has_geographic_context + has_person_name +
+                has_financial_jargon + has_institution + has_phrase_not_brand +
+                has_product_disambiguation
+            )
+
+            # Weighted score (stock tickers and company suffixes are strongest signals)
+            fp_indicator_score = (
+                has_stock_ticker * 2.0 +
+                has_company_suffix * 2.0 +
+                has_vehicle_pattern * 1.5 +
+                has_animal_context * 1.0 +
+                has_geographic_context * 1.0 +
+                has_person_name * 1.5 +
+                has_financial_jargon * 1.5 +
+                has_institution * 2.0 +
+                has_phrase_not_brand * 2.0 +
+                has_product_disambiguation * 2.0
+            )
+
+            features_list.append([
+                has_stock_ticker,
+                has_company_suffix,
+                has_vehicle_pattern,
+                has_animal_context,
+                has_geographic_context,
+                has_person_name,
+                has_financial_jargon,
+                has_institution,
+                has_phrase_not_brand,
+                has_product_disambiguation,
+                fp_indicator_count,
+                fp_indicator_score,
+            ])
 
         return np.array(features_list)
 
@@ -1283,7 +1640,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         # For *_brands methods, enable brand features before any processing
         if self.method.endswith('_brands'):
             self.include_brand_indicators = True
-            self.include_brand_summary = True
+            self.include_brand_summary = False  # Disabled: summary features don't add value
 
         # Preprocess texts
         texts = self._preprocess_texts(X)
@@ -1370,7 +1727,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._neg_context_scaler.fit(neg_context_features)
 
         elif self.method == 'tfidf_lsa_ner_proximity':
-            # TF-IDF LSA + NER + proximity features
+            # TF-IDF LSA + NER + proximity features + FP indicator features
             self._tfidf = self._create_tfidf_word()
             tfidf_features = self._tfidf.fit_transform(texts)
 
@@ -1401,8 +1758,16 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._neg_context_scaler = StandardScaler()
             self._neg_context_scaler.fit(neg_context_features)
 
+            # Fit scaler on FP indicator features (8-dim) if enabled
+            include_fp = getattr(self, 'include_fp_indicators', True)
+            if include_fp:
+                fp_indicator_features = self._compute_fp_indicator_features(texts)
+                self._fp_indicator_scaler = StandardScaler()
+                self._fp_indicator_scaler.fit(fp_indicator_features)
+
         elif self.method == 'tfidf_lsa_ner_proximity_brands':
             # TF-IDF LSA + NER + proximity + brand features (both indicators and summary)
+            # + FP indicator features (stock tickers, company suffixes, vehicle patterns, etc.)
             # Brand scalers are fitted at start of fit() due to endswith('_brands') check
             # Same as tfidf_lsa_ner_proximity
             self._tfidf = self._create_tfidf_word()
@@ -1430,6 +1795,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             neg_context_features = self._compute_negative_context_features(texts)
             self._neg_context_scaler = StandardScaler()
             self._neg_context_scaler.fit(neg_context_features)
+
+            # Fit scaler on FP indicator features (8-dim)
+            fp_indicator_features = self._compute_fp_indicator_features(texts)
+            self._fp_indicator_scaler = StandardScaler()
+            self._fp_indicator_scaler.fit(fp_indicator_features)
 
         elif self.method == 'tfidf_context':
             # Extract context windows around brand mentions
@@ -1546,6 +1916,22 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._neg_context_scaler = StandardScaler()
             self._neg_context_scaler.fit(neg_context_features)
 
+        elif self.method == 'sentence_transformer_ner_fp_indicators':
+            # Sentence embeddings + NER + FP indicator features (stock tickers, company suffixes, etc.)
+            self._fit_sentence_transformer()
+            # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
+            # Fit scaler on FP indicator features
+            fp_indicator_features = self._compute_fp_indicator_features(texts)
+            self._fp_indicator_scaler = StandardScaler()
+            self._fp_indicator_scaler.fit(fp_indicator_features)
+
         elif self.method == 'hybrid':
             self._tfidf = self._create_tfidf_word()
             self._tfidf.fit(texts)
@@ -1625,7 +2011,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         # (needed in case estimator was cloned by sklearn)
         if self.method.endswith('_brands'):
             self.include_brand_indicators = True
-            self.include_brand_summary = True
+            self.include_brand_summary = False  # Disabled: summary features don't add value
 
         # Preprocess texts
         texts = self._preprocess_texts(X)
@@ -1713,7 +2099,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner_proximity':
-            # TF-IDF LSA + NER + proximity features + brand-specific NER
+            # TF-IDF LSA + NER + proximity features + brand-specific NER + optional FP indicators
             tfidf_features = self._tfidf.transform(texts)
             lsa_features = self._lsa.transform(tfidf_features)
             ner_features = self._compute_ner_features(texts)
@@ -1724,11 +2110,21 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
-            features = np.hstack([lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled])
+
+            feature_arrays = [lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled]
+
+            # Add FP indicator features if enabled (with backwards compatibility)
+            include_fp = getattr(self, 'include_fp_indicators', True)
+            if include_fp and self._fp_indicator_scaler is not None:
+                fp_indicator_features = self._compute_fp_indicator_features(texts)
+                fp_indicator_scaled = self._fp_indicator_scaler.transform(fp_indicator_features)
+                feature_arrays.append(fp_indicator_scaled)
+
+            features = np.hstack(feature_arrays)
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner_proximity_brands':
-            # TF-IDF LSA + NER + proximity + brand features (53-dim) + brand-specific NER
+            # TF-IDF LSA + NER + proximity + brand features (53-dim) + brand-specific NER + FP indicators
             # Brand features are added by _stack_optional_features since include_brand_* flags are True
             tfidf_features = self._tfidf.transform(texts)
             lsa_features = self._lsa.transform(tfidf_features)
@@ -1740,7 +2136,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
-            features = np.hstack([lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled])
+            fp_indicator_features = self._compute_fp_indicator_features(texts)
+            fp_indicator_scaled = self._fp_indicator_scaler.transform(fp_indicator_features)
+            features = np.hstack([lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled, fp_indicator_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_context':
@@ -1836,6 +2234,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             neg_context_features = self._compute_negative_context_features(texts)
             neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
             features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled])
+            return _stack_optional_features(features, is_sparse=False)
+
+        elif self.method == 'sentence_transformer_ner_fp_indicators':
+            # Sentence embeddings (384-dim) + scaled NER (6-dim) + brand-specific NER (8-dim) + FP indicators (8-dim)
+            sentence_features = self._transform_sentence_transformer(texts)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
+            fp_indicator_features = self._compute_fp_indicator_features(texts)
+            fp_indicator_scaled = self._fp_indicator_scaler.transform(fp_indicator_features)
+            features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled, fp_indicator_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'hybrid':
@@ -2022,6 +2432,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             'include_metadata_features': self.include_metadata_features,
             'include_brand_indicators': self.include_brand_indicators,
             'include_brand_summary': self.include_brand_summary,
+            'include_fp_indicators': getattr(self, 'include_fp_indicators', True),
             'random_state': self.random_state,
         }
 

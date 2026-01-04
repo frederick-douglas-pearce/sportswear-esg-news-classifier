@@ -456,11 +456,17 @@ class TextExplainer:
         )
 
 
-def get_fp_feature_groups(method: str = 'sentence_transformer_ner_brands') -> Dict[str, range]:
+def get_fp_feature_groups(
+    method: str = 'sentence_transformer_ner_brands',
+    lsa_n_components: int = 100,
+    include_fp_indicators: bool = True,
+) -> Dict[str, range]:
     """Get feature group definitions for FP classifier.
 
     Args:
         method: Feature engineering method used
+        lsa_n_components: Number of LSA components (for LSA-based methods)
+        include_fp_indicators: Whether FP indicator features are included
 
     Returns:
         Dictionary mapping group names to feature index ranges
@@ -487,23 +493,61 @@ def get_fp_feature_groups(method: str = 'sentence_transformer_ner_brands') -> Di
             'negative_context': range(394, 398),
         }
     elif method == 'tfidf_lsa_ner_proximity':
-        # LSA (100) + NER (6) + proximity (4) + neg_context (4)
-        return {
-            'lsa_features': range(0, 100),
-            'ner_features': range(100, 106),
-            'proximity_features': range(106, 110),
-            'negative_context': range(110, 114),
-        }
+        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + neg_context (4) + optional FP indicators (8)
+        idx = 0
+        groups = {}
+
+        groups['lsa_features'] = range(idx, idx + lsa_n_components)
+        idx += lsa_n_components
+
+        groups['ner_features'] = range(idx, idx + 6)
+        idx += 6
+
+        groups['brand_ner_features'] = range(idx, idx + 8)
+        idx += 8
+
+        groups['proximity_features'] = range(idx, idx + 4)
+        idx += 4
+
+        groups['negative_context'] = range(idx, idx + 4)
+        idx += 4
+
+        if include_fp_indicators:
+            groups['fp_indicators'] = range(idx, idx + 12)
+            idx += 12
+
+        return groups
     elif method == 'tfidf_lsa_ner_proximity_brands':
-        # LSA (100) + NER (6) + proximity (4) + neg_context (4) + brand_indicators (50) + brand_summary (3)
-        return {
-            'lsa_features': range(0, 100),
-            'ner_features': range(100, 106),
-            'proximity_features': range(106, 110),
-            'negative_context': range(110, 114),
-            'brand_indicators': range(114, 164),
-            'brand_summary': range(164, 167),
-        }
+        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + neg_context (4) + FP indicators (12) + brand_indicators (50) + brand_summary (3)
+        idx = 0
+        groups = {}
+
+        groups['lsa_features'] = range(idx, idx + lsa_n_components)
+        idx += lsa_n_components
+
+        groups['ner_features'] = range(idx, idx + 6)
+        idx += 6
+
+        groups['brand_ner_features'] = range(idx, idx + 8)
+        idx += 8
+
+        groups['proximity_features'] = range(idx, idx + 4)
+        idx += 4
+
+        groups['negative_context'] = range(idx, idx + 4)
+        idx += 4
+
+        if include_fp_indicators:
+            groups['fp_indicators'] = range(idx, idx + 12)
+            idx += 12
+
+        groups['brand_indicators'] = range(idx, idx + 50)
+        idx += 50
+
+        groups['brand_summary'] = range(idx, idx + 3)
+        idx += 3
+
+        return groups
     else:
         # Generic fallback - no grouping
         return {}

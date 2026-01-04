@@ -223,7 +223,9 @@ class NewsCollector:
                     stats.articles_scraped += 1
                     continue
 
-                result = self.scraper.scrape_with_delay(article.url)
+                # Pass expected brands for validation
+                expected_brands = article.brands_mentioned or []
+                result = self.scraper.scrape_with_delay(article.url, expected_brands)
 
                 if result.success:
                     self.db.update_article_content(
@@ -233,6 +235,12 @@ class NewsCollector:
                         "success",
                     )
                     stats.articles_scraped += 1
+                    # Log brand validation warnings for review
+                    if result.brand_validation_warning:
+                        logger.warning(
+                            f"Brand validation warning for {article.url}: "
+                            f"{result.brand_validation_warning}"
+                        )
                 else:
                     self.db.update_article_content(
                         session,
@@ -243,9 +251,11 @@ class NewsCollector:
                     )
                     stats.articles_scrape_failed += 1
 
+        scraper_stats = self.scraper.get_stats()
         logger.info(
             f"Scraping complete: {stats.articles_scraped} success, "
-            f"{stats.articles_scrape_failed} failed"
+            f"{stats.articles_scrape_failed} failed, "
+            f"{scraper_stats.get('brand_validation_warnings', 0)} brand validation warnings"
         )
         return stats
 

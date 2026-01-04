@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy.orm import joinedload
 
 from src.data_collection.database import db
-from src.data_collection.models import Article, BrandLabel, LabelEvidence
+from src.data_collection.models import Article, ArticleChunk, BrandLabel, LabelEvidence
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -56,6 +56,44 @@ def get_sentiment_label(sentiment: int | None) -> str | None:
     return {-1: "negative", 0: "neutral", 1: "positive"}.get(sentiment)
 
 
+def sanitize_text(text: str | None) -> str | None:
+    """Remove or replace characters that cause JSON/YAML parsing issues.
+
+    Removes emoji and other problematic Unicode characters that can cause
+    issues with Jekyll's YAML parser.
+    """
+    if text is None:
+        return None
+
+    import re
+
+    # Remove emoji and other symbol characters
+    # This regex pattern matches most emoji and pictographic characters
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U00002702-\U000027B0"  # dingbats
+        "\U000024C2-\U0001F251"
+        "\U0001f926-\U0001f937"
+        "\U00010000-\U0010ffff"
+        "\u2640-\u2642"
+        "\u2600-\u2B55"
+        "\u200d"
+        "\u23cf"
+        "\u23e9"
+        "\u231a"
+        "\ufe0f"  # variation selectors
+        "\u3030"
+        "]+",
+        flags=re.UNICODE,
+    )
+
+    return emoji_pattern.sub("", text)
+
+
 def query_labeled_articles(session, limit: int | None = None) -> list[Article]:
     """Query labeled articles with all relationships loaded.
 
@@ -70,7 +108,9 @@ def query_labeled_articles(session, limit: int | None = None) -> list[Article]:
         session.query(Article)
         .filter(Article.labeling_status == "labeled")
         .options(
-            joinedload(Article.brand_labels).joinedload(BrandLabel.evidence)
+            joinedload(Article.brand_labels)
+            .joinedload(BrandLabel.evidence)
+            .joinedload(LabelEvidence.chunk)
         )
         .order_by(Article.published_at.desc())
     )
@@ -121,11 +161,15 @@ def format_article_for_json(article: Article) -> dict[str, Any]:
         # Build evidence list
         evidence_list = []
         for ev in label.evidence:
-            evidence_list.append({
+            evidence_item = {
                 "category": ev.category,
-                "excerpt": ev.excerpt,
+                "excerpt": sanitize_text(ev.excerpt),
                 "relevance_score": ev.relevance_score,
-            })
+            }
+            # Include chunk text if available (provides context for the excerpt)
+            if ev.chunk and ev.chunk.chunk_text:
+                evidence_item["chunk_text"] = sanitize_text(ev.chunk.chunk_text)
+            evidence_list.append(evidence_item)
 
         brand_details.append({
             "brand": label.brand,

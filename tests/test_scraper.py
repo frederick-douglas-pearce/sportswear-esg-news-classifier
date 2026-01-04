@@ -170,6 +170,96 @@ class TestScrapeResult:
         assert result.status == "skipped"
 
 
+class TestBrandValidation:
+    """Tests for post-scrape brand validation."""
+
+    def test_finds_brand_in_content(self):
+        """Should find brand when it appears in content."""
+        scraper = ArticleScraper()
+        content = "Nike announced new sustainability initiatives today."
+
+        brands_found, warning = scraper._validate_brand_mentions(content, ["Nike"])
+
+        assert "Nike" in brands_found
+        assert warning is None
+
+    def test_finds_multiple_brands(self):
+        """Should find multiple brands in content."""
+        scraper = ArticleScraper()
+        content = "Nike and Adidas are competing on sustainability metrics."
+
+        brands_found, warning = scraper._validate_brand_mentions(content, ["Nike", "Adidas"])
+
+        assert "Nike" in brands_found
+        assert "Adidas" in brands_found
+        assert warning is None
+
+    def test_case_insensitive_matching(self):
+        """Should match brands case-insensitively."""
+        scraper = ArticleScraper()
+        content = "NIKE announced new goals. The adidas team responded."
+
+        brands_found, warning = scraper._validate_brand_mentions(content, ["Nike", "Adidas"])
+
+        assert "Nike" in brands_found
+        assert "Adidas" in brands_found
+
+    def test_warns_when_brand_not_found(self):
+        """Should warn when expected brand not found in content."""
+        scraper = ArticleScraper()
+        content = "This article is about general sports industry news."
+
+        brands_found, warning = scraper._validate_brand_mentions(content, ["Nike"])
+
+        assert len(brands_found) == 0
+        assert warning is not None
+        assert "Nike" in warning
+        assert "not found" in warning.lower() or "None of" in warning
+
+    def test_handles_multi_word_brands(self):
+        """Should handle multi-word brand names."""
+        scraper = ArticleScraper()
+        content = "Under Armour released quarterly earnings. The North Face expanded."
+
+        brands_found, warning = scraper._validate_brand_mentions(
+            content, ["Under Armour", "The North Face"]
+        )
+
+        assert "Under Armour" in brands_found
+        assert "The North Face" in brands_found
+
+    def test_handles_brand_variations(self):
+        """Should handle brand name variations."""
+        scraper = ArticleScraper()
+        content = "lululemon reported strong sales. ASICS earnings exceeded expectations."
+
+        brands_found, warning = scraper._validate_brand_mentions(
+            content, ["Lululemon", "ASICS"]
+        )
+
+        assert "Lululemon" in brands_found
+        assert "ASICS" in brands_found
+
+    def test_empty_expected_brands(self):
+        """Should handle empty expected brands list."""
+        scraper = ArticleScraper()
+        content = "Some article content here."
+
+        brands_found, warning = scraper._validate_brand_mentions(content, [])
+
+        assert len(brands_found) == 0
+        assert warning is None
+
+    def test_partial_brand_not_matched(self):
+        """Should not match partial brand names (word boundary required)."""
+        scraper = ArticleScraper()
+        content = "The punishing workout was tough."  # Contains 'puma' but not as brand
+
+        brands_found, warning = scraper._validate_brand_mentions(content, ["Puma"])
+
+        assert "Puma" not in brands_found
+
+
 class TestScraperStats:
     """Tests for scraper statistics tracking."""
 
@@ -180,6 +270,7 @@ class TestScraperStats:
 
         assert stats["scraped"] == 0
         assert stats["failed"] == 0
+        assert stats["brand_validation_warnings"] == 0
 
     def test_stats_increment_on_success(self):
         """Should increment scraped count on success."""

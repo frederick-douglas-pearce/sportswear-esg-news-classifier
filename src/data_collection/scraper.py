@@ -2,9 +2,10 @@
 
 import logging
 import random
+import re
 import time
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dateutil.parser import UnknownTimezoneWarning
 from langdetect import LangDetectException, detect
@@ -44,6 +45,9 @@ class ScrapeResult:
     content: str | None = None
     error: str | None = None
     status: str = "pending"
+    brands_found: list[str] = field(default_factory=list)
+    brands_expected: list[str] = field(default_factory=list)
+    brand_validation_warning: str | None = None
 
 
 class ArticleScraper:
@@ -53,6 +57,7 @@ class ArticleScraper:
         self.delay_seconds = delay_seconds or settings.scrape_delay_seconds
         self.articles_scraped = 0
         self.articles_failed = 0
+        self.brand_validation_warnings = 0
 
     def _get_random_user_agent(self) -> str:
         """Get a random user agent string."""
@@ -83,9 +88,113 @@ class ArticleScraper:
         except LangDetectException:
             return True  # Detection failed, assume English
 
-    def scrape_article(self, url: str) -> ScrapeResult:
+    def _validate_brand_mentions(
+        self, content: str, expected_brands: list[str]
+    ) -> tuple[list[str], str | None]:
+        """
+        Validate that expected brands appear in scraped content.
+
+        This helps detect when the scraper grabbed boilerplate/ads instead of
+        actual article content.
+
+        Args:
+            content: Scraped article text
+            expected_brands: List of brand names expected to appear
+
+        Returns:
+            Tuple of (brands_found, warning_message or None)
+        """
+        if not expected_brands:
+            return [], None
+
+        # Brand name patterns (handles common variations)
+        # Maps canonical brand name to regex patterns
+        brand_patterns: dict[str, list[str]] = {
+            # Standard brands - case insensitive word boundary match
+            "Nike": [r"\bNike\b"],
+            "Adidas": [r"\bAdidas\b", r"\badidas\b"],
+            "Puma": [r"\bPuma\b"],
+            "Under Armour": [r"\bUnder\s+Armour\b", r"\bUnderArmour\b"],
+            "Lululemon": [r"\bLululemon\b", r"\blululemon\b"],
+            "Patagonia": [r"\bPatagonia\b"],
+            "Columbia Sportswear": [r"\bColumbia\s+Sportswear\b", r"\bColumbia\b"],
+            "New Balance": [r"\bNew\s+Balance\b"],
+            "ASICS": [r"\bASICS\b", r"\bAsics\b"],
+            "Reebok": [r"\bReebok\b"],
+            "Skechers": [r"\bSkechers\b"],
+            "Fila": [r"\bFila\b", r"\bFILA\b"],
+            "The North Face": [r"\bThe\s+North\s+Face\b", r"\bNorth\s+Face\b"],
+            "Vans": [r"\bVans\b"],
+            "Converse": [r"\bConverse\b"],
+            "Salomon": [r"\bSalomon\b"],
+            "Mammut": [r"\bMammut\b"],
+            "Umbro": [r"\bUmbro\b"],
+            "Anta": [r"\bAnta\s+Sports\b", r"\bAnta\b"],
+            "Li-Ning": [r"\bLi-Ning\b", r"\bLi\s*Ning\b"],
+            "Brooks Running": [r"\bBrooks\s+Running\b", r"\bBrooks\b"],
+            "Decathlon": [r"\bDecathlon\b"],
+            "Deckers": [r"\bDeckers\b"],
+            "Yonex": [r"\bYonex\b"],
+            "Mizuno": [r"\bMizuno\b"],
+            "K-Swiss": [r"\bK-Swiss\b"],
+            "Altra Running": [r"\bAltra\s+Running\b", r"\bAltra\b"],
+            "Hoka": [r"\bHoka\b", r"\bHOKA\b"],
+            "Saucony": [r"\bSaucony\b"],
+            "Merrell": [r"\bMerrell\b"],
+            "Timberland": [r"\bTimberland\b"],
+            "Spyder": [r"\bSpyder\b"],
+            "On Running": [r"\bOn\s+Running\b", r"\bOn\s+Cloud\b"],
+            "Allbirds": [r"\bAllbirds\b"],
+            "Gymshark": [r"\bGymshark\b"],
+            "Everlast": [r"\bEverlast\b"],
+            "Arc'teryx": [r"\bArc'teryx\b", r"\bArcteryx\b"],
+            "Jack Wolfskin": [r"\bJack\s+Wolfskin\b"],
+            "Athleta": [r"\bAthleta\b"],
+            "Vuori": [r"\bVuori\b"],
+            "Cotopaxi": [r"\bCotopaxi\b"],
+            "Prana": [r"\bPrana\b", r"\bprAna\b"],
+            "Eddie Bauer": [r"\bEddie\s+Bauer\b"],
+            "361 Degrees": [r"\b361\s*Degrees\b", r"\b361°\b"],
+            "Xtep": [r"\bXtep\b"],
+            "Peak Sport": [r"\bPeak\s+Sport\b"],
+            "Mountain Hardwear": [r"\bMountain\s+Hardwear\b"],
+            "Black Diamond": [r"\bBlack\s+Diamond\b"],
+            "Outdoor Voices": [r"\bOutdoor\s+Voices\b"],
+            "Diadora": [r"\bDiadora\b"],
+        }
+
+        brands_found = []
+        content_lower = content.lower()
+
+        for brand in expected_brands:
+            # Get patterns for this brand, or create a default one
+            patterns = brand_patterns.get(brand, [rf"\b{re.escape(brand)}\b"])
+
+            for pattern in patterns:
+                if re.search(pattern, content, re.IGNORECASE):
+                    brands_found.append(brand)
+                    break
+
+        # Generate warning if no expected brands found
+        warning = None
+        if expected_brands and not brands_found:
+            warning = (
+                f"None of the expected brands ({', '.join(expected_brands[:3])}"
+                f"{', ...' if len(expected_brands) > 3 else ''}) found in scraped content. "
+                f"Scraper may have grabbed boilerplate/ads instead of article."
+            )
+            logger.warning(f"Brand validation: {warning}")
+
+        return brands_found, warning
+
+    def scrape_article(self, url: str, expected_brands: list[str] | None = None) -> ScrapeResult:
         """
         Scrape full article content from URL.
+
+        Args:
+            url: Article URL to scrape
+            expected_brands: List of brand names expected to appear in content
+                (used for validation warning, not failure)
 
         Returns:
             ScrapeResult with content or error details
@@ -124,11 +233,21 @@ class ArticleScraper:
                     status="skipped",
                 )
 
+            # Validate brand mentions in content
+            brands_found, validation_warning = self._validate_brand_mentions(
+                content, expected_brands or []
+            )
+            if validation_warning:
+                self.brand_validation_warnings += 1
+
             self.articles_scraped += 1
             return ScrapeResult(
                 success=True,
                 content=content,
                 status="success",
+                brands_found=brands_found,
+                brands_expected=expected_brands or [],
+                brand_validation_warning=validation_warning,
             )
 
         except ArticleException as e:
@@ -144,9 +263,11 @@ class ArticleScraper:
             self.articles_failed += 1
             return ScrapeResult(success=False, error=f"Scrape error: {str(e)}", status="failed")
 
-    def scrape_with_delay(self, url: str) -> ScrapeResult:
+    def scrape_with_delay(
+        self, url: str, expected_brands: list[str] | None = None
+    ) -> ScrapeResult:
         """Scrape article with polite delay between requests."""
-        result = self.scrape_article(url)
+        result = self.scrape_article(url, expected_brands)
         time.sleep(self.delay_seconds)
         return result
 
@@ -155,4 +276,5 @@ class ArticleScraper:
         return {
             "scraped": self.articles_scraped,
             "failed": self.articles_failed,
+            "brand_validation_warnings": self.brand_validation_warnings,
         }
