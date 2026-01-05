@@ -298,22 +298,30 @@ flowchart TB
 ```
 sportswear-esg-news-classifier/
 ├── docker-compose.yml          # PostgreSQL + FP Classifier API containers
-├── Dockerfile                  # Multi-stage build for FP Classifier API
+├── Dockerfile                  # Multi-stage build for classifier APIs
 ├── pyproject.toml              # Project dependencies and metadata (uv/pip)
 ├── .env.example                # Environment variable template
 ├── .env                        # Local environment variables (not committed)
 ├── logs/                       # Application logs
+├── data/                       # Training data exports (JSONL)
+│   ├── fp_training_data.jsonl        # FP classifier training data
+│   └── ep_training_data.jsonl        # EP classifier training data
+├── migrations/                 # Database migration scripts
+│   └── 002_classifier_predictions.sql  # Classifier predictions table
 ├── scripts/
 │   ├── collect_news.py         # CLI script for data collection
 │   ├── label_articles.py       # CLI script for LLM-based labeling
 │   ├── export_training_data.py # Export labeled data for ML training
+│   ├── export_website_feed.py  # Export JSON/Atom feeds for website
 │   ├── gdelt_backfill.py       # Historical backfill script (3 months)
 │   ├── cleanup_non_english.py  # Remove non-English articles from database
 │   ├── cleanup_false_positives.py # Identify/remove false positive brand matches
 │   ├── train.py                # Unified training script for FP/EP classifiers
 │   ├── predict.py              # Unified FastAPI service for all classifiers
 │   ├── retrain.py              # Retrain models with version management
+│   ├── register_model.py       # Register models in MLflow without retraining
 │   ├── monitor_drift.py        # Monitor prediction drift for deployed models
+│   ├── deploy_cloudrun.sh      # Google Cloud Run deployment script
 │   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
 │   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
 │   ├── cron_monitor.sh         # Cron wrapper for drift monitoring
@@ -325,7 +333,12 @@ sportswear-esg-news-classifier/
 │   ├── ep1_EDA_FE.ipynb              # EP: EDA & Feature Engineering
 │   ├── ep2_model_selection_tuning.ipynb  # EP: Model selection & tuning
 │   └── ep3_model_evaluation_deployment.ipynb  # EP: Test evaluation & deployment
-├── models/                     # Saved ML models (gitignored)
+├── models/                     # Saved ML models and artifacts
+│   ├── registry.json                 # Model version registry
+│   ├── fp_classifier_pipeline.joblib # FP production model
+│   ├── fp_classifier_config.json     # FP model configuration
+│   ├── ep_classifier_pipeline.joblib # EP production model
+│   └── ep_classifier_config.json     # EP model configuration
 ├── src/
 │   ├── data_collection/
 │   │   ├── __init__.py
@@ -343,9 +356,10 @@ sportswear-esg-news-classifier/
 │   │   ├── chunker.py          # Paragraph-based article chunking
 │   │   ├── embedder.py         # OpenAI embedding wrapper
 │   │   ├── labeler.py          # Claude labeling logic
+│   │   ├── classifier_client.py # HTTP client for FP/EP classifier APIs
 │   │   ├── evidence_matcher.py # Match excerpts to chunks via similarity
 │   │   ├── database.py         # Labeling-specific DB operations
-│   │   └── pipeline.py         # Orchestrates full labeling flow
+│   │   └── pipeline.py         # Orchestrates full labeling flow with FP pre-filter
 │   ├── fp1_nb/                 # FP classifier - EDA & feature engineering
 │   │   ├── __init__.py
 │   │   ├── data_utils.py       # Data loading, splitting, target analysis
@@ -360,6 +374,7 @@ sportswear-esg-news-classifier/
 │   ├── fp3_nb/                 # FP classifier - evaluation & deployment
 │   │   ├── __init__.py
 │   │   ├── threshold_optimization.py  # Threshold tuning for target recall
+│   │   ├── explainability.py   # SHAP, LIME, prototype explanations
 │   │   └── deployment.py       # Pipeline export utilities
 │   ├── ep1_nb/                 # EP classifier - EDA & feature engineering
 │   │   ├── __init__.py
@@ -388,24 +403,29 @@ sportswear-esg-news-classifier/
 │       ├── monitoring.py       # Evidently drift detection
 │       ├── reference_data.py   # Reference dataset management
 │       └── alerts.py           # Webhook notifications (Slack/Discord)
-└── tests/                      # 528 tests
+└── tests/                      # 548 tests
     ├── conftest.py             # Shared pytest fixtures
-    ├── test_api_client.py      # NewsData.io client unit tests (23 tests)
-    ├── test_gdelt_client.py    # GDELT client unit tests (31 tests)
-    ├── test_scraper.py         # Scraper and language detection tests (19 tests)
-    ├── test_collector.py       # Collector unit tests (13 tests)
-    ├── test_database.py        # Database integration tests (12 tests)
-    ├── test_chunker.py         # Article chunker unit tests (21 tests)
-    ├── test_labeler.py         # LLM labeling and response parsing tests (33 tests)
-    ├── test_embedder.py        # OpenAI embedder unit tests (15 tests)
-    ├── test_evidence_matcher.py # Evidence matching unit tests (24 tests)
-    ├── test_labeling_pipeline.py # Labeling pipeline unit tests (13 tests)
-    ├── test_deployment.py      # Deployment module tests (64 tests)
-    ├── test_explainability.py  # Model explainability tests (28 tests)
-    ├── test_mlops_tracking.py  # MLflow tracking tests (27 tests)
-    ├── test_mlops_monitoring.py # Drift monitoring tests (26 tests)
-    ├── test_retrain.py         # Retraining pipeline tests (38 tests)
-    └── test_integration.py     # End-to-end pipeline tests (12 tests)
+    ├── test_api_client.py      # NewsData.io client unit tests
+    ├── test_gdelt_client.py    # GDELT client unit tests
+    ├── test_scraper.py         # Scraper and language detection tests
+    ├── test_collector.py       # Collector unit tests
+    ├── test_database.py        # Database integration tests (requires PostgreSQL)
+    ├── test_chunker.py         # Article chunker unit tests
+    ├── test_labeler.py         # LLM labeling and response parsing tests
+    ├── test_embedder.py        # OpenAI embedder unit tests
+    ├── test_evidence_matcher.py # Evidence matching unit tests
+    ├── test_labeling_pipeline.py # Labeling pipeline unit tests
+    ├── test_fp_prefilter.py    # FP classifier pre-filter integration tests
+    ├── test_fp1_nb_*.py        # FP notebook utility tests (data, modeling)
+    ├── test_fp2_nb_*.py        # FP overfitting analysis tests
+    ├── test_fp3_nb_*.py        # FP threshold and deployment tests
+    ├── test_deployment.py      # Deployment module tests
+    ├── test_explainability.py  # Model explainability tests (SHAP, LIME)
+    ├── test_mlops_tracking.py  # MLflow tracking tests
+    ├── test_mlops_monitoring.py # Drift monitoring tests
+    ├── test_mlops_reference_data.py # Reference data management tests
+    ├── test_retrain.py         # Retraining pipeline tests
+    └── test_integration.py     # End-to-end pipeline tests
 ```
 
 ## Quick Start
@@ -1898,7 +1918,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with **528 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, and MLOps modules.
+The project includes a comprehensive test suite with **548 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, and MLOps modules.
 
 ```bash
 # Run all tests
@@ -1928,27 +1948,19 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 | `src/labeling/` | 69-100% | LLM labeling pipeline |
 | `src/data_collection/` | 76-95% | API clients, scraper, collector |
 
-**Test Files:**
+**Test Categories:**
 
-| Test File | Tests | Description |
-|-----------|-------|-------------|
-| `test_api_client.py` | 23 | NewsData.io brand extraction, article parsing, query generation |
-| `test_gdelt_client.py` | 31 | GDELT article parsing, query generation, date handling |
-| `test_scraper.py` | 19 | Language detection, paywall detection, scraping |
-| `test_collector.py` | 13 | Deduplication, dry run mode, API limits |
-| `test_database.py` | 12 | Upsert operations, queries (requires PostgreSQL) |
-| `test_chunker.py` | 21 | Article chunking, token counting, paragraph boundaries |
-| `test_labeler.py` | 33 | LLM response parsing, ArticleLabeler, JSON extraction |
-| `test_embedder.py` | 15 | OpenAI embedder, batching, retry logic |
-| `test_evidence_matcher.py` | 24 | Evidence matching, fuzzy/exact/embedding similarity |
-| `test_labeling_pipeline.py` | 13 | Pipeline orchestration, statistics tracking |
-| `test_deployment.py` | 64 | FP/EP classifiers, config, data loading, preprocessing |
-| `test_explainability.py` | 28 | LIME, SHAP feature groups, prototype explanations |
-| `test_mlops_tracking.py` | 27 | MLflow experiment tracking, graceful degradation |
-| `test_mlops_monitoring.py` | 28 | Evidently drift detection, legacy KS tests |
-| `test_mlops_reference_data.py` | 22 | Reference data loading, database predictions |
-| `test_retrain.py` | 38 | Retraining pipeline, semantic versioning, deployment triggers |
-| `test_integration.py` | 12 | End-to-end classifier pipeline tests |
+| Category | Description |
+|----------|-------------|
+| Data Collection | NewsData.io client, GDELT client, scraper, collector, database |
+| Labeling Pipeline | Chunker, labeler, embedder, evidence matcher, pipeline orchestration |
+| FP Classifier Pre-filter | Classifier client integration, batch processing |
+| Notebook Utilities | FP/EP data utils, modeling, overfitting analysis, threshold tuning |
+| Deployment | FP/EP classifiers, config, preprocessing, prediction |
+| Explainability | SHAP feature groups, LIME local explanations, prototypes |
+| MLOps | MLflow tracking, Evidently monitoring, reference data, alerts |
+| Retraining | Version management, auto-promotion, deployment triggers |
+| Integration | End-to-end classifier pipeline tests |
 
 ## Troubleshooting
 

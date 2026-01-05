@@ -28,6 +28,9 @@ models/*.pkl
 *.db
 *.sqlite
 data/*.jsonl
+# Exception: training data files needed for notebook reproducibility
+!data/fp_training_data.jsonl
+!data/ep_training_data.jsonl
 
 # Distribution
 dist/
