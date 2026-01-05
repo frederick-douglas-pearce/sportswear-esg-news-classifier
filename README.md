@@ -432,16 +432,44 @@ sportswear-esg-news-classifier/
 
 ### 1. Prerequisites
 
+**Required for all users:**
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) package manager
 - Docker and Docker Compose
-- NewsData.io API key ([get free tier here](https://newsdata.io/register)) - *optional if using GDELT*
+
+**API Keys by Feature:**
+
+| Feature | API Key | Where to Get |
+|---------|---------|--------------|
+| News Collection (NewsData) | `NEWSDATA_API_KEY` | [newsdata.io/register](https://newsdata.io/register) (free tier) |
+| News Collection (GDELT) | *None required* | Free, no registration |
+| Article Labeling | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) |
+| Embeddings | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+
+**For ML Zoomcamp Reviewers:**
+
+To run the notebooks and evaluate the ML classifiers, you only need:
+- Python 3.12+ and uv (no Docker required)
+- Training data is included in the repository (`data/fp_training_data.jsonl`, `data/ep_training_data.jsonl`)
+
+```bash
+# Quick notebook evaluation (no API keys needed)
+uv sync
+uv run jupyter lab notebooks/
+```
+
+**For Cloud Deployment (Optional):**
+
+See [`.github/DEPLOYMENT_SETUP.md`](.github/DEPLOYMENT_SETUP.md) for Google Cloud Run deployment requirements including:
+- `GCP_PROJECT_ID` - Google Cloud project ID
+- `GCP_SA_KEY` - Service account JSON key with Cloud Run Admin role
+- `GCP_REGION` - Deployment region (optional, defaults to us-central1)
 
 ### 2. Installation
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier.git
 cd sportswear-esg-news-classifier
 
 # Install dependencies with uv
@@ -453,11 +481,13 @@ uv sync --extra dev
 # Create environment file from template
 cp .env.example .env
 
-# Edit .env and add your API keys, e.g.
-# NEWSDATA_API_KEY=your_api_key_here, etc
+# Edit .env and add your API keys
+# Required keys depend on which features you want to use (see table above)
 ```
 
 ### 3. Start the Database
+
+*Skip this step if you only want to run the ML notebooks.*
 
 ```bash
 # Start PostgreSQL with pgvector extension
@@ -637,7 +667,7 @@ The project uses a **hybrid LLM + ML approach** for article classification:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Cost Savings**: By filtering false positives (~15% of articles) and non-ESG content (~30% of articles) with ML classifiers before LLM labeling, the pipeline can reduce Claude API costs by 40-50%.
+**Cost Savings**: By filtering false positives (~15% of articles) and non-ESG content (~30% of articles) with ML classifiers before LLM labeling, the pipeline can reduce Claude API costs by 20-30% given realistic false-positive rates.
 
 ### LLM Labeling Workflow
 
@@ -769,7 +799,7 @@ The project is designed to train three progressively complex classifiers that ca
 
 ### ML Classifier Notebooks
 
-The project includes 3-notebook pipelines for developing ML classifiers. Each pipeline follows the same structure with supporting utility modules for consistent preprocessing and evaluation.
+The project includes 3-notebook pipelines for developing ML classifiers. Each pipeline follows the same structure with supporting utility modules for consistent preprocessing and evaluation. Moving much of the python code to modules leads to cleaner, easy to follow notebooks, with much of the code covered by test cases.
 
 **Two complete classifier pipelines:**
 1. **False Positive (FP) Classifier**: Filters non-sportswear brand mentions (modules: `src/fp1_nb/`, `src/fp2_nb/`, `src/fp3_nb/`)
@@ -797,7 +827,7 @@ fp_feature_config.json         fp_cv_metrics.json                  fp_classifier
 
 #### fp1_EDA_FE.ipynb - EDA & Feature Engineering
 
-- **Data Loading**: 993 articles (856 sportswear, 137 false positives)
+- **Data Loading**: News articles with sportswear and false positives without sportswear
 - **EDA**: Text length distributions, brand distribution, word frequencies
 - **Feature Engineering**: Sentence-transformer embeddings + NER brand context features
 - **Hyperparameter Tuning**: Optimizes `proximity_window_size` for NER features
@@ -808,21 +838,8 @@ fp_feature_config.json         fp_cv_metrics.json                  fp_classifier
 - **Baseline Models**: LR, RF, HGB with 3-fold stratified CV
 - **Hyperparameter Tuning**: GridSearchCV optimizing F2 score
 - **Overfitting Analysis**: Train-validation gap visualization
-- **Best Model**: Random Forest with `balanced_subsample` class weights
+- **Best Model**: Random Forest with `balanced` class weights
 - **Exports**: Best classifier and CV metrics for fp3
-
-**Overfitting Analysis Note:**
-
-The Random Forest model shows training F2 = 1.0 across all hyperparameter combinations, while validation F2 ≈ 0.973. This pattern (perfect training scores) is expected with small datasets and Random Forest's default behavior:
-
-1. **Why train = 1.0**: With only ~530 samples per CV training fold and 390 features, individual trees can perfectly memorize training data when `min_samples_leaf=1`.
-
-2. **Why this is acceptable**: Despite individual tree overfitting, ensemble averaging reduces variance. The key evidence:
-   - Train-val gap is only 2.7% (below the 5% warning threshold)
-   - CV-to-test gap is negligible (+0.02%), confirming excellent generalization
-   - Validation F2 continues improving with more trees (ensemble benefit)
-
-3. **Generalization confirmed**: Test set performance (F2: 0.974) matches CV performance (F2: 0.973), indicating the model generalizes well to unseen data despite the high training scores.
 
 #### fp3_model_evaluation_deployment.ipynb - Test Evaluation & Deployment
 
@@ -834,6 +851,19 @@ The Random Forest model shows training F2 = 1.0 across all hyperparameter combin
 - CV F2: 0.973, Test F2: 0.974
 - Test Recall: 98.8%, Test Precision: 91.9%
 - Optimized threshold: 0.605 (at 98% recall)
+
+**Overfitting Analysis Note:**
+
+The Random Forest model often shows perfect training F2 values of 1.0, while validation F2 ≈ 0.973. This pattern (perfect training scores) is expected with small datasets and Random Forest's default behavior:
+
+1. **Why train = 1.0**: With only ~600 samples per CV training fold and 200+ features, individual trees can perfectly memorize training data when `min_samples_leaf=1`.
+
+2. **Why this is acceptable**: Despite individual tree overfitting, ensemble averaging reduces variance. The key evidence:
+   - Train-val gap is <2% (below the 5% warning threshold)
+   - CV-to-test gap is negligible (<0.5%), confirming excellent generalization
+   - Validation F2 continues improving with more trees (ensemble benefit)
+
+3. **Generalization confirmed**: Test set performance is consistently less than 0.5% different than CV performance, indicating the model generalizes well to unseen data despite the high training scores (see the fp3 or ep3 notebooks for details)
 
 **Supporting Modules:**
 - `src/fp1_nb/` - Data loading, EDA, feature transformer, NER analysis, modeling utilities
