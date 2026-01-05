@@ -513,12 +513,12 @@ def get_fp_feature_groups(
         idx += 4
 
         if include_fp_indicators:
-            groups['fp_indicators'] = range(idx, idx + 12)
-            idx += 12
+            groups['fp_indicators'] = range(idx, idx + 13)
+            idx += 13
 
         return groups
     elif method == 'tfidf_lsa_ner_proximity_brands':
-        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + neg_context (4) + FP indicators (12) + brand_indicators (50) + brand_summary (3)
+        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + neg_context (4) + FP indicators (13) + brand_indicators (50) + brand_summary (3)
         idx = 0
         groups = {}
 
@@ -538,8 +538,8 @@ def get_fp_feature_groups(
         idx += 4
 
         if include_fp_indicators:
-            groups['fp_indicators'] = range(idx, idx + 12)
-            idx += 12
+            groups['fp_indicators'] = range(idx, idx + 13)
+            idx += 13
 
         groups['brand_indicators'] = range(idx, idx + 50)
         idx += 50

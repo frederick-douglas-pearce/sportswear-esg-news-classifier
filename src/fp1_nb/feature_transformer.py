@@ -422,6 +422,25 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'\bDecathlon\s+Capital\s+Partners?\b', 'Decathlon'),
     ]
 
+    # Sponsored event patterns - indicate article IS about sportswear brand
+    # These are NEGATIVE FP indicators (reduce FP score when detected)
+    SPONSORED_EVENT_PATTERNS = [
+        # Under Armour sponsored events
+        (r'\bUnder\s+Armour\s+(?:Next|All[- ]?America)\b', 'Under Armour'),
+        (r'\bUA\s+(?:Next|All[- ]?America)\b', 'Under Armour'),
+        # Nike sponsored events
+        (r'\bNike\s+(?:Bowl|Cup|Classic|Invitational|Championship)\b', 'Nike'),
+        (r'\bNike\s+(?:Hoop\s+Summit|Elite)\b', 'Nike'),
+        # Adidas sponsored events
+        (r'\bAdidas\s+(?:Cup|Classic|Nations|Gauntlet)\b', 'Adidas'),
+        # Puma sponsored events
+        (r'\bPuma\s+(?:Cup|Classic|Championship)\b', 'Puma'),
+        # Generic brand + event patterns
+        (r'\b(?:Nike|Adidas|Puma|Under\s+Armour|Reebok)\s+(?:sponsored|presents?|hosts?)\b', None),
+        # All-Star/All-America with brand context
+        (r'\b(?:All[- ]?Star|All[- ]?America(?:n)?)\s+(?:Game|Match|Classic)\b', None),
+    ]
+
     # Class-level caches to avoid redundant computation across instances
     # These are shared across all FPFeatureTransformer instances
     _embedding_cache: ClassVar[Dict[str, np.ndarray]] = {}
@@ -1022,6 +1041,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         - Phrase patterns where brand is used as phrase (new balance of power)
         - Product disambiguation (Black Diamond Cheese, Converse Gold Project)
 
+        Also detects patterns that indicate TRUE sportswear content:
+        - Sponsored events (Under Armour All-America, Nike Bowl, etc.)
+
         Features computed (per sample):
         - has_stock_ticker: Binary flag if stock ticker pattern found
         - has_company_suffix: Binary flag if company suffix pattern found
@@ -1033,14 +1055,15 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         - has_institution: Binary flag if institution pattern found
         - has_phrase_not_brand: Binary flag if brand used as common phrase
         - has_product_disambiguation: Binary flag if brand matches other product
-        - fp_indicator_count: Total count of FP indicators
-        - fp_indicator_score: Weighted score of FP indicators
+        - has_sponsored_event: Binary flag if brand-sponsored event detected (NEGATIVE FP indicator)
+        - fp_indicator_count: Total count of FP indicators (excludes sponsored_event)
+        - fp_indicator_score: Weighted score of FP indicators (sponsored_event subtracts)
 
         Args:
             texts: List of text strings
 
         Returns:
-            numpy array of shape (n_samples, 12)
+            numpy array of shape (n_samples, 13)
         """
         features_list = []
 
@@ -1053,6 +1076,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         institution_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.INSTITUTION_PATTERNS]
         phrase_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.PHRASE_NOT_BRAND_PATTERNS]
         product_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.PRODUCT_DISAMBIGUATION_PATTERNS]
+        sponsored_event_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.SPONSORED_EVENT_PATTERNS]
 
         animal_keywords_set = set(kw.lower() for kw in self.ANIMAL_CONTEXT_KEYWORDS)
         geographic_keywords_set = set(kw.lower() for kw in self.GEOGRAPHIC_CONTEXT_KEYWORDS)
@@ -1157,7 +1181,17 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
                         has_product_disambiguation = 1
                         break
 
-            # Aggregate features
+            # Check sponsored event patterns (NEGATIVE FP indicator - suggests sportswear)
+            has_sponsored_event = 0
+            for pattern, brand in sponsored_event_patterns:
+                if pattern.search(text):
+                    # If brand is specified, check if that brand is mentioned
+                    # If brand is None, it's a generic pattern that applies to any sportswear brand
+                    if brand is None or brand in brands:
+                        has_sponsored_event = 1
+                        break
+
+            # Aggregate features (sponsored_event is NOT counted as FP indicator)
             fp_indicator_count = (
                 has_stock_ticker + has_company_suffix + has_vehicle_pattern +
                 has_animal_context + has_geographic_context + has_person_name +
@@ -1166,6 +1200,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             )
 
             # Weighted score (stock tickers and company suffixes are strongest signals)
+            # sponsored_event SUBTRACTS from score (indicates sportswear, not FP)
             fp_indicator_score = (
                 has_stock_ticker * 2.0 +
                 has_company_suffix * 2.0 +
@@ -1176,7 +1211,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
                 has_financial_jargon * 1.5 +
                 has_institution * 2.0 +
                 has_phrase_not_brand * 2.0 +
-                has_product_disambiguation * 2.0
+                has_product_disambiguation * 2.0 -
+                has_sponsored_event * 2.0  # Subtract: indicates true sportswear
             )
 
             features_list.append([
@@ -1190,6 +1226,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
                 has_institution,
                 has_phrase_not_brand,
                 has_product_disambiguation,
+                has_sponsored_event,
                 fp_indicator_count,
                 fp_indicator_score,
             ])

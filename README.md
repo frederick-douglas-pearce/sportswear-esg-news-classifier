@@ -1,6 +1,8 @@
 # ESG News Classifier for Sportswear Brands
 
 > **ML Zoomcamp Capstone Project** - A production-ready multi-label text classification system that monitors sustainability news in the sportswear and outdoor apparel industry.
+>
+> **🔗 Live Demo:** [View ESG News Feed](https://frederick-douglas-pearce.github.io/projects/esg_classifier/) - Browse curated ESG articles with interactive filtering by brand and category
 
 ## Problem Description
 
@@ -21,31 +23,40 @@ This project builds an **automated ESG news monitoring pipeline** that:
 2. **Filters false positives** using an ML classifier (Random Forest, F2: 0.974) - articles where brand names refer to non-sportswear entities
 3. **Pre-filters ESG content** using a second ML classifier (Logistic Regression, F2: 0.931) - identifies articles with sustainability content
 4. **Labels articles** with detailed ESG categories, sentiment, and extracted ESG content chunks using Claude Sonnet (only for articles that pass both filters)
-5. **Reduces costs by 40-50%** by using ML classifiers as pre-filters before expensive LLM calls
+5. **Reduces costs by 20-30%** by using ML classifiers with >99% Recall as pre-filters before expensive LLM calls
 
 ### Real-World Application
 
-The end goal is to generate a **curated ESG news feed** for my personal website ([frederick-douglas-pearce.github.io](https://frederick-douglas-pearce.github.io/)) that tracks sustainability developments in the sportswear/outdoorwear industry. This could be implemented as:
+The classifier powers a **live ESG news feed** on my personal website that tracks sustainability developments in the sportswear/outdoorwear industry:
 
-- An RSS feed for news aggregators
-- A dedicated sustainability news page
-- Email digest summaries
+**📊 [ESG News Feed](https://frederick-douglas-pearce.github.io/projects/esg_classifier/)** - A curated, searchable collection of ESG-related news articles
 
-The ML classifiers enable cost-effective continuous monitoring that would be prohibitively expensive with LLM-only approaches.
+**Features:**
+- **Brand Filtering**: Filter articles by any of the 50 monitored sportswear brands
+- **ESG Category Filtering**: View articles by Environmental, Social, Governance, or Digital Transformation categories
+- **Evidence Excerpts**: Each article shows relevant ESG quotes extracted from the source text
+- **Sentiment Indicators**: Color-coded badges show positive/neutral/negative sentiment for each category
+- **Source Links**: Direct links to original news articles
+
+**Export Options:**
+- JSON data feed for programmatic access
+- Atom/RSS feed for news aggregators
+
+The ML classifiers enable cost-effective continuous monitoring that would be significantly more expensive with LLM-only approaches.
 
 ### Dataset
 
 The training data was collected and labeled specifically for this project:
 
 - **Source**: NewsData.io API + GDELT DOC 2.0 API (free, 3 months history)
-- **Collection period**: December 2025 - January 2026
+- **Collection period**: December 2025 - Present
 - **Articles collected**: ~3,000 articles mentioning target brands
 - **Labeled articles**: 993 for FP classifier, 870 for EP classifier
 - **Labeling method**: Claude Sonnet with structured JSON output + manual review
 
 Training data is exported to JSONL format in `data/` directory using `scripts/export_training_data.py`.
 
-## Target Brands (50)
+### Target Brands (50)
 
 The system monitors news for the following sportswear and outdoor apparel brands:
 
@@ -172,7 +183,7 @@ flowchart TB
 - [x] Evidence linking to source text chunks
 - [x] Labeling CLI with dry-run and batch support
 
-### Phase 3: Model Development (Current)
+### Phase 3: Model Development ✅
 - [x] Export labeled data for training (JSONL format for 3 classifier types)
 - [x] False positive brand detection and cleanup tools
 - [x] False Positive Classifier - 3-notebook pipeline complete
@@ -187,24 +198,44 @@ flowchart TB
   - ep3: Test evaluation + threshold optimization + deployment export
   - Logistic Regression achieves Test F2: 0.931, Recall: 100%
   - Supporting modules in `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/`
-- [ ] ESG Multi-label Classifier: Category classification with sentiment
-- [ ] Advanced: Fine-tuned DistilBERT/RoBERTa
+- [ ] ESG Multi-label Classifier: Category classification with sentiment (future)
+- [ ] Advanced: Fine-tuned DistilBERT/RoBERTa (future)
 
-### Phase 4: Evaluation & Explainability
-- [ ] Per-category Precision, Recall, F1-score
-- [ ] Hamming Loss (multi-label specific)
-- [ ] SHAP values for model explainability
+### Phase 4: Evaluation & Explainability ✅
+- [x] Per-classifier Precision, Recall, F1, F2 scores
+- [x] Threshold optimization for target recall (99% FP, 99% EP)
+- [x] SHAP feature group importance analysis
+- [x] LIME local explanations for individual predictions
+- [x] Prototype-based explanations (similar training examples)
+- [x] Explainability module (`src/fp3_nb/explainability.py`)
 
 ### Phase 5: Deployment (Current)
 - [x] Unified FastAPI REST API (`scripts/predict.py`)
 - [x] Unified training script (`scripts/train.py`)
 - [x] Deployment module (`src/deployment/`)
-- [x] Multi-stage Dockerfile
+- [x] Multi-stage Dockerfile with auto-dependency detection
 - [x] Docker Compose integration
 - [x] GitHub Actions CI/CD to Google Cloud Run
-- [x] Model registry with version tracking
-- [x] Prediction logging for drift monitoring
-- [ ] Streamlit dashboard (optional)
+- [x] Model registry with version tracking (`models/registry.json`)
+- [x] Prediction logging to database for drift monitoring
+- [x] FP classifier deployed and integrated into labeling pipeline
+- [ ] EP classifier deployment and labeling pipeline integration
+
+### Phase 6: MLOps Monitoring ✅
+- [x] MLflow experiment tracking (hyperparameters, metrics, artifacts)
+- [x] Evidently AI drift detection with HTML reports
+- [x] Reference dataset management for drift comparison
+- [x] Automated daily drift monitoring (cron + GitHub Actions)
+- [x] Webhook alerts for Slack/Discord
+- [x] Retraining pipeline with semantic versioning (`scripts/retrain.py`)
+- [x] Model promotion workflow with auto-promote option
+
+### Phase 7: Website Integration ✅
+- [x] Export script for JSON and Atom feeds (`scripts/export_website_feed.py`)
+- [x] Live ESG news feed on personal website
+- [x] Client-side filtering by brand and ESG category
+- [x] Evidence excerpts with sentiment indicators
+- [x] RSS/Atom feed for news aggregators
 
 ## Table of Contents
 
@@ -229,6 +260,7 @@ flowchart TB
   - [Exporting Training Data](#exporting-training-data)
   - [ML Classifier Notebooks](#ml-classifier-notebooks)
   - [ML Classifier Opportunities](#ml-classifier-opportunities)
+  - [Text Feature Extraction Methods](#text-feature-extraction-methods)
 - [FP Classifier Deployment](#fp-classifier-deployment)
   - [Local Deployment](#local-deployment-without-docker)
   - [Docker Deployment](#docker-deployment)
@@ -825,6 +857,164 @@ The EP classifier follows the same 3-notebook structure as FP, with ESG-specific
 - `src/ep1_nb/` - Data loading, EDA, EPFeatureTransformer with ESG vocabularies
 - `src/ep2_nb/` - Train-validation gap analysis, overfitting visualization
 - `src/ep3_nb/` - Threshold optimization, deployment pipeline utilities
+
+### Text Feature Extraction Methods
+
+This section provides a high-level overview of the natural language processing (NLP) techniques used to convert raw text into numerical features that machine learning models can process. These methods are fundamental to text classification but may not be covered in standard ML courses.
+
+#### The Challenge: Text → Numbers
+
+Machine learning models work with numerical data, but news articles are text. The feature extraction pipeline transforms text into meaningful numerical representations while preserving semantic information about brands, ESG topics, and context.
+
+```
+Raw Text ──► Preprocessing ──► Feature Extraction ──► Numerical Matrix ──► ML Model
+              (cleaning)         (TF-IDF, NER,         (X matrix)          (classify)
+                                  embeddings)
+```
+
+#### TF-IDF (Term Frequency-Inverse Document Frequency)
+
+**What it does:** Converts text into a sparse matrix where each column represents a word/phrase and each value indicates how important that term is to the document.
+
+**How it works:**
+- **Term Frequency (TF)**: How often a word appears in a document
+- **Inverse Document Frequency (IDF)**: Penalizes common words that appear everywhere (e.g., "the", "and")
+- **TF-IDF = TF × IDF**: Words that are frequent in a document but rare overall get higher scores
+
+**Example:**
+```
+Document: "Nike releases sustainability report on carbon emissions"
+
+TF-IDF scores (simplified):
+  "sustainability": 0.45  (rare, domain-specific → high score)
+  "nike":           0.38  (brand name, moderately rare)
+  "releases":       0.12  (common action verb → lower score)
+  "the":            0.00  (stop word, filtered out)
+```
+
+**In this project:** Used in the EP (ESG Pre-filter) classifier with n-grams (1-2 word phrases) and vocabulary limited to top 10,000 terms.
+
+#### LSA (Latent Semantic Analysis) / Truncated SVD
+
+**What it does:** Reduces the high-dimensional TF-IDF matrix to a smaller set of "topics" that capture semantic relationships between words.
+
+**Why it's needed:** A TF-IDF matrix with 10,000 words creates 10,000 features—too many for efficient training. LSA compresses this to ~100-200 components while preserving the most important patterns.
+
+**How it works:**
+- Uses Singular Value Decomposition (SVD) to find latent "concepts"
+- Words that co-occur in similar contexts are grouped together
+- Reduces dimensionality while capturing semantic similarity
+
+**Example:**
+```
+Original TF-IDF: 10,000 features (one per word)
+After LSA (200 components): 200 features (latent topics)
+
+Component 47 might capture: "carbon" + "emissions" + "climate" + "footprint"
+Component 103 might capture: "workers" + "factory" + "wages" + "labor"
+```
+
+**In this project:** The EP classifier uses LSA with 200 components to reduce TF-IDF features while retaining ESG-relevant semantic patterns.
+
+#### NER (Named Entity Recognition)
+
+**What it does:** Identifies and classifies named entities in text—people, organizations, locations, etc.—using a pre-trained language model (spaCy).
+
+**Why it's useful for this project:** Helps distinguish between brand name contexts:
+- "Puma launches new shoe" → ORG (organization) = sportswear brand ✓
+- "A puma was spotted in the mountains" → No ORG = animal, not the brand ✗
+
+**Features extracted:**
+- **Brand-as-ORG**: Is the brand name recognized as an organization entity?
+- **Proximity features**: How close is the brand mention to other organization entities?
+- **Context features**: What other entities appear near the brand name?
+
+**Example:**
+```
+Text: "Nike CEO John Donahoe announced partnerships with Adidas and Puma"
+
+NER output:
+  Nike     → ORG (organization)
+  John Donahoe → PERSON
+  Adidas   → ORG
+  Puma     → ORG
+
+Features: brand_as_org=True, nearby_orgs=2, has_person=True
+```
+
+**In this project:** The FP (False Positive) classifier uses NER features to detect whether brand names appear in sportswear-related contexts.
+
+#### Sentence Embeddings (Sentence-Transformers)
+
+**What it does:** Converts entire sentences or documents into dense numerical vectors (typically 384-768 dimensions) that capture semantic meaning.
+
+**How it differs from TF-IDF:**
+- TF-IDF: Sparse, high-dimensional, based on word counts
+- Embeddings: Dense, lower-dimensional, based on meaning
+
+**Key advantage:** Semantically similar texts have similar embeddings, even if they use different words.
+
+**Example:**
+```
+Text A: "Nike reduces carbon emissions by 30%"
+Text B: "Athletic footwear company cuts greenhouse gases"
+
+TF-IDF similarity: LOW (few shared words)
+Embedding similarity: HIGH (same meaning)
+```
+
+**Models used:**
+- `all-MiniLM-L6-v2`: Fast, 384-dimensional embeddings (used in FP classifier)
+- `text-embedding-3-small`: OpenAI model, 1536 dimensions (used for evidence matching)
+
+**In this project:** The FP classifier concatenates sentence embeddings with NER features for richer text representation.
+
+#### Feature Combination Strategy
+
+The classifiers combine multiple feature types for robust performance:
+
+**FP Classifier (False Positive Detection):**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Input: Article title + content + brand name                     │
+├─────────────────────────────────────────────────────────────────┤
+│ Feature Groups:                                                  │
+│ ├── Sentence Embeddings (384 dim) - semantic meaning            │
+│ ├── NER Context (12 features) - entity recognition              │
+│ ├── Proximity Features (6 features) - brand/entity relationships│
+│ └── FP Indicators (13 features) - domain-specific patterns      │
+│                                                                  │
+│ Total: ~415 features → Random Forest → is_sportswear (0/1)     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**EP Classifier (ESG Pre-filter):**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Input: Article title + content + metadata                        │
+├─────────────────────────────────────────────────────────────────┤
+│ Feature Groups:                                                  │
+│ ├── TF-IDF + LSA (200 dim) - document topics                    │
+│ ├── ESG Vocabulary Counts (4 features) - category keywords      │
+│ └── Metadata Features (varies) - source, category               │
+│                                                                  │
+│ Total: ~210 features → Logistic Regression → has_esg (0/1)     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Why These Methods?
+
+| Method | Strength | Trade-off |
+|--------|----------|-----------|
+| TF-IDF + LSA | Fast, interpretable, captures topic patterns | Loses word order, limited semantic understanding |
+| NER | Identifies entities, provides context | Requires pre-trained model, language-specific |
+| Sentence Embeddings | Rich semantic representation | Slower, less interpretable, larger model size |
+
+The project uses **different methods for different tasks**:
+- **EP classifier**: TF-IDF + LSA (fast, topic-focused for ESG detection)
+- **FP classifier**: Embeddings + NER (semantic understanding for brand disambiguation)
+
+This hybrid approach balances performance, interpretability, and computational cost.
 
 ## FP Classifier Deployment
 

@@ -1,22 +1,22 @@
 {
-  "threshold": 0.2755951097970699,
+  "threshold": 0.5,
   "target_recall": 0.99,
   "model_name": "RF_tuned",
-  "transformer_method": "tfidf_lsa_ner_proximity",
+  "transformer_method": "tfidf_lsa_ner_proximity_brands",
   "best_params": {
-    "class_weight": "balanced",
+    "class_weight": null,
     "max_depth": 20,
     "min_samples_leaf": 1,
     "min_samples_split": 2,
     "n_estimators": 200
   },
-  "cv_f2": 0.9782576576462377,
-  "cv_recall": 0.9895833333333334,
-  "cv_precision": 0.9354462800828459,
-  "test_f2": 0.967741935483871,
-  "test_recall": 0.9722222222222222,
-  "test_precision": 0.9502262443438914,
-  "threshold_recall": 0.9907407407407407,
-  "threshold_precision": 0.8842975206611571,
-  "threshold_f2": 0.9674502712477396
+  "cv_f2": 0.9800320341400686,
+  "cv_recall": 0.9885609377206609,
+  "cv_precision": 0.9477810551114532,
+  "test_f2": 0.9773755656108597,
+  "test_recall": 0.9863013698630136,
+  "test_precision": 0.9432314410480349,
+  "threshold_recall": 0.9908675799086758,
+  "threshold_precision": 0.9434782608695652,
+  "threshold_f2": 0.9810126582278481
 }
