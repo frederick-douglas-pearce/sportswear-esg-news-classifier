@@ -18,11 +18,10 @@ logs/*.log
 models/logs/
 
 # Saved models (intermediate artifacts)
+# Note: Pipeline files (*.joblib) are too large for GitHub (sentence transformer ~105MB)
+# Regenerate by running notebooks or train.py; config files contain hyperparameters
 models/*.joblib
 models/*.pkl
-# Exception: classifier pipelines are needed for deployment
-!models/fp_classifier_pipeline.joblib
-!models/ep_classifier_pipeline.joblib
 
 # Data
 *.db
