@@ -246,6 +246,12 @@ flowchart TB
   - [1. Prerequisites](#1-prerequisites)
   - [2. Installation](#2-installation)
   - [3. Start the Database](#3-start-the-database)
+- [ML Zoomcamp Reviewer Guide](#ml-zoomcamp-reviewer-guide)
+  - [Step 1: Run the Notebooks](#step-1-run-the-notebooks)
+  - [Step 2: Train with CLI](#step-2-train-with-cli)
+  - [Step 3: Local API Deployment](#step-3-local-api-deployment)
+  - [Step 4: Docker Deployment](#step-4-docker-deployment)
+  - [Step 5: Cloud Deployment](#step-5-cloud-deployment)
 - [Running the News Collection Script](#running-the-news-collection-script)
   - [Testing (Dry Run Mode)](#testing-dry-run-mode)
   - [Production Collection](#production-collection)
@@ -448,15 +454,19 @@ sportswear-esg-news-classifier/
 
 **For ML Zoomcamp Reviewers:**
 
-To run the notebooks and evaluate the ML classifiers, you only need:
-- Python 3.12+ and uv (no Docker required)
-- Training data is included in the repository (`data/fp_training_data.jsonl`, `data/ep_training_data.jsonl`)
+See the [**ML Zoomcamp Reviewer Guide**](#ml-zoomcamp-reviewer-guide) for step-by-step evaluation instructions covering:
+- Notebook review (fp1, fp2, fp3)
+- CLI training with `scripts/train.py`
+- Local and Docker deployment
+- Cloud Run deployment verification
 
+**Quick start for notebooks only:**
 ```bash
-# Quick notebook evaluation (no API keys needed)
 uv sync
 uv run jupyter lab notebooks/
 ```
+
+Training data is included: `data/fp_training_data.jsonl` (no API keys needed)
 
 **For Cloud Deployment (Optional):**
 
@@ -498,6 +508,223 @@ docker ps
 ```
 
 The database will be available at `localhost:5434`.
+
+## ML Zoomcamp Reviewer Guide
+
+This section provides a step-by-step guide for ML Zoomcamp reviewers to evaluate the FP (False Positive) classifier, which is the primary ML component of this project.
+
+**What you'll evaluate:**
+1. Training data and exploratory analysis (notebooks)
+2. Model training pipeline (CLI script)
+3. Local API deployment (FastAPI)
+4. Containerized deployment (Docker)
+5. Cloud deployment (Google Cloud Run)
+
+**Time estimate:** ~30 minutes for full evaluation
+
+### Step 1: Run the Notebooks
+
+The FP classifier is developed through a 3-notebook pipeline. Training data is included in the repository.
+
+```bash
+# Clone and setup
+git clone https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier.git
+cd sportswear-esg-news-classifier
+uv sync
+
+# Launch Jupyter
+uv run jupyter lab notebooks/
+```
+
+**Notebooks to review (in order):**
+
+| Notebook | Purpose | Key Outputs |
+|----------|---------|-------------|
+| `fp1_EDA_FE.ipynb` | EDA & Feature Engineering | Feature transformer, hyperparameter tuning |
+| `fp2_model_selection_tuning.ipynb` | Model Selection & Tuning | Best model (Random Forest), CV metrics |
+| `fp3_model_evaluation_deployment.ipynb` | Test Evaluation & Deployment | Threshold optimization, pipeline export |
+
+**Training data:** `data/fp_training_data.jsonl` (1,340 articles: 1,089 sportswear, 251 false positives)
+
+**Key metrics to look for:**
+- CV F2 Score: ~0.98
+- Test F2 Score: ~0.97
+- Test Recall: ~99% (optimized for high recall to minimize false negatives)
+
+### Step 2: Train with CLI
+
+After reviewing the notebooks, train the model using the CLI script:
+
+```bash
+# Train FP classifier (uses config exported from fp2 notebook)
+uv run python scripts/train.py --classifier fp --verbose
+
+# Expected output:
+# ============================================================
+# FP CLASSIFIER TRAINING
+# ============================================================
+# [1/7] Loading training data...
+# [2/7] Creating text features...
+# [3/7] Splitting data...
+# [4/7] Fitting feature transformer...
+# [5/7] Training RandomForest classifier...
+# [6/7] Evaluating on test set...
+# [7/7] Optimizing threshold for 99% recall...
+# ============================================================
+# TRAINING COMPLETE
+# ============================================================
+```
+
+**Outputs:**
+- `models/fp_classifier_pipeline.joblib` - Trained sklearn pipeline
+- `models/fp_classifier_config.json` - Model configuration and metrics
+
+### Step 3: Local API Deployment
+
+Deploy the trained model as a FastAPI service:
+
+```bash
+# Start the FP classifier API
+CLASSIFIER_TYPE=fp uv run python scripts/predict.py
+
+# Expected output:
+# Starting FP classifier API on port 8000
+# Loaded FP classifier
+# Model: RF_tuned
+# Threshold: 0.5000
+```
+
+**Test the API:**
+
+```bash
+# Health check
+curl http://localhost:8000/health
+# {"status":"healthy","model_loaded":true,"classifier_type":"fp"}
+
+# Model info
+curl http://localhost:8000/model/info
+
+# Test prediction (sportswear article - should return is_sportswear: true)
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Nike announces new sustainability initiative",
+    "content": "The athletic footwear giant unveiled plans to reduce carbon emissions.",
+    "brands": ["Nike"]
+  }'
+
+# Test prediction (false positive - should return is_sportswear: false)
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Puma spotted in California mountains",
+    "content": "Wildlife officials confirmed a mountain lion sighting near hiking trails.",
+    "brands": ["Puma"]
+  }'
+```
+
+**API Documentation:** http://localhost:8000/docs (Swagger UI)
+
+### Step 4: Docker Deployment
+
+Deploy the classifier using Docker Compose:
+
+```bash
+# Build and start the FP classifier container
+docker compose build fp-classifier
+docker compose up -d fp-classifier
+
+# Check container status
+docker ps
+
+# Test health endpoint
+curl http://localhost:8000/health
+
+# View logs
+docker logs esg-news-fp-classifier
+
+# Stop the container
+docker compose down fp-classifier
+```
+
+**Docker implementation details:**
+- Multi-stage build for minimal image size
+- Auto-detects dependencies from model config (sentence-transformers, spaCy, etc.)
+- Health check endpoint for container orchestration
+- See `Dockerfile` and `docker-compose.yml` for configuration
+
+### Step 5: Cloud Deployment
+
+The FP classifier is deployed to **Google Cloud Run** for production use.
+
+**Deployment Architecture:**
+
+```
+GitHub Actions (CI/CD)
+         │
+         ▼
+┌─────────────────────────────┐
+│   Google Cloud Run          │
+│   ├── fp-classifier-api    │
+│   │   ├── /health           │
+│   │   ├── /model/info       │
+│   │   ├── /predict          │
+│   │   └── /predict/batch    │
+│   └── (2GB memory, 300s timeout)
+└─────────────────────────────┘
+```
+
+**Live API:** The deployed API URL is available upon request (not committed to repo for security).
+
+**Deployment Screenshots:**
+
+*Screenshots demonstrating the deployed Cloud Run API:*
+
+<details>
+<summary>Click to view Cloud Run deployment screenshots</summary>
+
+**Health Check Response:**
+
+![Health Check](images/gcr_health_check.png)
+
+**Swagger UI Documentation:**
+
+![API Docs](images/gcr_swagger_ui.png)
+
+**Example Prediction:**
+
+![Prediction](images/gcr_prediction_example.png)
+
+</details>
+
+> **Note:** If screenshots are not visible, the live API URL can be provided upon request for direct verification.
+
+**Deployment Documentation:**
+
+For detailed CI/CD setup instructions, see [`.github/DEPLOYMENT_SETUP.md`](.github/DEPLOYMENT_SETUP.md), which covers:
+- Required GitHub Secrets (`GCP_PROJECT_ID`, `GCP_SA_KEY`)
+- Service account creation with Cloud Run Admin role
+- Deployment triggers and manual workflow dispatch
+- Verifying deployment with `gcloud` CLI
+
+**GitHub Actions Workflow:**
+
+The deployment is automated via `.github/workflows/deploy.yml`:
+- Triggers on push to main when model files change
+- Builds Docker image with classifier dependencies
+- Deploys to Cloud Run with appropriate memory/timeout settings
+
+### Reviewer Checklist
+
+Use this checklist to verify all evaluation criteria:
+
+- [ ] **Notebooks**: fp1, fp2, fp3 notebooks run without errors
+- [ ] **Training data**: `data/fp_training_data.jsonl` loads correctly
+- [ ] **CLI training**: `scripts/train.py` completes successfully
+- [ ] **Local API**: FastAPI starts and responds to `/health`
+- [ ] **Predictions**: API returns correct predictions for test cases
+- [ ] **Docker**: Container builds and runs with `docker compose`
+- [ ] **Cloud Run**: Screenshots show deployed API (or request live URL)
 
 ## Running the News Collection Script
 
