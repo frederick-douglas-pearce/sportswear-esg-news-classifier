@@ -4,6 +4,12 @@
 >
 > **🔗 Live Demo:** [View ESG News Feed](https://frederick-douglas-pearce.github.io/projects/esg_classifier/) - Browse curated ESG articles with interactive filtering by brand and category
 
+---
+
+**For ML Zoomcamp Reviewers:** This project includes extensive infrastructure for data collection, LLM-based labeling, and MLOps monitoring to support a production news classification system. **For course evaluation, please focus on the FP (False Positive) classifier** - the core ML component. Jump to the **[ML Zoomcamp Reviewer Guide](#ml-zoomcamp-reviewer-guide)** for a streamlined 5-step evaluation covering notebooks, training, and deployment.
+
+---
+
 ## Problem Description
 
 ### The Challenge
@@ -243,201 +249,42 @@ flowchart TB
 - [Project Roadmap](#project-roadmap)
 - [Project Structure](#project-structure)
 - [Quick Start](#quick-start)
-  - [1. Prerequisites](#1-prerequisites)
-  - [2. Installation](#2-installation)
-  - [3. Start the Database](#3-start-the-database)
-- [ML Zoomcamp Reviewer Guide](#ml-zoomcamp-reviewer-guide)
-  - [Step 1: Run the Notebooks](#step-1-run-the-notebooks)
-  - [Step 2: Train with CLI](#step-2-train-with-cli)
-  - [Step 3: Local API Deployment](#step-3-local-api-deployment)
-  - [Step 4: Docker Deployment](#step-4-docker-deployment)
-  - [Step 5: Cloud Deployment](#step-5-cloud-deployment)
-- [Running the News Collection Script](#running-the-news-collection-script)
-  - [Testing (Dry Run Mode)](#testing-dry-run-mode)
-  - [Production Collection](#production-collection)
-  - [Scheduled Collection (Cron)](#scheduled-collection-cron)
-  - [Scrape-Only Mode](#scrape-only-mode)
-  - [Command-Line Options](#command-line-options)
-- [LLM-Based Article Labeling](#llm-based-article-labeling)
-  - [LLM Labeling Workflow](#llm-labeling-workflow)
-  - [Running the Labeling Pipeline](#running-the-labeling-pipeline)
-  - [Labeling Command-Line Options](#labeling-command-line-options)
-  - [Cost Estimation](#cost-estimation)
-  - [Exporting Training Data](#exporting-training-data)
-  - [ML Classifier Notebooks](#ml-classifier-notebooks)
-  - [ML Classifier Opportunities](#ml-classifier-opportunities)
+- [ML Zoomcamp Reviewer Guide](#ml-zoomcamp-reviewer-guide) ⭐
+- [News Collection](#news-collection)
+- [AI-Based Article Labeling](#ai-based-article-labeling)
+  - [ML Classifier Notebooks](#ml-classifier-notebooks) ⭐
   - [Text Feature Extraction Methods](#text-feature-extraction-methods)
-- [FP Classifier Deployment](#fp-classifier-deployment)
-  - [Local Deployment](#local-deployment-without-docker)
-  - [Docker Deployment](#docker-deployment)
-  - [API Endpoints](#api-endpoints)
-  - [Retraining the Model](#retraining-the-model)
-- [Model Deployment Workflow](#model-deployment-workflow)
-  - [Workflow Overview](#workflow-overview)
-  - [Phase 1: Development (Notebooks)](#phase-1-development-notebooks)
-  - [Phase 2: Training (train.py)](#phase-2-training-trainpy)
-  - [Phase 3: Evaluation (Decide to Promote)](#phase-3-evaluation-decide-to-promote)
-  - [Phase 4: Promotion (retrain.py)](#phase-4-promotion-retrainpy)
-  - [Semantic Versioning](#semantic-versioning)
-  - [Daily Retraining Workflow](#daily-retraining-workflow)
-- [MLOps: Experiment Tracking & Monitoring](#mlops-experiment-tracking--monitoring)
-  - [MLflow Experiment Tracking](#mlflow-experiment-tracking)
-  - [Evidently AI Drift Monitoring](#evidently-ai-drift-monitoring)
-  - [Automated Monitoring](#automated-monitoring)
-  - [Webhook Alerts](#webhook-alerts)
-- [Environment Variables](#environment-variables)
-- [Database Schema](#database-schema)
-  - [Articles Table](#articles-table)
-  - [Collection Runs Table](#collection-runs-table)
-  - [Labeling Tables](#labeling-tables)
-- [Querying the Database](#querying-the-database)
-  - [Quick Stats](#quick-stats)
-  - [Detailed Queries](#detailed-queries)
-  - [Labeling Queries](#labeling-queries)
-  - [Interactive Database Access](#interactive-database-access)
-- [Database Backup](#database-backup)
-  - [Backup Commands](#backup-commands)
-  - [Retention Policy](#retention-policy)
-  - [Automated Backups](#automated-backups)
-  - [Restore Process](#restore-process)
+- [FP Classifier Deployment](#fp-classifier-deployment) ⭐
+- [Model Deployment Workflow](#model-deployment-workflow) ⭐
+- [MLOps](#mlops)
+- [Database](#database)
 - [ESG Category Structure](#esg-category-structure)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 
+> ⭐ = Key sections for ML Zoomcamp evaluation
+
 ## Project Structure
 
-```
-sportswear-esg-news-classifier/
-├── docker-compose.yml          # PostgreSQL + FP Classifier API containers
-├── Dockerfile                  # Multi-stage build for classifier APIs
-├── pyproject.toml              # Project dependencies and metadata (uv/pip)
-├── .env.example                # Environment variable template
-├── .env                        # Local environment variables (not committed)
-├── logs/                       # Application logs
-├── data/                       # Training data exports (JSONL)
-│   ├── fp_training_data.jsonl        # FP classifier training data
-│   └── ep_training_data.jsonl        # EP classifier training data
-├── migrations/                 # Database migration scripts
-│   └── 002_classifier_predictions.sql  # Classifier predictions table
-├── scripts/
-│   ├── collect_news.py         # CLI script for data collection
-│   ├── label_articles.py       # CLI script for LLM-based labeling
-│   ├── export_training_data.py # Export labeled data for ML training
-│   ├── export_website_feed.py  # Export JSON/Atom feeds for website
-│   ├── gdelt_backfill.py       # Historical backfill script (3 months)
-│   ├── cleanup_non_english.py  # Remove non-English articles from database
-│   ├── cleanup_false_positives.py # Identify/remove false positive brand matches
-│   ├── train.py                # Unified training script for FP/EP classifiers
-│   ├── predict.py              # Unified FastAPI service for all classifiers
-│   ├── retrain.py              # Retrain models with version management
-│   ├── register_model.py       # Register models in MLflow without retraining
-│   ├── monitor_drift.py        # Monitor prediction drift for deployed models
-│   ├── deploy_cloudrun.sh      # Google Cloud Run deployment script
-│   ├── cron_collect.sh         # Cron wrapper for NewsData.io collection
-│   ├── cron_scrape.sh          # Cron wrapper for GDELT collection
-│   ├── cron_monitor.sh         # Cron wrapper for drift monitoring
-│   └── setup_cron.sh           # User-friendly cron management
-├── notebooks/
-│   ├── fp1_EDA_FE.ipynb              # FP: EDA & Feature Engineering
-│   ├── fp2_model_selection_tuning.ipynb  # FP: Model selection & tuning
-│   ├── fp3_model_evaluation_deployment.ipynb  # FP: Test evaluation & deployment
-│   ├── ep1_EDA_FE.ipynb              # EP: EDA & Feature Engineering
-│   ├── ep2_model_selection_tuning.ipynb  # EP: Model selection & tuning
-│   └── ep3_model_evaluation_deployment.ipynb  # EP: Test evaluation & deployment
-├── models/                     # Saved ML models and artifacts
-│   ├── registry.json                 # Model version registry
-│   ├── fp_classifier_pipeline.joblib # FP production model
-│   ├── fp_classifier_config.json     # FP model configuration
-│   ├── ep_classifier_pipeline.joblib # EP production model
-│   └── ep_classifier_config.json     # EP model configuration
-├── src/
-│   ├── data_collection/
-│   │   ├── __init__.py
-│   │   ├── config.py           # Settings, brands, keywords, API configuration
-│   │   ├── api_client.py       # NewsData.io API wrapper with query generation
-│   │   ├── gdelt_client.py     # GDELT DOC 2.0 API wrapper (free, 3 months history)
-│   │   ├── scraper.py          # Full article text extraction with language detection
-│   │   ├── database.py         # PostgreSQL operations with SQLAlchemy
-│   │   ├── models.py           # SQLAlchemy models (Article, CollectionRun, labeling tables)
-│   │   └── collector.py        # Orchestrates API collection + scraping phases
-│   ├── labeling/
-│   │   ├── __init__.py
-│   │   ├── config.py           # Labeling settings, prompts, category definitions
-│   │   ├── models.py           # Pydantic models for LLM responses
-│   │   ├── chunker.py          # Paragraph-based article chunking
-│   │   ├── embedder.py         # OpenAI embedding wrapper
-│   │   ├── labeler.py          # Claude labeling logic
-│   │   ├── classifier_client.py # HTTP client for FP/EP classifier APIs
-│   │   ├── evidence_matcher.py # Match excerpts to chunks via similarity
-│   │   ├── database.py         # Labeling-specific DB operations
-│   │   └── pipeline.py         # Orchestrates full labeling flow with FP pre-filter
-│   ├── fp1_nb/                 # FP classifier - EDA & feature engineering
-│   │   ├── __init__.py
-│   │   ├── data_utils.py       # Data loading, splitting, target analysis
-│   │   ├── eda_utils.py        # Text analysis, brand distribution, word frequencies
-│   │   ├── preprocessing.py    # Text cleaning, feature engineering
-│   │   ├── feature_transformer.py  # Sentence transformer + NER features
-│   │   ├── ner_analysis.py     # Named entity recognition utilities
-│   │   └── modeling.py         # GridSearchCV, model evaluation, comparison
-│   ├── fp2_nb/                 # FP classifier - model selection & tuning
-│   │   ├── __init__.py
-│   │   └── overfitting_analysis.py  # Train-val gap visualization
-│   ├── fp3_nb/                 # FP classifier - evaluation & deployment
-│   │   ├── __init__.py
-│   │   ├── threshold_optimization.py  # Threshold tuning for target recall
-│   │   ├── explainability.py   # SHAP, LIME, prototype explanations
-│   │   └── deployment.py       # Pipeline export utilities
-│   ├── ep1_nb/                 # EP classifier - EDA & feature engineering
-│   │   ├── __init__.py
-│   │   ├── data_utils.py       # Data loading, splitting, target analysis
-│   │   ├── eda_utils.py        # Text analysis, brand distribution
-│   │   ├── preprocessing.py    # Text cleaning, feature engineering
-│   │   ├── feature_transformer.py  # EPFeatureTransformer with ESG vocabularies
-│   │   └── modeling.py         # GridSearchCV, model evaluation
-│   ├── ep2_nb/                 # EP classifier - model selection & tuning
-│   │   ├── __init__.py
-│   │   └── overfitting_analysis.py  # Train-val gap visualization
-│   ├── ep3_nb/                 # EP classifier - evaluation & deployment
-│   │   ├── __init__.py
-│   │   ├── threshold_optimization.py  # Threshold tuning for target recall
-│   │   └── deployment.py       # Pipeline export utilities
-│   ├── deployment/             # Production deployment module
-│   │   ├── __init__.py
-│   │   ├── config.py           # Configuration and risk level mapping
-│   │   ├── data.py             # Data loading and splitting utilities
-│   │   ├── preprocessing.py    # Text preprocessing for API
-│   │   └── prediction.py       # FPClassifier wrapper class
-│   └── mlops/                  # MLOps module for tracking & monitoring
-│       ├── __init__.py
-│       ├── config.py           # MLOps settings (MLflow, Evidently, alerts)
-│       ├── tracking.py         # MLflow experiment tracking wrapper
-│       ├── monitoring.py       # Evidently drift detection
-│       ├── reference_data.py   # Reference dataset management
-│       └── alerts.py           # Webhook notifications (Slack/Discord)
-└── tests/                      # 548 tests
-    ├── conftest.py             # Shared pytest fixtures
-    ├── test_api_client.py      # NewsData.io client unit tests
-    ├── test_gdelt_client.py    # GDELT client unit tests
-    ├── test_scraper.py         # Scraper and language detection tests
-    ├── test_collector.py       # Collector unit tests
-    ├── test_database.py        # Database integration tests (requires PostgreSQL)
-    ├── test_chunker.py         # Article chunker unit tests
-    ├── test_labeler.py         # LLM labeling and response parsing tests
-    ├── test_embedder.py        # OpenAI embedder unit tests
-    ├── test_evidence_matcher.py # Evidence matching unit tests
-    ├── test_labeling_pipeline.py # Labeling pipeline unit tests
-    ├── test_fp_prefilter.py    # FP classifier pre-filter integration tests
-    ├── test_fp1_nb_*.py        # FP notebook utility tests (data, modeling)
-    ├── test_fp2_nb_*.py        # FP overfitting analysis tests
-    ├── test_fp3_nb_*.py        # FP threshold and deployment tests
-    ├── test_deployment.py      # Deployment module tests
-    ├── test_explainability.py  # Model explainability tests (SHAP, LIME)
-    ├── test_mlops_tracking.py  # MLflow tracking tests
-    ├── test_mlops_monitoring.py # Drift monitoring tests
-    ├── test_mlops_reference_data.py # Reference data management tests
-    ├── test_retrain.py         # Retraining pipeline tests
-    └── test_integration.py     # End-to-end pipeline tests
-```
+The project follows a modular architecture:
+
+| Directory | Purpose |
+|-----------|---------|
+| `src/` | Core modules: data_collection, labeling, mlops, notebook utilities |
+| `scripts/` | CLI tools: collection, labeling, training, deployment, monitoring |
+| `notebooks/` | ML classifier development: 6 notebooks (EDA → Tuning → Deployment) |
+| `models/` | Trained models, configs, and version registry |
+| `tests/` | Comprehensive test suite (548 tests) |
+| `docs/` | Detailed documentation for each subsystem |
+
+**Key Files for ML Zoomcamp:**
+- `notebooks/fp*.ipynb` - False Positive classifier pipeline
+- `notebooks/ep*.ipynb` - ESG Pre-filter classifier pipeline
+- `scripts/train.py` - CLI training script
+- `scripts/predict.py` - FastAPI prediction service
+- `Dockerfile` - Container deployment
+
+📁 See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for complete file listing.
 
 ## Quick Start
 
@@ -731,147 +578,28 @@ Use this checklist to verify all evaluation criteria:
 - [ ] **Docker**: Container builds and runs with `docker compose`
 - [ ] **Cloud Run**: Screenshots show deployed API (or request live URL)
 
-## Running the News Collection Script
+## News Collection
 
-All commands use `uv run` to execute within the project's virtual environment. Alternatively, you can activate the venv first with `source .venv/bin/activate` and omit `uv run`.
-
-### Testing (Dry Run Mode)
-
-Before running a full collection, test with a dry run to verify your setup:
+The pipeline collects ESG-related news articles from two sources:
+- **NewsData.io** - Paid API with real-time news (requires API key)
+- **GDELT DOC 2.0** - Free API with 3 months of historical data
 
 ```bash
-# Basic dry run - shows what would be done without saving
-uv run python scripts/collect_news.py --dry-run --max-calls 5
+# Quick test (dry run)
+uv run python scripts/collect_news.py --source gdelt --dry-run --max-calls 5
 
-# Dry run with verbose output for debugging
-uv run python scripts/collect_news.py --dry-run --max-calls 5 -v
-```
-
-**What dry run does:**
-- Connects to the NewsData.io API and fetches articles
-- Displays statistics about what would be saved
-- Does NOT write anything to the database
-- Useful for testing API key and connectivity
-
-**Expected output:**
-```
-2024-12-14 10:00:00 - __main__ - INFO - Starting ESG News Collection
-2024-12-14 10:00:01 - src.data_collection.collector - INFO - Starting API collection with 120 queries, max 5 calls
-2024-12-14 10:00:05 - src.data_collection.collector - INFO - [DRY RUN] Would save 10 articles
-2024-12-14 10:00:05 - __main__ - INFO - Collection complete:
-2024-12-14 10:00:05 - __main__ - INFO -   API calls made: 5
-2024-12-14 10:00:05 - __main__ - INFO -   New articles: 50
-2024-12-14 10:00:05 - __main__ - INFO -   Duplicates skipped: 0
-2024-12-14 10:00:05 - __main__ - INFO -   Articles scraped: 0
-2024-12-14 10:00:05 - __main__ - INFO -   Scrape failures: 0
-```
-
-### Production Collection
-
-```bash
-# Run full daily collection using NewsData.io (requires API key)
-uv run python scripts/collect_news.py
-
-# Run collection using GDELT (free, no API key needed, 3 months history)
+# Production collection
 uv run python scripts/collect_news.py --source gdelt
 
-# GDELT with shorter time window (for frequent collection)
-uv run python scripts/collect_news.py --source gdelt --timespan 6h
-
-# GDELT historical backfill for specific date range
-uv run python scripts/collect_news.py --source gdelt --start-date 2025-10-01 --end-date 2025-10-07
-
-# With custom limits
-uv run python scripts/collect_news.py --max-calls 100 --scrape-limit 50
-
-# Verbose mode for monitoring
-uv run python scripts/collect_news.py -v
-```
-
-### GDELT Historical Backfill
-
-To collect 3 months of historical data from GDELT in weekly batches:
-
-```bash
-# Run full 3-month backfill
-uv run python scripts/gdelt_backfill.py
-
-# Test first batch only (dry run)
-uv run python scripts/gdelt_backfill.py --dry-run --max-calls 5
-
-# Resume from a specific date
-uv run python scripts/gdelt_backfill.py --start-from 2025-11-01
-
-# Backfill only 1 month
-uv run python scripts/gdelt_backfill.py --months 1
-```
-
-### Scheduled Collection (Cron)
-
-Set up automatic collection with two cron jobs:
-- **NewsData job**: Fetches from NewsData.io API + scrapes (4x daily, requires API key)
-- **GDELT job**: Fetches from GDELT API + scrapes (4x daily, free, no key needed)
-
-```bash
-# Install both cron jobs
+# Set up automated collection (8x daily)
 ./scripts/setup_cron.sh install
-
-# Check status
-./scripts/setup_cron.sh status
-
-# Remove both cron jobs
-./scripts/setup_cron.sh remove
-
-# Install/remove individual jobs
-./scripts/setup_cron.sh install-collect   # NewsData only
-./scripts/setup_cron.sh install-scrape    # GDELT only
-./scripts/setup_cron.sh remove-collect
-./scripts/setup_cron.sh remove-scrape
-
-# View logs
-tail -f logs/collection_$(date +%Y%m%d).log   # NewsData logs
-tail -f logs/gdelt_$(date +%Y%m%d).log        # GDELT logs
 ```
 
-**Schedule:**
-| Time | Job | Description |
-|------|-----|-------------|
-| 12am, 6am, 12pm, 6pm | NewsData | NewsData.io API (50 calls) + scrape (100 articles) |
-| 3am, 9am, 3pm, 9pm | GDELT | GDELT API (6h window) + scrape (100 articles) |
-
-### Scrape-Only Mode
-
-If you have articles already fetched but not yet scraped:
-
-```bash
-# Only scrape pending articles (skip API collection)
-uv run python scripts/collect_news.py --scrape-only
-
-# With custom limit
-uv run python scripts/collect_news.py --scrape-only --scrape-limit 50
-```
-
-### Command-Line Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--source SOURCE` | API source: `newsdata` or `gdelt` | `newsdata` |
-| `--dry-run` | Don't save to database, just show what would be done | False |
-| `--max-calls N` | Maximum API calls to make | 200 |
-| `--scrape-only` | Only scrape pending articles, skip API collection | False |
-| `--scrape-limit N` | Maximum articles to scrape | 100 |
-| `--timespan SPAN` | GDELT only: relative time window (e.g., `6h`, `1d`, `1w`, `3m`) | `3m` |
-| `--start-date DATE` | GDELT only: start date for historical collection (YYYY-MM-DD) | - |
-| `--end-date DATE` | GDELT only: end date for historical collection (YYYY-MM-DD) | - |
-| `-v, --verbose` | Enable verbose/debug logging | False |
+📖 See [docs/COLLECTION.md](docs/COLLECTION.md) for full CLI options, cron setup, and backfill procedures.
 
 ## AI-Based Article Labeling
 
 The project uses a **hybrid LLM + ML approach** for article classification:
-
-1. **LLM Labeling (Claude Sonnet)**: High-quality labeling of articles into ESG categories with per-brand sentiment analysis. This generates training data for ML classifiers.
-
-2. **ML Classifiers**: Cost-efficient models trained on LLM-labeled data that can filter and classify articles at little to no cost (~$0 vs ~$15/1000 articles).
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -899,135 +627,18 @@ The project uses a **hybrid LLM + ML approach** for article classification:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Cost Savings**: By filtering false positives (~15% of articles) and non-ESG content (~30% of articles) with ML classifiers before LLM labeling, the pipeline can reduce Claude API costs by 20-30% given realistic false-positive rates.
+**How it works:**
+1. **LLM Labeling (Claude Sonnet)**: High-quality labeling into ESG categories with sentiment. Generates training data for ML classifiers (~$15/1000 articles).
+2. **ML Classifiers**: Cost-efficient models filter articles before LLM labeling, reducing costs by 20-30%.
 
-### LLM Labeling Workflow
+**ML Classifiers Developed:**
+| Classifier | Purpose | Performance |
+|------------|---------|-------------|
+| **FP (False Positive)** ✅ | Filter non-sportswear brand mentions | F2: 0.974, Recall: 98.8% |
+| **EP (ESG Pre-filter)** ✅ | Identify articles with ESG content | F2: 0.931, Recall: 100% |
+| **ESG Multi-label** | Full category + sentiment classification | Planned |
 
-The LLM labeling pipeline processes articles through these steps:
-
-1. **Chunking**: Articles are split into paragraph-based chunks (~500 tokens each) with character position tracking
-2. **Embedding**: Chunks are embedded using OpenAI's `text-embedding-3-small` model for semantic search
-3. **LLM Labeling**: Claude Sonnet analyzes each article and returns structured JSON with:
-   - Per-brand ESG category labels (Environmental, Social, Governance, Digital Transformation)
-   - Ternary sentiment for each category (+1 positive, 0 neutral, -1 negative)
-   - Supporting evidence quotes from the article
-   - Confidence score and reasoning
-4. **Evidence Matching**: Evidence excerpts are linked back to article chunks via exact match, fuzzy match, or embedding similarity
-
-The labeled data is then exported to train ML classifiers that can handle routine classification at scale.
-
-### Data Labeling Scope
-
-Articles are only labeled if they are **primarily about** the sportswear brand's activities. The labeling pipeline filters out two types of false positives:
-
-**1. Brand Name Conflicts**: When a brand name refers to something other than the sportswear company:
-- "Puma" (the animal), "Patagonia" (the region), "Columbia" (the country/university)
-- "Vans" (vehicles), "Anta" (Indian political district), "Decathlon" (investment firms)
-
-**2. Tangential Brand Mentions**: When the brand name correctly refers to the sportswear company, but the article is not actually about that brand:
-- Former executives now working at other companies (e.g., "Ex-Nike VP joins Tech Startup")
-- Biographical context in profiles about people who no longer work at the brand
-- Articles about other companies that briefly mention a sportswear brand for comparison
-
-**Key Test**: Is this article primarily about the sportswear brand's current activities, products, or ESG initiatives? If the brand is only mentioned as background context, historical reference, or biographical detail, it should be marked as a false positive.
-
-### Running the Labeling Pipeline
-
-```bash
-# Check labeling statistics
-uv run python scripts/label_articles.py --stats
-
-# Test with dry run (doesn't save to database)
-uv run python scripts/label_articles.py --dry-run --batch-size 5
-
-# Label a batch of articles
-uv run python scripts/label_articles.py --batch-size 10
-
-# Label a specific article by UUID
-uv run python scripts/label_articles.py --article-id 12345678-1234-1234-1234-123456789abc
-
-# Skip embedding generation (faster but no semantic evidence matching)
-uv run python scripts/label_articles.py --batch-size 10 --skip-embedding
-
-# Verbose mode for debugging
-uv run python scripts/label_articles.py --batch-size 5 -v
-```
-
-### Labeling Command-Line Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--batch-size N` | Number of articles to process | 10 |
-| `--dry-run` | Show what would be done without saving | False |
-| `--article-id UUID` | Label a specific article | - |
-| `--skip-chunking` | Skip chunking for articles that already have chunks | False |
-| `--skip-embedding` | Skip embedding generation | False |
-| `--stats` | Show labeling statistics and exit | False |
-| `-v, --verbose` | Enable verbose/debug logging | False |
-
-### Cost Estimation
-
-| Component | Approximate Cost |
-|-----------|------------------|
-| OpenAI embeddings (text-embedding-3-small) | ~$0.02 per 1000 articles |
-| Claude Sonnet labeling | ~$10-15 per 1000 articles |
-| **Total** | **~$15 per 1000 articles** |
-
-### Exporting Training Data
-
-Export labeled data for ML classifier training:
-
-```bash
-# Export false positive classifier data (sportswear vs non-sportswear brands)
-uv run python scripts/export_training_data.py --dataset fp
-
-# Export ESG pre-filter data (has ESG content vs no ESG)
-uv run python scripts/export_training_data.py --dataset esg-prefilter
-
-# Export full ESG multi-label classifier data
-uv run python scripts/export_training_data.py --dataset esg-labels
-
-# Export only new data since a date (for incremental updates)
-uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01
-
-# Export to specific file
-uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
-```
-
-**Export Formats (JSONL):**
-
-| Dataset | Fields | Use Case |
-|---------|--------|----------|
-| `fp` | article_id, title, content, brands, is_sportswear | False positive brand classifier |
-| `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
-| `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
-
-### ML Classifier Opportunities
-
-The project is designed to train three progressively complex classifiers that can reduce Claude API costs while maintaining accuracy:
-
-**1. False Positive Brand Classifier** ✅ (Complete)
-- **Purpose**: Filter out articles where brand names match non-sportswear entities (e.g., "Puma" the animal, "Patagonia" the region, "Black Diamond" the power company)
-- **Input**: Article title + content + detected brand name
-- **Output**: Binary classification (is_sportswear: 0 or 1)
-- **Training Data**: 993 records from `--dataset fp` export (856 sportswear, 137 false positives)
-- **Impact**: Prevents ~15% of articles from requiring expensive LLM labeling
-- **Best Model**: Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 0.988)
-
-**2. ESG Pre-filter Classifier** ✅ (Complete)
-- **Purpose**: Quickly identify whether an article contains any ESG-relevant content before detailed classification
-- **Input**: Article title + content + metadata
-- **Output**: Binary classification (has_esg: 0 or 1)
-- **Training Data**: 870 records from `--dataset esg-prefilter` export (635 has ESG, 235 no ESG)
-- **Impact**: Skip detailed ESG labeling for articles with no ESG content
-- **Best Model**: Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%)
-
-**3. ESG Multi-label Classifier**
-- **Purpose**: Classify articles into specific ESG categories with sentiment, replacing Claude for routine classification
-- **Input**: Article title + content + brand name
-- **Output**: Multi-label (Environmental, Social, Governance, Digital Transformation) with ternary sentiment (-1, 0, +1)
-- **Training Data**: 554 records from `--dataset esg-labels` export
-- **Impact**: Replace Claude API calls entirely for high-confidence predictions
+📖 See [docs/LABELING.md](docs/LABELING.md) for LLM pipeline details, CLI options, and training data export.
 
 ### ML Classifier Notebooks
 
@@ -1750,463 +1361,71 @@ curl -X POST http://localhost:8000/predict \
 uv run python scripts/monitor_drift.py --classifier fp --days 1
 ```
 
-## MLOps: Experiment Tracking & Monitoring
+## MLOps
 
 The project includes optional MLOps features for experiment tracking and production monitoring. All features use **graceful degradation** - they work when disabled with no code changes required.
 
-### MLflow Experiment Tracking
-
-Track training experiments with hyperparameters, metrics, and model artifacts.
-
-**Enable MLflow:**
-
-```bash
-# In .env
-MLFLOW_ENABLED=true
-MLFLOW_TRACKING_URI=sqlite:///mlruns.db  # Local SQLite tracking
-# Or use a remote server:
-# MLFLOW_TRACKING_URI=http://mlflow-server:5000
-```
-
-**Training with MLflow:**
+| Feature | Tool | Purpose |
+|---------|------|---------|
+| Experiment Tracking | MLflow | Log hyperparameters, metrics, and model artifacts |
+| Drift Monitoring | Evidently AI | Detect prediction distribution shifts |
+| Automated Alerts | Webhooks | Slack/Discord notifications for drift |
 
 ```bash
-# Train with automatic MLflow logging
-uv run python scripts/train.py --classifier fp --verbose
+# Enable MLflow tracking
+MLFLOW_ENABLED=true uv run python scripts/train.py --classifier fp
 
-# View experiments in MLflow UI
+# View MLflow UI
 uv run mlflow ui --backend-store-uri sqlite:///mlruns.db
-# Open http://localhost:5000
-```
 
-**What gets logged:**
-- Training parameters (model type, hyperparameters, target recall)
-- Metrics (test F2, recall, precision, threshold)
-- Artifacts (pipeline, config JSON)
-- Run metadata (timestamp, classifier type)
-
-**Programmatic Usage:**
-
-```python
-from src.mlops import ExperimentTracker
-
-tracker = ExperimentTracker("fp")
-with tracker.start_run(run_name="fp-v1.2.0"):
-    # Your training code...
-    tracker.log_params({"n_estimators": 200, "max_depth": 20})
-    tracker.log_metrics({"test_f2": 0.974, "test_recall": 0.988})
-    tracker.log_artifact("models/fp_classifier_pipeline.joblib")
-```
-
-### Evidently AI Drift Monitoring
-
-Detect prediction drift and data quality issues in production.
-
-**Enable Evidently:**
-
-```bash
-# In .env
-EVIDENTLY_ENABLED=true
-DRIFT_THRESHOLD=0.1  # Alert if drift score > 10%
-```
-
-**Running Drift Monitoring:**
-
-```bash
-# Production drift check from database (recommended)
+# Monitor for drift (from production database)
 uv run python scripts/monitor_drift.py --classifier fp --from-db
 
-# Extended analysis with HTML report
-uv run python scripts/monitor_drift.py --classifier fp --from-db --days 30 --html-report
-
-# Create reference dataset from production data
-uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30
-
-# Check reference dataset stats
-uv run python scripts/monitor_drift.py --classifier fp --reference-stats
-
-# Legacy: from local log files (for local API testing)
-uv run python scripts/monitor_drift.py --classifier fp --logs-dir logs/predictions
-```
-
-**Data Sources:**
-- `--from-db`: Load predictions from `classifier_predictions` database table (recommended for production)
-- `--logs-dir`: Load from local JSONL log files (for local API development)
-
-**Monitor Output:**
-
-```
-============================================================
-DRIFT MONITORING REPORT - FP
-============================================================
-
-Timestamp: 2025-12-29 10:30:45
-Drift Detected: NO
-Drift Score: 0.0523 (threshold: 0.1000)
-
-HTML Report: reports/monitoring/fp/drift_report_20251229_103045.html
-
-============================================================
-✅ Status: Healthy - no significant drift detected
-```
-
-**What gets monitored:**
-- Probability distribution drift (KS test or Evidently)
-- Prediction rate shifts
-- Data quality issues (missing values, outliers)
-
-### Automated Monitoring
-
-Set up daily drift monitoring with cron or GitHub Actions.
-
-**Local Cron Setup:**
-
-```bash
-# Install monitoring cron job (runs daily at 6am UTC)
+# Set up daily monitoring
 ./scripts/setup_cron.sh install-monitor
-
-# Check status
-./scripts/setup_cron.sh status
-
-# Remove monitoring job
-./scripts/setup_cron.sh remove-monitor
-
-# View logs
-tail -f logs/monitoring/fp_monitoring_$(date +%Y%m%d).log
 ```
 
-**GitHub Actions:**
+📖 See [docs/MLOPS.md](docs/MLOPS.md) for detailed setup, configuration options, and programmatic usage.
 
-The project includes `.github/workflows/monitoring.yml` for automated drift monitoring:
+## Database
 
-```yaml
-# Runs daily at 6am UTC
-# Monitors FP and EP classifiers
-# Uploads HTML reports as artifacts
-# Sends alerts via webhook if drift detected
-```
+PostgreSQL with pgvector stores articles, labels, embeddings, and classifier predictions.
 
-**Required GitHub Secrets:**
-- `ALERT_WEBHOOK_URL` - Slack/Discord webhook for alerts
+| Table | Purpose |
+|-------|---------|
+| `articles` | News metadata, full content, labeling status |
+| `brand_labels` | Per-brand ESG classifications with sentiment |
+| `article_chunks` | Text chunks with embeddings for evidence matching |
+| `classifier_predictions` | ML classifier audit trail |
 
-**Manual Workflow Trigger:**
+### Quick Commands
 
 ```bash
-# Trigger via GitHub CLI
-gh workflow run monitoring.yml --field classifier=fp --field days=7
-```
+# Check labeling status
+docker exec esg_news_db psql -U postgres -d esg_news -c \
+  "SELECT labeling_status, COUNT(*) FROM articles GROUP BY labeling_status;"
 
-### Webhook Alerts
-
-Receive Slack or Discord notifications when drift is detected.
-
-**Configure Alerts:**
-
-```bash
-# In .env
-ALERT_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
-ALERT_ON_DRIFT=true
-ALERT_ON_TRAINING=false  # Optional: alert after training
-```
-
-**Alert Example (Slack):**
-
-```
-⚠️ ESG Classifier Alert
-━━━━━━━━━━━━━━━━━━━━━━━━
-Drift Detected
-Drift detected! Score: 0.1523 (threshold: 0.1000)
-
-Classifier: fp | 2025-12-29 10:30:45
-
-Drift Score: 0.1523
-Threshold: 0.1000
-Reference Size: 1000
-Current Size: 250
-```
-
-**Programmatic Alerts:**
-
-```python
-from src.mlops import send_drift_alert
-
-send_drift_alert(
-    classifier_type="fp",
-    drift_score=0.15,
-    threshold=0.10,
-    details={"reference_size": 1000, "current_size": 250}
-)
-```
-
-### MLOps Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MLFLOW_ENABLED` | Enable MLflow experiment tracking | `false` |
-| `MLFLOW_TRACKING_URI` | MLflow server URI or local path | `sqlite:///mlruns.db` |
-| `MLFLOW_EXPERIMENT_PREFIX` | Prefix for experiment names | `esg-classifier` |
-| `EVIDENTLY_ENABLED` | Enable Evidently drift detection | `false` |
-| `EVIDENTLY_REPORTS_DIR` | Directory for HTML reports | `reports/monitoring` |
-| `DRIFT_THRESHOLD` | Drift score threshold for alerts | `0.1` |
-| `REFERENCE_DATA_DIR` | Directory for reference datasets | `data/reference` |
-| `REFERENCE_WINDOW_DAYS` | Days of data for reference | `30` |
-| `ALERT_WEBHOOK_URL` | Slack/Discord webhook URL | - |
-| `ALERT_ON_DRIFT` | Send alert on drift detection | `true` |
-| `ALERT_ON_TRAINING` | Send alert after training | `false` |
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NEWSDATA_API_KEY` | Your NewsData.io API key | Required (for NewsData) |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5434/esg_news` |
-| `POSTGRES_USER` | Database username | `postgres` |
-| `POSTGRES_PASSWORD` | Database password | `postgres` |
-| `POSTGRES_DB` | Database name | `esg_news` |
-| `MAX_API_CALLS_PER_DAY` | API rate limit | `200` |
-| `SCRAPE_DELAY_SECONDS` | Delay between scrape requests | `2` |
-| `GDELT_TIMESPAN` | Default GDELT time window | `3m` |
-| `GDELT_MAX_RECORDS` | Max records per GDELT query | `250` |
-| `ANTHROPIC_API_KEY` | Anthropic API key for Claude labeling | Required (for labeling) |
-| `OPENAI_API_KEY` | OpenAI API key for embeddings | Required (for labeling) |
-| `LABELING_MODEL` | Claude model for labeling | `claude-sonnet-4-20250514` |
-| `EMBEDDING_MODEL` | OpenAI model for embeddings | `text-embedding-3-small` |
-| `LABELING_BATCH_SIZE` | Default articles per labeling batch | `10` |
-| `TARGET_CHUNK_TOKENS` | Target tokens per chunk | `500` |
-| `MAX_CHUNK_TOKENS` | Maximum tokens per chunk | `800` |
-| `MIN_CHUNK_TOKENS` | Minimum tokens per chunk | `100` |
-| `FP_CLASSIFIER_ENABLED` | Enable FP classifier pre-filter in labeling pipeline | `false` |
-| `FP_CLASSIFIER_URL` | FP classifier API URL | `http://localhost:8000` |
-| `FP_SKIP_LLM_THRESHOLD` | Skip LLM for articles below this probability | `0.5` |
-| `FP_CLASSIFIER_TIMEOUT` | FP classifier API timeout (seconds) | `30.0` |
-
-## Database Schema
-
-### Articles Table
-
-Stores article metadata from API + full scraped content + future embeddings:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key |
-| `article_id` | String | Unique ID from NewsData.io |
-| `title` | Text | Article title |
-| `description` | Text | Short description/summary |
-| `full_content` | Text | Full scraped article text |
-| `url` | String | Article URL |
-| `published_at` | DateTime | Publication date |
-| `source_name` | String | News source name |
-| `brands_mentioned` | Array | Detected brand names |
-| `scrape_status` | String | pending/success/failed |
-| `labeling_status` | String | pending/labeled/skipped/false_positive/unlabelable |
-| `labeled_at` | DateTime | Timestamp when article was labeled |
-| `skipped_at` | DateTime | Timestamp when article was skipped (for future relabeling) |
-| `embedding` | Vector(1536) | For future semantic search |
-
-### Collection Runs Table
-
-Logs each daily collection run with statistics for monitoring.
-
-### Labeling Tables
-
-The labeling pipeline adds several new tables:
-
-**`article_chunks`** - Chunked article text for embeddings and evidence linking:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key |
-| `article_id` | UUID | Foreign key to articles |
-| `chunk_index` | Integer | Order within article |
-| `chunk_text` | Text | Chunk content |
-| `char_start`, `char_end` | Integer | Position in full_content |
-| `token_count` | Integer | Token count |
-| `embedding` | Vector(1536) | OpenAI embedding |
-
-**`brand_labels`** - Per-brand ESG labels with sentiment:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key |
-| `article_id` | UUID | Foreign key to articles |
-| `brand` | String | Brand name (Nike, Adidas, etc.) |
-| `environmental`, `social`, `governance`, `digital_transformation` | Boolean | Category flags |
-| `environmental_sentiment`, etc. | SmallInt | Sentiment (-1, 0, 1, or NULL) |
-| `confidence_score` | Float | LLM confidence (0-1) |
-| `labeled_by` | String | Source (claude-sonnet, human, classifier) |
-| `model_version` | String | Model identifier |
-
-**`label_evidence`** - Supporting text excerpts:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key |
-| `brand_label_id` | UUID | Foreign key to brand_labels |
-| `chunk_id` | UUID | Foreign key to article_chunks (nullable) |
-| `category` | String | ESG category |
-| `excerpt` | Text | Evidence quote |
-| `relevance_score` | Float | Match confidence |
-
-**`labeling_runs`** - Tracks labeling batches with statistics and cost estimates.
-
-## Querying the Database
-
-Use these commands to check collection progress and database statistics.
-
-### Quick Stats
-
-```bash
-# Total articles collected
-docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT COUNT(*) as total_articles FROM articles;"
-
-# Articles by scrape status
-docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT scrape_status, COUNT(*) FROM articles GROUP BY scrape_status;"
-
-# Articles pending scrape
-docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT COUNT(*) as pending FROM articles WHERE scrape_status = 'pending';"
-
-# Successfully scraped articles (have full text)
-docker exec esg_news_db psql -U postgres -d esg_news -c "SELECT COUNT(*) as scraped FROM articles WHERE scrape_status = 'success';"
-```
-
-### Detailed Queries
-
-```bash
-# Recent collection runs with statistics
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT
-    started_at::date as date,
-    status,
-    api_calls_made,
-    articles_fetched,
-    articles_duplicates,
-    articles_scraped,
-    articles_scrape_failed
-FROM collection_runs
-ORDER BY started_at DESC
-LIMIT 10;"
-
-# Articles per brand (approximate - checks brands_mentioned array)
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT unnest(brands_mentioned) as brand, COUNT(*)
-FROM articles
-WHERE brands_mentioned IS NOT NULL
-GROUP BY brand
-ORDER BY count DESC;"
-
-# Articles collected per day
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT created_at::date as date, COUNT(*) as articles
-FROM articles
-GROUP BY created_at::date
-ORDER BY date DESC;"
-
-# Sample of recent articles
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT LEFT(title, 60) as title, source_name, scrape_status, created_at::date
-FROM articles
-ORDER BY created_at DESC
-LIMIT 10;"
-```
-
-### Labeling Queries
-
-```bash
-# Labeling statistics
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT labeling_status, COUNT(*)
-FROM articles
-GROUP BY labeling_status;"
-
-# Brand labels by category
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT brand,
-       COUNT(*) as total_labels,
-       SUM(CASE WHEN environmental THEN 1 ELSE 0 END) as environmental,
-       SUM(CASE WHEN social THEN 1 ELSE 0 END) as social,
-       SUM(CASE WHEN governance THEN 1 ELSE 0 END) as governance,
-       SUM(CASE WHEN digital_transformation THEN 1 ELSE 0 END) as digital
-FROM brand_labels
-GROUP BY brand
-ORDER BY total_labels DESC;"
-
-# Recent labeling runs
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT started_at::date, status, articles_processed, brands_labeled,
-       ROUND(estimated_cost_usd::numeric, 4) as cost
-FROM labeling_runs
-ORDER BY started_at DESC
-LIMIT 5;"
-
-# Evidence excerpts for a brand
-docker exec esg_news_db psql -U postgres -d esg_news -c "
-SELECT le.category, LEFT(le.excerpt, 80) as evidence, le.relevance_score
-FROM label_evidence le
-JOIN brand_labels bl ON le.brand_label_id = bl.id
-WHERE bl.brand = 'Nike'
-LIMIT 10;"
-```
-
-### Interactive Database Access
-
-```bash
-# Open psql shell for interactive queries
+# Interactive access
 docker exec -it esg_news_db psql -U postgres -d esg_news
-```
 
-## Database Backup
-
-The project includes automated backup infrastructure to protect collected and labeled data.
-
-### Backup Commands
-
-```bash
-# Create a new backup (compressed, ~25MB)
+# Create backup
 ./scripts/backup_db.sh backup
 
-# List all available backups
-./scripts/backup_db.sh list
-
-# Show backup status and disk usage
-./scripts/backup_db.sh status
-
-# Restore from a backup file
-./scripts/backup_db.sh restore --file backups/daily/esg_news_YYYYMMDD_HHMMSS.sql.gz
-
-# Manually rotate old backups
-./scripts/backup_db.sh rotate
-```
-
-### Retention Policy
-
-| Type | Retention | Created |
-|------|-----------|---------|
-| Daily | 7 days | Every backup |
-| Weekly | 4 weeks | Sundays |
-| Monthly | 3 months | 1st of month |
-
-After 3 months: ~14 backups, ~350MB disk space.
-
-### Automated Backups
-
-```bash
-# Enable daily backups at 2am
+# Set up daily backups
 ./scripts/setup_cron.sh install-backup
-
-# Check backup cron status
-./scripts/setup_cron.sh status
-
-# Remove backup cron job
-./scripts/setup_cron.sh remove-backup
 ```
 
-### Restore Process
+### Key Environment Variables
 
-The restore command includes safety features:
-1. Creates a pre-restore backup automatically
-2. Requires explicit "yes" confirmation
-3. Recreates the database with pgvector extension
-4. Verifies record counts after restore
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5434/esg_news` |
+| `NEWSDATA_API_KEY` | NewsData.io API key | Required (for NewsData) |
+| `ANTHROPIC_API_KEY` | Claude API key | Required (for labeling) |
+| `OPENAI_API_KEY` | OpenAI API key | Required (for embeddings) |
+| `FP_CLASSIFIER_ENABLED` | Enable FP pre-filter | `false` |
+
+📖 See [docs/DATABASE.md](docs/DATABASE.md) for full schema, queries, backup procedures, and all environment variables.
 
 ## ESG Category Structure
 
