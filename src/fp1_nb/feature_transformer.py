@@ -52,6 +52,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'sentence_transformer',
         'sentence_transformer_ner',  # Sentence embeddings + NER entity type features
         'sentence_transformer_ner_brands',  # Sentence + NER + brand indicator/summary features
+        'doc2vec_ner_brands',  # Doc2Vec + NER + brand indicator features
         'sentence_transformer_ner_vocab',  # Sentence + NER + domain vocabulary features
         'sentence_transformer_ner_proximity',  # Sentence + NER + proximity features (corporate/outdoor vocab)
         'sentence_transformer_ner_fp_indicators',  # Sentence + NER + FP indicator features (stock tickers, company suffixes, etc.)
@@ -1917,6 +1918,23 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._brand_ner_scaler = StandardScaler()
             self._brand_ner_scaler.fit(brand_ner_features)
 
+        elif self.method == 'doc2vec_ner_brands':
+            # Doc2Vec embeddings + NER + brand features
+            # Brand scalers are fitted at start of fit() due to endswith('_brands') check
+            self._fit_doc2vec(texts)
+            # Fit scaler for doc2vec embeddings
+            doc2vec_features = self._transform_doc2vec(texts)
+            self._doc2vec_scaler = StandardScaler()
+            self._doc2vec_scaler.fit(doc2vec_features)
+            # Fit scaler on NER features
+            ner_features = self._compute_ner_features(texts)
+            self._ner_scaler = StandardScaler()
+            self._ner_scaler.fit(ner_features)
+            # Fit scaler on brand-specific NER features
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            self._brand_ner_scaler = StandardScaler()
+            self._brand_ner_scaler.fit(brand_ner_features)
+
         elif self.method == 'sentence_transformer_ner_vocab':
             # Sentence embeddings + NER + domain vocabulary features
             self._fit_sentence_transformer()
@@ -2245,6 +2263,18 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             brand_ner_features = self._compute_brand_specific_ner_features(texts)
             brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled])
+            return _stack_optional_features(features, is_sparse=False)
+
+        elif self.method == 'doc2vec_ner_brands':
+            # Doc2Vec embeddings (vector_size-dim) + scaled NER features (6-dim) + brand-specific NER (8-dim) + brand features (50-dim)
+            # Brand features are added by _stack_optional_features since include_brand_* flags are True
+            doc2vec_features = self._transform_doc2vec(texts)
+            doc2vec_scaled = self._doc2vec_scaler.transform(doc2vec_features)
+            ner_features = self._compute_ner_features(texts)
+            ner_scaled = self._ner_scaler.transform(ner_features)
+            brand_ner_features = self._compute_brand_specific_ner_features(texts)
+            brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
+            features = np.hstack([doc2vec_scaled, ner_scaled, brand_ner_scaled])
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_vocab':
