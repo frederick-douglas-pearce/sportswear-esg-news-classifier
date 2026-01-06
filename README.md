@@ -102,7 +102,7 @@ flowchart TB
 
     subgraph prefilter["Phase 2: ML Pre-filters"]
         fp_api["FP Classifier API<br/><i>Cloud Run / Local</i>"]
-        ep_api["EP Classifier API<br/><i>Cloud Run / Local</i>"]
+        ep_api["EP Classifier API<br/><i>Local only (pending deploy)</i>"]
     end
 
     subgraph labeling["Phase 3: LLM Labeling"]
@@ -120,13 +120,20 @@ flowchart TB
     subgraph deployment["Phase 5: Deployment"]
         registry["Model Registry<br/><i>registry.json + MLflow</i>"]
         docker["Docker Build<br/><i>Auto-detect dependencies</i>"]
-        cloudrun["Google Cloud Run<br/><i>FP + EP APIs</i>"]
+        cloudrun["Google Cloud Run<br/><i>FP API (EP pending)</i>"]
     end
 
     subgraph monitoring["Phase 6: MLOps Monitoring"]
         pred_logs["Prediction Logging<br/><i>Database + files</i>"]
         drift["Drift Monitor<br/><i>Evidently AI</i>"]
         alerts["Webhook Alerts<br/><i>Slack/Discord</i>"]
+    end
+
+    subgraph website["Phase 7: Website Integration"]
+        feed_export["Feed Export<br/><i>export_website_feed.py</i>"]
+        json_feed["JSON Feed<br/><i>_data/esg_news.json</i>"]
+        atom_feed["Atom Feed<br/><i>assets/feeds/esg_news.atom</i>"]
+        jekyll["Jekyll Site<br/><i>GitHub Pages</i>"]
     end
 
     %% Data Collection Flow
@@ -168,6 +175,16 @@ flowchart TB
     predictions --> drift
     drift -->|"drift detected"| alerts
     drift -->|"retrain signal"| train
+
+    %% Website Flow
+    labels --> feed_export
+    feed_export --> json_feed
+    feed_export --> atom_feed
+    json_feed --> jekyll
+    atom_feed --> jekyll
+
+    %% Styling for pending deployment
+    style ep_api stroke-dasharray: 5 5
 ```
 
 ## Project Roadmap
@@ -193,9 +210,9 @@ flowchart TB
 - [x] Export labeled data for training (JSONL format for 3 classifier types)
 - [x] False positive brand detection and cleanup tools
 - [x] False Positive Classifier - 3-notebook pipeline complete
-  - fp1: EDA + sentence-transformer/NER feature engineering
+  - fp1: EDA + TF-IDF+LSA/NER/Brand/Proximity feature engineering selection w/ hyperparameter tuning
   - fp2: Model selection + hyperparameter tuning (3-fold CV)
-  - fp3: Test evaluation + threshold optimization + deployment export
+  - fp3: Test evaluation + threshold optimization + feature importance + deployment export
   - Random Forest achieves Test F2: 0.974, Recall: 98.8%
   - Supporting modules in `src/fp1_nb/`, `src/fp2_nb/`, `src/fp3_nb/`
 - [x] ESG Pre-filter Classifier - 3-notebook pipeline complete
@@ -208,7 +225,7 @@ flowchart TB
 - [ ] Advanced: Fine-tuned DistilBERT/RoBERTa (future)
 
 ### Phase 4: Evaluation & Explainability ✅
-- [x] Per-classifier Precision, Recall, F1, F2 scores
+- [x] Per-classifier Precision, Recall, PR-AUC, F2 scores
 - [x] Threshold optimization for target recall (99% FP, 99% EP)
 - [x] SHAP feature group importance analysis
 - [x] LIME local explanations for individual predictions
