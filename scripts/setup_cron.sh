@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COLLECT_SCRIPT="$SCRIPT_DIR/cron_collect.sh"
 SCRAPE_SCRIPT="$SCRIPT_DIR/cron_scrape.sh"
 MONITOR_SCRIPT="$SCRIPT_DIR/cron_monitor.sh"
+BACKUP_SCRIPT="$SCRIPT_DIR/backup_db.sh"
 
 # Collection: runs at midnight, 6am, noon, 6pm (4x daily)
 COLLECT_SCHEDULE="0 0,6,12,18 * * *"
@@ -27,6 +28,11 @@ SCRAPE_COMMENT="# ESG News GDELT - collect from GDELT + scrape (4x daily)"
 MONITOR_SCHEDULE="0 6 * * *"
 MONITOR_ENTRY="$MONITOR_SCHEDULE $MONITOR_SCRIPT"
 MONITOR_COMMENT="# ESG Classifier Monitoring - drift detection (daily)"
+
+# Database backup: runs daily at 2am (before monitoring)
+BACKUP_SCHEDULE="0 2 * * *"
+BACKUP_ENTRY="$BACKUP_SCHEDULE $BACKUP_SCRIPT backup"
+BACKUP_COMMENT="# ESG Database Backup - daily with rotation"
 
 install_collect() {
     if crontab -l 2>/dev/null | grep -q "$COLLECT_SCRIPT"; then
@@ -82,6 +88,24 @@ remove_monitor() {
     fi
 }
 
+install_backup() {
+    if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT"; then
+        echo "Backup job already installed."
+    else
+        (crontab -l 2>/dev/null || true; echo "$BACKUP_COMMENT"; echo "$BACKUP_ENTRY") | crontab -
+        echo "✓ Backup job installed (daily at 2am)"
+    fi
+}
+
+remove_backup() {
+    if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT"; then
+        crontab -l | grep -v "$BACKUP_SCRIPT" | grep -v "ESG Database Backup" | crontab -
+        echo "✓ Backup job removed."
+    else
+        echo "No backup job found."
+    fi
+}
+
 case "$1" in
     install)
         install_collect
@@ -100,10 +124,14 @@ case "$1" in
     install-monitor)
         install_monitor
         ;;
+    install-backup)
+        install_backup
+        ;;
     remove)
         remove_collect
         remove_scrape
         remove_monitor
+        remove_backup
         ;;
     remove-collect)
         remove_collect
@@ -113,6 +141,9 @@ case "$1" in
         ;;
     remove-monitor)
         remove_monitor
+        ;;
+    remove-backup)
+        remove_backup
         ;;
     status)
         echo "ESG News Cron Jobs Status"
@@ -133,9 +164,14 @@ case "$1" in
         else
             echo "Monitoring: NOT INSTALLED"
         fi
+        if crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT"; then
+            echo "Backup:     ACTIVE (daily at 2am)"
+        else
+            echo "Backup:     NOT INSTALLED"
+        fi
         echo ""
         echo "Current crontab:"
-        crontab -l 2>/dev/null | grep -E "(ESG|cron_)" || echo "(no ESG jobs)"
+        crontab -l 2>/dev/null | grep -E "(ESG|cron_|backup_)" || echo "(no ESG jobs)"
         ;;
     *)
         echo "ESG News Collector - Cron Setup"
@@ -149,13 +185,16 @@ case "$1" in
         echo "  install-collect  - Add NewsData collection job"
         echo "  install-scrape   - Add GDELT collection job"
         echo "  install-monitor  - Add monitoring job"
+        echo "  install-backup   - Add database backup job"
         echo "  remove-collect   - Remove collection job"
         echo "  remove-scrape    - Remove scrape job"
         echo "  remove-monitor   - Remove monitoring job"
+        echo "  remove-backup    - Remove backup job"
         echo ""
         echo "Schedule:"
         echo "  NewsData (API + scrape):   midnight, 6am, noon, 6pm"
         echo "  GDELT (free API + scrape): 3am, 9am, 3pm, 9pm"
+        echo "  Backup (daily rotation):   2am"
         echo "  Monitoring (drift check):  6am UTC daily"
         exit 1
         ;;

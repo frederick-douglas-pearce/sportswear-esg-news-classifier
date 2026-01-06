@@ -58,8 +58,16 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requi
 ./scripts/setup_cron.sh remove             # Remove both cron jobs
 ./scripts/setup_cron.sh install-scrape     # Add GDELT collection job
 ./scripts/setup_cron.sh install-monitor    # Add drift monitoring job (daily)
+./scripts/setup_cron.sh install-backup     # Add database backup job (daily at 2am)
 tail -f logs/collection_$(date +%Y%m%d).log  # View NewsData logs
 tail -f logs/gdelt_$(date +%Y%m%d).log       # View GDELT logs
+
+# Database Backup
+./scripts/backup_db.sh backup              # Create a new backup
+./scripts/backup_db.sh list                # List available backups
+./scripts/backup_db.sh status              # Show backup status and disk usage
+./scripts/backup_db.sh restore --file backups/daily/esg_news_YYYYMMDD_HHMMSS.sql.gz  # Restore from backup
+./scripts/backup_db.sh rotate              # Clean up old backups (runs automatically after backup)
 
 # MLOps - Drift Monitoring (use --from-db for production predictions stored in database)
 uv run python scripts/monitor_drift.py --classifier fp --from-db              # Production drift check (7 days)
