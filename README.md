@@ -573,15 +573,15 @@ GitHub Actions (CI/CD)
 For detailed CI/CD setup instructions, see [`.github/DEPLOYMENT_SETUP.md`](.github/DEPLOYMENT_SETUP.md), which covers:
 - Required GitHub Secrets (`GCP_PROJECT_ID`, `GCP_SA_KEY`)
 - Service account creation with Cloud Run Admin role
-- Deployment triggers and manual workflow dispatch
+- Manual workflow dispatch and `retrain.py` integration
 - Verifying deployment with `gcloud` CLI
 
 **GitHub Actions Workflow:**
 
-The deployment is automated via `.github/workflows/deploy.yml`:
-- Triggers on push to main when model files change
-- Builds Docker image with classifier dependencies
-- Deploys to Cloud Run with appropriate memory/timeout settings
+Deployment is managed via `.github/workflows/deploy.yml`:
+- **Manual trigger**: Use "Run workflow" in GitHub Actions UI to deploy `fp`, `ep`, or `all`
+- **Automated via retrain.py**: After major/minor version promotion, `retrain.py --auto-promote` triggers deployment
+- **Patch versions skipped**: Only major/minor versions trigger redeployment (patches update model files only)
 
 ### Reviewer Checklist
 

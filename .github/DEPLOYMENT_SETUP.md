@@ -68,17 +68,22 @@ Examples: us-central1, us-east1, europe-west1
 
 ## Deployment Triggers
 
-The workflow automatically deploys when:
+The workflow deploys via manual trigger or automation:
 
-1. **Push to main branch** - Deploys classifiers if relevant files changed:
-   - FP: Changes in `src/fp1_nb/`, `models/fp_*`
-   - EP: Changes in `src/ep1_nb/`, `models/ep_*`
-   - Both: Changes in `Dockerfile`, `scripts/predict.py`, `src/deployment/`
-
-2. **Manual trigger** - Use "Run workflow" button in Actions tab to deploy:
+1. **Manual trigger** - Use "Run workflow" button in Actions tab:
    - `fp` - Deploy only FP classifier
    - `ep` - Deploy only EP classifier
    - `all` - Deploy both classifiers
+
+2. **Automated via retrain.py** - After major/minor version promotion:
+   ```bash
+   # Retrain and auto-promote if metrics improve (triggers deployment)
+   uv run python scripts/retrain.py --classifier fp --auto-promote
+   ```
+   The script calls `gh workflow run deploy.yml` for major/minor versions.
+
+3. **Patch versions skipped** - Only major/minor versions trigger redeployment.
+   Patch versions update model files but don't require container rebuilds.
 
 ## Deployed Services
 
