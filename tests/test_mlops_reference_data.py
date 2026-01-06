@@ -92,7 +92,7 @@ class TestLoadPredictionsFromDatabase:
             (datetime.now(timezone.utc), 0.25, 0, 0.5, "low", "none", "v1.0.0", 300),
         ]
         mock_columns = ["timestamp", "probability", "prediction", "threshold",
-                        "risk_level", "action_taken", "model_version", "text_length"]
+                        "confidence_level", "action_taken", "model_version", "text_length"]
 
         mock_result = MagicMock()
         mock_result.fetchall.return_value = mock_rows
@@ -121,7 +121,7 @@ class TestLoadPredictionsFromDatabase:
             (datetime.now(timezone.utc), 0.8, 1, 0.5, "medium", "review", "v2.0.0", 450),
         ]
         mock_columns = ["timestamp", "probability", "prediction", "threshold",
-                        "risk_level", "action_taken", "model_version", "text_length"]
+                        "confidence_level", "action_taken", "model_version", "text_length"]
 
         mock_result = MagicMock()
         mock_result.fetchall.return_value = mock_rows

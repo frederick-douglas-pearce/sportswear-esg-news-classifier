@@ -207,8 +207,8 @@ class FPPredictionResponse(BaseModel):
     probability: float = Field(
         ..., description="Probability of being sportswear-related (0.0 to 1.0)"
     )
-    risk_level: str = Field(
-        ..., description="Risk level: 'low', 'medium', or 'high'"
+    confidence_level: str = Field(
+        ..., description="Confidence level: 'low', 'medium', or 'high'"
     )
     threshold: float = Field(..., description="Classification threshold used")
 
@@ -299,7 +299,7 @@ async def predict(
     """Classify an article.
 
     The response format depends on the classifier type:
-    - FP: is_sportswear, probability, risk_level, threshold
+    - FP: is_sportswear, probability, confidence_level, threshold
     - EP: has_esg, probability, threshold
 
     Args:

@@ -33,9 +33,9 @@ from .config import (
     MODEL_NAME,
     PIPELINE_PATH,
     CONFIG_PATH,
-    RISK_LEVELS,
+    CONFIDENCE_LEVELS,
     TARGET_RECALL,
-    get_risk_level,
+    get_confidence_level,
     load_config,
     save_config,
 )
@@ -114,9 +114,9 @@ __all__ = [
     "MODEL_NAME",
     "PIPELINE_PATH",
     "CONFIG_PATH",
-    "RISK_LEVELS",
+    "CONFIDENCE_LEVELS",
     "TARGET_RECALL",
-    "get_risk_level",
+    "get_confidence_level",
     "load_config",
     "save_config",
     # Data utilities

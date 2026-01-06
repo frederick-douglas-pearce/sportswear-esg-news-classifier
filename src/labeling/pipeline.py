@@ -281,7 +281,7 @@ class LabelingPipeline:
                     prediction=result.is_sportswear,
                     threshold_used=threshold,
                     action_taken=action,
-                    risk_level=result.risk_level,
+                    confidence_level=result.confidence_level,
                     skip_reason=skip_reason,
                 )
 
@@ -359,7 +359,7 @@ class LabelingPipeline:
                 probability=prediction.probability,
                 prediction=prediction.prediction,
                 threshold_used=prediction.threshold_used,
-                risk_level=prediction.risk_level,
+                confidence_level=prediction.confidence_level,
                 esg_categories=prediction.esg_categories,
                 action_taken=prediction.action_taken,
                 skip_reason=prediction.skip_reason,

@@ -266,7 +266,8 @@ class ClassifierPrediction(Base):
     threshold_used = Column(Float, nullable=False)  # Threshold used for this prediction
 
     # FP-specific fields (nullable for other classifiers)
-    risk_level = Column(String(20))  # 'low', 'medium', 'high' for FP classifier
+    # Note: DB column is 'risk_level' for backward compatibility, attribute is 'confidence_level'
+    confidence_level = Column("risk_level", String(20))  # 'low', 'medium', 'high' for FP classifier
 
     # EP/ESG-specific fields (nullable for FP)
     esg_categories = Column(JSON)  # For ESG multi-label predictions

@@ -242,7 +242,7 @@ flowchart TB
 - [x] Model registry with version tracking (`models/registry.json`)
 - [x] Prediction logging to database for drift monitoring
 - [x] FP classifier deployed and integrated into labeling pipeline
-- [ ] EP classifier deployment and labeling pipeline integration
+- [ ] EP classifier deployment and labeling pipeline integration (future)
 
 ### Phase 6: MLOps Monitoring ✅
 - [x] MLflow experiment tracking (hyperparameters, metrics, artifacts)
@@ -389,8 +389,6 @@ This section provides a step-by-step guide for ML Zoomcamp reviewers to evaluate
 4. Containerized deployment (Docker)
 5. Cloud deployment (Google Cloud Run)
 
-**Time estimate:** ~30 minutes for full evaluation
-
 ### Step 1: Run the Notebooks
 
 The FP classifier is developed through a 3-notebook pipeline. Training data is included in the repository.
@@ -401,7 +399,7 @@ git clone https://github.com/frederick-douglas-pearce/sportswear-esg-news-classi
 cd sportswear-esg-news-classifier
 uv sync
 
-# Launch Jupyter
+# Launch Jupyter, paste link in browser
 uv run jupyter lab notebooks/
 ```
 

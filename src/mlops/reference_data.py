@@ -63,7 +63,7 @@ def load_predictions_from_database(
                 cp.probability,
                 cp.prediction,
                 cp.threshold_used as threshold,
-                cp.risk_level,
+                cp.risk_level as confidence_level,
                 cp.action_taken,
                 cp.model_version,
                 LENGTH(a.title || ' ' || COALESCE(a.full_content, '')) as text_length

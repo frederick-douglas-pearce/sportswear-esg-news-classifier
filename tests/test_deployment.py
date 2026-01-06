@@ -14,7 +14,7 @@ from src.deployment.config import (
     CLASSIFIER_CONFIG,
     get_classifier_config,
     get_classifier_paths,
-    get_risk_level,
+    get_confidence_level,
     load_config,
     save_config,
 )
@@ -95,35 +95,35 @@ class TestGetClassifierPaths:
 
 
 class TestGetRiskLevel:
-    """Tests for get_risk_level function."""
+    """Tests for get_confidence_level function."""
 
     def test_low_risk(self):
         """Test low risk level (likely false positive)."""
-        assert get_risk_level(0.0) == "low"
-        assert get_risk_level(0.1) == "low"
-        assert get_risk_level(0.29) == "low"
+        assert get_confidence_level(0.0) == "low"
+        assert get_confidence_level(0.1) == "low"
+        assert get_confidence_level(0.29) == "low"
 
     def test_medium_risk(self):
         """Test medium risk level (uncertain)."""
-        assert get_risk_level(0.3) == "medium"
-        assert get_risk_level(0.5) == "medium"
-        assert get_risk_level(0.59) == "medium"
+        assert get_confidence_level(0.3) == "medium"
+        assert get_confidence_level(0.5) == "medium"
+        assert get_confidence_level(0.59) == "medium"
 
     def test_high_risk(self):
         """Test high risk level (likely sportswear)."""
-        assert get_risk_level(0.6) == "high"
-        assert get_risk_level(0.8) == "high"
-        assert get_risk_level(1.0) == "high"
+        assert get_confidence_level(0.6) == "high"
+        assert get_confidence_level(0.8) == "high"
+        assert get_confidence_level(1.0) == "high"
 
     def test_invalid_probability_below_zero(self):
         """Test that negative probability raises error."""
         with pytest.raises(ValueError, match="Probability must be between 0 and 1"):
-            get_risk_level(-0.1)
+            get_confidence_level(-0.1)
 
     def test_invalid_probability_above_one(self):
         """Test that probability > 1 raises error."""
         with pytest.raises(ValueError, match="Probability must be between 0 and 1"):
-            get_risk_level(1.5)
+            get_confidence_level(1.5)
 
 
 class TestLoadConfig:
@@ -660,14 +660,14 @@ class TestFPClassifier:
 
         assert "is_sportswear" in result
         assert "probability" in result
-        assert "risk_level" in result
+        assert "confidence_level" in result
         assert "threshold" in result
 
-    def test_fp_predict_risk_level(self, mock_fp_classifier):
+    def test_fp_predict_confidence_level(self, mock_fp_classifier):
         """Test FP prediction includes correct risk level."""
         # Mock returns 0.7 probability
         result = mock_fp_classifier.predict("Test")
-        assert result["risk_level"] == "high"
+        assert result["confidence_level"] == "high"
 
     def test_fp_predict_from_fields(self, mock_fp_classifier):
         """Test prediction from article fields."""
@@ -733,8 +733,8 @@ class TestEPClassifier:
         assert "has_esg" in result
         assert "probability" in result
         assert "threshold" in result
-        # EP classifier should NOT have risk_level
-        assert "risk_level" not in result
+        # EP classifier should NOT have confidence_level
+        assert "confidence_level" not in result
 
     def test_ep_predict_from_fields(self, mock_ep_classifier):
         """Test prediction from article fields."""

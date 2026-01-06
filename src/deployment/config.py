@@ -80,10 +80,10 @@ MODEL_NAME = CLASSIFIER_CONFIG[ClassifierType.FP]["model_name"]
 PIPELINE_PATH = CLASSIFIER_CONFIG[ClassifierType.FP]["pipeline_path"]
 CONFIG_PATH = CLASSIFIER_CONFIG[ClassifierType.FP]["config_path"]
 
-# Risk levels for FP classifier (probability-based confidence levels)
-# Higher probability = higher confidence it's a true positive (sportswear)
-# Lower probability = higher risk of being a false positive
-RISK_LEVELS: Dict[str, Tuple[float, float]] = {
+# Confidence levels for FP classifier (probability-based)
+# Higher probability = higher confidence it's a true sportswear article
+# Lower probability = lower confidence (likely false positive)
+CONFIDENCE_LEVELS: Dict[str, Tuple[float, float]] = {
     "low": (0.0, 0.3),  # Likely false positive
     "medium": (0.3, 0.6),  # Uncertain
     "high": (0.6, 1.0),  # Likely true sportswear article
@@ -113,19 +113,20 @@ def load_config(config_path: str) -> Dict[str, Any]:
     return config
 
 
-def get_risk_level(probability: float) -> str:
-    """Map probability to risk level category (FP classifier specific).
+def get_confidence_level(probability: float) -> str:
+    """Map probability to confidence level category (FP classifier specific).
 
-    The risk level indicates confidence that the article is about sportswear:
+    The confidence level indicates how confident the classifier is that the
+    article is about a sportswear brand:
     - "high": High confidence it's a true sportswear article (prob >= 0.6)
     - "medium": Uncertain, may need manual review (0.3 <= prob < 0.6)
-    - "low": Likely a false positive (prob < 0.3)
+    - "low": Low confidence, likely a false positive (prob < 0.3)
 
     Args:
         probability: Probability from classifier (0.0 to 1.0)
 
     Returns:
-        Risk level string: "low", "medium", or "high"
+        Confidence level string: "low", "medium", or "high"
 
     Raises:
         ValueError: If probability is not between 0 and 1
@@ -133,7 +134,7 @@ def get_risk_level(probability: float) -> str:
     if not 0.0 <= probability <= 1.0:
         raise ValueError(f"Probability must be between 0 and 1, got {probability}")
 
-    for level, (low, high) in RISK_LEVELS.items():
+    for level, (low, high) in CONFIDENCE_LEVELS.items():
         if low <= probability < high:
             return level
 

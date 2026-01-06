@@ -6,7 +6,7 @@ from ..base import BaseClassifier
 from ..config import (
     ClassifierType,
     CLASSIFIER_CONFIG,
-    get_risk_level,
+    get_confidence_level,
 )
 from .preprocessing import prepare_input
 
@@ -64,12 +64,12 @@ class FPClassifier(BaseClassifier):
             Dictionary with FP-specific fields:
                 - is_sportswear: Whether article is about sportswear
                 - probability: Model confidence
-                - risk_level: "low", "medium", or "high"
+                - confidence_level: "low", "medium", or "high"
                 - threshold: Classification threshold used
         """
         return {
             "is_sportswear": bool(is_positive),
             "probability": float(probability),
-            "risk_level": get_risk_level(probability),
+            "confidence_level": get_confidence_level(probability),
             "threshold": self.threshold,
         }

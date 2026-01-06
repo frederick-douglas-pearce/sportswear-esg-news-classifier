@@ -20,7 +20,7 @@ class FPPredictionResult:
 
     is_sportswear: bool
     probability: float
-    risk_level: str
+    confidence_level: str
     threshold: float
 
 
@@ -40,7 +40,7 @@ class ClassifierPredictionRecord:
     action_taken: str  # 'skipped_llm', 'continued_to_llm', 'failed'
 
     # FP-specific
-    risk_level: str | None = None
+    confidence_level: str | None = None
 
     # ESG-specific (future)
     esg_categories: dict[str, Any] | None = None
@@ -184,7 +184,7 @@ class ClassifierClient:
         return FPPredictionResult(
             is_sportswear=data["is_sportswear"],
             probability=data["probability"],
-            risk_level=data["risk_level"],
+            confidence_level=data["confidence_level"],
             threshold=data["threshold"],
         )
 
@@ -230,7 +230,7 @@ class ClassifierClient:
             FPPredictionResult(
                 is_sportswear=p["is_sportswear"],
                 probability=p["probability"],
-                risk_level=p["risk_level"],
+                confidence_level=p["confidence_level"],
                 threshold=p["threshold"],
             )
             for p in data["predictions"]

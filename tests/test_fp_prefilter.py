@@ -114,7 +114,7 @@ class TestClassifierClient:
             mock_response.json.return_value = {
                 "is_sportswear": True,
                 "probability": 0.85,
-                "risk_level": "low",
+                "confidence_level": "low",
                 "threshold": 0.3,
             }
             mock_http_client.post.return_value = mock_response
@@ -131,7 +131,7 @@ class TestClassifierClient:
             assert isinstance(result, FPPredictionResult)
             assert result.is_sportswear is True
             assert result.probability == 0.85
-            assert result.risk_level == "low"
+            assert result.confidence_level == "low"
             assert result.threshold == 0.3
 
     def test_predict_fp_batch_success(self):
@@ -143,8 +143,8 @@ class TestClassifierClient:
             mock_response = MagicMock()
             mock_response.json.return_value = {
                 "predictions": [
-                    {"is_sportswear": True, "probability": 0.9, "risk_level": "low", "threshold": 0.3},
-                    {"is_sportswear": False, "probability": 0.1, "risk_level": "high", "threshold": 0.3},
+                    {"is_sportswear": True, "probability": 0.9, "confidence_level": "low", "threshold": 0.3},
+                    {"is_sportswear": False, "probability": 0.1, "confidence_level": "high", "threshold": 0.3},
                 ]
             }
             mock_http_client.post.return_value = mock_response
@@ -173,14 +173,14 @@ class TestClassifierPredictionRecord:
             prediction=True,
             threshold_used=0.3,
             action_taken="continued_to_llm",
-            risk_level="low",
+            confidence_level="low",
         )
 
         assert prediction.classifier_type == "fp"
         assert prediction.probability == 0.85
         assert prediction.prediction is True
         assert prediction.action_taken == "continued_to_llm"
-        assert prediction.risk_level == "low"
+        assert prediction.confidence_level == "low"
         assert prediction.skip_reason is None
         assert prediction.error_message is None
 
@@ -193,7 +193,7 @@ class TestClassifierPredictionRecord:
             prediction=False,
             threshold_used=0.3,
             action_taken="skipped_llm",
-            risk_level="high",
+            confidence_level="high",
             skip_reason="High-confidence false positive: probability 0.15 < threshold 0.3",
         )
 
@@ -307,7 +307,7 @@ class TestFPPrefilter:
                     FPPredictionResult(
                         is_sportswear=False,
                         probability=0.05,  # Very low - definitely not sportswear
-                        risk_level="high",
+                        confidence_level="high",
                         threshold=0.3,
                     )
                 ]
@@ -341,7 +341,7 @@ class TestFPPrefilter:
                     FPPredictionResult(
                         is_sportswear=True,
                         probability=0.95,  # High - definitely sportswear
-                        risk_level="low",
+                        confidence_level="low",
                         threshold=0.3,
                     )
                 ]
@@ -409,7 +409,7 @@ class TestFPPrefilter:
                     FPPredictionResult(
                         is_sportswear=True,
                         probability=0.8,
-                        risk_level="low",
+                        confidence_level="low",
                         threshold=0.3,
                     )
                 ]
@@ -452,7 +452,7 @@ class TestFPPrefilter:
                     FPPredictionResult(
                         is_sportswear=True,
                         probability=0.8,
-                        risk_level="low",
+                        confidence_level="low",
                         threshold=0.3,
                     )
                 ]
@@ -489,7 +489,7 @@ class TestFPPrefilter:
                     FPPredictionResult(
                         is_sportswear=True,
                         probability=0.8,
-                        risk_level="low",
+                        confidence_level="low",
                         threshold=0.3,
                     )
                 ]
