@@ -462,7 +462,7 @@ docker build --build-arg CLASSIFIER_TYPE=ep -t ep-classifier-api .
 docker run -p 8001:8001 -e CLASSIFIER_TYPE=ep -e PORT=8001 ep-classifier-api
 
 # Or use docker-compose for both
-docker compose up fp-classifier ep-classifier
+docker compose up fp-classifier-api ep-classifier-api
 ```
 
 ### API Endpoints

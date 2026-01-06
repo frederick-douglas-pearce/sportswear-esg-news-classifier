@@ -389,6 +389,8 @@ This section provides a step-by-step guide for ML Zoomcamp reviewers to evaluate
 4. Containerized deployment (Docker)
 5. Cloud deployment (Google Cloud Run)
 
+> **Note:** This project uses text-based feature engineering techniques (TF-IDF, sentence embeddings, named entity recognition) that were not covered in the ML Zoomcamp curriculum. For a high-level explanation of these NLP methods, see [Text Feature Extraction Methods](#text-feature-extraction-methods).
+
 ### Step 1: Run the Notebooks
 
 The FP classifier is developed through a 3-notebook pipeline. Training data is included in the repository.
@@ -498,8 +500,8 @@ Deploy the classifier using Docker Compose:
 
 ```bash
 # Build and start the FP classifier container
-docker compose build fp-classifier
-docker compose up -d fp-classifier
+docker compose build fp-classifier-api
+docker compose up -d fp-classifier-api
 
 # Check container status
 docker ps
@@ -508,10 +510,10 @@ docker ps
 curl http://localhost:8000/health
 
 # View logs
-docker logs esg-news-fp-classifier
+docker logs fp-classifier-api
 
 # Stop the container
-docker compose down fp-classifier
+docker compose down fp-classifier-api
 ```
 
 **Docker implementation details:**
