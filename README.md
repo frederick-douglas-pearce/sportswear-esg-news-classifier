@@ -295,6 +295,11 @@ flowchart TB
   - [Detailed Queries](#detailed-queries)
   - [Labeling Queries](#labeling-queries)
   - [Interactive Database Access](#interactive-database-access)
+- [Database Backup](#database-backup)
+  - [Backup Commands](#backup-commands)
+  - [Retention Policy](#retention-policy)
+  - [Automated Backups](#automated-backups)
+  - [Restore Process](#restore-process)
 - [ESG Category Structure](#esg-category-structure)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -2148,6 +2153,60 @@ LIMIT 10;"
 # Open psql shell for interactive queries
 docker exec -it esg_news_db psql -U postgres -d esg_news
 ```
+
+## Database Backup
+
+The project includes automated backup infrastructure to protect collected and labeled data.
+
+### Backup Commands
+
+```bash
+# Create a new backup (compressed, ~25MB)
+./scripts/backup_db.sh backup
+
+# List all available backups
+./scripts/backup_db.sh list
+
+# Show backup status and disk usage
+./scripts/backup_db.sh status
+
+# Restore from a backup file
+./scripts/backup_db.sh restore --file backups/daily/esg_news_YYYYMMDD_HHMMSS.sql.gz
+
+# Manually rotate old backups
+./scripts/backup_db.sh rotate
+```
+
+### Retention Policy
+
+| Type | Retention | Created |
+|------|-----------|---------|
+| Daily | 7 days | Every backup |
+| Weekly | 4 weeks | Sundays |
+| Monthly | 3 months | 1st of month |
+
+After 3 months: ~14 backups, ~350MB disk space.
+
+### Automated Backups
+
+```bash
+# Enable daily backups at 2am
+./scripts/setup_cron.sh install-backup
+
+# Check backup cron status
+./scripts/setup_cron.sh status
+
+# Remove backup cron job
+./scripts/setup_cron.sh remove-backup
+```
+
+### Restore Process
+
+The restore command includes safety features:
+1. Creates a pre-restore backup automatically
+2. Requires explicit "yes" confirmation
+3. Recreates the database with pgvector extension
+4. Verifies record counts after restore
 
 ## ESG Category Structure
 
