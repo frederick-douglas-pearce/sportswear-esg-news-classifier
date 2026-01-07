@@ -543,7 +543,7 @@ GitHub Actions (CI/CD)
 └─────────────────────────────┘
 ```
 
-**Live API:** The deployed API URL is available upon request (not committed to repo for security).
+**Live API:** The deployed API URL is available in the screenshots.
 
 **Deployment Screenshots:**
 
@@ -552,17 +552,22 @@ GitHub Actions (CI/CD)
 <details>
 <summary>Click to view Cloud Run deployment screenshots</summary>
 
-**Health Check Response:**
-
-![Health Check](images/gcr_health_check.png)
-
 **Swagger UI Documentation:**
 
-![API Docs](images/gcr_swagger_ui.png)
+![API Docs](images/fp_classifier_gcr_docs.png)
+
+**Health Response:**
+
+![Health](images/fp_classifier_gcr_health.png)
+
+
+**Model Info Response:**
+
+![Model Info](images/fp_classifier_gcr_model_info.png)
 
 **Example Prediction:**
 
-![Prediction](images/gcr_prediction_example.png)
+![Prediction](images/fp_classifier_gcr_predict.png)
 
 </details>
 
