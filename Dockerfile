@@ -91,11 +91,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder (includes all dependencies)
-COPY --from=builder /app/.venv /app/.venv
+# Use --chown to set ownership during copy (avoids slow chown -R)
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 
-# Copy model cache from builder (spacy models for FP)
+# Copy model cache from builder (spacy models, sentence-transformers for FP)
 # For EP classifier, this copies an empty directory (created in builder stage)
-COPY --from=builder /root/.cache /home/appuser/.cache
+COPY --from=builder --chown=appuser:appuser /root/.cache /home/appuser/.cache
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"
@@ -105,29 +106,26 @@ ENV HF_HOME=/home/appuser/.cache/huggingface
 ENV CLASSIFIER_TYPE=${CLASSIFIER_TYPE}
 
 # Copy unified prediction script
-COPY scripts/predict.py scripts/
+COPY --chown=appuser:appuser scripts/predict.py scripts/
 
 # Copy deployment module (shared by all classifiers)
-COPY src/deployment/ src/deployment/
-COPY src/__init__.py src/__init__.py
+COPY --chown=appuser:appuser src/deployment/ src/deployment/
+COPY --chown=appuser:appuser src/__init__.py src/__init__.py
 
 # Copy classifier-specific modules
 # FP needs fp1_nb for feature transformer
 # EP needs ep1_nb for feature transformer
-RUN mkdir -p src/fp1_nb src/ep1_nb src/data_collection
+RUN mkdir -p src/fp1_nb src/ep1_nb src/data_collection && chown -R appuser:appuser src/
 
-COPY src/fp1_nb/ src/fp1_nb/
-COPY src/ep1_nb/ src/ep1_nb/
-COPY src/data_collection/config.py src/data_collection/config.py
+COPY --chown=appuser:appuser src/fp1_nb/ src/fp1_nb/
+COPY --chown=appuser:appuser src/ep1_nb/ src/ep1_nb/
+COPY --chown=appuser:appuser src/data_collection/config.py src/data_collection/config.py
 # Create minimal __init__.py (avoids importing models which needs SQLAlchemy)
-RUN echo 'from .config import settings' > src/data_collection/__init__.py
+RUN echo 'from .config import settings' > src/data_collection/__init__.py && chown appuser:appuser src/data_collection/__init__.py
 
 # Copy model artifacts for the specified classifier
-COPY models/${CLASSIFIER_TYPE}_classifier_pipeline.joblib models/
-COPY models/${CLASSIFIER_TYPE}_classifier_config.json models/
-
-# Set ownership for non-root user
-RUN chown -R appuser:appuser /app /home/appuser
+COPY --chown=appuser:appuser models/${CLASSIFIER_TYPE}_classifier_pipeline.joblib models/
+COPY --chown=appuser:appuser models/${CLASSIFIER_TYPE}_classifier_config.json models/
 
 # Switch to non-root user
 USER appuser

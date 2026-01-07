@@ -374,6 +374,12 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         r'\bprice\s+target\b',
         r'\banalyst\s+(?:rating|recommendation)s?\b',
         r'\bGet\s+Free\s+Report\b',  # Common in financial article templates
+        # Stock trading article patterns (added based on FP analysis)
+        r'\bOTCMKTS\b',  # Over-the-counter stock ticker prefix
+        r'\bstock\s+crosses\b',  # "stock crosses above/below"
+        r'\btrading\s+(?:down|up|flat)\b',  # "trading down 3%"
+        r'\bWhat\'?s\s+Next\??\b',  # Common financial article headline suffix
+        r'\b(?:50|100|200)\s+day\s+moving\b',  # Specific moving averages
     ]
 
     # Institution patterns that indicate non-sportswear entities
@@ -421,6 +427,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'\bAum\s+Guitar\s+Prana\b', 'Prana'),
         # Decathlon Capital (investment firm, not retailer)
         (r'\bDecathlon\s+Capital\s+Partners?\b', 'Decathlon'),
+        # Computer chips (ASICs = Application-Specific Integrated Circuits)
+        (r'\b(?:AI|custom|hardware)\s+ASICs?\b', 'ASICS'),
+        (r'\bASICs?\s+(?:chip|processor|accelerator)\b', 'ASICS'),
     ]
 
     # Sponsored event patterns - indicate article IS about sportswear brand
