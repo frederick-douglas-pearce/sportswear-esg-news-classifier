@@ -588,18 +588,6 @@ Deployment is managed via `.github/workflows/deploy.yml`:
 - **Automated via retrain.py**: After major/minor version promotion, `retrain.py --auto-promote` triggers deployment
 - **Patch versions skipped**: Only major/minor versions trigger redeployment (patches update model files only)
 
-### Reviewer Checklist
-
-Use this checklist to verify all evaluation criteria:
-
-- [ ] **Notebooks**: fp1, fp2, fp3 notebooks run without errors
-- [ ] **Training data**: `data/fp_training_data.jsonl` loads correctly
-- [ ] **CLI training**: `scripts/train.py` completes successfully
-- [ ] **Local API**: FastAPI starts and responds to `/health`
-- [ ] **Predictions**: API returns correct predictions for test cases
-- [ ] **Docker**: Container builds and runs with `docker compose`
-- [ ] **Cloud Run**: Screenshots show deployed API (or request live URL)
-
 ## News Collection
 
 The pipeline collects ESG-related news articles from two sources:
