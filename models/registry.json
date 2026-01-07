@@ -1,6 +1,6 @@
 {
   "fp": {
-    "production": "v2.1.0",
+    "production": "v2.2.0",
     "versions": {
       "v1.0.0": {
         "created_at": "2024-12-23T00:00:00Z",
@@ -24,7 +24,7 @@
         "transformer_method": "tfidf_lsa_ner_proximity_brands",
         "threshold": 0.5356,
         "metrics": {
-          "cv_f2": 0.9850,
+          "cv_f2": 0.985,
           "cv_recall": 0.9948,
           "cv_precision": 0.9479,
           "test_f2": 0.9835,
@@ -40,7 +40,7 @@
         "transformer_method": "tfidf_lsa_ner_proximity_brands",
         "threshold": 0.4753,
         "metrics": {
-          "cv_f2": 0.9840,
+          "cv_f2": 0.984,
           "cv_recall": 0.9961,
           "cv_precision": 0.9386,
           "test_f2": 0.9804,
@@ -48,6 +48,22 @@
           "test_precision": 0.9453
         },
         "notes": "Added brand-specific NER features: person-name detection (Salomon, Jordan, Brooks), geographic detection (Patagonia, Columbia), lowercase detection (Vans)"
+      },
+      "v2.2.0": {
+        "created_at": "2026-01-07T08:07:40Z",
+        "trained_on": "data/fp_training_data.jsonl",
+        "model_name": "RF_tuned",
+        "transformer_method": "tfidf_lsa_ner_proximity_brands",
+        "threshold": 0.5114,
+        "metrics": {
+          "cv_f2": 0.9812,
+          "cv_recall": 0.9912,
+          "cv_precision": 0.9433,
+          "test_f2": 0.9843,
+          "test_recall": 0.9912,
+          "test_precision": 0.9574
+        },
+        "notes": "Added stock article FP indicators (OTCMKTS, trading patterns), ASICs chip disambiguation. Test precision +1.2% vs v2.1.0"
       }
     }
   },
