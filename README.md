@@ -312,15 +312,6 @@ The project follows a modular architecture:
 - [uv](https://docs.astral.sh/uv/) package manager
 - Docker and Docker Compose
 
-**API Keys by Feature:**
-
-| Feature | API Key | Where to Get |
-|---------|---------|--------------|
-| News Collection (NewsData) | `NEWSDATA_API_KEY` | [newsdata.io/register](https://newsdata.io/register) (free tier) |
-| News Collection (GDELT) | *None required* | Free, no registration |
-| Article Labeling | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) |
-| Embeddings | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-
 **For ML Zoomcamp Reviewers:**
 
 See the [**ML Zoomcamp Reviewer Guide**](#ml-zoomcamp-reviewer-guide) for step-by-step evaluation instructions covering:
@@ -336,6 +327,15 @@ uv run jupyter lab notebooks/
 ```
 
 Training data is included: `data/fp_training_data.jsonl` (no API keys needed)
+
+**API Keys by Feature:**
+
+| Feature | API Key | Where to Get |
+|---------|---------|--------------|
+| News Collection (NewsData) | `NEWSDATA_API_KEY` | [newsdata.io/register](https://newsdata.io/register) (free tier) |
+| News Collection (GDELT) | *None required* | Free, no registration |
+| Article Labeling | `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com/) |
+| Embeddings | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 
 **For Cloud Deployment (Optional):**
 
@@ -571,7 +571,7 @@ GitHub Actions (CI/CD)
 
 </details>
 
-> **Note:** If screenshots are not visible, the live API URL can be provided upon request for direct verification.
+> **Note:** Click arrow. If screenshots are not visible, check fp_classifier_gcr_*.png files in images folder.
 
 **Deployment Documentation:**
 
