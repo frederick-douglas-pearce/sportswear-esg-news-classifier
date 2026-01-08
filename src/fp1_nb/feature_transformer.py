@@ -278,10 +278,13 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'Salomon\s*&\s*Ludwin', 'Salomon'),  # Investment firm
         (r'Salomon\s+LLC', 'Salomon'),
         (r'Salomon\s+Capital', 'Salomon'),
-        # Lumber/forestry
+        # Lumber/forestry/investment
         (r'Timberland\s+Lumber', 'Timberland'),
         (r'Timberland\s+Company', 'Timberland'),  # Not the boot brand
         (r'Timberland\s+Corp', 'Timberland'),
+        (r'Timberlands?\s+(?:investment|assets?|ownership|portfolio)', 'Timberland'),  # Forestry investment
+        (r'(?:own|manage|acquire)\s+timberlands?', 'Timberland'),  # Forestry operations
+        (r'Weyerhaeuser.*[Tt]imberland', 'Timberland'),  # Weyerhaeuser forestry company
         # Mining/resources
         (r'Black\s+Diamond\s+Group', 'Black Diamond'),
         (r'Black\s+Diamond\s+Power', 'Black Diamond'),
@@ -311,15 +314,24 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         r'\bFord\s+Puma\b',
         r'\bPuma\s+(?:EV|Gen-E|ST|Titanium|Trend|hybrid)\b',
         r'\bPuma\s+(?:hatchback|crossover|SUV)\b',
+        # Other car context near Puma
+        r'\b(?:Leapmotor|Renault)\s+\d+.*\bPuma\b',  # e.g., "fight the Renault 4 and Ford Puma"
         # Ford Vans
         r'\bFord\s+(?:Transit|E-Transit)\s+(?:van|vans|Courier)\b',
         # Generic vehicle patterns for Vans
         r'\b(?:delivery|cargo|commercial|police|prison|container|mobile|forensic)\s+vans?\b',
         r'\bvans?\s+(?:and\s+)?(?:trucks?|lorr(?:y|ies))\b',
         r'\b(?:seized|stolen|intercept(?:ed)?)\s+vans?\b',
+        # Additional van types (from FP analysis)
+        r'\b(?:vanity|transit|camper|sanitation|health|medical|snack|flatbed|council)\s+vans?\b',
+        r'\bvans?\s+(?:were|was|being)\s+(?:stolen|broken|intercepted|used)\b',
+        r'\bRivian\s+(?:electric\s+)?(?:delivery\s+)?vans?\b',  # Rivian electric delivery vans
+        r'\belectric\s+(?:garbage|delivery)\s+(?:vans?|vehicles?)\b',
         # Puma helicopter (military)
         r'\bPuma\s+helicopter\b',
         r'\bSA\s*330\s*Puma\b',  # Puma helicopter model
+        # Best Vans articles (automotive reviews)
+        r'\bBest\s+(?:Vans|Minivans)\s+(?:for|of)\s+\d{4}\b',
     ]
 
     # Animal context keywords for Puma (the animal)
@@ -380,6 +392,17 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         r'\btrading\s+(?:down|up|flat)\b',  # "trading down 3%"
         r'\bWhat\'?s\s+Next\??\b',  # Common financial article headline suffix
         r'\b(?:50|100|200)\s+day\s+moving\b',  # Specific moving averages
+        # Additional financial patterns (from FP analysis)
+        r'\bShould\s+You\s+(?:Buy|Sell)\b',  # Common financial headline suffix
+        r'\bStock\s+(?:Passes|Crosses)\s+Above\b',  # Stock price crossing pattern
+        r'\bShare\s+Price\s+(?:Passes|Crosses)\b',  # Share price crossing pattern
+        r'\bHere\'?s\s+Why\b',  # Common financial headline suffix
+        r'\bTSE\s*:\s*\w+\b',  # Toronto Stock Exchange tickers
+        r'\bASX\s*:\s*\w+\b',  # Australian Stock Exchange tickers
+        r'\bdebt-to-equity\s+ratio\b',
+        r'\bquick\s+ratio\b',
+        r'\bcurrent\s+ratio\b',
+        r'\bFive\s+stocks\s+we\s+like\s+better\b',  # MarketBeat promotional content
     ]
 
     # Institution patterns that indicate non-sportswear entities
