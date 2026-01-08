@@ -789,8 +789,11 @@ def evaluate_feature_engineering(
         if verbose:
             print(f"Evaluating {name}...")
 
+        # Filter out 'tuning' key from config as it's not a transformer parameter
+        transformer_config = {k: v for k, v in config.items() if k != 'tuning'}
+
         # Create transformer
-        transformer = transformer_class(**config, random_state=random_state)
+        transformer = transformer_class(**transformer_config, random_state=random_state)
 
         # Fit transformer on TRAINING data only (to prevent data leakage)
         transformer.fit_transform(
@@ -921,9 +924,11 @@ def run_transformer_tuning(
     print(f"CV: {n_folds}-fold stratified\n")
 
     # Build kwargs for tune_feature_transformer
+    # Filter out 'tuning' key from config as it's not a transformer parameter
+    base_config = {k: v for k, v in fe_configs[best_fe].items() if k != 'tuning'}
     tune_kwargs = {
         'transformer_class': transformer_class,
-        'base_config': fe_configs[best_fe],
+        'base_config': base_config,
         'param_name': param_name,
         'param_values': param_values,
         'X_fe': X_train,
@@ -954,7 +959,7 @@ def run_transformer_tuning(
         return None, None, None
 
     # Analyze tuning results
-    default_value = fe_configs[best_fe].get(param_name)
+    default_value = base_config.get(param_name)
     optimal_param_value, best_tuned_f2 = analyze_tuning_results(
         tuning_df=tuning_df,
         param_name=param_name,

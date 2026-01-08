@@ -366,7 +366,7 @@ cp .env.example .env
 
 ### 3. Start the Database
 
-*Skip this step if you only want to run the ML notebooks.*
+*This step is needed for the labeling pipeline. Skip it if you only want to train and deploy the FP classifier.*
 
 ```bash
 # Start PostgreSQL with pgvector extension
@@ -393,7 +393,7 @@ This section provides a step-by-step guide for ML Zoomcamp reviewers to evaluate
 
 ### Step 1: Run the Notebooks
 
-The FP classifier is developed through a 3-notebook pipeline. Training data is included in the repository.
+The FP classifier is developed through a 3-notebook pipeline. Training data is included in the repository. Note that the fp1 and fp2 notebooks can take a long time to run (10-20 minutes). In the fp1 notebook, comment out the `doc2vec_ner_brands` feature engineering method in the fe_configs dict to reduce the runtime. In the fp2 notebook, reduce the hyperparameter grid values for the HistGradientBoosting Tuning method in the fp2 notebook to reduce its runtime.
 
 ```bash
 # Clone and setup
