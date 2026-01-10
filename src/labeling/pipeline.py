@@ -773,6 +773,23 @@ class LabelingPipeline:
             result["skipped"] = True
             return result
 
+        # Check if any sportswear brand has actual ESG categories
+        # (not just brand analysis with all categories = False)
+        brands_with_esg = [
+            a for a in sportswear_brands if a.get_applicable_categories()
+        ]
+        if not brands_with_esg:
+            logger.info(
+                f"Article {article_id}: sportswear brands found but no ESG categories apply"
+            )
+            if not dry_run:
+                with self.database.db.get_session() as session:
+                    self.database.update_article_labeling_status(
+                        session, article_id, "skipped", "No ESG categories apply to sportswear brands"
+                    )
+            result["skipped"] = True
+            return result
+
         # Step 4: Match evidence to chunks (if we have chunks)
         # Only match evidence for sportswear brands
         evidence_matches = {}
