@@ -18,7 +18,7 @@
         5
       ],
       "char_max_features": 5000,
-      "lsa_n_components": 100,
+      "lsa_n_components": 200,
       "context_window_words": 20,
       "doc2vec_vector_size": 100,
       "doc2vec_min_count": 2,
@@ -40,23 +40,23 @@
   "model": {
     "type": "RandomForest",
     "params": {
-      "class_weight": "balanced",
-      "max_depth": 20,
+      "class_weight": null,
+      "max_depth": 15,
       "min_samples_leaf": 1,
       "min_samples_split": 4,
-      "n_estimators": 200
+      "n_estimators": 250
     },
     "calibrated": false
   },
   "cv_metrics": {
-    "f2": 0.9860458350804885,
-    "recall": 0.9936974650979771,
-    "precision": 0.9567512810546867,
-    "f1": 0.9748202467831614,
-    "accuracy": 0.9589045141745672,
-    "pr_auc": 0.9966350310410673,
+    "f2": 0.9807933458621546,
+    "recall": 0.9915511352220213,
+    "precision": 0.9403366247917999,
+    "f1": 0.9651554981961593,
+    "accuracy": 0.9429536431105991,
+    "pr_auc": 0.9902882860081629,
     "n_folds": 3
   },
-  "exported_at": "2026-01-09T11:05:10.270731",
+  "exported_at": "2026-01-09T18:40:52.438647",
   "notebook": "fp2_model_selection_tuning.ipynb"
 }

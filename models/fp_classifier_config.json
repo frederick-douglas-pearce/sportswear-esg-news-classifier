@@ -1,22 +1,28 @@
 {
-  "threshold": 0.39421771301883707,
+  "threshold": 0.6557119617916679,
   "target_recall": 0.99,
-  "model_name": "RF_tuned",
+  "model_name": "RandomForest_tuned",
   "transformer_method": "tfidf_lsa_ner_proximity_brands",
   "best_params": {
-    "class_weight": "balanced",
-    "max_depth": 20,
+    "class_weight": null,
+    "max_depth": 15,
     "min_samples_leaf": 1,
     "min_samples_split": 4,
-    "n_estimators": 200
+    "n_estimators": 250
   },
-  "cv_f2": 0.9860458350804885,
-  "cv_recall": 0.9936974650979771,
-  "cv_precision": 0.9567512810546867,
-  "test_f2": 0.9698996655518395,
-  "test_recall": 0.9747899159663865,
-  "test_precision": 0.9508196721311475,
-  "threshold_recall": 0.9915966386554622,
-  "threshold_precision": 0.9365079365079365,
-  "threshold_f2": 0.9800664451827242
+  "calibrated": false,
+  "test_f2": 0.9824414715719063,
+  "test_recall": 0.9957627118644068,
+  "test_precision": 0.9325396825396826,
+  "threshold_recall": 0.9915254237288136,
+  "threshold_precision": 0.9551020408163265,
+  "threshold_f2": 0.9840201850294366,
+  "true_positives": 234,
+  "false_positives": 11,
+  "true_negatives": 52,
+  "false_negatives": 2,
+  "trained_at": "2026-01-09T23:15:04.821518",
+  "data_path": "data/fp_training_data.jsonl",
+  "n_samples": 1492,
+  "training_config": "fp2_model_selection_tuning.ipynb"
 }

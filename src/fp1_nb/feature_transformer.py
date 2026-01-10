@@ -376,6 +376,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'\bSalomon\s+Kalou\b', 'Salomon'),  # Soccer player
         (r'\bSalomon\s+Rondon\b', 'Salomon'),  # Soccer player
         (r'\bMichael\s+(?:Lavie\s+)?Salomon\b', 'Salomon'),  # Business person
+        # Dr./Professor prefix patterns (from FP analysis)
+        (r'\bDr\.?\s+\w+[-\s]Salomon\b', 'Salomon'),  # Dr. Anne Vincent-Salomon
+        (r'\bDr\.?\s+Salomon\b', 'Salomon'),  # Dr. Salomon (any doctor)
+        (r'\bProfessor\s+\w*\s*Salomon\b', 'Salomon'),  # Professor Salomon
+        (r'\bVincent[-\s]Salomon\b', 'Salomon'),  # Vincent-Salomon (hyphenated name)
     ]
 
     # Financial jargon patterns indicating stock-only articles
@@ -459,11 +464,16 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
     ]
 
     # Product/Project disambiguation patterns
-    # Brands that match food products, mining projects, etc.
+    # Brands that match food products, mining projects, venues, events, etc.
     PRODUCT_DISAMBIGUATION_PATTERNS = [
         # Food products
         (r'\bBlack\s+Diamond\s+Cheese\b', 'Black Diamond'),
         (r'\bBlack\s+Diamond\s+(?:cheddar|aged|slices?)\b', 'Black Diamond'),
+        # Venue/Event names (from FP analysis)
+        (r'\bBlack\s+Diamond\s+Ranch\b', 'Black Diamond'),  # Golf course in Florida
+        (r'\bBlack\s+Diamond\s+Summit\b', 'Black Diamond'),  # Conference/event name
+        (r'\bat\s+Black\s+Diamond\b', 'Black Diamond'),  # "tournament at Black Diamond"
+        (r'\bBlack\s+Diamond\s+(?:Golf|Country)\s+Club\b', 'Black Diamond'),
         # Mining/Gold projects
         (r'\bConverse\s+(?:Gold\s+)?Project\b', 'Converse'),
         (r'\bConverse\s+(?:mine|mining|exploration)\b', 'Converse'),
