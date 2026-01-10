@@ -12,9 +12,11 @@ from anthropic import Anthropic, RateLimitError
 from .config import (
     LABELING_SYSTEM_PROMPT,
     LABELING_USER_PROMPT_TEMPLATE,
+    TARGET_SPORTSWEAR_BRANDS,
     labeling_settings,
 )
 from .models import BrandAnalysis, CategoryLabel, LabelingResponse
+from .prompt_manager import PromptManager, PromptVersion
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,9 @@ class LabelingResult:
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
+    prompt_version: str = ""
+    prompt_system_hash: str = ""
+    prompt_user_hash: str = ""
 
 
 class ArticleLabeler:
@@ -39,6 +44,7 @@ class ArticleLabeler:
     - Automatic retry with exponential backoff for rate limits
     - Token usage tracking for cost estimation
     - Fallback parsing for malformed responses
+    - Versioned prompt support
     """
 
     def __init__(
@@ -48,6 +54,7 @@ class ArticleLabeler:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         max_tokens: int = 2000,
+        prompt_version: str | None = None,
     ):
         """Initialize the labeler.
 
@@ -57,6 +64,7 @@ class ArticleLabeler:
             max_retries: Maximum retry attempts for rate limits
             retry_delay: Initial delay between retries in seconds
             max_tokens: Maximum output tokens
+            prompt_version: Version of prompts to use (default: production version)
         """
         self.api_key = api_key or labeling_settings.anthropic_api_key
         self.model = model or labeling_settings.labeling_model
@@ -71,10 +79,46 @@ class ArticleLabeler:
 
         self.client = Anthropic(api_key=self.api_key)
 
+        # Load versioned prompts
+        self.prompt_manager = PromptManager()
+        self._prompt_version = prompt_version or labeling_settings.prompt_version
+
+        try:
+            self.loaded_prompt = self.prompt_manager.load_version(self._prompt_version)
+            logger.info(
+                f"Loaded prompt version {self.loaded_prompt.version} "
+                f"(system: {self.loaded_prompt.system_prompt_hash}, "
+                f"user: {self.loaded_prompt.user_prompt_hash})"
+            )
+        except (FileNotFoundError, ValueError) as e:
+            logger.warning(f"Failed to load versioned prompts: {e}. Using hardcoded fallback.")
+            self.loaded_prompt = None
+
         # Track usage
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_api_calls = 0
+
+    @property
+    def prompt_version(self) -> str:
+        """Get the current prompt version string."""
+        if self.loaded_prompt:
+            return self.loaded_prompt.version
+        return "legacy"
+
+    @property
+    def prompt_system_hash(self) -> str:
+        """Get the system prompt hash."""
+        if self.loaded_prompt:
+            return self.loaded_prompt.system_prompt_hash
+        return ""
+
+    @property
+    def prompt_user_hash(self) -> str:
+        """Get the user prompt hash."""
+        if self.loaded_prompt:
+            return self.loaded_prompt.user_prompt_hash
+        return ""
 
     def label_article(
         self,
@@ -101,6 +145,9 @@ class ArticleLabeler:
                 success=False,
                 error="No content provided",
                 model=self.model,
+                prompt_version=self.prompt_version,
+                prompt_system_hash=self.prompt_system_hash,
+                prompt_user_hash=self.prompt_user_hash,
             )
 
         if not brands:
@@ -108,25 +155,44 @@ class ArticleLabeler:
                 success=False,
                 error="No brands to analyze",
                 model=self.model,
+                prompt_version=self.prompt_version,
+                prompt_system_hash=self.prompt_system_hash,
+                prompt_user_hash=self.prompt_user_hash,
             )
 
         # Truncate content if too long
         max_content_tokens = labeling_settings.max_article_tokens
         content = self._truncate_content(content, max_content_tokens)
 
-        # Build user prompt
-        user_prompt = LABELING_USER_PROMPT_TEMPLATE.format(
-            title=title,
-            published_at=published_at.strftime("%Y-%m-%d") if published_at else "Unknown",
-            source_name=source_name or "Unknown",
-            brands=", ".join(brands),
-            content=content,
-        )
+        # Build prompts using versioned templates or fallback to hardcoded
+        if self.loaded_prompt:
+            system_prompt = self.prompt_manager.get_formatted_system_prompt(
+                version=self.loaded_prompt.version,
+                brands=list(TARGET_SPORTSWEAR_BRANDS),
+            )
+            user_prompt = self.prompt_manager.get_formatted_user_prompt(
+                version=self.loaded_prompt.version,
+                title=title,
+                published_at=published_at.strftime("%Y-%m-%d") if published_at else "Unknown",
+                source_name=source_name or "Unknown",
+                brands=", ".join(brands),
+                content=content,
+            )
+        else:
+            # Fallback to hardcoded prompts
+            system_prompt = LABELING_SYSTEM_PROMPT
+            user_prompt = LABELING_USER_PROMPT_TEMPLATE.format(
+                title=title,
+                published_at=published_at.strftime("%Y-%m-%d") if published_at else "Unknown",
+                source_name=source_name or "Unknown",
+                brands=", ".join(brands),
+                content=content,
+            )
 
         # Call Claude API with retry
         try:
             response_text, input_tokens, output_tokens = self._call_api_with_retry(
-                user_prompt
+                user_prompt, system_prompt
             )
             self.total_input_tokens += input_tokens
             self.total_output_tokens += output_tokens
@@ -142,6 +208,9 @@ class ArticleLabeler:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     model=self.model,
+                    prompt_version=self.prompt_version,
+                    prompt_system_hash=self.prompt_system_hash,
+                    prompt_user_hash=self.prompt_user_hash,
                 )
             else:
                 return LabelingResult(
@@ -150,6 +219,9 @@ class ArticleLabeler:
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     model=self.model,
+                    prompt_version=self.prompt_version,
+                    prompt_system_hash=self.prompt_system_hash,
+                    prompt_user_hash=self.prompt_user_hash,
                 )
 
         except Exception as e:
@@ -158,6 +230,9 @@ class ArticleLabeler:
                 success=False,
                 error=str(e),
                 model=self.model,
+                prompt_version=self.prompt_version,
+                prompt_system_hash=self.prompt_system_hash,
+                prompt_user_hash=self.prompt_user_hash,
             )
 
     def _truncate_content(self, content: str, max_tokens: int) -> str:
@@ -178,8 +253,14 @@ class ArticleLabeler:
         logger.debug(f"Truncated content from {len(content)} to {len(truncated)} chars")
         return truncated + "\n\n[Content truncated...]"
 
-    def _call_api_with_retry(self, user_prompt: str) -> tuple[str, int, int]:
+    def _call_api_with_retry(
+        self, user_prompt: str, system_prompt: str
+    ) -> tuple[str, int, int]:
         """Call Claude API with automatic retry for rate limits.
+
+        Args:
+            user_prompt: The user message content
+            system_prompt: The system prompt to use
 
         Returns:
             Tuple of (response_text, input_tokens, output_tokens)
@@ -191,7 +272,7 @@ class ArticleLabeler:
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=self.max_tokens,
-                    system=LABELING_SYSTEM_PROMPT,
+                    system=system_prompt,
                     messages=[{"role": "user", "content": user_prompt}],
                 )
 
@@ -317,7 +398,7 @@ class ArticleLabeler:
 
         return data
 
-    def get_stats(self) -> dict[str, int | float]:
+    def get_stats(self) -> dict[str, int | float | str]:
         """Get labeling statistics.
 
         Returns:
@@ -334,6 +415,9 @@ class ArticleLabeler:
             "total_api_calls": self.total_api_calls,
             "estimated_cost_usd": input_cost + output_cost,
             "model": self.model,
+            "prompt_version": self.prompt_version,
+            "prompt_system_hash": self.prompt_system_hash,
+            "prompt_user_hash": self.prompt_user_hash,
         }
 
     def reset_stats(self) -> None:

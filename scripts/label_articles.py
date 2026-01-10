@@ -16,6 +16,12 @@ Examples:
 
     # Check current labeling statistics
     python scripts/label_articles.py --stats
+
+    # List available prompt versions
+    python scripts/label_articles.py --list-prompts
+
+    # Use a specific prompt version
+    python scripts/label_articles.py --prompt-version v1.1.0 --dry-run --batch-size 5
 """
 
 import argparse
@@ -30,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.labeling.config import labeling_settings
 from src.labeling.database import labeling_db
 from src.labeling.pipeline import LabelingPipeline
+from src.labeling.prompt_manager import prompt_manager
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -86,6 +93,16 @@ def parse_args() -> argparse.Namespace:
         help="Show labeling statistics and exit",
     )
     parser.add_argument(
+        "--prompt-version",
+        type=str,
+        help="Prompt version to use (default: production version from registry)",
+    )
+    parser.add_argument(
+        "--list-prompts",
+        action="store_true",
+        help="List available prompt versions and exit",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -115,12 +132,40 @@ def show_stats() -> None:
     print()
 
 
+def list_prompts() -> None:
+    """List available prompt versions."""
+    try:
+        versions = prompt_manager.list_versions()
+        production = prompt_manager.get_production_version()
+
+        print("\n=== Available Prompt Versions ===")
+        print()
+        for version in versions:
+            info = prompt_manager.get_version_info(version)
+            prod_marker = " (production)" if version == production else ""
+            print(f"  {version}{prod_marker}")
+            if info.get("commit_message"):
+                print(f"    {info['commit_message']}")
+            if info.get("created_at"):
+                print(f"    Created: {info['created_at'][:10]}")
+            print()
+
+    except FileNotFoundError:
+        print("\nNo prompt registry found. Using hardcoded prompts.")
+        print()
+
+
 def main() -> int:
     """Main entry point."""
     args = parse_args()
     setup_logging(args.verbose)
 
     logger = logging.getLogger(__name__)
+
+    # List prompts and exit
+    if args.list_prompts:
+        list_prompts()
+        return 0
 
     # Show stats and exit
     if args.stats:
@@ -155,7 +200,7 @@ def main() -> int:
         logger.info("[DRY RUN] No changes will be saved to database")
 
     # Run the pipeline
-    pipeline = LabelingPipeline()
+    pipeline = LabelingPipeline(prompt_version=args.prompt_version)
 
     try:
         stats = pipeline.label_articles(
@@ -168,6 +213,16 @@ def main() -> int:
 
         # Print results
         print("\n=== Labeling Results ===")
+
+        # Show prompt version info
+        pipeline_stats = pipeline.get_stats()
+        if "labeler" in pipeline_stats:
+            labeler_stats = pipeline_stats["labeler"]
+            pv = labeler_stats.get("prompt_version", "unknown")
+            ps_hash = labeler_stats.get("prompt_system_hash", "")[:8]
+            pu_hash = labeler_stats.get("prompt_user_hash", "")[:8]
+            print(f"Prompt version:         {pv} (system: {ps_hash}, user: {pu_hash})")
+
         print(f"Articles processed:     {stats.articles_processed}")
         print(f"Articles labeled:       {stats.articles_labeled}")
         print(f"Articles skipped:       {stats.articles_skipped}")

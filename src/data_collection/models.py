@@ -163,6 +163,7 @@ class BrandLabel(Base):
     # Labeling provenance
     labeled_by = Column(String(50), nullable=False)  # 'claude-sonnet', 'human', 'classifier-v1'
     model_version = Column(String(100))  # e.g., 'claude-3-5-sonnet-20241022'
+    prompt_version = Column(String(20))  # e.g., 'v1.0.0' - prompt template version used
     labeled_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Human review tracking
@@ -222,6 +223,11 @@ class LabelingRun(Base):
     status = Column(String(20), default="running")  # running, success, partial, failed
     error_message = Column(Text)
     config = Column(JSON)  # Store run configuration
+
+    # Prompt versioning
+    prompt_version = Column(String(20))  # e.g., 'v1.0.0'
+    prompt_system_hash = Column(String(12))  # SHA256 hash prefix for verification
+    prompt_user_hash = Column(String(12))  # SHA256 hash prefix for verification
 
     def __repr__(self) -> str:
         return f"<LabelingRun(id={self.id!r}, status={self.status!r})>"

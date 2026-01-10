@@ -1,0 +1,14 @@
+{
+  "version": "v1.0.0",
+  "system_prompt_file": "system_prompt.txt",
+  "user_prompt_file": "user_prompt.txt",
+  "variables": {
+    "system": ["brands"],
+    "user": ["title", "published_at", "source_name", "brands", "content"]
+  },
+  "model_config": {
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 2000,
+    "temperature": 0.0
+  }
+}

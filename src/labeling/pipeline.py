@@ -69,6 +69,7 @@ class LabelingPipeline:
         embedder: OpenAIEmbedder | None = None,
         labeler: ArticleLabeler | None = None,
         fp_client: ClassifierClient | None = None,
+        prompt_version: str | None = None,
     ):
         """Initialize the pipeline.
 
@@ -78,12 +79,14 @@ class LabelingPipeline:
             embedder: OpenAI embedder
             labeler: Claude article labeler
             fp_client: FP classifier HTTP client
+            prompt_version: Version of prompts to use (default: production version)
         """
         self.database = database or labeling_db
         self.chunker = chunker or ArticleChunker()
         self.embedder = embedder
         self.labeler = labeler
         self.fp_client = fp_client
+        self.prompt_version = prompt_version
 
         # Lazy initialization of API clients
         self._embedder_initialized = embedder is not None
@@ -100,7 +103,7 @@ class LabelingPipeline:
     def _ensure_labeler(self) -> ArticleLabeler:
         """Ensure labeler is initialized."""
         if not self._labeler_initialized:
-            self.labeler = ArticleLabeler()
+            self.labeler = ArticleLabeler(prompt_version=self.prompt_version)
             self._labeler_initialized = True
         return self.labeler
 
@@ -393,6 +396,9 @@ class LabelingPipeline:
 
         db.init_db()
 
+        # Ensure labeler is initialized to get prompt version info
+        labeler = self._ensure_labeler()
+
         # Create labeling run record
         run = None
         if not dry_run:
@@ -407,6 +413,9 @@ class LabelingPipeline:
                         if article_ids
                         else None,
                     },
+                    prompt_version=labeler.prompt_version,
+                    prompt_system_hash=labeler.prompt_system_hash,
+                    prompt_user_hash=labeler.prompt_user_hash,
                 )
                 run_id = run.id
 
@@ -799,6 +808,7 @@ class LabelingPipeline:
                     article_id,
                     sportswear_brands,  # Only sportswear brands
                     model_version=label_result.model,
+                    prompt_version=label_result.prompt_version,
                 )
 
                 # Save evidence for each label

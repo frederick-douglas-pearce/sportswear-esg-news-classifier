@@ -1,0 +1,35 @@
+{
+  "prompt_type": "esg_labeling",
+  "description": "ESG classification prompts for sportswear brand news articles",
+  "production": "v1.0.0",
+  "versions": {
+    "v1.0.0": {
+      "created_at": "2025-01-09T00:00:00Z",
+      "commit_message": "Initial prompt version - baseline extracted from config.py",
+      "description": "Original ESG labeling prompts with brand verification, ESG category definitions, and false positive guidance",
+      "model_recommendations": {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "initial",
+        "status": "production"
+      }
+    },
+    "v1.1.0": {
+      "created_at": "2025-01-09T12:00:00Z",
+      "commit_message": "Add Substantive Coverage Test for clearer false positive classification",
+      "description": "Adds explicit guidance for identifying false positives where brand mentions are too tangential to warrant inclusion in any topical category. Clarifies that articles with superficial brand references (data tables, roundup lists, passing mentions) should be marked as false positives.",
+      "model_recommendations": {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "system",
+        "status": "testing"
+      }
+    }
+  }
+}

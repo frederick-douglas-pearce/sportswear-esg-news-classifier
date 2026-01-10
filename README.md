@@ -393,7 +393,7 @@ This section provides a step-by-step guide for ML Zoomcamp reviewers to evaluate
 
 ### Step 1: Run the Notebooks
 
-The FP classifier is developed through a 3-notebook pipeline. Training data is included in the repository. Note that the fp1 and fp2 notebooks can take a long time to run (10-20 minutes). In the fp1 notebook, comment out the `doc2vec_ner_brands` feature engineering method in the fe_configs dict to reduce the runtime. In the fp2 notebook, reduce the hyperparameter grid values for the HistGradientBoosting Tuning method in the fp2 notebook to reduce its runtime.
+The FP classifier is developed through a 3-notebook pipeline. Training data is included in the repository. Note that the fp1 and fp2 notebooks can take a long time to run (10-20 minutes). In the fp1 notebook, comment out the `doc2vec_ner_brands` feature engineering method in the fe_configs dict to reduce the runtime. In the fp2 notebook, reduce the hyperparameter grid values for the HistGradientBoosting Tuning method to reduce its runtime.
 
 ```bash
 # Clone and setup
@@ -649,6 +649,8 @@ The project uses a **hybrid LLM + ML approach** for article classification:
 | **ESG Multi-label** | Full category + sentiment classification | Planned |
 
 📖 See [docs/LABELING.md](docs/LABELING.md) for LLM pipeline details, CLI options, and training data export.
+
+📖 See [docs/PROMPT_VERSIONING.md](docs/PROMPT_VERSIONING.md) for versioned prompt management (tracking prompt templates used for each labeling run).
 
 ### ML Classifier Notebooks
 

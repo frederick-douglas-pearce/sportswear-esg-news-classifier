@@ -119,6 +119,7 @@ class LabelingDatabase:
         brand_analyses: list[BrandAnalysis],
         model_version: str,
         labeled_by: str = "claude-sonnet",
+        prompt_version: str | None = None,
     ) -> list[BrandLabel]:
         """Save brand labels from LLM analysis.
 
@@ -131,6 +132,7 @@ class LabelingDatabase:
             brand_analyses: List of BrandAnalysis from LLM
             model_version: Model version string
             labeled_by: Labeling source identifier
+            prompt_version: Version of prompt template used for labeling
 
         Returns:
             List of created BrandLabel objects (only sportswear brands)
@@ -172,6 +174,7 @@ class LabelingDatabase:
                 reasoning=analysis.reasoning,
                 labeled_by=labeled_by,
                 model_version=model_version,
+                prompt_version=prompt_version,
             )
             session.add(label)
             db_labels.append(label)
@@ -237,10 +240,31 @@ class LabelingDatabase:
                 article.skipped_at = datetime.now(timezone.utc)
 
     def create_labeling_run(
-        self, session: Session, config: dict[str, Any] | None = None
+        self,
+        session: Session,
+        config: dict[str, Any] | None = None,
+        prompt_version: str | None = None,
+        prompt_system_hash: str | None = None,
+        prompt_user_hash: str | None = None,
     ) -> LabelingRun:
-        """Create a new labeling run record."""
-        run = LabelingRun(config=config)
+        """Create a new labeling run record.
+
+        Args:
+            session: Database session
+            config: Run configuration dictionary
+            prompt_version: Version of prompt templates used
+            prompt_system_hash: SHA256 hash prefix of system prompt
+            prompt_user_hash: SHA256 hash prefix of user prompt
+
+        Returns:
+            Created LabelingRun object
+        """
+        run = LabelingRun(
+            config=config,
+            prompt_version=prompt_version,
+            prompt_system_hash=prompt_system_hash,
+            prompt_user_hash=prompt_user_hash,
+        )
         session.add(run)
         session.flush()
         return run
