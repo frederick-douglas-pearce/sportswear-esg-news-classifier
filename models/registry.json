@@ -1,6 +1,6 @@
 {
   "fp": {
-    "production": "v2.2.0",
+    "production": "v2.3.0",
     "versions": {
       "v1.0.0": {
         "created_at": "2024-12-23T00:00:00Z",
@@ -64,6 +64,22 @@
           "test_precision": 0.9574
         },
         "notes": "Added stock article FP indicators (OTCMKTS, trading patterns), ASICs chip disambiguation. Test precision +1.2% vs v2.1.0"
+      },
+      "v2.3.0": {
+        "created_at": "2026-01-10T22:30:47Z",
+        "trained_on": "data/fp_training_data.jsonl",
+        "model_name": "RF_tuned",
+        "transformer_method": "tfidf_lsa_ner_proximity_brands",
+        "threshold": 0.5885,
+        "metrics": {
+          "cv_f2": 0.9867,
+          "cv_recall": 0.9928,
+          "cv_precision": 0.963,
+          "test_f2": 0.9844,
+          "test_recall": 0.9917,
+          "test_precision": 0.9562
+        },
+        "notes": "Fixed 10 boilerplate articles, added Dr./Professor Salomon patterns, Black Diamond venue/event patterns. CV F2 +0.55% vs v2.2.0. Training data: 1535 samples (+43)."
       }
     }
   },
