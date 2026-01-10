@@ -305,6 +305,13 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'(\w+)\s+Holdings\b', None),
         (r'(\w+)\s+Therapeutics\b', None),
         (r'(\w+)\s+Biotechnology\b', None),
+        (r'(\w+)\s+Biopharmaceutical\b', None),
+        (r'(\w+)\s+Pharmaceuticals?\b', None),
+        # Additional Timberland forestry patterns (from FP analysis)
+        (r'JPMorgan\s+Campbell\s+Global.*[Tt]imberland', 'Timberland'),
+        (r'Campbell\s+Global.*[Tt]imberland', 'Timberland'),
+        (r'\d+[,\d]*\s+[Aa]cres\s+of\s+[Tt]imberland', 'Timberland'),
+        (r'[Tt]imberland\s+(?:property|acquisition|platform|investing)', 'Timberland'),
     ]
 
     # Vehicle brand patterns that indicate automotive context
@@ -403,6 +410,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         r'\bquick\s+ratio\b',
         r'\bcurrent\s+ratio\b',
         r'\bFive\s+stocks\s+we\s+like\s+better\b',  # MarketBeat promotional content
+        # Additional stock-only article patterns (from FP analysis)
+        r'\bHere\'?s\s+What\s+Happened\b',  # Common stock article suffix
+        r'\bShares\s+(?:Gap\s+)?(?:Up|Down)\b',  # "Shares Up 1.6%", "Shares Gap Down"
+        r'\bStock\s+Price\s+(?:Up|Down)\b',  # "Stock Price Up 1.6%"
+        r'\bDrawing\s+Market\s+Parallels\b',  # Financial analysis articles
     ]
 
     # Institution patterns that indicate non-sportswear entities
@@ -420,6 +432,12 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'\bPrana\s+(?:Hyperbaric|Oxygen|Therapy|Clinic|Hospital)\b', 'Prana'),
         # Sports networks (not the gear brand)
         (r'\bBlack\s+Diamond\s+(?:Sports?\s+)?Network\b', 'Black Diamond'),
+        # Entertainment/TV show tangential mentions (from FP analysis)
+        # Brand appears in TV show context but article is not about the brand
+        (r'\bStranger\s+Things\b.*\b(?:Nike|Adidas|Under\s+Armour|Reebok)\b', None),
+        (r'\b(?:Season|Episode)\s+\d+\b.*\b(?:Nike|Adidas|Under\s+Armour|Reebok)\b', None),
+        (r'\bcontinuity\s+error\b', None),
+        (r'\banachronis(?:m|tic)\b', None),
     ]
 
     # Phrase patterns where brand names are used as common phrases
@@ -434,6 +452,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'\bfocus(?:ed|ing)?\s+on\s+running\b', 'On Running'),
         (r'\bon\s+running\s+the\s+(?:ball|offense|game)\b', 'On Running'),
         (r'\bstrong\s+focus\s+on\s+running\b', 'On Running'),
+        # On Running in property/geographic names (from FP analysis)
+        (r'\bon\s+Running\s+Iron\s+Ranch\b', 'On Running'),
+        (r'\bRunning\s+(?:Iron|Creek|River|Springs|Hills?|Ridge|Valley|Water)\s+(?:Ranch|Farm|Estate|Property)\b', 'On Running'),
+        (r'\bon\s+Running\s+\w+\s+(?:Ranch|Farm|Estate|Property)\b', 'On Running'),
     ]
 
     # Product/Project disambiguation patterns

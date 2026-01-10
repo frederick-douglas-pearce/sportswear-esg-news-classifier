@@ -26,6 +26,13 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, cross_validate
 
+# Suppress sklearn parallel warning (harmless - just about config propagation)
+warnings.filterwarnings(
+    "ignore",
+    message=".*sklearn.utils.parallel.delayed.*should be used with.*sklearn.utils.parallel.Parallel.*",
+    category=UserWarning
+)
+
 # F2 scorer for recall-focused optimization
 f2_scorer = make_scorer(fbeta_score, beta=2)
 
