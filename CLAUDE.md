@@ -88,11 +88,10 @@ uv run python scripts/register_model.py --classifier fp --bump minor --update-re
 uv run python scripts/register_model.py --classifier fp --register-model  # Also add to MLflow Model Registry
 
 # Website Feed Export (for Jekyll/al-folio GitHub Pages)
-uv run python scripts/export_website_feed.py --format json -o ~/website/_data/esg_news.json  # JSON export
-uv run python scripts/export_website_feed.py --format atom -o ~/website/assets/feeds/esg_news.atom  # Atom feed
+# Website repo location: /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io
 uv run python scripts/export_website_feed.py --format both \
-  --json-output ~/website/_data/esg_news.json \
-  --atom-output ~/website/assets/feeds/esg_news.atom  # Export both formats
+  --json-output /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io/_data/esg_news.json \
+  --atom-output /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io/assets/feeds/esg_news.atom
 uv run python scripts/export_website_feed.py --format json --limit 100 --dry-run  # Preview export
 ```
 
@@ -551,14 +550,16 @@ Export labeled ESG news articles for display on a Jekyll/al-folio static website
 ### Update Workflow
 
 ```bash
+# Website repo: /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io
+
 # 1. In ML project: Run export script
-cd sportswear-esg-news-classifier
+cd /home/fdpearce/Documents/Courses/DataTalksClub/projects/machine-learning-zoomcamp/sportswear-esg-news-classifier
 uv run python scripts/export_website_feed.py --format both \
-  --json-output ~/website/_data/esg_news.json \
-  --atom-output ~/website/assets/feeds/esg_news.atom
+  --json-output /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io/_data/esg_news.json \
+  --atom-output /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io/assets/feeds/esg_news.atom
 
 # 2. In website repo: Commit and push
-cd ~/website
+cd /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io
 git add _data/esg_news.json assets/feeds/esg_news.atom
 git commit -m "Update ESG news - $(date +%Y-%m-%d)"
 git push

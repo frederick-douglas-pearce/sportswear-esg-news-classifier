@@ -35,18 +35,26 @@ class LabelingSettings(BaseModel):
         default_factory=lambda: os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     )
 
-    # Chunking parameters
+    # Chunking parameters (reduced for more granular evidence matching)
     target_chunk_tokens: int = Field(
-        default_factory=lambda: int(os.getenv("TARGET_CHUNK_TOKENS", "500"))
+        default_factory=lambda: int(os.getenv("TARGET_CHUNK_TOKENS", "200"))
     )
     max_chunk_tokens: int = Field(
-        default_factory=lambda: int(os.getenv("MAX_CHUNK_TOKENS", "800"))
+        default_factory=lambda: int(os.getenv("MAX_CHUNK_TOKENS", "350"))
     )
     min_chunk_tokens: int = Field(
-        default_factory=lambda: int(os.getenv("MIN_CHUNK_TOKENS", "100"))
+        default_factory=lambda: int(os.getenv("MIN_CHUNK_TOKENS", "75"))
     )
     chunk_overlap_tokens: int = Field(
         default_factory=lambda: int(os.getenv("CHUNK_OVERLAP_TOKENS", "50"))
+    )
+
+    # Evidence matching parameters
+    evidence_min_confidence: float = Field(
+        default_factory=lambda: float(os.getenv("EVIDENCE_MIN_CONFIDENCE", "0.50"))
+    )
+    evidence_use_embedding_rerank: bool = Field(
+        default_factory=lambda: os.getenv("EVIDENCE_USE_EMBEDDING_RERANK", "true").lower() == "true"
     )
 
     # Processing limits

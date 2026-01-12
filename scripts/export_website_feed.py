@@ -37,6 +37,70 @@ from sqlalchemy.orm import joinedload
 
 from src.data_collection.database import db
 from src.data_collection.models import Article, ArticleChunk, BrandLabel, LabelEvidence
+from src.labeling.evidence_matcher import _get_confidence_label
+
+
+# Default context size for evidence snippets
+SNIPPET_CONTEXT_CHARS = 100
+
+
+def extract_snippet(
+    chunk_text: str, excerpt: str, context_chars: int = SNIPPET_CONTEXT_CHARS
+) -> str:
+    """Extract a condensed snippet around the matched excerpt.
+
+    Args:
+        chunk_text: Full text of the matched chunk
+        excerpt: The evidence excerpt to find
+        context_chars: Characters of context around the excerpt
+
+    Returns:
+        Snippet with context around the excerpt, or truncated chunk if not found
+    """
+    if not chunk_text or not excerpt:
+        return chunk_text or ""
+
+    excerpt_lower = excerpt.lower()
+    chunk_lower = chunk_text.lower()
+
+    # Try to find exact position first
+    pos = chunk_lower.find(excerpt_lower)
+    if pos == -1:
+        # Try to find the first few words of the excerpt
+        first_words = " ".join(excerpt.split()[:5]).lower()
+        if first_words:
+            pos = chunk_lower.find(first_words)
+
+    if pos == -1:
+        # Can't find it - return truncated chunk
+        if len(chunk_text) <= context_chars * 2:
+            return chunk_text
+        return chunk_text[: context_chars * 2] + "..."
+
+    # Extract context around the match
+    context_start = max(0, pos - context_chars)
+    context_end = min(len(chunk_text), pos + len(excerpt) + context_chars)
+
+    # Adjust to word boundaries
+    if context_start > 0:
+        # Find next space after context_start
+        space_pos = chunk_text.find(" ", context_start)
+        if space_pos != -1 and space_pos < pos:
+            context_start = space_pos + 1
+
+    if context_end < len(chunk_text):
+        # Find last space before context_end
+        space_pos = chunk_text.rfind(" ", pos + len(excerpt), context_end)
+        if space_pos != -1:
+            context_end = space_pos
+
+    snippet = chunk_text[context_start:context_end].strip()
+
+    # Add ellipsis indicators
+    prefix = "..." if context_start > 0 else ""
+    suffix = "..." if context_end < len(chunk_text) else ""
+
+    return f"{prefix}{snippet}{suffix}"
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -165,10 +229,12 @@ def format_article_for_json(article: Article) -> dict[str, Any]:
                 "category": ev.category,
                 "excerpt": sanitize_text(ev.excerpt),
                 "relevance_score": ev.relevance_score,
+                "confidence": _get_confidence_label(ev.relevance_score or 0.0),
             }
-            # Include chunk text if available (provides context for the excerpt)
-            if ev.chunk and ev.chunk.chunk_text:
-                evidence_item["chunk_text"] = sanitize_text(ev.chunk.chunk_text)
+            # Include condensed context snippet instead of full chunk text
+            if ev.chunk and ev.chunk.chunk_text and ev.excerpt:
+                snippet = extract_snippet(ev.chunk.chunk_text, ev.excerpt)
+                evidence_item["context_snippet"] = sanitize_text(snippet)
             evidence_list.append(evidence_item)
 
         brand_details.append({

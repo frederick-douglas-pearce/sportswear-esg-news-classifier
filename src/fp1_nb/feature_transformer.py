@@ -339,6 +339,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         r'\bSA\s*330\s*Puma\b',  # Puma helicopter model
         # Best Vans articles (automotive reviews)
         r'\bBest\s+(?:Vans|Minivans)\s+(?:for|of)\s+\d{4}\b',
+        # Can-Am Spyder three-wheeled motorcycles (not Spyder ski apparel)
+        r'\bCan[-\s]?Am\s+Spyder\b',
+        r'\bSpyder\s+(?:F3|RT|Ryker)\b',  # Spyder model names
+        r'\b(?:three[-\s]?wheel(?:ed)?|trike)\s+(?:motorcycle|vehicle)s?\b.*\bSpyder\b',
+        r'\bSpyder\s+(?:motorcycle|roadster|trike)\b',
     ]
 
     # Animal context keywords for Puma (the animal)
@@ -437,6 +442,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'\bPrana\s+(?:Hyperbaric|Oxygen|Therapy|Clinic|Hospital)\b', 'Prana'),
         # Sports networks (not the gear brand)
         (r'\bBlack\s+Diamond\s+(?:Sports?\s+)?Network\b', 'Black Diamond'),
+        # Everlast Gyms (fitness chain, not Everlast boxing equipment brand)
+        (r'\bEverlast\s+Gym(?:s)?\b', 'Everlast'),
+        (r'\bEverlast\s+(?:fitness|performance)\s+[Cc]entre?\b', 'Everlast'),
+        (r'\bEverlast\s+(?:membership|facility|facilities)\b', 'Everlast'),
         # Entertainment/TV show tangential mentions (from FP analysis)
         # Brand appears in TV show context but article is not about the brand
         (r'\bStranger\s+Things\b.*\b(?:Nike|Adidas|Under\s+Armour|Reebok)\b', None),
@@ -461,6 +470,12 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'\bon\s+Running\s+Iron\s+Ranch\b', 'On Running'),
         (r'\bRunning\s+(?:Iron|Creek|River|Springs|Hills?|Ridge|Valley|Water)\s+(?:Ranch|Farm|Estate|Property)\b', 'On Running'),
         (r'\bon\s+Running\s+\w+\s+(?:Ranch|Farm|Estate|Property)\b', 'On Running'),
+        # The North Face as mountaineering term (not the apparel brand)
+        # "north face" refers to the north-facing side of a mountain
+        (r'\b(?:the\s+)?north\s+face\s+of\s+(?:Mount|Mt\.?|the)\s+\w+\b', 'The North Face'),
+        (r'\bski(?:ed|ing)?\s+(?:down\s+)?(?:the\s+)?north\s+face\b', 'The North Face'),
+        (r'\bclimb(?:ed|ing)?\s+(?:the\s+)?north\s+face\b', 'The North Face'),
+        (r'\b(?:Everest|Eiger|K2|Matterhorn)[\'s]*\s+north\s+face\b', 'The North Face'),
     ]
 
     # Product/Project disambiguation patterns

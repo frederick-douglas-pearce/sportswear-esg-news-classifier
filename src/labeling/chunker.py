@@ -3,10 +3,14 @@
 import logging
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import tiktoken
 
 from .config import labeling_settings
+
+if TYPE_CHECKING:
+    import spacy
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +42,9 @@ class ArticleChunker:
         max_tokens: int | None = None,
         min_tokens: int | None = None,
         overlap_tokens: int | None = None,
+        short_article_threshold: int | None = None,
         model: str = "cl100k_base",
+        use_spacy: bool = True,
     ):
         """Initialize the chunker.
 
@@ -47,15 +53,25 @@ class ArticleChunker:
             max_tokens: Maximum chunk size in tokens (default: from settings)
             min_tokens: Minimum chunk size in tokens (default: from settings)
             overlap_tokens: Overlap between chunks in tokens (default: from settings)
+            short_article_threshold: Articles under this token count become single chunk
+                                     (default: 75% of target_tokens for more granular chunking)
             model: Tiktoken encoding model for token counting
+            use_spacy: Use spaCy for sentence splitting (more accurate than regex)
         """
         self.target_tokens = target_tokens or labeling_settings.target_chunk_tokens
         self.max_tokens = max_tokens or labeling_settings.max_chunk_tokens
         self.min_tokens = min_tokens or labeling_settings.min_chunk_tokens
         self.overlap_tokens = overlap_tokens or labeling_settings.chunk_overlap_tokens
+        # Short article threshold: below this, article becomes single chunk
+        # Default to 75% of target to ensure moderately short articles still get chunked
+        self.short_article_threshold = short_article_threshold or int(self.target_tokens * 0.75)
 
         # Initialize tiktoken encoder
         self.encoder = tiktoken.get_encoding(model)
+
+        # spaCy model for sentence splitting (lazy loaded)
+        self.use_spacy = use_spacy
+        self._nlp: "spacy.Language | None" = None
 
     def count_tokens(self, text: str) -> int:
         """Count tokens in text using tiktoken."""
@@ -63,13 +79,70 @@ class ArticleChunker:
             return 0
         return len(self.encoder.encode(text))
 
-    def _split_into_sentences(self, text: str) -> list[str]:
-        """Split text into sentences while preserving sentence endings."""
+    @property
+    def nlp(self) -> "spacy.Language":
+        """Lazily load spaCy model for sentence splitting."""
+        if self._nlp is None:
+            import spacy
+
+            # Load small model with minimal pipeline for efficiency
+            # Only need sentence boundary detection, not NER or lemmatization
+            self._nlp = spacy.load("en_core_web_sm", disable=["ner", "lemmatizer"])
+            logger.debug("Loaded spaCy model for sentence splitting")
+        return self._nlp
+
+    def _split_into_sentences_spacy(self, text: str) -> list[tuple[str, int, int]]:
+        """Split text into sentences using spaCy with character positions.
+
+        Args:
+            text: Text to split into sentences
+
+        Returns:
+            List of (sentence_text, start_char, end_char) tuples
+        """
+        doc = self.nlp(text)
+        sentences = []
+        for sent in doc.sents:
+            sent_text = sent.text.strip()
+            if sent_text:
+                sentences.append((sent_text, sent.start_char, sent.end_char))
+        return sentences
+
+    def _split_into_sentences_regex(self, text: str) -> list[str]:
+        """Split text into sentences using regex (fallback method)."""
         # Pattern matches sentence-ending punctuation followed by space or end
         # Handles common abbreviations to avoid false splits
         sentence_pattern = r'(?<=[.!?])\s+(?=[A-Z])'
         sentences = re.split(sentence_pattern, text)
         return [s.strip() for s in sentences if s.strip()]
+
+    def _split_into_sentences(self, text: str) -> list[tuple[str, int, int]]:
+        """Split text into sentences with character positions.
+
+        Uses spaCy if enabled (more accurate for abbreviations, etc.),
+        otherwise falls back to regex-based splitting.
+
+        Args:
+            text: Text to split into sentences
+
+        Returns:
+            List of (sentence_text, start_char, end_char) tuples
+        """
+        if self.use_spacy:
+            return self._split_into_sentences_spacy(text)
+
+        # Fallback to regex - need to compute positions manually
+        sentences = self._split_into_sentences_regex(text)
+        result = []
+        current_pos = 0
+        for sent in sentences:
+            start = text.find(sent, current_pos)
+            if start == -1:
+                start = current_pos
+            end = start + len(sent)
+            result.append((sent, start, end))
+            current_pos = end
+        return result
 
     def _split_into_paragraphs(self, text: str) -> list[tuple[str, int]]:
         """Split text into paragraphs with their starting positions.
@@ -113,51 +186,51 @@ class ArticleChunker:
             return [(text, char_start, char_start + len(text))]
 
         chunks = []
-        current_chunk_sentences = []
+        current_chunk_sentences: list[str] = []
         current_chunk_start = char_start
+        current_chunk_end = char_start
         current_tokens = 0
 
-        for sentence in sentences:
-            sentence_tokens = self.count_tokens(sentence)
+        for sent_text, sent_start, sent_end in sentences:
+            sentence_tokens = self.count_tokens(sent_text)
+            abs_start = char_start + sent_start
+            abs_end = char_start + sent_end
 
             # If single sentence exceeds max, add it as its own chunk
             if sentence_tokens > self.max_tokens:
                 # First, save any accumulated sentences
                 if current_chunk_sentences:
                     chunk_text = ' '.join(current_chunk_sentences)
-                    chunk_end = current_chunk_start + len(chunk_text)
-                    chunks.append((chunk_text, current_chunk_start, chunk_end))
+                    chunks.append((chunk_text, current_chunk_start, current_chunk_end))
                     current_chunk_sentences = []
                     current_tokens = 0
 
                 # Add the long sentence as its own chunk
-                sentence_start = text.find(sentence)
-                if sentence_start != -1:
-                    abs_start = char_start + sentence_start
-                else:
-                    abs_start = current_chunk_start
-                chunks.append((sentence, abs_start, abs_start + len(sentence)))
-                current_chunk_start = abs_start + len(sentence) + 1
+                chunks.append((sent_text, abs_start, abs_end))
+                current_chunk_start = abs_end
+                current_chunk_end = abs_end
                 continue
 
             # If adding this sentence would exceed target, start new chunk
             if current_tokens + sentence_tokens > self.target_tokens and current_chunk_sentences:
                 chunk_text = ' '.join(current_chunk_sentences)
-                chunk_end = current_chunk_start + len(chunk_text)
-                chunks.append((chunk_text, current_chunk_start, chunk_end))
+                chunks.append((chunk_text, current_chunk_start, current_chunk_end))
 
-                current_chunk_start = chunk_end + 1
-                current_chunk_sentences = [sentence]
+                current_chunk_start = abs_start
+                current_chunk_sentences = [sent_text]
+                current_chunk_end = abs_end
                 current_tokens = sentence_tokens
             else:
-                current_chunk_sentences.append(sentence)
+                if not current_chunk_sentences:
+                    current_chunk_start = abs_start
+                current_chunk_sentences.append(sent_text)
+                current_chunk_end = abs_end
                 current_tokens += sentence_tokens
 
         # Don't forget the last chunk
         if current_chunk_sentences:
             chunk_text = ' '.join(current_chunk_sentences)
-            chunk_end = current_chunk_start + len(chunk_text)
-            chunks.append((chunk_text, current_chunk_start, chunk_end))
+            chunks.append((chunk_text, current_chunk_start, current_chunk_end))
 
         return chunks
 
@@ -176,8 +249,8 @@ class ArticleChunker:
         content = content.strip()
         total_tokens = self.count_tokens(content)
 
-        # Short articles: single chunk
-        if total_tokens <= self.target_tokens:
+        # Short articles: single chunk (only if below short_article_threshold)
+        if total_tokens <= self.short_article_threshold:
             return [
                 Chunk(
                     index=0,
