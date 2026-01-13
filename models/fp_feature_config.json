@@ -14,7 +14,7 @@
     5
   ],
   "char_max_features": 5000,
-  "lsa_n_components": 100,
+  "lsa_n_components": 120,
   "context_window_words": 20,
   "doc2vec_vector_size": 100,
   "doc2vec_min_count": 2,
