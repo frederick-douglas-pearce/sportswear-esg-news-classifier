@@ -303,3 +303,56 @@ SELECT
 FROM articles
 WHERE labeling_status = 'failed'
 ORDER BY labeled_at DESC;
+
+-- ---------------------------------------------------------------------------
+-- Historical Data Review (Post-Policy Change Analysis)
+-- Use these queries to identify articles that may need relabeling after
+-- prompt/policy changes (e.g., tangential brand mentions, stock articles)
+-- ---------------------------------------------------------------------------
+
+-- Count articles by status before a specific date
+-- Update the timestamp to match your policy change date
+SELECT
+    COUNT(*) AS count,
+    labeling_status
+FROM articles
+WHERE labeled_at < '2025-12-26 00:13:57+00'
+GROUP BY labeling_status;
+
+-- Find potentially mislabeled stock/financial articles (labeled)
+-- These may be tangential brand mentions that should be false_positive
+SELECT
+    a.title,
+    a.source_name,
+    bl.brand,
+    a.labeled_at
+FROM articles a
+JOIN brand_labels bl ON bl.article_id = a.id
+WHERE a.labeled_at < '2025-12-26 00:13:57+00'
+AND (
+    a.title ILIKE '%stock%' OR
+    a.title ILIKE '%shares%' OR
+    a.title ILIKE '%trading%' OR
+    a.title ILIKE '%short interest%'
+)
+ORDER BY a.labeled_at DESC;
+
+-- Find skipped articles that may be false positives
+-- Note: labeled_at is NULL for skips, so use created_at for filtering
+SELECT
+    a.title,
+    a.source_name,
+    a.brands_mentioned
+FROM articles a
+WHERE a.labeling_status = 'skipped'
+AND (
+    a.title ILIKE '%stock%' OR
+    a.title ILIKE '%shares%' OR
+    a.title ILIKE '%trading%' OR
+    a.title ILIKE '%short interest%' OR
+    a.title ILIKE '%former%' OR
+    a.title ILIKE '%ex-%' OR
+    a.title ILIKE '%appoints%' OR
+    a.title ILIKE '%joins%'
+)
+ORDER BY a.created_at DESC;

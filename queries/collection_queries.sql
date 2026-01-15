@@ -151,3 +151,31 @@ FROM date_series ds
 LEFT JOIN articles a ON a.created_at::date = ds.date
 WHERE a.id IS NULL
 ORDER BY ds.date DESC;
+
+-- ---------------------------------------------------------------------------
+-- Troubleshooting & Diagnostics
+-- ---------------------------------------------------------------------------
+
+-- Scrape error patterns
+-- Identify common failure reasons for scraping
+SELECT
+    scrape_error,
+    COUNT(*) AS count
+FROM articles
+WHERE scrape_status = 'failed'
+GROUP BY scrape_error
+ORDER BY count DESC
+LIMIT 10;
+
+-- Recent collection run details
+-- Detailed view of recent runs for troubleshooting
+SELECT
+    started_at::date AS date,
+    started_at::time AS time,
+    status,
+    articles_fetched,
+    articles_scraped,
+    articles_scrape_failed
+FROM collection_runs
+ORDER BY started_at DESC
+LIMIT 10;
