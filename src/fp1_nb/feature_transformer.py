@@ -116,6 +116,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'shoe', 'shoes', 'sneaker', 'sneakers', 'footwear', 'boot', 'boots',
         'apparel', 'clothing', 'wear', 'sportswear', 'activewear', 'athleisure',
         'jersey', 'jerseys', 'shorts', 'pants', 'jacket', 'jackets',
+        # Wearables/tech accessories (smartwatches, fitness trackers, etc.)
+        'smartwatch', 'smart watch', 'wearable', 'wearables', 'fitness tracker',
+        'smart ring', 'activity tracker', 'health tracking', 'heart rate',
         # Sports/Activity
         'athletic', 'sports', 'running', 'basketball', 'soccer', 'football',
         'tennis', 'golf', 'training', 'workout', 'fitness', 'gym',
@@ -124,6 +127,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         'launch', 'release', 'sponsor', 'sponsorship', 'endorsement',
         # Product terms
         'product', 'products', 'line', 'model', 'design', 'edition',
+        # Product announcements/launches
+        'announces', 'announced', 'unveils', 'unveiled', 'introduces', 'introduced',
+        'debuts', 'debuted', 'showcase', 'showcases', 'reveals', 'revealed',
     ]
 
     # Corporate/business vocabulary - signals legitimate business news about sportswear companies
@@ -204,9 +210,14 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         # Children's balance bikes (not New Balance)
         'balance bike', 'balance bikes', 'tricycle', 'kindergarten',
         'preschool', 'toddler', 'pedal', 'pedals',
-        # TV/entertainment (Top Gear Patagonia special)
+        # TV/entertainment (Top Gear Patagonia special, TV series productions)
         'tv show', 'episode', 'special', 'presenter', 'presenters',
         'clarkson', 'hammond', 'jeremy', 'richard', 'james may',
+        # Film/TV production (Patagonia TV series, etc.)
+        'drama', 'thriller', 'series', 'film', 'movie', 'cinema',
+        'producer', 'co-producer', 'production', 'filming', 'shooting',
+        'director', 'screenplay', 'cast', 'starring', 'toplines',
+        'netflix', 'hbo', 'amazon prime', 'streaming',
         # NASA/space events
         'nasa', 'space', 'astronaut', 'rocket', 'satellite',
     ]
@@ -265,10 +276,25 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
     # e.g., "NASDAQ:ANTA" (Antalpha Platform) vs "ANTA Sports"
     STOCK_TICKER_PATTERNS = [
         r'\bNASDAQ\s*:\s*ANTA\b',  # Antalpha Platform (not Anta Sports)
+        r'\bNASDAQ\s*:\s*PBYI\b',  # Puma Biotechnology (not Puma sportswear)
         r'\bTSE\s*:\s*BDI\b',       # Black Diamond Group (mining)
         r'\bNASDAQ\s*:\s*BIRD\b',   # Could be confused but usually is Allbirds
         r'\bASX\s*:\s*PL3\b',       # Patagonia Lithium
         r'\bOTCMKTS\s*:',           # OTC markets often have FP companies
+        r'\bOTCMKTS\s*:\s*PMMAF\b',  # Puma Exploration (mining)
+    ]
+
+    # Stock-only article patterns - articles purely about stock metrics without brand substance
+    # These indicate financial analysis articles that aren't really about the sportswear brand
+    STOCK_ONLY_PATTERNS = [
+        r'\bshort\s+interest\s+(?:update|down|up|drops?|rises?|decreases?|increases?)\b',
+        r'\btrading\s+(?:up|down)\s+\d+%\b',
+        r'\bshares?\s+(?:gap\s+)?(?:up|down)\b',
+        r'\bstock\s+(?:passes|crosses)\s+(?:above|below)\s+\d+\s*day\s+moving\s+average\b',
+        r'\b50[\s-]?day\s+moving\s+average\b',
+        r'\b200[\s-]?day\s+moving\s+average\b',
+        r'\bcalculating\s+(?:the\s+)?intrinsic\s+value\b',
+        r'\bhead[\s-]?to[\s-]?head\s+(?:review|analysis|comparison)\b',
     ]
 
     # Company suffixes that indicate non-sportswear entities
@@ -285,6 +311,9 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'Timberlands?\s+(?:investment|assets?|ownership|portfolio)', 'Timberland'),  # Forestry investment
         (r'(?:own|manage|acquire)\s+timberlands?', 'Timberland'),  # Forestry operations
         (r'Weyerhaeuser.*[Tt]imberland', 'Timberland'),  # Weyerhaeuser forestry company
+        # Timberland as place/institution (not boots brand)
+        (r'Timberland\s+(?:Regional\s+)?Library', 'Timberland'),  # Timberland Regional Library
+        (r'Timberland\s+(?:High\s+)?School', 'Timberland'),  # Schools named Timberland
         # Mining/resources
         (r'Black\s+Diamond\s+Group', 'Black Diamond'),
         (r'Black\s+Diamond\s+Power', 'Black Diamond'),
@@ -295,6 +324,16 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         (r'Puma\s+Biotechnology', 'Puma'),
         # Tech/platform
         (r'Antalpha\s+Platform', 'Anta'),  # NASDAQ:ANTA crypto company
+        # Hotels/hospitality (not sportswear)
+        (r'ANTA\s+Hotel', 'Anta'),  # ANTA Hotel chain (Radisson)
+        (r'Anta\s+Hotel', 'Anta'),
+        # Universities/institutions (Columbia Sportswear vs Columbia University)
+        (r'Columbia\s+University', 'Columbia'),
+        (r'Columbia\s+College', 'Columbia'),
+        (r'Columbia\s+Business\s+School', 'Columbia'),
+        # Political/diplomatic phrases (New Balance of power, not New Balance shoes)
+        (r'[Nn]ew\s+[Bb]alance\s+of\s+(?:power|trade|forces?)', 'New Balance'),
+        (r'(?:shift|change|alter)\s+(?:the\s+)?balance', 'New Balance'),
         # Generic suffixes that may indicate different companies
         (r'(\w+)\s+LLC\b', None),  # Matches any brand + LLC
         (r'(\w+)\s+Ltd\.?\b', None),
@@ -344,6 +383,23 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         r'\bSpyder\s+(?:F3|RT|Ryker)\b',  # Spyder model names
         r'\b(?:three[-\s]?wheel(?:ed)?|trike)\s+(?:motorcycle|vehicle)s?\b.*\bSpyder\b',
         r'\bSpyder\s+(?:motorcycle|roadster|trike)\b',
+    ]
+
+    # "On Running" phrase collision patterns
+    # The brand "On Running" can be confused with common phrases like "focus on running"
+    # These patterns indicate the text is NOT about On Running shoes
+    ON_RUNNING_FP_PATTERNS = [
+        # Sports context - "on running the ball", "focus on running game"
+        r'\bon\s+running\s+the\s+ball\b',
+        r'\bfocus(?:ed|ing)?\s+on\s+running\b',
+        r'\bkeep\s+(?:a\s+)?(?:strong\s+)?focus\s+on\s+running\b',
+        r'\bon\s+running\s+(?:the\s+)?(?:ground\s+)?game\b',
+        r'\b(?:ground|rushing)\s+(?:game|attack).*\bon\s+running\b',
+        # General verb usage - "keep on running", "go on running"
+        r'\b(?:keep|kept|go|went|carry|carried)\s+on\s+running\b',
+        # Political/business context - "on running for office", "on running the company"
+        r'\bon\s+running\s+for\s+(?:office|president|governor|mayor)\b',
+        r'\bon\s+running\s+(?:the\s+)?(?:company|business|organization)\b',
     ]
 
     # Animal context keywords for Puma (the animal)
@@ -1143,14 +1199,16 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             texts: List of text strings
 
         Returns:
-            numpy array of shape (n_samples, 13)
+            numpy array of shape (n_samples, 15)
         """
         features_list = []
 
         # Compile regex patterns once
         stock_ticker_patterns = [re.compile(p, re.IGNORECASE) for p in self.STOCK_TICKER_PATTERNS]
+        stock_only_patterns = [re.compile(p, re.IGNORECASE) for p in self.STOCK_ONLY_PATTERNS]
         company_suffix_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.COMPANY_SUFFIX_PATTERNS]
         vehicle_patterns = [re.compile(p, re.IGNORECASE) for p in self.VEHICLE_BRAND_PATTERNS]
+        on_running_fp_patterns = [re.compile(p, re.IGNORECASE) for p in self.ON_RUNNING_FP_PATTERNS]
         person_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.PERSON_NAME_PATTERNS]
         financial_jargon_patterns = [re.compile(p, re.IGNORECASE) for p in self.FINANCIAL_JARGON_PATTERNS]
         institution_patterns = [(re.compile(p[0], re.IGNORECASE), p[1]) for p in self.INSTITUTION_PATTERNS]
@@ -1172,6 +1230,17 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
                     has_stock_ticker = 1
                     break
 
+            # Check stock-only article patterns (pure financial metrics articles)
+            has_stock_only = 0
+            stock_only_match_count = 0
+            for pattern in stock_only_patterns:
+                if pattern.search(text):
+                    stock_only_match_count += 1
+                    # Require at least 2 matches for confidence
+                    if stock_only_match_count >= 2:
+                        has_stock_only = 1
+                        break
+
             # Check company suffix patterns
             has_company_suffix = 0
             for pattern, brand in company_suffix_patterns:
@@ -1187,6 +1256,14 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
                 if pattern.search(text):
                     has_vehicle_pattern = 1
                     break
+
+            # Check "On Running" false positive patterns (only if On Running brand mentioned)
+            has_on_running_fp = 0
+            if 'On Running' in brands or 'On' in brands:
+                for pattern in on_running_fp_patterns:
+                    if pattern.search(text):
+                        has_on_running_fp = 1
+                        break
 
             # Check animal context (only if Puma is mentioned)
             has_animal_context = 0
@@ -1273,8 +1350,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
             # Aggregate features (sponsored_event is NOT counted as FP indicator)
             fp_indicator_count = (
-                has_stock_ticker + has_company_suffix + has_vehicle_pattern +
-                has_animal_context + has_geographic_context + has_person_name +
+                has_stock_ticker + has_stock_only + has_company_suffix + has_vehicle_pattern +
+                has_on_running_fp + has_animal_context + has_geographic_context + has_person_name +
                 has_financial_jargon + has_institution + has_phrase_not_brand +
                 has_product_disambiguation
             )
@@ -1283,8 +1360,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             # sponsored_event SUBTRACTS from score (indicates sportswear, not FP)
             fp_indicator_score = (
                 has_stock_ticker * 2.0 +
+                has_stock_only * 2.0 +  # Stock-only articles are strong FP signals
                 has_company_suffix * 2.0 +
                 has_vehicle_pattern * 1.5 +
+                has_on_running_fp * 2.0 +  # On Running phrase collision is strong signal
                 has_animal_context * 1.0 +
                 has_geographic_context * 1.0 +
                 has_person_name * 1.5 +
@@ -1297,8 +1376,10 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
 
             features_list.append([
                 has_stock_ticker,
+                has_stock_only,
                 has_company_suffix,
                 has_vehicle_pattern,
+                has_on_running_fp,
                 has_animal_context,
                 has_geographic_context,
                 has_person_name,

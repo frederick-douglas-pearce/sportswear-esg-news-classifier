@@ -234,6 +234,43 @@ with engine.connect() as conn:
 - `database.py` - Labeling-specific DB operations
 - `pipeline.py` - Orchestrates FP pre-filter → chunking → embedding → labeling → evidence matching
 
+### Prompt Versioning (`prompts/`)
+
+LLM prompts are version-controlled in `prompts/labeling/` with the following structure:
+
+```
+prompts/labeling/
+├── registry.json          # Version registry with metadata
+├── v1.0.0/
+│   ├── config.json        # Version config (model, variables)
+│   ├── system_prompt.txt  # System prompt template
+│   └── user_prompt.txt    # User prompt template
+├── v1.1.0/
+│   └── ...
+└── v1.2.0/
+    └── ...
+```
+
+**To update prompts:**
+
+1. Create a new version directory (e.g., `prompts/labeling/v1.3.0/`)
+2. Copy files from the previous version as a starting point
+3. Update `system_prompt.txt` and/or `user_prompt.txt` with changes
+4. Update `config.json` with the new version number
+5. Update `registry.json`:
+   - Add entry for new version with `created_at`, `commit_message`, `description`
+   - Set previous version's status to `"superseded"`
+   - Set new version's status to `"testing"`
+6. Update `src/labeling/config.py` with matching changes (runtime prompt)
+7. Add changelog entry to `CLAUDE.md` documenting the change
+
+**Important:** The `src/labeling/config.py` file contains the runtime prompt used by the labeling pipeline. When updating prompts, BOTH the versioned files in `prompts/` AND the config.py must be updated to stay in sync.
+
+**Version statuses:**
+- `production` - Currently deployed version
+- `testing` - Under evaluation
+- `superseded` - Replaced by newer version
+
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
 - `label_articles.py` - CLI for LLM-based article labeling
@@ -685,7 +722,35 @@ psql $DATABASE_URL -f migrations/002_classifier_predictions.sql
 
 ---
 
-### 2025-12-27: Clarified is_sportswear_brand Semantics
+### 2026-01-14: Clarified is_sportswear_brand Policy for Stock Articles
+
+**Change**: Updated `src/labeling/config.py` to clarify that `is_sportswear_brand` is about **substantive content**, not just identity. This supersedes the 2025-12-27 entry.
+
+**Key distinction:**
+- `is_sportswear_brand: true` → Article has **substantive content** about the sportswear brand (products, business news, strategy, management, analyst commentary with reasoning)
+- `is_sportswear_brand: false` → Brand name refers to something else (Puma animal) OR article has **no substantive content** (pure stock metrics only)
+
+**The "Finance Category Test":** Would this article be useful if we added a "Finance" or "Business News" category? If YES → `is_sportswear_brand: true`. If the article is just raw metrics available from Yahoo Finance → `is_sportswear_brand: false`.
+
+**Examples:**
+| Article | Substantive? | Label |
+|---------|-------------|-------|
+| "NKE stock up 4% today" | No (just price) | `false_positive` |
+| "Adidas short interest down 22%" | No (just metrics) | `false_positive` |
+| "Jim Cramer says Nike CEO is reinventing the company" | Yes (strategy discussion) | `skipped` |
+| "Analysts give Adidas Buy rating citing strong Q4 outlook" | Yes (business reasoning) | `skipped` |
+| "Nike shares surge after CEO announces restructuring" | Yes (substantive news) | `skipped` |
+
+**Why this matters:**
+- Pure metrics articles clutter the dataset with no actionable information
+- Substantive financial articles may be useful for future "Finance" category
+- FP classifier should learn to filter pure metrics, not substantive business news
+
+---
+
+### 2025-12-27: Clarified is_sportswear_brand Semantics (SUPERSEDED)
+
+**Note**: This entry is superseded by the 2026-01-14 clarification above.
 
 **Change**: Updated `src/labeling/config.py` prompt to clarify that `is_sportswear_brand` is about IDENTITY (does the brand name refer to the sportswear company?), not CONTENT (does the article have ESG content?).
 

@@ -28,6 +28,20 @@
       },
       "tags": {
         "author": "system",
+        "status": "superseded"
+      }
+    },
+    "v1.2.0": {
+      "created_at": "2026-01-14T00:00:00Z",
+      "commit_message": "Clarify is_sportswear_brand policy for stock articles",
+      "description": "Clarifies that is_sportswear_brand is about substantive content, not just identity. Pure stock metrics (short interest, price movements, moving averages) with no commentary should be false_positive. Adds Finance Category Test: would this article be useful if we added a Finance category? If just raw metrics from Yahoo Finance, it's a false positive.",
+      "model_recommendations": {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "system",
         "status": "testing"
       }
     }

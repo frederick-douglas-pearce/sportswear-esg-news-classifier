@@ -355,29 +355,43 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 
 ## CRITICAL: Understanding is_sportswear_brand
 
-The `is_sportswear_brand` field indicates whether the brand name refers to the SPORTSWEAR/APPAREL COMPANY. This is about IDENTITY, not content.
+The `is_sportswear_brand` field indicates whether the article contains **substantive content** about the sportswear/apparel company. This determines whether the article is worth processing for potential ESG content or future analysis.
 
-**Set `is_sportswear_brand: false` ONLY when the brand name refers to something ELSE:**
-- Puma the animal (not Puma sportswear)
-- Patagonia the geographic region (not Patagonia outdoor apparel)
-- "Vans" meaning vehicles (not Vans footwear)
-- Black Diamond Equipment for climbing gear (not sportswear)
+**Set `is_sportswear_brand: false` when:**
 
-**Set `is_sportswear_brand: true` (or omit the brand) when the article IS about the sportswear brand:**
+1. **Brand name refers to something ELSE entirely:**
+   - Puma the animal (not Puma sportswear)
+   - Patagonia the geographic region (not Patagonia outdoor apparel)
+   - "Vans" meaning vehicles (not Vans footwear)
+   - Puma Biotechnology, Columbia University (different entities)
+
+2. **Pure stock metrics with NO substantive commentary:**
+   - "NKE stock up 4% today" - just price movement, no brand discussion
+   - "Adidas short interest down 22%" - just metrics, no company insight
+   - "PUMA SE trading above 50-day moving average" - technical analysis only
+   - These provide no useful information about the brand's business, products, or operations
+
+3. **Tangential mentions without substantive coverage:**
+   - Former executives now at other companies (article is about the OTHER company)
+   - Brand mentioned only as biographical context or comparison
+   - Industry reports where brand appears in a list without detail
+
+**Set `is_sportswear_brand: true` (or omit the brand) when the article HAS substantive content:**
+
 - Product announcements, reviews, sales (→ true, but no ESG categories apply)
 - Store openings, sponsorships, athlete signings (→ true, but no ESG categories apply)
-- Financial articles ABOUT the sportswear company's business (→ true, check for governance content)
+- Financial articles with substantive business commentary:
+  - "Jim Cramer says Nike CEO is reinventing the company" → true (discusses strategy/management)
+  - "Analysts give Adidas Buy rating citing strong Q4 outlook" → true (discusses business prospects)
+  - "Puma reports earnings beat driven by China growth" → true (discusses business performance)
 
-**Tangential Mentions (still set `is_sportswear_brand: false`):**
-- Former executives now at other companies (article is about the OTHER company)
-- Brand mentioned only as biographical context or comparison
-- Industry reports where brand appears in a list without substantive coverage
+**Key test:** Would this article be useful if we added a "Finance" or "Business News" category? If YES, set `is_sportswear_brand: true`. If the article is just raw metrics available from Yahoo Finance, set `is_sportswear_brand: false`.
 
-**Key Distinction:**
-- "Timberland boots on sale" → `is_sportswear_brand: true` (it's about Timberland products), but omit from brand_analyses since no ESG content
-- "Timberland forests need protection" → `is_sportswear_brand: false` (referring to forests, not the brand)
-
-**When in doubt:** If the article is genuinely ABOUT the sportswear brand's products, stores, or business activities (even without ESG content), set `is_sportswear_brand: true` and either assign no ESG categories or omit the brand from the response. Reserve `is_sportswear_brand: false` for cases where the brand name refers to something completely different."""
+**Examples:**
+- "Timberland boots on sale" → `is_sportswear_brand: true` (product content)
+- "Timberland forests need protection" → `is_sportswear_brand: false` (not the brand)
+- "NKE +2.3% in morning trading" → `is_sportswear_brand: false` (pure metrics)
+- "Nike shares surge after CEO announces restructuring plan" → `is_sportswear_brand: true` (substantive)"""
 
 # Build the system prompt with the current brand list
 LABELING_SYSTEM_PROMPT = _LABELING_SYSTEM_PROMPT_TEMPLATE.format(
