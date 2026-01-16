@@ -1,6 +1,6 @@
 {
   "fp": {
-    "production": "v2.3.0",
+    "production": "v2.4.0",
     "versions": {
       "v1.0.0": {
         "created_at": "2024-12-23T00:00:00Z",
@@ -80,6 +80,22 @@
           "test_precision": 0.9562
         },
         "notes": "Fixed 10 boilerplate articles, added Dr./Professor Salomon patterns, Black Diamond venue/event patterns. CV F2 +0.55% vs v2.2.0. Training data: 1535 samples (+43)."
+      },
+      "v2.4.0": {
+        "created_at": "2026-01-16T02:15:36Z",
+        "trained_on": "data/fp_training_data.jsonl",
+        "model_name": "RF_tuned",
+        "transformer_method": "tfidf_lsa_ner_proximity_brands",
+        "threshold": 0.4911,
+        "metrics": {
+          "cv_f2": 0.9839,
+          "cv_recall": 0.9913,
+          "cv_precision": 0.9553,
+          "test_f2": 0.9861,
+          "test_recall": 0.9884,
+          "test_precision": 0.9771
+        },
+        "notes": "Training data expanded to 1634 samples (+99). Test F2 +0.17%, test precision +2.09% vs v2.3.0. Added Columbia Sportswear stock article as FP."
       }
     }
   },
