@@ -1,14 +1,14 @@
 {
   "model_name": "RF_tuned",
-  "cv_f2": 0.983620812838382,
-  "cv_recall": 0.990079365079365,
-  "cv_precision": 0.9589649095431906,
-  "cv_f1": 0.9741593767173443,
-  "cv_accuracy": 0.958528951486698,
-  "cv_pr_auc": 0.9946287395280656,
+  "cv_f2": 0.9838793170436267,
+  "cv_recall": 0.9912959218065387,
+  "cv_precision": 0.9553062173683456,
+  "cv_f1": 0.9729633114463295,
+  "cv_accuracy": 0.9563886252592358,
+  "cv_pr_auc": 0.9946975536301986,
   "best_params": {
     "class_weight": null,
-    "max_depth": 20,
+    "max_depth": 15,
     "min_samples_leaf": 1,
     "min_samples_split": 2,
     "n_estimators": 120
