@@ -517,7 +517,7 @@ def main() -> int:
         print(f"Atom feed written to: {output_path}")
 
     # Print summary
-    print_summary([], json_data)
+    print_summary(articles, json_data)
 
     if args.dry_run:
         print("\n[DRY RUN] No files written")
