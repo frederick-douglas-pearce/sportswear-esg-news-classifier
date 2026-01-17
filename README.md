@@ -260,6 +260,16 @@ flowchart TB
 - [x] Evidence excerpts with sentiment indicators
 - [x] RSS/Atom feed for news aggregators
 
+### Phase 8: Agent Orchestrator ✅
+- [x] Hybrid orchestrator for automated maintenance workflows
+- [x] Daily labeling workflow (collection check → labeling → quality metrics → reports)
+- [x] Drift monitoring workflow (FP/EP classifier drift detection with alerts)
+- [x] Website export workflow (JSON/Atom feed generation with git integration)
+- [x] Unified notification system (Resend email + Slack/Discord webhooks)
+- [x] YAML-based state management with checkpointing
+- [x] Cron scheduling (5:30am drift, 6:30am labeling, 7:00am export)
+- [x] CLI: `uv run python -m src.agent run|status|list|history`
+
 ## Table of Contents
 
 - [System Architecture](#system-architecture)
@@ -287,11 +297,11 @@ The project follows a modular architecture:
 
 | Directory | Purpose |
 |-----------|---------|
-| `src/` | Core modules: data_collection, labeling, mlops, notebook utilities |
+| `src/` | Core modules: data_collection, labeling, mlops, agent, notebook utilities |
 | `scripts/` | CLI tools: collection, labeling, training, deployment, monitoring |
 | `notebooks/` | ML classifier development: 6 notebooks (EDA → Tuning → Deployment) |
 | `models/` | Trained models, configs, and version registry |
-| `tests/` | Comprehensive test suite (548 tests) |
+| `tests/` | Comprehensive test suite (664 tests) |
 | `docs/` | Detailed documentation for each subsystem |
 
 **Key Files for ML Zoomcamp:**
@@ -1465,7 +1475,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with **548 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, and MLOps modules.
+The project includes a comprehensive test suite with **664 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, MLOps modules, and agent orchestration.
 
 ```bash
 # Run all tests
@@ -1507,6 +1517,7 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 | Explainability | SHAP feature groups, LIME local explanations, prototypes |
 | MLOps | MLflow tracking, Evidently monitoring, reference data, alerts |
 | Retraining | Version management, auto-promotion, deployment triggers |
+| Agent Orchestrator | State management, workflows, notifications, drift monitoring |
 | Integration | End-to-end classifier pipeline tests |
 
 ## Troubleshooting

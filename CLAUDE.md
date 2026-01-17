@@ -41,7 +41,7 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (p
 CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
 
 # Testing
-uv run pytest                              # Run all tests (528 tests)
+uv run pytest                              # Run all tests (664 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -72,6 +72,17 @@ uv run python scripts/register_model.py --classifier fp --bump minor --update-re
 uv run python scripts/export_website_feed.py --format both \
   --json-output /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io/_data/esg_news.json \
   --atom-output /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io/assets/feeds/esg_news.atom
+
+# Agent Orchestrator
+uv run python -m src.agent list                    # List available workflows
+uv run python -m src.agent run daily_labeling      # Run daily labeling workflow
+uv run python -m src.agent run drift_monitoring    # Run drift monitoring workflow
+uv run python -m src.agent run website_export      # Run website export workflow
+uv run python -m src.agent run daily_labeling --dry-run  # Dry run (no side effects)
+uv run python -m src.agent status                  # Show workflow status
+uv run python -m src.agent history                 # Show workflow history
+./scripts/setup_cron.sh install-agent              # Install all agent cron jobs
+./scripts/setup_cron.sh status                     # Check cron status
 ```
 
 ## Data Collection Status Reporting
@@ -173,6 +184,18 @@ prompts/labeling/
 - `reference_data.py` - Reference dataset management
 - `alerts.py` - Webhook notifications for Slack/Discord
 
+### Agent Orchestrator (`src/agent/`)
+- `config.py` - Agent settings (state dir, email, retries)
+- `state.py` - YAML-based state management with checkpointing
+- `runner.py` - Script execution wrapper with retry logic
+- `notifications.py` - Unified notifications (Resend email + webhooks)
+- `workflows/` - Workflow definitions:
+  - `base.py` - Workflow base class and registry
+  - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
+  - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
+  - `website_export.py` - JSON/Atom feed generation with git integration
+- `__main__.py` - CLI entry point (run, status, list, history)
+
 ### ML Classifier Notebooks (`notebooks/`)
 
 **False Positive Classifier (3 notebooks):** fp1_EDA_FE.ipynb → fp2_model_selection_tuning.ipynb → fp3_model_evaluation_deployment.ipynb
@@ -189,8 +212,8 @@ prompts/labeling/
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 528 tests
-Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_integration
+### Test Suite (`tests/`) - 664 tests
+Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_integration
 
 ### Database Schema
 - **articles**: Article metadata + scraped content + labeling_status
@@ -220,6 +243,11 @@ MLFLOW_ENABLED=false, MLFLOW_TRACKING_URI=sqlite:///mlruns.db
 EVIDENTLY_ENABLED=false, DRIFT_THRESHOLD=0.1
 REFERENCE_DATA_DIR=data/reference, REFERENCE_WINDOW_DAYS=30
 ALERT_WEBHOOK_URL, ALERT_ON_DRIFT=true
+
+# Agent Orchestrator
+AGENT_EMAIL_ENABLED=false, AGENT_EMAIL_RECIPIENT=, AGENT_EMAIL_SENDER=
+RESEND_API_KEY=  # Recommended for email (resend.com, 3000/month free)
+AGENT_LLM_ANALYSIS=false, AGENT_LLM_ERROR_THRESHOLD=0.1
 ```
 
 ## ESG Category Structure
