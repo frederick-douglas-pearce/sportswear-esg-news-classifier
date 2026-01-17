@@ -10,6 +10,12 @@ Key components:
 - workflows: Workflow definitions (daily_labeling, model_training, etc.)
 """
 
+# Load environment variables before importing config
+# This ensures .env is loaded when agent_settings is created
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from .config import agent_settings
 from .runner import ScriptResult, run_script
 from .state import WorkflowState, WorkflowStatus, state_manager
