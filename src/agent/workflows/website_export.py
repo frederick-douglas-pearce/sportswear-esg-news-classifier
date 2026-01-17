@@ -133,6 +133,18 @@ def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         logger.info("No changes to commit")
         return {"git_skipped": True, "reason": "no_changes"}
 
+    # Run prettier to format JSON file before committing
+    prettier_result = run_script(
+        ["npx", "prettier", "--write", "_data/esg_news.json"],
+        cwd=website_repo,
+        retries=0,
+        timeout=60,
+    )
+
+    if not prettier_result.success:
+        logger.warning(f"Prettier formatting failed: {prettier_result.stderr}")
+        # Continue anyway - prettier failure shouldn't block the export
+
     # Add files
     add_result = run_script(
         ["git", "add", "_data/esg_news.json", "assets/feeds/esg_news.atom"],
