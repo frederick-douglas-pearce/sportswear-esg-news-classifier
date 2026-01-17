@@ -62,3 +62,4 @@ notebooks/models/
 mlruns/
 mlruns.db
 logs/agent/
+reports/daily_labeling/
