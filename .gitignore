@@ -61,3 +61,4 @@ notebooks/models/
 *.code-workspace
 mlruns/
 mlruns.db
+logs/agent/
