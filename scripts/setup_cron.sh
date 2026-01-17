@@ -13,6 +13,7 @@ COLLECT_SCRIPT="$SCRIPT_DIR/cron_collect.sh"
 SCRAPE_SCRIPT="$SCRIPT_DIR/cron_scrape.sh"
 MONITOR_SCRIPT="$SCRIPT_DIR/cron_monitor.sh"
 BACKUP_SCRIPT="$SCRIPT_DIR/backup_db.sh"
+AGENT_SCRIPT="$SCRIPT_DIR/cron_agent.sh"
 
 # Collection: runs at midnight, 6am, noon, 6pm (4x daily)
 COLLECT_SCHEDULE="0 0,6,12,18 * * *"
@@ -33,6 +34,21 @@ MONITOR_COMMENT="# ESG Classifier Monitoring - drift detection (daily)"
 BACKUP_SCHEDULE="0 2 * * *"
 BACKUP_ENTRY="$BACKUP_SCHEDULE $BACKUP_SCRIPT backup"
 BACKUP_COMMENT="# ESG Database Backup - daily with rotation"
+
+# Agent daily labeling: runs at 6:30am (after collection completes)
+AGENT_LABELING_SCHEDULE="30 6 * * *"
+AGENT_LABELING_ENTRY="$AGENT_LABELING_SCHEDULE $AGENT_SCRIPT daily_labeling"
+AGENT_LABELING_COMMENT="# ESG Agent - daily labeling workflow"
+
+# Agent website export: runs at 7am (after labeling completes)
+AGENT_EXPORT_SCHEDULE="0 7 * * *"
+AGENT_EXPORT_ENTRY="$AGENT_EXPORT_SCHEDULE $AGENT_SCRIPT website_export"
+AGENT_EXPORT_COMMENT="# ESG Agent - website feed export"
+
+# Agent drift monitoring: runs at 5:30am (before labeling)
+AGENT_DRIFT_SCHEDULE="30 5 * * *"
+AGENT_DRIFT_ENTRY="$AGENT_DRIFT_SCHEDULE $AGENT_SCRIPT drift_monitoring"
+AGENT_DRIFT_COMMENT="# ESG Agent - drift monitoring workflow"
 
 install_collect() {
     if crontab -l 2>/dev/null | grep -q "$COLLECT_SCRIPT"; then
@@ -106,6 +122,60 @@ remove_backup() {
     fi
 }
 
+install_agent_labeling() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT daily_labeling"; then
+        echo "Agent labeling job already installed."
+    else
+        (crontab -l 2>/dev/null || true; echo "$AGENT_LABELING_COMMENT"; echo "$AGENT_LABELING_ENTRY") | crontab -
+        echo "✓ Agent labeling job installed (daily at 6:30am)"
+    fi
+}
+
+install_agent_export() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT website_export"; then
+        echo "Agent export job already installed."
+    else
+        (crontab -l 2>/dev/null || true; echo "$AGENT_EXPORT_COMMENT"; echo "$AGENT_EXPORT_ENTRY") | crontab -
+        echo "✓ Agent export job installed (daily at 7am)"
+    fi
+}
+
+remove_agent_labeling() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT daily_labeling"; then
+        crontab -l | grep -v "$AGENT_SCRIPT daily_labeling" | grep -v "ESG Agent - daily labeling" | crontab -
+        echo "✓ Agent labeling job removed."
+    else
+        echo "No agent labeling job found."
+    fi
+}
+
+remove_agent_export() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT website_export"; then
+        crontab -l | grep -v "$AGENT_SCRIPT website_export" | grep -v "ESG Agent - website" | crontab -
+        echo "✓ Agent export job removed."
+    else
+        echo "No agent export job found."
+    fi
+}
+
+install_agent_drift() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT drift_monitoring"; then
+        echo "Agent drift job already installed."
+    else
+        (crontab -l 2>/dev/null || true; echo "$AGENT_DRIFT_COMMENT"; echo "$AGENT_DRIFT_ENTRY") | crontab -
+        echo "✓ Agent drift job installed (daily at 5:30am)"
+    fi
+}
+
+remove_agent_drift() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT drift_monitoring"; then
+        crontab -l | grep -v "$AGENT_SCRIPT drift_monitoring" | grep -v "ESG Agent - drift" | crontab -
+        echo "✓ Agent drift job removed."
+    else
+        echo "No agent drift job found."
+    fi
+}
+
 case "$1" in
     install)
         install_collect
@@ -127,11 +197,30 @@ case "$1" in
     install-backup)
         install_backup
         ;;
+    install-agent-labeling)
+        install_agent_labeling
+        ;;
+    install-agent-export)
+        install_agent_export
+        ;;
+    install-agent-drift)
+        install_agent_drift
+        ;;
+    install-agent)
+        install_agent_drift
+        install_agent_labeling
+        install_agent_export
+        echo ""
+        echo "Agent logs: logs/agent/cron_<workflow>_YYYYMMDD.log"
+        ;;
     remove)
         remove_collect
         remove_scrape
         remove_monitor
         remove_backup
+        remove_agent_labeling
+        remove_agent_export
+        remove_agent_drift
         ;;
     remove-collect)
         remove_collect
@@ -144,6 +233,20 @@ case "$1" in
         ;;
     remove-backup)
         remove_backup
+        ;;
+    remove-agent-labeling)
+        remove_agent_labeling
+        ;;
+    remove-agent-export)
+        remove_agent_export
+        ;;
+    remove-agent-drift)
+        remove_agent_drift
+        ;;
+    remove-agent)
+        remove_agent_labeling
+        remove_agent_export
+        remove_agent_drift
         ;;
     status)
         echo "ESG News Cron Jobs Status"
@@ -169,6 +272,21 @@ case "$1" in
         else
             echo "Backup:     NOT INSTALLED"
         fi
+        if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT daily_labeling"; then
+            echo "Agent Lab:  ACTIVE (daily at 6:30am)"
+        else
+            echo "Agent Lab:  NOT INSTALLED"
+        fi
+        if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT website_export"; then
+            echo "Agent Exp:  ACTIVE (daily at 7am)"
+        else
+            echo "Agent Exp:  NOT INSTALLED"
+        fi
+        if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT drift_monitoring"; then
+            echo "Agent Drf:  ACTIVE (daily at 5:30am)"
+        else
+            echo "Agent Drf:  NOT INSTALLED"
+        fi
         echo ""
         echo "Current crontab:"
         crontab -l 2>/dev/null | grep -E "(ESG|cron_|backup_)" || echo "(no ESG jobs)"
@@ -184,18 +302,29 @@ case "$1" in
         echo "  status           - Show current cron status"
         echo "  install-collect  - Add NewsData collection job"
         echo "  install-scrape   - Add GDELT collection job"
-        echo "  install-monitor  - Add monitoring job"
+        echo "  install-monitor  - Add monitoring job (standalone)"
         echo "  install-backup   - Add database backup job"
+        echo "  install-agent    - Add all agent workflow jobs"
+        echo "  install-agent-labeling - Add agent labeling job"
+        echo "  install-agent-export   - Add agent export job"
+        echo "  install-agent-drift    - Add agent drift monitoring job"
         echo "  remove-collect   - Remove collection job"
         echo "  remove-scrape    - Remove scrape job"
         echo "  remove-monitor   - Remove monitoring job"
         echo "  remove-backup    - Remove backup job"
+        echo "  remove-agent     - Remove all agent jobs"
+        echo "  remove-agent-labeling  - Remove agent labeling job"
+        echo "  remove-agent-export    - Remove agent export job"
+        echo "  remove-agent-drift     - Remove agent drift job"
         echo ""
         echo "Schedule:"
         echo "  NewsData (API + scrape):   midnight, 6am, noon, 6pm"
         echo "  GDELT (free API + scrape): 3am, 9am, 3pm, 9pm"
         echo "  Backup (daily rotation):   2am"
-        echo "  Monitoring (drift check):  6am UTC daily"
+        echo "  Monitoring (standalone):   6am UTC daily"
+        echo "  Agent drift monitoring:    5:30am daily"
+        echo "  Agent labeling:            6:30am daily"
+        echo "  Agent website export:      7am daily"
         exit 1
         ;;
 esac

@@ -43,6 +43,7 @@ dependencies = [
     "shap>=0.44",
     # Feed generation dependencies
     "feedgen>=1.0.0",
+    "resend>=2.19.0",
 ]
 
 [project.optional-dependencies]
