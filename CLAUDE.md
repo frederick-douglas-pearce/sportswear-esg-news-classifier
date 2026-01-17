@@ -270,6 +270,35 @@ JSON/Atom feeds for Jekyll/al-folio site. Website repo: `/home/fdpearce/Document
 
 ## Labeling Pipeline Changelog
 
+### 2026-01-16: Expanded Stock Article Classification Guidelines
+
+Clarified criteria for distinguishing between `false_positive` (pure metrics) and `skipped` (substantive content) for stock/finance articles. This matters because FP classifier bypasses LLM - articles incorrectly marked `false_positive` are permanently excluded from future labeling.
+
+**Substantive Content Indicators (→ `skipped`, send to LLM):**
+- Named analyst firms with specific ratings (e.g., "Citigroup reiterates neutral", "BNP Paribas upgrades to hold")
+- Consensus rating breakdowns (e.g., "1 Buy, 5 Hold, 1 Sell")
+- Earnings results with context or CEO commentary
+- Hedge fund/institutional investor activity with specifics (e.g., "GAMMA Investing grew position by 30%")
+- Price targets from analysts
+- Any editorial analysis or reasoning about the company
+
+**Raw Metrics Only (→ `false_positive`, skip LLM):**
+- Just stock price, PE ratio, moving averages
+- Short interest numbers without analyst context
+- Boilerplate company descriptions (template text)
+- Pure ticker data (e.g., "NKE $78.50 +2.3%")
+
+| Article Type | Example | Has Substantive Content? | Label |
+|-------------|---------|-------------------------|-------|
+| Raw metrics | "NKE stock up 4% today, 50-day MA $94.67" | ❌ No | `false_positive` |
+| Short interest only | "ANTA short interest up 535%, ratio 0.8 days" | ❌ No | `false_positive` |
+| Analyst ratings | "Citigroup neutral, BNP upgrades to hold, consensus: Hold" | ✅ Yes | `skipped` |
+| Hedge fund activity | "GAMMA Investing grew position by 30.1% to $161K" | ✅ Yes | `skipped` |
+| Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | ✅ Yes | `skipped` |
+| Analyst with targets | "Deutsche Bank reiterates buy, $146 target" | ✅ Yes | `skipped` |
+
+**FP Classifier Limitation:** The FP classifier may underweight less common brands (Anta, Puma, Xtep) compared to Nike/Adidas/Lululemon. Review FP classifier predictions for these brands during labeling audits.
+
 ### 2026-01-14: Clarified is_sportswear_brand Policy for Stock Articles
 
 `is_sportswear_brand` is about **substantive content**, not just identity:
