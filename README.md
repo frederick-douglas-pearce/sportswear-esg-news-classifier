@@ -262,10 +262,12 @@ flowchart TB
 
 ### Phase 8: Agent Orchestrator ✅
 - [x] Hybrid orchestrator for automated maintenance workflows
-- [x] Daily labeling workflow (collection check → labeling → quality metrics → reports)
+- [x] Daily labeling workflow (collection check → labeling → quality metrics → LLM analysis → reports)
 - [x] Drift monitoring workflow (FP/EP classifier drift detection with alerts)
 - [x] Website export workflow (JSON/Atom feed generation with git integration)
-- [x] Model training workflow (data export → quality check → notify → compare → promote)
+- [x] Model training workflow (data export → quality check → notify → compare → promote → deploy)
+- [x] LLM intelligence: Claude Sonnet analysis of labeling results for error detection
+- [x] GitHub Actions deployment trigger after model promotion
 - [x] Unified notification system (Resend email + Slack/Discord webhooks)
 - [x] YAML-based state management with checkpointing
 - [x] Cron scheduling (5:30am drift, 6:30am labeling, 7:00am export)

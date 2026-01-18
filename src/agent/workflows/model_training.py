@@ -528,7 +528,6 @@ def promote_model(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]
     # Send notification about promotion results
     if agent_settings.email_enabled and (promotion_results["promoted"] or promotion_results["failed"]):
         try:
-            subject = "Model Promotion Complete"
             body_lines = ["Model promotion workflow completed.", ""]
 
             if promotion_results["promoted"]:
@@ -537,15 +536,127 @@ def promote_model(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]
             if promotion_results["failed"]:
                 body_lines.append(f"Failed: {', '.join(f['classifier'] for f in promotion_results['failed'])}")
 
-            notifier = NotificationManager()
-            notifier.send_email(
-                subject=subject,
-                body="\n".join(body_lines),
+            notification = Notification(
+                notification_type=NotificationType.WORKFLOW_COMPLETE,
+                subject="Model Promotion Complete",
+                message="\n".join(body_lines),
+                details={
+                    "workflow": "model_training",
+                    "promoted": promotion_results["promoted"],
+                    "failed": [f["classifier"] for f in promotion_results["failed"]],
+                },
+                severity="info" if not promotion_results["failed"] else "warning",
             )
+
+            notifier = NotificationManager()
+            notifier.send(notification, channels=["email"])
         except Exception as e:
             logger.warning(f"Failed to send promotion notification: {e}")
 
     return promotion_results
+
+
+def trigger_deployment(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Trigger GitHub Actions deployment for promoted models.
+
+    Uses `gh workflow run` to trigger the deploy.yml workflow for each
+    promoted classifier. Only triggers for minor/major versions.
+
+    Requires:
+    - GitHub CLI (`gh`) installed and authenticated
+    - deploy.yml workflow in .github/workflows/
+    """
+    promoted = context.get("promoted", [])
+
+    if not promoted:
+        return {"deployment_skipped": True, "reason": "no_promoted_models"}
+
+    deployment_results = {
+        "triggered": [],
+        "skipped": [],
+        "failed": [],
+    }
+
+    # Read registry to get version info
+    registry_path = Path("models/registry.json")
+    registry = {}
+    if registry_path.exists():
+        try:
+            with open(registry_path) as f:
+                registry = json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not read registry: {e}")
+
+    for classifier in promoted:
+        # Get version from registry
+        classifier_info = registry.get(classifier, {})
+        version = classifier_info.get("version", "unknown")
+
+        # Determine bump type based on version change
+        # Default to minor since that's what promote_model uses
+        bump_type = "minor"
+
+        logger.info(f"Triggering deployment for {classifier} ({version}, {bump_type})")
+
+        # Trigger GitHub Actions workflow
+        try:
+            result = run_script(
+                [
+                    "gh", "workflow", "run", "deploy.yml",
+                    "-f", f"classifier={classifier}",
+                    "-f", f"version={version}",
+                    "-f", f"bump_type={bump_type}",
+                ],
+                retries=0,
+                timeout=30,
+            )
+
+            if result.success:
+                deployment_results["triggered"].append({
+                    "classifier": classifier,
+                    "version": version,
+                    "bump_type": bump_type,
+                })
+                logger.info(f"Deployment triggered for {classifier} {version}")
+            else:
+                # Check if gh is not installed or not authenticated
+                if "gh: command not found" in result.stderr or "not found" in result.stderr.lower():
+                    logger.warning("GitHub CLI (gh) not installed - skipping deployment trigger")
+                    deployment_results["skipped"].append({
+                        "classifier": classifier,
+                        "reason": "gh_not_installed",
+                    })
+                elif "authentication" in result.stderr.lower() or "login" in result.stderr.lower():
+                    logger.warning("GitHub CLI not authenticated - skipping deployment trigger")
+                    deployment_results["skipped"].append({
+                        "classifier": classifier,
+                        "reason": "gh_not_authenticated",
+                    })
+                else:
+                    deployment_results["failed"].append({
+                        "classifier": classifier,
+                        "error": result.stderr[:200],
+                    })
+                    logger.error(f"Failed to trigger deployment for {classifier}: {result.stderr[:200]}")
+
+        except Exception as e:
+            logger.error(f"Exception triggering deployment for {classifier}: {e}")
+            deployment_results["failed"].append({
+                "classifier": classifier,
+                "error": str(e),
+            })
+
+    # Log summary
+    if deployment_results["triggered"]:
+        print("\n" + "=" * 60)
+        print("DEPLOYMENT TRIGGERED")
+        print("=" * 60)
+        for item in deployment_results["triggered"]:
+            print(f"  {item['classifier']}: {item['version']} ({item['bump_type']})")
+        print("Monitor progress at: https://github.com/<owner>/<repo>/actions")
+        print("=" * 60 + "\n")
+
+    return deployment_results
 
 
 @WorkflowRegistry.register
@@ -563,6 +674,7 @@ class ModelTrainingWorkflow(Workflow):
     5. Compare new models to production
     6. Prompt for promotion approval
     7. Promote approved models
+    8. Trigger Cloud Run deployment (via GitHub Actions)
     """
 
     name = "model_training"
@@ -600,6 +712,12 @@ class ModelTrainingWorkflow(Workflow):
             name="promote_model",
             description="Promote approved models to production",
             handler=promote_model,
+            skip_on_dry_run=True,
+        ),
+        StepDefinition(
+            name="trigger_deployment",
+            description="Trigger Cloud Run deployment via GitHub Actions",
+            handler=trigger_deployment,
             skip_on_dry_run=True,
         ),
     ]

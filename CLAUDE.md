@@ -197,7 +197,7 @@ prompts/labeling/
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
   - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
   - `website_export.py` - JSON/Atom feed generation with git integration
-  - `model_training.py` - Data export → quality check → pause → model comparison → promotion
+  - `model_training.py` - Data export → quality check → pause → comparison → promotion → deploy
 - `__main__.py` - CLI entry point (run, continue, status, list, history)
 
 ### ML Classifier Notebooks (`notebooks/`)
