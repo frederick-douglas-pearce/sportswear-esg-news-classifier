@@ -40,6 +40,14 @@ class AgentSettings:
     llm_error_threshold: float = field(
         default_factory=lambda: float(os.getenv("AGENT_LLM_ERROR_THRESHOLD", "0.0"))
     )  # 0.0 = always run LLM, >0 = only if error_rate exceeds threshold
+    anthropic_api_key: str | None = field(
+        default_factory=lambda: os.getenv("ANTHROPIC_API_KEY") or None
+    )
+    llm_analysis_model: str = field(
+        default_factory=lambda: os.getenv(
+            "AGENT_LLM_MODEL", "claude-sonnet-4-20250514"
+        )
+    )
 
     # Email notifications
     email_enabled: bool = field(

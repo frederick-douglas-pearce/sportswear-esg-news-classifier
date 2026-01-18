@@ -194,6 +194,11 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     This step is configurable:
     - If AGENT_LLM_ANALYSIS=true and AGENT_LLM_ERROR_THRESHOLD=0.0: always run
     - If AGENT_LLM_ERROR_THRESHOLD > 0: only run if error_rate exceeds threshold
+
+    Uses Claude Sonnet to analyze recent labeling results and identify:
+    - Potential labeling errors
+    - Patterns in false positives
+    - Improvement suggestions
     """
     if context.get("labeling_skipped"):
         return {"llm_analysis_skipped": True, "reason": "labeling_skipped"}
@@ -201,6 +206,11 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     # Check if LLM analysis is enabled
     if not agent_settings.llm_analysis_enabled:
         return {"llm_analysis_skipped": True, "reason": "disabled"}
+
+    # Check if API key is available
+    if not agent_settings.anthropic_api_key:
+        logger.warning("LLM analysis skipped: ANTHROPIC_API_KEY not set")
+        return {"llm_analysis_skipped": True, "reason": "no_api_key"}
 
     # Check error threshold
     error_rate = context.get("error_rate", 0)
@@ -217,30 +227,80 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
             "threshold": threshold,
         }
 
-    # For now, prepare context for LLM analysis but don't call LLM
-    # This will be implemented in Phase 4
-    logger.info("LLM analysis would run here (placeholder)")
+    # Import LLM analysis module
+    from ..llm import LabelingAnalyzer, get_recent_labeling_samples
 
-    analysis_context = {
-        "llm_analysis_pending": True,
-        "articles_processed": context.get("articles_processed", 0),
-        "articles_labeled": context.get("articles_labeled", 0),
-        "articles_failed": context.get("articles_failed", 0),
+    # Get labeling output stats
+    labeling_output = context.get("labeling_output", {})
+    stats = {
+        "articles_processed": labeling_output.get("articles_processed", 0),
+        "articles_labeled": labeling_output.get("articles_labeled", 0),
+        "articles_skipped": labeling_output.get("articles_skipped", 0),
+        "false_positives": labeling_output.get("false_positives", 0),
+        "articles_failed": labeling_output.get("articles_failed", 0),
         "error_rate": context.get("error_rate", 0),
         "fp_rate": context.get("fp_rate", 0),
     }
 
-    # TODO: Phase 4 - Implement actual LLM analysis
-    # - Query recent labeling results from database
-    # - Sample false positives and errors
-    # - Send to Claude for analysis
-    # - Parse and store recommendations
+    # Get recent labeling samples from database
+    logger.info("Fetching recent labeling samples for LLM analysis...")
+    labeled_sample, fp_sample, skipped_sample = get_recent_labeling_samples(
+        days=1, sample_size=10
+    )
 
-    return {
-        "llm_analysis_completed": False,
-        "llm_analysis_placeholder": True,
-        "analysis_context": analysis_context,
-    }
+    logger.info(
+        f"Samples: {len(labeled_sample)} labeled, {len(fp_sample)} FP, {len(skipped_sample)} skipped"
+    )
+
+    # Skip if no samples to analyze
+    if not labeled_sample and not fp_sample and not skipped_sample:
+        logger.info("No recent samples to analyze, skipping LLM analysis")
+        return {
+            "llm_analysis_skipped": True,
+            "reason": "no_samples",
+        }
+
+    # Run LLM analysis
+    logger.info("Running Claude analysis on labeling results...")
+    try:
+        analyzer = LabelingAnalyzer(
+            api_key=agent_settings.anthropic_api_key,
+            model=agent_settings.llm_analysis_model,
+        )
+        result = analyzer.analyze_labeling_results(
+            stats=stats,
+            labeled_sample=labeled_sample,
+            fp_sample=fp_sample,
+            skipped_sample=skipped_sample,
+        )
+
+        if result.success:
+            logger.info(
+                f"LLM analysis completed: {result.input_tokens} input, "
+                f"{result.output_tokens} output tokens"
+            )
+            return {
+                "llm_analysis_completed": True,
+                "llm_analysis": result.analysis,
+                "llm_tokens": {
+                    "input": result.input_tokens,
+                    "output": result.output_tokens,
+                },
+                "llm_model": result.model,
+            }
+        else:
+            logger.error(f"LLM analysis failed: {result.error}")
+            return {
+                "llm_analysis_completed": False,
+                "llm_analysis_error": result.error,
+            }
+
+    except Exception as e:
+        logger.error(f"LLM analysis exception: {e}")
+        return {
+            "llm_analysis_completed": False,
+            "llm_analysis_error": str(e),
+        }
 
 
 def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +348,18 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         "completed": context.get("llm_analysis_completed", False),
         "skipped": context.get("llm_analysis_skipped", False),
     }
+
+    # Include LLM analysis details if available
+    if context.get("llm_analysis_completed"):
+        llm_analysis = context.get("llm_analysis", {})
+        report["llm_analysis"]["summary"] = llm_analysis.get("summary")
+        report["llm_analysis"]["overall_assessment"] = llm_analysis.get("overall_assessment")
+        report["llm_analysis"]["potential_errors_count"] = len(llm_analysis.get("potential_errors", []))
+        report["llm_analysis"]["patterns_detected_count"] = len(llm_analysis.get("patterns_detected", []))
+        report["llm_analysis"]["improvement_suggestions_count"] = len(llm_analysis.get("improvement_suggestions", []))
+        report["llm_analysis"]["tokens"] = context.get("llm_tokens")
+        # Store full analysis for detailed review
+        report["llm_analysis"]["details"] = llm_analysis
 
     logger.info(f"Generated report: {report}")
     return {"report": report}
@@ -399,6 +471,24 @@ def _log_summary(report: dict[str, Any]) -> None:
         print("  ⚠️  HIGH ERROR RATE DETECTED")
     if quality.get("high_fp_rate"):
         print("  ⚠️  HIGH FALSE POSITIVE RATE DETECTED")
+
+    # LLM Analysis summary
+    llm = report.get("llm_analysis", {})
+    print(f"\nLLM Analysis:")
+    if llm.get("skipped"):
+        print(f"  Skipped: {llm.get('reason', 'unknown')}")
+    elif llm.get("completed"):
+        print(f"  Status: Completed")
+        if llm.get("summary"):
+            print(f"  Summary: {llm.get('summary')}")
+        print(f"  Potential Errors: {llm.get('potential_errors_count', 0)}")
+        print(f"  Patterns Detected: {llm.get('patterns_detected_count', 0)}")
+        print(f"  Improvement Suggestions: {llm.get('improvement_suggestions_count', 0)}")
+        tokens = llm.get("tokens", {})
+        if tokens:
+            print(f"  Tokens: {tokens.get('input', 0)} in, {tokens.get('output', 0)} out")
+    else:
+        print(f"  Status: Not run")
 
     print("=" * 60 + "\n")
 

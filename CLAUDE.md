@@ -187,10 +187,11 @@ prompts/labeling/
 - `alerts.py` - Webhook notifications for Slack/Discord
 
 ### Agent Orchestrator (`src/agent/`)
-- `config.py` - Agent settings (state dir, email, retries)
+- `config.py` - Agent settings (state dir, email, retries, LLM)
 - `state.py` - YAML-based state management with checkpointing
 - `runner.py` - Script execution wrapper with retry logic
 - `notifications.py` - Unified notifications (Resend email + webhooks)
+- `llm.py` - Claude Sonnet integration for labeling analysis
 - `workflows/` - Workflow definitions:
   - `base.py` - Workflow base class and registry
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
@@ -250,7 +251,9 @@ ALERT_WEBHOOK_URL, ALERT_ON_DRIFT=true
 # Agent Orchestrator
 AGENT_EMAIL_ENABLED=false, AGENT_EMAIL_RECIPIENT=, AGENT_EMAIL_SENDER=
 RESEND_API_KEY=  # Recommended for email (resend.com, 3000/month free)
-AGENT_LLM_ANALYSIS=false, AGENT_LLM_ERROR_THRESHOLD=0.1
+AGENT_LLM_ANALYSIS=true  # Enable Claude analysis of labeling results
+AGENT_LLM_ERROR_THRESHOLD=0.0  # 0.0 = always run, >0 = only if error_rate exceeds
+AGENT_LLM_MODEL=claude-sonnet-4-20250514  # Model for LLM analysis
 ```
 
 ## ESG Category Structure
