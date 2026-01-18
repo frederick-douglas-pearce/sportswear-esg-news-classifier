@@ -261,8 +261,9 @@ class TestRunUvScript:
             run_uv_script("scripts/test.py", args=["--flag", "value"])
 
             called_command = mock_run.call_args[0][0]
-            assert called_command == [
-                "uv",
+            # First element should be uv path (may be full path or just 'uv')
+            assert called_command[0].endswith("uv")
+            assert called_command[1:] == [
                 "run",
                 "python",
                 "scripts/test.py",

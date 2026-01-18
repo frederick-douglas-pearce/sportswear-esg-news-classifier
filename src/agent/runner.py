@@ -2,6 +2,8 @@
 
 import json
 import logging
+import os
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -12,6 +14,51 @@ from typing import Any
 from .config import agent_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _find_uv_path() -> str:
+    """Find the full path to the uv executable.
+
+    This is necessary because cron runs with a minimal PATH that may not
+    include ~/.local/bin where uv is typically installed.
+
+    Returns:
+        Full path to uv executable, or 'uv' if not found (will fail later)
+    """
+    # First try shutil.which (works if uv is in current PATH)
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return uv_path
+
+    # Check common installation locations
+    common_paths = [
+        Path.home() / ".local" / "bin" / "uv",
+        Path.home() / ".cargo" / "bin" / "uv",
+        Path("/usr/local/bin/uv"),
+        Path("/usr/bin/uv"),
+    ]
+
+    for path in common_paths:
+        if path.exists() and os.access(path, os.X_OK):
+            logger.debug(f"Found uv at: {path}")
+            return str(path)
+
+    # Fallback to just 'uv' - will fail with clear error if not in PATH
+    logger.warning("Could not find uv executable, falling back to 'uv'")
+    return "uv"
+
+
+# Cache the uv path at module load time
+_UV_PATH: str | None = None
+
+
+def _get_uv_path() -> str:
+    """Get the cached uv path, finding it on first call."""
+    global _UV_PATH
+    if _UV_PATH is None:
+        _UV_PATH = _find_uv_path()
+        logger.info(f"Using uv at: {_UV_PATH}")
+    return _UV_PATH
 
 
 @dataclass
@@ -207,7 +254,8 @@ def run_uv_script(
     Returns:
         ScriptResult with execution details
     """
-    command = ["uv", "run", "python", script_path]
+    uv_path = _get_uv_path()
+    command = [uv_path, "run", "python", script_path]
     if args:
         command.extend(args)
     return run_script(command, **kwargs)
