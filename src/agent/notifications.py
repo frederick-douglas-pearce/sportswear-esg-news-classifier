@@ -213,7 +213,7 @@ class EmailNotifier:
                 <h2>ESG Agent: {notification.notification_type.value.replace('_', ' ').title()}</h2>
             </div>
             <div class="content">
-                <p>{notification.message}</p>
+                <p>{notification.message.replace(chr(10), "<br>" + chr(10))}</p>
                 {details_html}
             </div>
             <div class="footer">
@@ -358,7 +358,7 @@ class ResendNotifier:
                 <h2>ESG Agent: {notification.notification_type.value.replace('_', ' ').title()}</h2>
             </div>
             <div class="content">
-                <p>{notification.message}</p>
+                <p>{notification.message.replace(chr(10), "<br>" + chr(10))}</p>
                 {details_html}
             </div>
             <div class="footer">

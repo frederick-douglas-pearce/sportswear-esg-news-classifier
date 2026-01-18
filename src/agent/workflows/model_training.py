@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import agent_settings
-from ..notifications import NotificationManager
+from ..notifications import Notification, NotificationManager, NotificationType
 from ..runner import run_export_training_data, run_script
 from .base import StepDefinition, Workflow, WorkflowRegistry
 
@@ -205,6 +205,9 @@ def notify_and_pause(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     The user needs to run the training notebooks:
     - notebooks/fp1_EDA_FE.ipynb → fp2_model_selection_tuning.ipynb → fp3_model_evaluation_deployment.ipynb
     - notebooks/ep1_EDA_FE.ipynb → ep2_model_selection_tuning.ipynb → ep3_model_evaluation_deployment.ipynb
+
+    This step explicitly pauses the workflow after sending the notification,
+    rather than using requires_approval=True which pauses before execution.
     """
     # Build notification content
     datasets = context.get("datasets", {})
@@ -240,8 +243,6 @@ def notify_and_pause(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     # Send email notification
     if agent_settings.email_enabled:
         try:
-            subject = "Model Training Data Ready - Action Required"
-
             body_lines = [
                 "Training data has been exported and is ready for notebook execution.",
                 "",
@@ -261,13 +262,22 @@ def notify_and_pause(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
                 *summary["instructions"],
             ])
 
-            notifier = NotificationManager()
-            notifier.send_email(
-                subject=subject,
-                body="\n".join(body_lines),
+            notification = Notification(
+                notification_type=NotificationType.WORKFLOW_COMPLETE,
+                subject="Model Training Data Ready - Action Required",
+                message="\n".join(body_lines),
+                details={
+                    "workflow": "model_training",
+                    "datasets": summary["datasets"],
+                    "quality_passed": quality,
+                },
+                severity="info",
             )
+
+            notifier = NotificationManager()
+            result = notifier.send(notification, channels=["email"])
             logger.info("Sent training notification email")
-            summary["email_sent"] = True
+            summary["email_sent"] = result.get("email", False)
         except Exception as e:
             logger.warning(f"Failed to send email notification: {e}")
             summary["email_sent"] = False
@@ -289,6 +299,16 @@ def notify_and_pause(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     for instruction in summary["instructions"]:
         print(instruction)
     print("=" * 60 + "\n")
+
+    # Pause workflow after sending notification
+    # This is done explicitly rather than via requires_approval=True
+    # so the notification is sent BEFORE pausing
+    workflow._workflow_state.current_step = "notify_and_pause"
+    workflow.state.pause_workflow(
+        workflow.name,
+        reason="Waiting for manual notebook execution",
+    )
+    logger.info("Workflow paused - waiting for notebook execution")
 
     return summary
 
@@ -544,7 +564,7 @@ class ModelTrainingWorkflow(Workflow):
             name="notify_and_pause",
             description="Send notification and pause for manual notebook execution",
             handler=notify_and_pause,
-            requires_approval=True,  # This pauses the workflow
+            # Note: This step pauses explicitly after execution (to send email first)
         ),
         StepDefinition(
             name="compare_models",
