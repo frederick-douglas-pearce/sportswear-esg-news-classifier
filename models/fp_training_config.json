@@ -40,23 +40,23 @@
   "model": {
     "type": "RandomForest",
     "params": {
-      "class_weight": null,
+      "class_weight": "balanced",
       "max_depth": 15,
       "min_samples_leaf": 1,
       "min_samples_split": 2,
-      "n_estimators": 120
+      "n_estimators": 70
     },
     "calibrated": false
   },
   "cv_metrics": {
-    "f2": 0.9838793170436267,
-    "recall": 0.9912959218065387,
-    "precision": 0.9553062173683456,
-    "f1": 0.9729633114463295,
-    "accuracy": 0.9563886252592358,
-    "pr_auc": 0.9946975536301986,
+    "f2": 0.9830762463372831,
+    "recall": 0.9898148148148148,
+    "precision": 0.9570745812125123,
+    "f1": 0.9731504371046387,
+    "accuracy": 0.9565515377652751,
+    "pr_auc": 0.9960785045900757,
     "n_folds": 3
   },
-  "exported_at": "2026-01-15T17:01:17.419276",
+  "exported_at": "2026-01-17T17:54:38.585040",
   "notebook": "fp2_model_selection_tuning.ipynb"
 }
