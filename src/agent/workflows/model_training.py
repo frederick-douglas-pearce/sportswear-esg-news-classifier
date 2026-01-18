@@ -52,20 +52,39 @@ def export_training_data(workflow: Workflow, context: dict[str, Any]) -> dict[st
     }
 
     # Determine which classifiers to export
-    # Map classifier types to dataset names
+    # Map classifier types to dataset names and standard output files
     classifier_to_dataset = {
         "fp": "fp",
         "ep": "esg-prefilter",  # EP classifier uses esg-prefilter dataset
+    }
+    # Standard output files that notebooks expect
+    classifier_to_standard_file = {
+        "fp": "data/fp_training_data.jsonl",
+        "ep": "data/esg-prefilter_training_data.jsonl",
     }
     classifiers = context.get("classifiers", ["fp", "ep"])
     if isinstance(classifiers, str):
         classifiers = [classifiers]
 
+    data_dir = Path("data")
+
     for classifier in classifiers:
         dataset_name = classifier_to_dataset.get(classifier, classifier)
+        standard_file = classifier_to_standard_file.get(classifier)
         logger.info(f"Exporting {classifier} training data (dataset: {dataset_name})...")
 
+        # Export to timestamped file (default behavior)
         result = run_export_training_data(dataset=dataset_name)
+
+        if result.success:
+            # Find the latest timestamped file and copy to standard name
+            pattern = f"{dataset_name}_*.jsonl"
+            timestamped_files = sorted(data_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+            if timestamped_files and standard_file:
+                import shutil
+                latest_file = timestamped_files[0]
+                shutil.copy2(latest_file, standard_file)
+                logger.info(f"Copied {latest_file.name} to {standard_file}")
 
         dataset_result = {
             "success": result.success,
