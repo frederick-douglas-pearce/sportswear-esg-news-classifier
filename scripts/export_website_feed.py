@@ -31,6 +31,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import spacy
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy.orm import joinedload
@@ -42,12 +44,109 @@ from src.labeling.evidence_matcher import _get_confidence_label
 
 # Default context size for evidence snippets
 SNIPPET_CONTEXT_CHARS = 100
+DEFAULT_SENTENCES_BEFORE = 1
+DEFAULT_SENTENCES_AFTER = 1
+
+# Lazy-loaded spaCy model
+_nlp = None
 
 
-def extract_snippet(
+def _get_nlp():
+    """Get spaCy NLP model, loading lazily on first use."""
+    global _nlp
+    if _nlp is None:
+        _nlp = spacy.load("en_core_web_sm")
+    return _nlp
+
+
+def extract_snippet_with_sentences(
+    chunk_text: str,
+    excerpt: str,
+    sentences_before: int = DEFAULT_SENTENCES_BEFORE,
+    sentences_after: int = DEFAULT_SENTENCES_AFTER,
+) -> str:
+    """Extract snippet with N sentences of context around the excerpt.
+
+    Uses spaCy for sentence boundary detection to provide natural context
+    around evidence excerpts.
+
+    Args:
+        chunk_text: Full text of the matched chunk
+        excerpt: The evidence excerpt to find
+        sentences_before: Number of sentences to include before the excerpt
+        sentences_after: Number of sentences to include after the excerpt
+
+    Returns:
+        Snippet with sentence context around the excerpt, with ellipsis
+        indicators if truncated. Falls back to character-based extraction
+        if excerpt cannot be located in sentences.
+    """
+    if not chunk_text or not excerpt:
+        return chunk_text or ""
+
+    # Find excerpt position in text (case-insensitive)
+    excerpt_lower = excerpt.lower()
+    chunk_lower = chunk_text.lower()
+
+    pos = chunk_lower.find(excerpt_lower)
+    if pos == -1:
+        # Try first few words as fallback
+        first_words = " ".join(excerpt.split()[:5]).lower()
+        if first_words:
+            pos = chunk_lower.find(first_words)
+
+    if pos == -1:
+        # Cannot find excerpt - fall back to character-based extraction
+        return extract_snippet_char_based(chunk_text, excerpt)
+
+    excerpt_end = pos + len(excerpt)
+
+    # Use spaCy to tokenize into sentences
+    nlp = _get_nlp()
+    doc = nlp(chunk_text)
+    sentences = list(doc.sents)
+
+    if not sentences:
+        return extract_snippet_char_based(chunk_text, excerpt)
+
+    # Find which sentence(s) contain the excerpt
+    excerpt_sentence_indices = []
+    for i, sent in enumerate(sentences):
+        sent_start = sent.start_char
+        sent_end = sent.end_char
+        # Check if sentence overlaps with excerpt
+        if sent_start <= excerpt_end and sent_end >= pos:
+            excerpt_sentence_indices.append(i)
+
+    if not excerpt_sentence_indices:
+        # Excerpt spans sentence boundaries or not found
+        return extract_snippet_char_based(chunk_text, excerpt)
+
+    # Determine range of sentences to include
+    first_excerpt_idx = min(excerpt_sentence_indices)
+    last_excerpt_idx = max(excerpt_sentence_indices)
+
+    start_idx = max(0, first_excerpt_idx - sentences_before)
+    end_idx = min(len(sentences) - 1, last_excerpt_idx + sentences_after)
+
+    # Build the snippet from sentences
+    snippet_sentences = [sentences[i].text.strip() for i in range(start_idx, end_idx + 1)]
+    snippet = " ".join(snippet_sentences)
+
+    # Add ellipsis indicators
+    prefix = "..." if start_idx > 0 else ""
+    suffix = "..." if end_idx < len(sentences) - 1 else ""
+
+    return f"{prefix}{snippet}{suffix}"
+
+
+def extract_snippet_char_based(
     chunk_text: str, excerpt: str, context_chars: int = SNIPPET_CONTEXT_CHARS
 ) -> str:
-    """Extract a condensed snippet around the matched excerpt.
+    """Extract a condensed snippet around the matched excerpt using character windows.
+
+    This is the fallback method when sentence-based extraction cannot locate
+    the excerpt properly.
 
     Args:
         chunk_text: Full text of the matched chunk
@@ -101,6 +200,25 @@ def extract_snippet(
     suffix = "..." if context_end < len(chunk_text) else ""
 
     return f"{prefix}{snippet}{suffix}"
+
+
+def extract_snippet(
+    chunk_text: str, excerpt: str, context_chars: int = SNIPPET_CONTEXT_CHARS
+) -> str:
+    """Extract a snippet around the matched excerpt with sentence context.
+
+    Uses sentence-aware extraction by default, which provides 1 sentence
+    before and 1 sentence after the excerpt for natural context.
+
+    Args:
+        chunk_text: Full text of the matched chunk
+        excerpt: The evidence excerpt to find
+        context_chars: Characters of context (used for fallback only)
+
+    Returns:
+        Snippet with context around the excerpt
+    """
+    return extract_snippet_with_sentences(chunk_text, excerpt)
 
 
 def setup_logging(verbose: bool = False) -> None:
