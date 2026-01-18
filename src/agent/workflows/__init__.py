@@ -3,6 +3,7 @@
 from .base import Workflow, WorkflowRegistry
 from .daily_labeling import DailyLabelingWorkflow
 from .drift_monitoring import DriftMonitoringWorkflow
+from .model_training import ModelTrainingWorkflow
 from .website_export import WebsiteExportWorkflow
 
 __all__ = [
@@ -10,5 +11,6 @@ __all__ = [
     "WorkflowRegistry",
     "DailyLabelingWorkflow",
     "DriftMonitoringWorkflow",
+    "ModelTrainingWorkflow",
     "WebsiteExportWorkflow",
 ]

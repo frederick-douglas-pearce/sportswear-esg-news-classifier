@@ -31,7 +31,7 @@ from .state import state_manager
 from .workflows import WorkflowRegistry
 
 # Import workflow modules to register them
-from .workflows import daily_labeling, drift_monitoring, website_export  # noqa: F401
+from .workflows import daily_labeling, drift_monitoring, model_training, website_export  # noqa: F401
 
 
 def setup_logging(verbose: bool = False) -> None:

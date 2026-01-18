@@ -265,10 +265,11 @@ flowchart TB
 - [x] Daily labeling workflow (collection check → labeling → quality metrics → reports)
 - [x] Drift monitoring workflow (FP/EP classifier drift detection with alerts)
 - [x] Website export workflow (JSON/Atom feed generation with git integration)
+- [x] Model training workflow (data export → quality check → notify → compare → promote)
 - [x] Unified notification system (Resend email + Slack/Discord webhooks)
 - [x] YAML-based state management with checkpointing
 - [x] Cron scheduling (5:30am drift, 6:30am labeling, 7:00am export)
-- [x] CLI: `uv run python -m src.agent run|status|list|history`
+- [x] CLI: `uv run python -m src.agent run|continue|status|list|history`
 
 ## Table of Contents
 

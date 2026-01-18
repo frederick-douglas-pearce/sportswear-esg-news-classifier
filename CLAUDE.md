@@ -78,7 +78,9 @@ uv run python -m src.agent list                    # List available workflows
 uv run python -m src.agent run daily_labeling      # Run daily labeling workflow
 uv run python -m src.agent run drift_monitoring    # Run drift monitoring workflow
 uv run python -m src.agent run website_export      # Run website export workflow
+uv run python -m src.agent run model_training      # Run model training workflow (pauses for notebooks)
 uv run python -m src.agent run daily_labeling --dry-run  # Dry run (no side effects)
+uv run python -m src.agent continue model_training # Resume paused workflow after notebooks
 uv run python -m src.agent status                  # Show workflow status
 uv run python -m src.agent history                 # Show workflow history
 ./scripts/setup_cron.sh install-agent              # Install all agent cron jobs
@@ -194,7 +196,8 @@ prompts/labeling/
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
   - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
   - `website_export.py` - JSON/Atom feed generation with git integration
-- `__main__.py` - CLI entry point (run, status, list, history)
+  - `model_training.py` - Data export → quality check → pause → model comparison → promotion
+- `__main__.py` - CLI entry point (run, continue, status, list, history)
 
 ### ML Classifier Notebooks (`notebooks/`)
 
