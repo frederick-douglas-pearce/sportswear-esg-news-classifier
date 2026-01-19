@@ -79,9 +79,11 @@ def run_labeling(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
 
     logger.info(f"Running labeling on {pending_count} pending articles")
 
-    # Run labeling without batch limit (process all pending)
+    # Run labeling with explicit batch size to process all pending
+    # Note: batch_size=None would use the script's default (10), so we
+    # explicitly pass the pending count to ensure all articles are processed
     result = run_label_articles(
-        batch_size=None,  # Process all pending
+        batch_size=pending_count,  # Process all pending articles
         dry_run=context.get("dry_run", False),
     )
 

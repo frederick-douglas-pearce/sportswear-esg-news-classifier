@@ -269,7 +269,9 @@ def run_label_articles(
     """Run the label_articles.py script.
 
     Args:
-        batch_size: Number of articles to process (None = all pending)
+        batch_size: Number of articles to process. If None, uses the script's
+            default (LABELING_BATCH_SIZE env var, typically 10). To process
+            all pending articles, pass the pending count explicitly.
         dry_run: If True, don't save to database
         stats_only: If True, only show stats without labeling
 
