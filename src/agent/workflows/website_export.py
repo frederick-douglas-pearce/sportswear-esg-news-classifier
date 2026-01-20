@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import agent_settings
+from ..notifications import Notification, NotificationManager, NotificationType
 from ..runner import run_export_website_feed, run_script
 from .base import StepDefinition, Workflow, WorkflowRegistry
 
@@ -187,6 +188,67 @@ def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
     }
 
 
+def send_error_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Send email notification only if there was an error during export.
+
+    This step checks for failures in previous steps and sends an alert email
+    if any issues were detected. Successful exports are silent.
+    """
+    errors = []
+
+    # Check export step
+    if not context.get("export_success", True) and not context.get("export_skipped"):
+        errors.append(f"Export failed: {context.get('export_error', 'Unknown error')}")
+
+    # Check validation step
+    if not context.get("validation_passed", True) and not context.get("validation_skipped"):
+        validation_errors = context.get("errors", [])
+        errors.append(f"Validation failed: {', '.join(validation_errors)}")
+
+    # Check git step
+    if context.get("git_success") is False:
+        errors.append(f"Git operation failed: {context.get('error', 'Unknown error')}")
+
+    # No errors - silent success
+    if not errors:
+        logger.info("Website export completed successfully - no notification needed")
+        return {"notification_sent": False, "reason": "no_errors"}
+
+    # Build error notification
+    error_message = "\n".join(f"• {e}" for e in errors)
+    details = {
+        "export_success": context.get("export_success", "N/A"),
+        "validation_passed": context.get("validation_passed", "N/A"),
+        "git_success": context.get("git_success", "N/A"),
+    }
+
+    if context.get("json_output"):
+        details["json_output"] = context.get("json_output")
+    if context.get("atom_output"):
+        details["atom_output"] = context.get("atom_output")
+
+    notification = Notification(
+        notification_type=NotificationType.WORKFLOW_FAILED,
+        subject="Website Export Failed",
+        message=f"The website export workflow encountered errors:\n\n{error_message}",
+        details=details,
+        severity="error",
+    )
+
+    # Send notification
+    manager = NotificationManager()
+    result = manager.send(notification)
+
+    channels_used = [k for k, v in result.items() if v]
+    logger.warning(f"Sent error notification via: {channels_used}")
+
+    return {
+        "notification_sent": True,
+        "errors": errors,
+        "channels": channels_used,
+    }
+
+
 @WorkflowRegistry.register
 class WebsiteExportWorkflow(Workflow):
     """Website feed export workflow.
@@ -195,6 +257,7 @@ class WebsiteExportWorkflow(Workflow):
     1. Export JSON and Atom feeds
     2. Validate exported files
     3. Commit and push to website repository
+    4. Send error notification (only if there was a failure)
     """
 
     name = "website_export"
@@ -215,6 +278,12 @@ class WebsiteExportWorkflow(Workflow):
             name="commit_and_push",
             description="Commit and push changes to website repository",
             handler=commit_and_push,
+            skip_on_dry_run=True,
+        ),
+        StepDefinition(
+            name="send_error_notification",
+            description="Send email notification if export failed",
+            handler=send_error_notification,
             skip_on_dry_run=True,
         ),
     ]
