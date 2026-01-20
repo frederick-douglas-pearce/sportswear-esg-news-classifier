@@ -58,7 +58,7 @@ The entire system runs autonomously with minimal human intervention through a **
 - **Intelligent oversight**: Claude Sonnet analyzes labeling results daily to detect errors, identify patterns, and suggest improvements
 - **Proactive monitoring**: ML classifier drift detection triggers alerts before model degradation affects production
 - **Cost-efficient**: ML classifiers filter articles before LLM calls, reducing Claude API costs by 20-30%
-- **Time-saving**: Eliminates ~2-3 hours/week of manual maintenance (running scripts, reviewing results, updating website)
+- **Time-saving**: Eliminates ~5-10 hours/week of manual maintenance (running scripts, reviewing results, updating website)
 - **Hands-off deployment**: Model training workflow includes human-in-the-loop notebook review, then automatically promotes and deploys improved models
 
 **Daily operation cost**: ~$0.50-1.00/day (labeling + monitoring), fully automated with email reports.
