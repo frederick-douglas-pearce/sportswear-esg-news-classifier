@@ -50,6 +50,20 @@ The classifier powers a **live ESG news feed** on my personal website that track
 
 The ML classifiers enable cost-effective continuous monitoring that would be significantly more expensive with LLM-only approaches.
 
+### Autonomous Operations
+
+The entire system runs autonomously with minimal human intervention through a **custom agent orchestrator**:
+
+- **Self-maintaining**: Daily workflows handle news collection, article labeling, quality monitoring, and website updates automatically
+- **Intelligent oversight**: Claude Sonnet analyzes labeling results daily to detect errors, identify patterns, and suggest improvements
+- **Proactive monitoring**: ML classifier drift detection triggers alerts before model degradation affects production
+- **Cost-efficient**: Hybrid ML + LLM approach processes ~$0.04/article vs ~$0.015/article for pure LLM labeling (20-30% savings)
+- **Hands-off deployment**: Model training workflow includes human-in-the-loop notebook review, then automatically promotes and deploys improved models
+
+**Daily operation cost**: ~$0.50-1.00/day (labeling + monitoring), fully automated with email reports.
+
+📖 See [Agent Orchestrator](#agent-orchestrator) section for workflow details.
+
 ### Dataset
 
 The training data was collected and labeled specifically for this project:
@@ -287,6 +301,7 @@ flowchart TB
 - [FP Classifier Deployment](#fp-classifier-deployment) ⭐
 - [Model Deployment Workflow](#model-deployment-workflow) ⭐
 - [MLOps](#mlops)
+- [Agent Orchestrator](#agent-orchestrator)
 - [Database](#database)
 - [ESG Category Structure](#esg-category-structure)
 - [Testing](#testing)
@@ -1411,6 +1426,60 @@ uv run python scripts/monitor_drift.py --classifier fp --from-db
 ```
 
 📖 See [docs/MLOPS.md](docs/MLOPS.md) for detailed setup, configuration options, and programmatic usage.
+
+## Agent Orchestrator
+
+The project includes a custom-built agent orchestrator that automates daily operations, reducing manual maintenance to near-zero while ensuring data quality and system health.
+
+### Why Build a Custom Agent?
+
+Off-the-shelf workflow tools (Airflow, Prefect, Dagster) are powerful but add significant operational overhead for a single-developer project. The custom agent provides:
+
+- **Lightweight**: Single Python module, no external services required
+- **YAML state management**: Human-readable workflow state and history
+- **LLM intelligence**: Claude Sonnet analyzes labeling results for quality assurance
+- **Unified notifications**: Email (Resend) + webhooks (Slack/Discord) in one interface
+- **Checkpointing**: Workflows can pause for human review and resume
+
+### Workflows
+
+| Workflow | Schedule | Purpose |
+|----------|----------|---------|
+| `daily_labeling` | 6:30 AM | Process pending articles through ML + LLM pipeline, generate quality reports |
+| `drift_monitoring` | 5:30 AM | Check FP/EP classifier drift, alert if degradation detected |
+| `website_export` | 7:00 AM | Export labeled articles to Jekyll site, commit and push |
+| `model_training` | Manual | Export data → run notebooks → compare → promote → deploy |
+
+### Quick Start
+
+```bash
+# List available workflows
+uv run python -m src.agent list
+
+# Run a workflow manually
+uv run python -m src.agent run daily_labeling
+
+# Dry run (no side effects)
+uv run python -m src.agent run daily_labeling --dry-run
+
+# Check workflow status
+uv run python -m src.agent status
+
+# Install cron jobs for automated operation
+./scripts/setup_cron.sh install-agent
+```
+
+### Daily Operation Flow
+
+```
+5:30 AM  drift_monitoring   → Check classifier health, alert on drift
+6:30 AM  daily_labeling     → Label articles, quality check, email report
+7:00 AM  website_export     → Update live feed, push to GitHub Pages
+```
+
+Each workflow generates detailed logs in `logs/agent/` and archives state to `~/.esg-agent/history/`.
+
+📖 See [docs/AGENT.md](docs/AGENT.md) for workflow details, configuration options, and architecture.
 
 ## Database
 
