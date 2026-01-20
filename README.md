@@ -57,7 +57,8 @@ The entire system runs autonomously with minimal human intervention through a **
 - **Self-maintaining**: Daily workflows handle news collection, article labeling, quality monitoring, and website updates automatically
 - **Intelligent oversight**: Claude Sonnet analyzes labeling results daily to detect errors, identify patterns, and suggest improvements
 - **Proactive monitoring**: ML classifier drift detection triggers alerts before model degradation affects production
-- **Cost-efficient**: Hybrid ML + LLM approach processes ~$0.04/article vs ~$0.015/article for pure LLM labeling (20-30% savings)
+- **Cost-efficient**: ML classifiers filter articles before LLM calls, reducing Claude API costs by 20-30%
+- **Time-efficient**: ML inference (~50ms/article) vs LLM API calls (~3-5s/article) for filtered articles
 - **Hands-off deployment**: Model training workflow includes human-in-the-loop notebook review, then automatically promotes and deploys improved models
 
 **Daily operation cost**: ~$0.50-1.00/day (labeling + monitoring), fully automated with email reports.
