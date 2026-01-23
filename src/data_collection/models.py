@@ -186,6 +186,7 @@ class LabelEvidence(Base):
     __table_args__ = (
         Index("ix_label_evidence_brand_label_id", "brand_label_id"),
         Index("ix_label_evidence_category", "category"),
+        Index("ix_label_evidence_rerank_score", "rerank_score"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -193,7 +194,9 @@ class LabelEvidence(Base):
     chunk_id = Column(UUID(as_uuid=True), ForeignKey("article_chunks.id", ondelete="SET NULL"))
     category = Column(String(30), nullable=False)  # environmental, social, governance, digital_transformation
     excerpt = Column(Text, nullable=False)  # Extracted quote from article
-    relevance_score = Column(Float)  # How relevant this excerpt is (0.0 to 1.0)
+    relevance_score = Column(Float)  # Initial matching score (0.0 to 1.0), combined fuzzy+embedding
+    rerank_score = Column(Float)  # Cross-encoder rerank score (0.0 to 1.0)
+    match_method = Column(String(20))  # How evidence was matched: exact, fuzzy, embedding, combined, none
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships

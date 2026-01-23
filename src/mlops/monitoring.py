@@ -9,9 +9,19 @@ from typing import Any
 import pandas as pd
 
 from .config import mlops_settings
-from .reference_data import load_prediction_logs, load_reference_dataset
+from .reference_data import TRACKED_BRANDS, load_prediction_logs, load_reference_dataset
 
 logger = logging.getLogger(__name__)
+
+# Drift detection configuration by feature type
+# Keys are column name patterns, values are (method, p_value_threshold)
+DRIFT_CONFIG = {
+    # Core prediction metrics - standard threshold
+    "probability": ("ks", 0.05),
+    "prediction": ("chisquare", 0.05),
+    # Brand columns - looser threshold (brands can vary naturally)
+    "brand_": ("chisquare", 0.01),
+}
 
 
 @dataclass
@@ -48,24 +58,16 @@ class DriftMonitor:
             self._setup_evidently()
 
     def _setup_evidently(self) -> None:
-        """Initialize Evidently components."""
+        """Initialize Evidently components using v0.7+ API."""
         try:
-            from evidently import ColumnMapping
-            from evidently.metrics import (
-                ColumnDriftMetric,
-                DatasetDriftMetric,
-                DatasetMissingValuesMetric,
-            )
-            from evidently.report import Report
+            from evidently import Report
+            from evidently.presets import DataDriftPreset
 
             self._evidently = {
                 "Report": Report,
-                "ColumnMapping": ColumnMapping,
-                "ColumnDriftMetric": ColumnDriftMetric,
-                "DatasetDriftMetric": DatasetDriftMetric,
-                "DatasetMissingValuesMetric": DatasetMissingValuesMetric,
+                "DataDriftPreset": DataDriftPreset,
             }
-            logger.info("Evidently initialized successfully")
+            logger.info("Evidently v0.7+ initialized successfully")
         except ImportError:
             logger.warning("Evidently not installed, using legacy drift detection")
             self.enabled = False
@@ -125,13 +127,28 @@ class DriftMonitor:
         else:
             return self._legacy_drift_check(current_data, reference_data)
 
+    def _get_drift_config(self, column_name: str) -> tuple[str, float]:
+        """Get drift detection method and threshold for a column.
+
+        Args:
+            column_name: Name of the column
+
+        Returns:
+            Tuple of (method, p_value_threshold)
+        """
+        for pattern, config in DRIFT_CONFIG.items():
+            if column_name.startswith(pattern) or column_name == pattern:
+                return config
+        # Default config
+        return ("ks", 0.05)
+
     def _evidently_drift_check(
         self,
         current_data: pd.DataFrame,
         reference_data: pd.DataFrame,
         save_report: bool,
     ) -> DriftReport:
-        """Run Evidently-based drift detection.
+        """Run Evidently-based drift detection using v0.7+ API.
 
         Args:
             current_data: Current prediction data
@@ -141,62 +158,101 @@ class DriftMonitor:
         Returns:
             DriftReport with results
         """
+        from evidently.metrics import ValueDrift
+
         Report = self._evidently["Report"]
-        ColumnDriftMetric = self._evidently["ColumnDriftMetric"]
-        DatasetDriftMetric = self._evidently["DatasetDriftMetric"]
-        DatasetMissingValuesMetric = self._evidently["DatasetMissingValuesMetric"]
+        DataDriftPreset = self._evidently["DataDriftPreset"]
 
-        # Determine columns to analyze
-        numeric_columns = []
-        for col in ["probability", "text_length"]:
+        # Determine columns to analyze: probability, prediction, and brand columns
+        columns_to_check = []
+
+        # Core metrics
+        for col in ["probability", "prediction"]:
             if col in current_data.columns and col in reference_data.columns:
-                numeric_columns.append(col)
+                columns_to_check.append(col)
 
-        if not numeric_columns:
+        # Brand columns
+        brand_cols = [c for c in current_data.columns if c.startswith("brand_")]
+        for col in brand_cols:
+            if col in reference_data.columns:
+                columns_to_check.append(col)
+
+        if not columns_to_check:
             return DriftReport(
                 classifier_type=self.classifier_type,
                 timestamp=datetime.now(),
                 drift_detected=False,
                 drift_score=0.0,
                 threshold=self.threshold,
-                details={"error": "No numeric columns available for drift detection"},
+                details={"error": "No columns available for drift detection"},
             )
 
-        # Build report with metrics
-        metrics = [DatasetDriftMetric(), DatasetMissingValuesMetric()]
-        for col in numeric_columns:
-            metrics.append(ColumnDriftMetric(column_name=col))
+        # Filter to only the columns we want to analyze
+        ref_filtered = reference_data[columns_to_check].copy()
+        curr_filtered = current_data[columns_to_check].copy()
 
+        # Build metrics with per-column configuration
+        metrics = []
+        for col in columns_to_check:
+            method, threshold = self._get_drift_config(col)
+            metrics.append(ValueDrift(column=col, method=method, threshold=threshold))
+
+        # Build and run report
         report = Report(metrics=metrics)
-        report.run(
-            reference_data=reference_data,
-            current_data=current_data,
+        snapshot = report.run(
+            reference_data=ref_filtered,
+            current_data=curr_filtered,
         )
 
-        # Extract results
-        report_dict = report.as_dict()
-        details = {}
-        drift_scores = []
+        # Extract results from the new API structure
+        report_dict = snapshot.dict()
+        details = {
+            "columns_checked": columns_to_check,
+            "core_metrics_drifted": [],
+            "brand_metrics_drifted": [],
+        }
+        core_drifted = 0
+        brand_drifted = 0
+        total_core = 0
+        total_brand = 0
 
-        for metric_result in report_dict.get("metrics", []):
-            metric_id = metric_result.get("metric", "")
-            result = metric_result.get("result", {})
+        for metric in report_dict.get("metrics", []):
+            metric_name = metric.get("metric_name", "")
+            config = metric.get("config", {})
+            value = metric.get("value")
 
-            if "DatasetDriftMetric" in metric_id:
-                details["dataset_drift"] = result.get("dataset_drift", False)
-                details["drift_share"] = result.get("drift_share", 0)
-                drift_scores.append(result.get("drift_share", 0))
+            if "ValueDrift" in metric_name:
+                col_name = config.get("column", "unknown")
+                p_value_threshold = config.get("threshold", 0.05)
+                p_value = value if isinstance(value, (int, float)) else 1.0
 
-            elif "ColumnDriftMetric" in metric_id:
-                col_name = result.get("column_name", "unknown")
-                details[f"{col_name}_drift"] = result.get("drift_detected", False)
-                details[f"{col_name}_drift_score"] = result.get("drift_score", 0)
-                if result.get("drift_detected"):
-                    drift_scores.append(result.get("drift_score", 0))
+                col_drift = p_value < p_value_threshold
+                details[f"{col_name}_drift"] = col_drift
+                details[f"{col_name}_p_value"] = float(p_value)
 
-        # Overall drift score (max of individual scores)
-        overall_drift = max(drift_scores) if drift_scores else 0.0
-        drift_detected = overall_drift > self.threshold
+                if col_name.startswith("brand_"):
+                    total_brand += 1
+                    if col_drift:
+                        brand_drifted += 1
+                        details["brand_metrics_drifted"].append(col_name)
+                else:
+                    total_core += 1
+                    if col_drift:
+                        core_drifted += 1
+                        details["core_metrics_drifted"].append(col_name)
+
+        # Calculate drift scores
+        core_drift_score = core_drifted / total_core if total_core > 0 else 0.0
+        brand_drift_score = brand_drifted / total_brand if total_brand > 0 else 0.0
+
+        # Overall drift: triggered if any core metric drifts OR significant brand drift
+        # Core metrics (probability, prediction) are more important
+        drift_detected = core_drifted > 0 or brand_drift_score > self.threshold
+
+        details["core_drift_score"] = core_drift_score
+        details["brand_drift_score"] = brand_drift_score
+        details["core_drifted_count"] = core_drifted
+        details["brand_drifted_count"] = brand_drifted
 
         # Save report
         report_path = None
@@ -204,7 +260,7 @@ class DriftMonitor:
             reports_dir = mlops_settings.get_reports_dir(self.classifier_type)
             reports_dir.mkdir(parents=True, exist_ok=True)
             report_path = reports_dir / f"drift_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-            report.save_html(str(report_path))
+            snapshot.save_html(str(report_path))
             logger.info(f"Saved drift report to {report_path}")
 
         # Add data stats
@@ -213,12 +269,15 @@ class DriftMonitor:
         if "probability" in current_data.columns:
             details["current_prob_mean"] = float(current_data["probability"].mean())
             details["reference_prob_mean"] = float(reference_data["probability"].mean())
+        if "prediction" in current_data.columns:
+            details["current_prediction_rate"] = float(current_data["prediction"].mean())
+            details["reference_prediction_rate"] = float(reference_data["prediction"].mean())
 
         return DriftReport(
             classifier_type=self.classifier_type,
             timestamp=datetime.now(),
             drift_detected=drift_detected,
-            drift_score=overall_drift,
+            drift_score=core_drift_score,  # Use core drift as primary score
             threshold=self.threshold,
             details=details,
             report_path=report_path,

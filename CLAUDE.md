@@ -51,6 +51,11 @@ RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requi
 ./scripts/setup_cron.sh status             # Check cron status
 ./scripts/setup_cron.sh remove             # Remove both cron jobs
 
+# Cross-Encoder Reranking Backfill
+uv run python scripts/backfill_rerank_scores.py --dry-run    # Preview backfill
+uv run python scripts/backfill_rerank_scores.py              # Run backfill
+uv run python scripts/backfill_rerank_scores.py --batch-size 100  # Custom batch size
+
 # Database Backup
 ./scripts/backup_db.sh backup              # Create a new backup
 ./scripts/backup_db.sh list                # List available backups
@@ -155,7 +160,8 @@ See `queries/` folder for comprehensive SQL queries:
 - `labeler.py` - Claude Sonnet wrapper for ESG classification
 - `classifier_client.py` - HTTP client for FP/EP classifier APIs
 - `evidence_matcher.py` - Links evidence excerpts to chunks via similarity matching
-- `pipeline.py` - Orchestrates FP pre-filter → chunking → embedding → labeling
+- `reranker.py` - Cross-encoder reranking for improved evidence quality
+- `pipeline.py` - Orchestrates FP pre-filter → chunking → embedding → labeling → reranking
 
 ### Prompt Versioning (`prompts/labeling/`)
 
@@ -224,7 +230,7 @@ Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, te
 - **collection_runs**: Collection run statistics
 - **article_chunks**: Chunked text with embeddings (pgvector)
 - **brand_labels**: Per-brand ESG labels with sentiment
-- **label_evidence**: Supporting excerpts linked to chunks
+- **label_evidence**: Supporting excerpts linked to chunks (rerank_score, match_method)
 - **labeling_runs**: Labeling batch tracking
 - **classifier_predictions**: ML classifier predictions audit trail
 
@@ -241,6 +247,10 @@ EMBEDDING_MODEL=text-embedding-3-small, LABELING_BATCH_SIZE=10
 # FP Classifier Pre-filter
 FP_CLASSIFIER_ENABLED=false, FP_CLASSIFIER_URL=http://localhost:8000
 FP_SKIP_LLM_THRESHOLD=0.5, FP_CLASSIFIER_TIMEOUT=30.0
+
+# Cross-Encoder Reranking (evidence quality improvement)
+RERANK_ENABLED=true, RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+RERANK_TOP_K=10, RERANK_WEIGHT=0.6
 
 # MLOps
 MLFLOW_ENABLED=false, MLFLOW_TRACKING_URI=sqlite:///mlruns.db
@@ -346,6 +356,25 @@ Clarified criteria for distinguishing between `false_positive` (pure metrics) an
 | "NKE stock up 4% today" | No | `false_positive` |
 | "Jim Cramer says Nike CEO is reinventing the company" | Yes | `skipped` |
 | "Nike shares surge after CEO announces restructuring" | Yes | `skipped` |
+
+### 2026-01-20: Cross-Encoder Reranking for Evidence Quality
+
+Integrated cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L-6-v2`) to improve evidence matching quality. The reranker jointly encodes (excerpt, chunk) pairs for more accurate relevance scoring than bi-encoder embeddings.
+
+**New features:**
+- `src/labeling/reranker.py` - CrossEncoderReranker class with lazy model loading
+- `rerank_score` and `match_method` columns in `label_evidence` table
+- Website export sorts evidence by `rerank_score` (falling back to `relevance_score`)
+- Configurable top-N evidence per category in export (`--top-n-evidence`)
+- Backfill script for existing articles: `scripts/backfill_rerank_scores.py`
+
+**Configuration:**
+- `RERANK_ENABLED=true` (default) - Enable/disable reranking
+- `RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2` - Model to use
+- `RERANK_TOP_K=10` - Candidates to rerank per excerpt
+- `RERANK_WEIGHT=0.6` - Weight for combined score: `(1-w)*initial + w*rerank`
+
+**Migration:** `psql $DATABASE_URL -f migrations/004_rerank_scores.sql`
 
 ### 2025-12-29: MLOps Improvements
 

@@ -208,6 +208,8 @@ class LabelingDatabase:
                 category=category,
                 excerpt=match.excerpt,
                 relevance_score=match.similarity_score,
+                rerank_score=match.rerank_score,
+                match_method=match.match_method,
             )
             session.add(evidence)
             db_evidence.append(evidence)

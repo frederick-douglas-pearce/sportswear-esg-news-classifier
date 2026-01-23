@@ -47,6 +47,9 @@ SNIPPET_CONTEXT_CHARS = 100
 DEFAULT_SENTENCES_BEFORE = 1
 DEFAULT_SENTENCES_AFTER = 1
 
+# Default top-N evidence per category for export
+DEFAULT_TOP_N_EVIDENCE_PER_CATEGORY = 3
+
 # Lazy-loaded spaCy model
 _nlp = None
 
@@ -303,11 +306,15 @@ def query_labeled_articles(session, limit: int | None = None) -> list[Article]:
     return query.all()
 
 
-def format_article_for_json(article: Article) -> dict[str, Any]:
+def format_article_for_json(
+    article: Article,
+    top_n_evidence_per_category: int = DEFAULT_TOP_N_EVIDENCE_PER_CATEGORY,
+) -> dict[str, Any]:
     """Format an article for JSON export.
 
     Args:
         article: Article object with loaded relationships
+        top_n_evidence_per_category: Maximum evidence items per category (0 = no limit)
 
     Returns:
         Dictionary matching the JSON schema
@@ -340,20 +347,47 @@ def format_article_for_json(article: Article) -> dict[str, Any]:
                 "sentiment_label": get_sentiment_label(sentiment) if applies else None,
             }
 
-        # Build evidence list
-        evidence_list = []
+        # Build evidence list, sorted by rerank_score (fallback to relevance_score)
+        # Group evidence by category for top-N filtering
+        evidence_by_category: dict[str, list[LabelEvidence]] = {}
         for ev in label.evidence:
-            evidence_item = {
-                "category": ev.category,
-                "excerpt": sanitize_text(ev.excerpt),
-                "relevance_score": ev.relevance_score,
-                "confidence": _get_confidence_label(ev.relevance_score or 0.0),
-            }
-            # Include condensed context snippet instead of full chunk text
-            if ev.chunk and ev.chunk.chunk_text and ev.excerpt:
-                snippet = extract_snippet(ev.chunk.chunk_text, ev.excerpt)
-                evidence_item["context_snippet"] = sanitize_text(snippet)
-            evidence_list.append(evidence_item)
+            if ev.category not in evidence_by_category:
+                evidence_by_category[ev.category] = []
+            evidence_by_category[ev.category].append(ev)
+
+        # Sort each category by rerank_score (desc), then relevance_score (desc)
+        for cat_evidence in evidence_by_category.values():
+            cat_evidence.sort(
+                key=lambda e: (
+                    e.rerank_score if e.rerank_score is not None else -1,
+                    e.relevance_score if e.relevance_score is not None else -1,
+                ),
+                reverse=True,
+            )
+
+        # Build evidence list with top-N per category
+        evidence_list = []
+        for cat, cat_evidence in evidence_by_category.items():
+            # Apply top-N limit if configured
+            if top_n_evidence_per_category > 0:
+                cat_evidence = cat_evidence[:top_n_evidence_per_category]
+
+            for ev in cat_evidence:
+                # Use rerank_score as primary score if available, else relevance_score
+                primary_score = ev.rerank_score if ev.rerank_score is not None else ev.relevance_score
+                evidence_item = {
+                    "category": ev.category,
+                    "excerpt": sanitize_text(ev.excerpt),
+                    "relevance_score": ev.relevance_score,
+                    "rerank_score": ev.rerank_score,
+                    "match_method": ev.match_method,
+                    "confidence": _get_confidence_label(primary_score or 0.0),
+                }
+                # Include condensed context snippet instead of full chunk text
+                if ev.chunk and ev.chunk.chunk_text and ev.excerpt:
+                    snippet = extract_snippet(ev.chunk.chunk_text, ev.excerpt)
+                    evidence_item["context_snippet"] = sanitize_text(snippet)
+                evidence_list.append(evidence_item)
 
         brand_details.append({
             "brand": label.brand,
@@ -381,11 +415,15 @@ def format_article_for_json(article: Article) -> dict[str, Any]:
     }
 
 
-def export_to_json(articles: list[Article]) -> dict[str, Any]:
+def export_to_json(
+    articles: list[Article],
+    top_n_evidence_per_category: int = DEFAULT_TOP_N_EVIDENCE_PER_CATEGORY,
+) -> dict[str, Any]:
     """Export articles to JSON format.
 
     Args:
         articles: List of Article objects
+        top_n_evidence_per_category: Maximum evidence items per category (0 = no limit)
 
     Returns:
         Dictionary with full JSON structure
@@ -396,7 +434,7 @@ def export_to_json(articles: list[Article]) -> dict[str, Any]:
 
     formatted_articles = []
     for article in articles:
-        formatted = format_article_for_json(article)
+        formatted = format_article_for_json(article, top_n_evidence_per_category)
         formatted_articles.append(formatted)
         all_brands.update(formatted["brands"])
         all_categories.update(formatted["categories"])
@@ -562,6 +600,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum number of articles to export",
     )
     parser.add_argument(
+        "--top-n-evidence",
+        type=int,
+        default=DEFAULT_TOP_N_EVIDENCE_PER_CATEGORY,
+        help=f"Maximum evidence items per category per brand (0 = no limit, default: {DEFAULT_TOP_N_EVIDENCE_PER_CATEGORY})",
+    )
+    parser.add_argument(
         "--base-url",
         type=str,
         default="https://frederick-douglas-pearce.github.io",
@@ -617,7 +661,7 @@ def main() -> int:
 
         if args.format in ("json", "both"):
             logger.info("Generating JSON export...")
-            json_data = export_to_json(articles)
+            json_data = export_to_json(articles, top_n_evidence_per_category=args.top_n_evidence)
 
         if args.format in ("atom", "both"):
             logger.info("Generating Atom feed...")

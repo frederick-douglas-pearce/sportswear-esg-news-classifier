@@ -21,12 +21,14 @@ class TestEvidenceMatchDataclass:
             chunk_index=0,
             similarity_score=0.95,
             match_method="exact",
+            rerank_score=0.88,
         )
         assert match.excerpt == "Test excerpt"
         assert match.chunk_id == chunk_id
         assert match.chunk_index == 0
         assert match.similarity_score == 0.95
         assert match.match_method == "exact"
+        assert match.rerank_score == 0.88
 
     def test_evidence_match_no_chunk(self):
         """Should create evidence match with no chunk."""
@@ -40,6 +42,18 @@ class TestEvidenceMatchDataclass:
         assert match.chunk_id is None
         assert match.chunk_index is None
         assert match.match_method == "none"
+        assert match.rerank_score is None  # Default is None
+
+    def test_evidence_match_default_rerank_score(self):
+        """Should have None as default rerank_score."""
+        match = EvidenceMatch(
+            excerpt="Test",
+            chunk_id=None,
+            chunk_index=None,
+            similarity_score=0.5,
+            match_method="fuzzy",
+        )
+        assert match.rerank_score is None
 
 
 class TestEvidenceMatcherExactMatch:

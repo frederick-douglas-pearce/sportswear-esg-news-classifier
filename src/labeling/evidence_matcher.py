@@ -8,6 +8,7 @@ from uuid import UUID
 from .chunker import Chunk
 from .config import labeling_settings
 from .embedder import OpenAIEmbedder
+from .reranker import CrossEncoderReranker, RerankCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,11 @@ class EvidenceMatch:
     excerpt: str
     chunk_id: UUID | None
     chunk_index: int | None
-    similarity_score: float
+    similarity_score: float  # Initial matching score (fuzzy+embedding combined)
     match_method: str  # "exact", "fuzzy", "embedding", "combined", "none"
     confidence: str = field(default="unmatched")  # "high", "medium", "low", "unmatched"
     context_snippet: str | None = field(default=None)  # Condensed snippet around match
+    rerank_score: float | None = field(default=None)  # Cross-encoder rerank score (0-1)
 
 
 class EvidenceMatcher:
@@ -50,29 +52,35 @@ class EvidenceMatcher:
     2. Fuzzy text matching (for minor variations)
     3. Embedding similarity (for paraphrased excerpts)
     4. Combined scoring (fuzzy + embedding reranking)
+    5. Cross-encoder reranking for improved accuracy (optional)
     """
 
     def __init__(
         self,
         embedder: OpenAIEmbedder | None = None,
+        reranker: CrossEncoderReranker | None = None,
         fuzzy_threshold: float = 0.8,
         embedding_threshold: float = 0.85,
         min_confidence_threshold: float | None = None,
         use_embedding_rerank: bool | None = None,
+        use_cross_encoder_rerank: bool | None = None,
         snippet_context_chars: int = 100,
     ):
         """Initialize the evidence matcher.
 
         Args:
             embedder: OpenAI embedder for semantic matching (optional)
+            reranker: Cross-encoder reranker for improved matching (optional)
             fuzzy_threshold: Minimum similarity for fuzzy matching (0.0-1.0)
             embedding_threshold: Minimum cosine similarity for embedding matching
             min_confidence_threshold: Minimum score to return a match (default: from settings)
                                       Below this, returns match_method="none"
             use_embedding_rerank: Use embedding to rerank fuzzy matches (default: from settings)
+            use_cross_encoder_rerank: Use cross-encoder to rerank matches (default: from settings)
             snippet_context_chars: Characters of context around matched excerpt for snippets
         """
         self.embedder = embedder
+        self.reranker = reranker
         self.fuzzy_threshold = fuzzy_threshold
         self.embedding_threshold = embedding_threshold
         self.min_confidence_threshold = (
@@ -84,6 +92,11 @@ class EvidenceMatcher:
             use_embedding_rerank
             if use_embedding_rerank is not None
             else labeling_settings.evidence_use_embedding_rerank
+        )
+        self.use_cross_encoder_rerank = (
+            use_cross_encoder_rerank
+            if use_cross_encoder_rerank is not None
+            else labeling_settings.rerank_enabled
         )
         self.snippet_context_chars = snippet_context_chars
 
@@ -141,7 +154,8 @@ class EvidenceMatcher:
         Matching strategy:
         1. Exact substring match (returns immediately with score 1.0)
         2. Fuzzy text matching with optional embedding reranking
-        3. Apply min confidence threshold - low scores return match_method="none"
+        3. Cross-encoder reranking for top-K candidates (if enabled)
+        4. Apply min confidence threshold - low scores return match_method="none"
         """
         excerpt_clean = excerpt.strip()
 
@@ -149,6 +163,14 @@ class EvidenceMatcher:
         for i, chunk in enumerate(chunks):
             if excerpt_clean in chunk.text:
                 snippet = self._extract_snippet(chunk.text, excerpt_clean)
+                # For exact matches, rerank_score is also 1.0
+                rerank_score = None
+                if self.use_cross_encoder_rerank and self.reranker:
+                    # Still compute rerank score for consistency
+                    candidates = [RerankCandidate(index=i, text=chunk.text, initial_score=1.0)]
+                    results = self.reranker.rerank(excerpt_clean, candidates, top_k=1)
+                    if results:
+                        rerank_score = results[0].rerank_score
                 return EvidenceMatch(
                     excerpt=excerpt,
                     chunk_id=chunk_ids[i] if chunk_ids else None,
@@ -157,6 +179,7 @@ class EvidenceMatcher:
                     match_method="exact",
                     confidence="high",
                     context_snippet=snippet,
+                    rerank_score=rerank_score,
                 )
 
         # Strategy 2: Calculate fuzzy scores for all chunks
@@ -178,10 +201,10 @@ class EvidenceMatcher:
             except Exception as e:
                 logger.warning(f"Embedding reranking failed: {e}")
 
-        # Compute final scores - combine fuzzy and embedding if both available
+        # Compute initial scores - combine fuzzy and embedding if both available
+        initial_scores: list[tuple[int, float]] = []  # (index, score)
         if embedding_scores and fuzzy_scores:
             # Combined scoring: 30% fuzzy, 70% embedding for semantic priority
-            combined_scores = []
             fuzzy_dict = dict(fuzzy_scores)
             embedding_dict = dict(embedding_scores)
 
@@ -189,26 +212,60 @@ class EvidenceMatcher:
                 fuzzy = fuzzy_dict.get(i, 0.0)
                 emb = embedding_dict.get(i, 0.0)
                 combined = 0.3 * fuzzy + 0.7 * emb
-                combined_scores.append((i, combined, fuzzy, emb))
+                initial_scores.append((i, combined))
 
-            # Sort by combined score descending
-            combined_scores.sort(key=lambda x: x[1], reverse=True)
-            best_idx, best_score, best_fuzzy, best_emb = combined_scores[0]
             match_method = "combined"
-
-            # Determine which component contributed more for logging
-            logger.debug(
-                f"Combined match: idx={best_idx}, "
-                f"combined={best_score:.3f}, fuzzy={best_fuzzy:.3f}, emb={best_emb:.3f}"
-            )
         else:
             # Fallback to fuzzy-only or embedding-only
             if embedding_scores:
-                best_idx, best_score = max(embedding_scores, key=lambda x: x[1])
+                initial_scores = embedding_scores
                 match_method = "embedding"
             else:
-                best_idx, best_score = max(fuzzy_scores, key=lambda x: x[1])
+                initial_scores = fuzzy_scores
                 match_method = "fuzzy"
+
+        # Sort by initial score descending
+        initial_scores.sort(key=lambda x: x[1], reverse=True)
+
+        # Strategy 4: Cross-encoder reranking (if enabled)
+        rerank_score: float | None = None
+        if self.use_cross_encoder_rerank and self.reranker and initial_scores:
+            # Take top-K candidates for reranking
+            top_k = labeling_settings.rerank_top_k
+            top_candidates = initial_scores[:top_k]
+
+            # Build rerank candidates
+            candidates = [
+                RerankCandidate(
+                    index=idx,
+                    text=chunks[idx].text,
+                    initial_score=score,
+                )
+                for idx, score in top_candidates
+            ]
+
+            # Rerank and get best result
+            rerank_results = self.reranker.rerank(excerpt_clean, candidates, top_k=1)
+            if rerank_results:
+                best_result = rerank_results[0]
+                best_idx = best_result.index
+                best_score = best_result.combined_score
+                rerank_score = best_result.rerank_score
+
+                logger.debug(
+                    f"Reranked match: idx={best_idx}, "
+                    f"combined={best_score:.3f}, rerank={rerank_score:.3f}, "
+                    f"initial={candidates[0].initial_score:.3f}"
+                )
+            else:
+                # Fallback if reranking fails
+                best_idx, best_score = initial_scores[0]
+        else:
+            # No reranking - use best initial score
+            best_idx, best_score = initial_scores[0]
+            logger.debug(
+                f"Initial match (no rerank): idx={best_idx}, score={best_score:.3f}"
+            )
 
         # Apply minimum confidence threshold
         if best_score < self.min_confidence_threshold:
@@ -224,6 +281,7 @@ class EvidenceMatcher:
                 match_method="none",
                 confidence="unmatched",
                 context_snippet=None,
+                rerank_score=rerank_score,
             )
 
         # Build successful match
@@ -239,6 +297,7 @@ class EvidenceMatcher:
             match_method=match_method,
             confidence=confidence,
             context_snippet=snippet,
+            rerank_score=rerank_score,
         )
 
     def _extract_snippet(self, chunk_text: str, excerpt: str) -> str:
@@ -342,6 +401,7 @@ def match_all_evidence(
     chunk_ids: list[UUID] | None = None,
     chunk_embeddings: list[list[float]] | None = None,
     embedder: OpenAIEmbedder | None = None,
+    reranker: CrossEncoderReranker | None = None,
 ) -> dict[str, dict[str, list[EvidenceMatch]]]:
     """Match all evidence from brand analyses to chunks.
 
@@ -351,11 +411,12 @@ def match_all_evidence(
         chunk_ids: Optional database UUIDs for chunks
         chunk_embeddings: Optional pre-computed chunk embeddings
         embedder: Optional embedder for semantic matching
+        reranker: Optional cross-encoder reranker for improved matching
 
     Returns:
         Nested dict: {brand_name: {category: [EvidenceMatch, ...]}}
     """
-    matcher = EvidenceMatcher(embedder=embedder)
+    matcher = EvidenceMatcher(embedder=embedder, reranker=reranker)
     results: dict[str, dict[str, list[EvidenceMatch]]] = {}
 
     for analysis in brand_analyses:

@@ -8,6 +8,7 @@ from .evidence_matcher import EvidenceMatch, EvidenceMatcher, match_all_evidence
 from .labeler import ArticleLabeler, LabelingResult
 from .models import BrandAnalysis, CategoryLabel, LabelingResponse
 from .pipeline import LabelingPipeline, LabelingStats
+from .reranker import CrossEncoderReranker, RerankCandidate, RerankResult
 
 __all__ = [
     "ArticleChunker",
@@ -15,6 +16,7 @@ __all__ = [
     "BrandAnalysis",
     "CategoryLabel",
     "Chunk",
+    "CrossEncoderReranker",
     "ESG_CATEGORIES",
     "EvidenceMatch",
     "EvidenceMatcher",
@@ -25,6 +27,8 @@ __all__ = [
     "LabelingResult",
     "LabelingStats",
     "OpenAIEmbedder",
+    "RerankCandidate",
+    "RerankResult",
     "labeling_db",
     "labeling_settings",
     "match_all_evidence",

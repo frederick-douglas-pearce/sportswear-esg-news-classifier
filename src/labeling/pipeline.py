@@ -17,6 +17,7 @@ from .embedder import OpenAIEmbedder
 from .evidence_matcher import EvidenceMatcher, match_all_evidence
 from .labeler import ArticleLabeler
 from .models import LabelingResponse
+from .reranker import CrossEncoderReranker
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class LabelingPipeline:
         embedder: OpenAIEmbedder | None = None,
         labeler: ArticleLabeler | None = None,
         fp_client: ClassifierClient | None = None,
+        reranker: CrossEncoderReranker | None = None,
         prompt_version: str | None = None,
     ):
         """Initialize the pipeline.
@@ -79,6 +81,7 @@ class LabelingPipeline:
             embedder: OpenAI embedder
             labeler: Claude article labeler
             fp_client: FP classifier HTTP client
+            reranker: Cross-encoder reranker for evidence matching
             prompt_version: Version of prompts to use (default: production version)
         """
         self.database = database or labeling_db
@@ -86,12 +89,14 @@ class LabelingPipeline:
         self.embedder = embedder
         self.labeler = labeler
         self.fp_client = fp_client
+        self.reranker = reranker
         self.prompt_version = prompt_version
 
         # Lazy initialization of API clients
         self._embedder_initialized = embedder is not None
         self._labeler_initialized = labeler is not None
         self._fp_client_initialized = fp_client is not None
+        self._reranker_initialized = reranker is not None
 
     def _ensure_embedder(self) -> OpenAIEmbedder:
         """Ensure embedder is initialized."""
@@ -123,6 +128,20 @@ class LabelingPipeline:
             )
             self._fp_client_initialized = True
         return self.fp_client
+
+    def _ensure_reranker(self) -> CrossEncoderReranker | None:
+        """Ensure reranker is initialized if enabled.
+
+        Returns:
+            CrossEncoderReranker if reranking is enabled, None otherwise.
+        """
+        if not labeling_settings.rerank_enabled:
+            return None
+
+        if not self._reranker_initialized:
+            self.reranker = CrossEncoderReranker()
+            self._reranker_initialized = True
+        return self.reranker
 
     def _deduplicate_by_title(
         self,
@@ -794,12 +813,15 @@ class LabelingPipeline:
         # Only match evidence for sportswear brands
         evidence_matches = {}
         if chunks:
+            # Initialize reranker if enabled
+            reranker = self._ensure_reranker()
             evidence_matches = match_all_evidence(
                 sportswear_brands,  # Only sportswear brands
                 chunks,
                 chunk_ids if chunk_ids else None,
                 chunk_embeddings if chunk_embeddings else None,
                 self.embedder,
+                reranker,
             )
 
         # Step 5: Save labels and evidence

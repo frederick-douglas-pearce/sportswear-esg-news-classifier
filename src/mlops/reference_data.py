@@ -18,9 +18,55 @@ PREDICTION_LOG_COLUMNS = [
     "timestamp",
     "probability",
     "prediction",
-    "text_length",
-    "has_brand_context",
 ]
+
+# Brands to track for drift detection (subset of most common)
+TRACKED_BRANDS = [
+    "Nike",
+    "Adidas",
+    "Puma",
+    "Under Armour",
+    "Lululemon",
+    "Patagonia",
+    "New Balance",
+    "ASICS",
+    "Reebok",
+    "Hoka",
+    "Skechers",
+    "The North Face",
+    "Anta",
+    "Li-Ning",
+]
+
+
+def _add_brand_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add one-hot encoded brand columns for drift tracking.
+
+    Args:
+        df: DataFrame with brands_mentioned column
+
+    Returns:
+        DataFrame with added brand_* columns
+    """
+    if "brands_mentioned" not in df.columns:
+        return df
+
+    # Create binary columns for each tracked brand
+    for brand in TRACKED_BRANDS:
+        col_name = f"brand_{brand.lower().replace(' ', '_')}"
+        df[col_name] = df["brands_mentioned"].apply(
+            lambda brands: 1 if brands and brand in brands else 0
+        )
+
+    # Also track "other" brands not in tracked list
+    df["brand_other"] = df["brands_mentioned"].apply(
+        lambda brands: 1 if brands and any(b not in TRACKED_BRANDS for b in brands) else 0
+    )
+
+    # Drop the original brands_mentioned column (not needed for drift detection)
+    df = df.drop(columns=["brands_mentioned"])
+
+    return df
 
 
 def load_predictions_from_database(
@@ -66,7 +112,7 @@ def load_predictions_from_database(
                 cp.risk_level as confidence_level,
                 cp.action_taken,
                 cp.model_version,
-                LENGTH(a.title || ' ' || COALESCE(a.full_content, '')) as text_length
+                a.brands_mentioned
             FROM classifier_predictions cp
             JOIN articles a ON cp.article_id = a.id
             WHERE cp.classifier_type = :classifier_type
@@ -93,6 +139,10 @@ def load_predictions_from_database(
 
         df = pd.DataFrame(rows, columns=columns)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+        # Create one-hot encoded brand columns for drift tracking
+        df = _add_brand_columns(df)
+
         logger.info(f"Loaded {len(df)} predictions from database for {classifier_type}")
         return df
 
