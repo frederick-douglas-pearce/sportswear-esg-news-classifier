@@ -458,8 +458,8 @@ def compare_models(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
 def prompt_promotion(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     """Prompt user for model promotion decision.
 
-    This step pauses the workflow and waits for user approval.
-    The approval is handled by the resume mechanism.
+    This step determines which models improved, displays results,
+    then pauses explicitly for user approval before promotion.
     """
     comparison = context.get("classifiers", {})
 
@@ -477,12 +477,36 @@ def prompt_promotion(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
             "models_to_promote": [],
         }
 
-    # Store which models should be promoted when resumed
-    return {
+    # Display models that would be promoted
+    print("\n" + "=" * 60)
+    print("MODELS READY FOR PROMOTION")
+    print("=" * 60)
+    for classifier in models_to_promote:
+        result = comparison.get(classifier, {})
+        imp = result.get("improvement", {})
+        new_model = result.get("new_model", {})
+        print(f"\n{classifier.upper()}:")
+        print(f"  New Test F2: {new_model.get('test_f2', 'N/A'):.4f}")
+        print(f"  Improvement: {imp.get('test_f2_delta', 0):+.4f} ({imp.get('test_f2_pct', 0):+.2f}%)")
+    print("\nTo promote these models, resume the workflow:")
+    print("  uv run python -m src.agent continue model_training")
+    print("=" * 60 + "\n")
+
+    result = {
         "promotion_prompted": True,
         "models_to_promote": models_to_promote,
-        "awaiting_approval": True,
     }
+
+    # Pause workflow explicitly for user approval
+    # This is done after the handler runs so models_to_promote is in the context
+    workflow._workflow_state.current_step = "prompt_promotion"
+    workflow.state.pause_workflow(
+        workflow.name,
+        reason="Approval required for model promotion",
+    )
+    logger.info(f"Workflow paused - approval required to promote: {models_to_promote}")
+
+    return result
 
 
 def promote_model(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
@@ -706,7 +730,7 @@ class ModelTrainingWorkflow(Workflow):
             name="prompt_promotion",
             description="Prompt user for model promotion decision",
             handler=prompt_promotion,
-            requires_approval=True,  # This pauses for promotion approval
+            # Note: This step pauses explicitly after determining models_to_promote
         ),
         StepDefinition(
             name="promote_model",
