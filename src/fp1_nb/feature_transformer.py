@@ -746,6 +746,8 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         include_brand_summary: bool = False,  # Aggregate brand stats (3 features)
         # FP indicator features
         include_fp_indicators: bool = True,  # FP detection patterns (8 features)
+        # Negative context features (can hurt generalization - see ablation study)
+        include_negative_context: bool = True,  # Negative context patterns (4 features)
         # General
         random_state: int = 42,
     ):
@@ -777,6 +779,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             include_brand_indicators: Whether to add multi-hot brand encoding (50 features)
             include_brand_summary: Whether to add aggregate brand stats (3 features)
             include_fp_indicators: Whether to add FP indicator features (8 features)
+            include_negative_context: Whether to add negative context features (4 features)
             random_state: Random seed for reproducibility
         """
         self.method = method
@@ -804,6 +807,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         self.include_brand_indicators = include_brand_indicators
         self.include_brand_summary = include_brand_summary
         self.include_fp_indicators = include_fp_indicators
+        self.include_negative_context = include_negative_context
         self.random_state = random_state
 
         # Fitted components (set during fit)
@@ -1994,10 +1998,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._proximity_scaler = StandardScaler()
             self._proximity_scaler.fit(proximity_features)
 
-            # Fit scaler on negative context features
-            neg_context_features = self._compute_negative_context_features(texts)
-            self._neg_context_scaler = StandardScaler()
-            self._neg_context_scaler.fit(neg_context_features)
+            # Fit scaler on negative context features (if enabled)
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                self._neg_context_scaler = StandardScaler()
+                self._neg_context_scaler.fit(neg_context_features)
 
         elif self.method == 'tfidf_lsa_ner_proximity':
             # TF-IDF LSA + NER + proximity features + FP indicator features
@@ -2026,10 +2031,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._proximity_scaler = StandardScaler()
             self._proximity_scaler.fit(proximity_features)
 
-            # Fit scaler on negative context features
-            neg_context_features = self._compute_negative_context_features(texts)
-            self._neg_context_scaler = StandardScaler()
-            self._neg_context_scaler.fit(neg_context_features)
+            # Fit scaler on negative context features (if enabled)
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                self._neg_context_scaler = StandardScaler()
+                self._neg_context_scaler.fit(neg_context_features)
 
             # Fit scaler on FP indicator features (8-dim) if enabled
             include_fp = getattr(self, 'include_fp_indicators', True)
@@ -2065,9 +2071,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             self._proximity_scaler = StandardScaler()
             self._proximity_scaler.fit(proximity_features)
 
-            neg_context_features = self._compute_negative_context_features(texts)
-            self._neg_context_scaler = StandardScaler()
-            self._neg_context_scaler.fit(neg_context_features)
+            # Fit scaler on negative context features (if enabled)
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                self._neg_context_scaler = StandardScaler()
+                self._neg_context_scaler.fit(neg_context_features)
 
             # Fit scaler on FP indicator features (8-dim)
             fp_indicator_features = self._compute_fp_indicator_features(texts)
@@ -2201,10 +2209,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             proximity_features = self._compute_proximity_features(texts)
             self._proximity_scaler = StandardScaler()
             self._proximity_scaler.fit(proximity_features)
-            # Fit scaler on negative context features
-            neg_context_features = self._compute_negative_context_features(texts)
-            self._neg_context_scaler = StandardScaler()
-            self._neg_context_scaler.fit(neg_context_features)
+            # Fit scaler on negative context features (if enabled)
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                self._neg_context_scaler = StandardScaler()
+                self._neg_context_scaler.fit(neg_context_features)
 
         elif self.method == 'sentence_transformer_ner_fp_indicators':
             # Sentence embeddings + NER + FP indicator features (stock tickers, company suffixes, etc.)
@@ -2378,14 +2387,17 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_proximity':
-            # TF-IDF LSA + proximity features (positive + negative context)
+            # TF-IDF LSA + proximity features (positive + optional negative context)
             tfidf_features = self._tfidf.transform(texts)
             lsa_features = self._lsa.transform(tfidf_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
-            neg_context_features = self._compute_negative_context_features(texts)
-            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
-            features = np.hstack([lsa_features, proximity_scaled, neg_context_scaled])
+            feature_arrays = [lsa_features, proximity_scaled]
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+                feature_arrays.append(neg_context_scaled)
+            features = np.hstack(feature_arrays)
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_lsa_ner_proximity':
@@ -2398,10 +2410,14 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
-            neg_context_features = self._compute_negative_context_features(texts)
-            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
 
-            feature_arrays = [lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled]
+            feature_arrays = [lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled]
+
+            # Add negative context features if enabled
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+                feature_arrays.append(neg_context_scaled)
 
             # Add FP indicator features if enabled (with backwards compatibility)
             include_fp = getattr(self, 'include_fp_indicators', True)
@@ -2424,11 +2440,19 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
-            neg_context_features = self._compute_negative_context_features(texts)
-            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
             fp_indicator_features = self._compute_fp_indicator_features(texts)
             fp_indicator_scaled = self._fp_indicator_scaler.transform(fp_indicator_features)
-            features = np.hstack([lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled, fp_indicator_scaled])
+
+            feature_arrays = [lsa_features, ner_scaled, brand_ner_scaled, proximity_scaled]
+
+            # Add negative context features if enabled
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+                feature_arrays.append(neg_context_scaled)
+
+            feature_arrays.append(fp_indicator_scaled)
+            features = np.hstack(feature_arrays)
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'tfidf_context':
@@ -2525,7 +2549,7 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_proximity':
-            # Sentence embeddings (384-dim) + scaled NER (6-dim) + brand-specific NER (8-dim) + scaled proximity (4-dim) + neg context (4-dim)
+            # Sentence embeddings (384-dim) + scaled NER (6-dim) + brand-specific NER (8-dim) + scaled proximity (4-dim) + optional neg context (4-dim)
             sentence_features = self._transform_sentence_transformer(texts)
             ner_features = self._compute_ner_features(texts)
             ner_scaled = self._ner_scaler.transform(ner_features)
@@ -2533,9 +2557,16 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
             brand_ner_scaled = self._brand_ner_scaler.transform(brand_ner_features)
             proximity_features = self._compute_proximity_features(texts)
             proximity_scaled = self._proximity_scaler.transform(proximity_features)
-            neg_context_features = self._compute_negative_context_features(texts)
-            neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
-            features = np.hstack([sentence_features, ner_scaled, brand_ner_scaled, proximity_scaled, neg_context_scaled])
+
+            feature_arrays = [sentence_features, ner_scaled, brand_ner_scaled, proximity_scaled]
+
+            # Add negative context features if enabled
+            if self.include_negative_context:
+                neg_context_features = self._compute_negative_context_features(texts)
+                neg_context_scaled = self._neg_context_scaler.transform(neg_context_features)
+                feature_arrays.append(neg_context_scaled)
+
+            features = np.hstack(feature_arrays)
             return _stack_optional_features(features, is_sparse=False)
 
         elif self.method == 'sentence_transformer_ner_fp_indicators':

@@ -49,8 +49,9 @@ from src.deployment.training_config import (
     load_training_config,
     training_config_exists,
 )
-from src.mlops import ExperimentTracker
+from src.mlops import ExperimentTracker, ImportanceHistory
 from src.deployment.data import load_training_data, split_data
+from src.fp3_nb.explainability import TextExplainer, get_fp_feature_groups, get_ep_feature_groups
 from src.fp1_nb.preprocessing import (
     create_text_features as fp_create_text_features,
     clean_text as fp_clean_text,
@@ -135,6 +136,11 @@ def parse_args() -> argparse.Namespace:
         "-v",
         action="store_true",
         help="Print detailed progress",
+    )
+    parser.add_argument(
+        "--no-importance",
+        action="store_true",
+        help="Skip feature importance tracking (faster training)",
     )
 
     return parser.parse_args()
@@ -279,6 +285,7 @@ def create_transformer(
         "include_vocab_features",
         "include_brand_indicators",
         "include_brand_summary",
+        "include_negative_context",
         "proximity_window_size",
         "vocab_window_size",
     ]
@@ -288,6 +295,10 @@ def create_transformer(
             transformer_params[key] = params[key]
 
     if classifier_type == ClassifierType.FP:
+        # Disable negative_context by default for FP classifier (see ablation study)
+        # These features hurt generalization based on permutation importance analysis
+        if "include_negative_context" not in transformer_params:
+            transformer_params["include_negative_context"] = False
         return FPFeatureTransformer(**transformer_params)
     elif classifier_type == ClassifierType.EP:
         return EPFeatureTransformer(**transformer_params)
@@ -304,6 +315,7 @@ def train_classifier(
     random_state: int,
     verbose: bool,
     tracker: ExperimentTracker | None = None,
+    track_importance: bool = True,
 ) -> dict[str, Any]:
     """Train a classifier using the provided training config.
 
@@ -517,6 +529,87 @@ def train_classifier(
         print(f"Threshold recall: {threshold_metrics['threshold_recall']:.4f}")
         print(f"Threshold precision: {threshold_metrics['threshold_precision']:.4f}")
 
+    # Track feature importance (SHAP and permutation)
+    shap_importance_dict = None
+    perm_importance_dict = None
+
+    # Get feature groups for this classifier type
+    if classifier_type == ClassifierType.FP:
+        feature_groups = get_fp_feature_groups(
+            method=fe_method,
+            lsa_n_components=fe_params.get("lsa_n_components", 100),
+            include_fp_indicators=True,
+            include_negative_context=fe_params.get("include_negative_context", False),
+        )
+    elif classifier_type == ClassifierType.EP:
+        feature_groups = get_ep_feature_groups(method=fe_method)
+    else:
+        feature_groups = {}
+
+    # Only compute importance for supported model types with feature groups
+    if track_importance and feature_groups and model_type in ["RandomForest", "HistGradientBoosting"]:
+        if verbose:
+            print("\n[Importance] Computing feature group importance...")
+
+        explainer = TextExplainer(
+            pipeline=model,
+            feature_groups=feature_groups,
+            class_names=["negative", "positive"],
+            threshold=optimal_threshold,
+        )
+
+        try:
+            # Compute SHAP importance
+            if verbose:
+                print("  - SHAP importance (tree explainer)...")
+            shap_importance = explainer.explain_feature_groups(
+                X_test_fe, sample_size=min(100, len(X_test_fe)), use_tree_explainer=True
+            )
+            shap_importance_dict = shap_importance.as_dict()
+
+            # Compute permutation importance
+            if verbose:
+                print("  - Permutation importance (10 repeats)...")
+            perm_importance = explainer.compute_permutation_importance(
+                X_test_fe, y_test, n_repeats=10, random_state=random_state, scoring="f2"
+            )
+            perm_importance_dict = perm_importance.as_dict()
+
+            # Save to importance history
+            history = ImportanceHistory.load(classifier_type.value)
+            history.add_record(
+                shap_importance=shap_importance_dict,
+                perm_importance=perm_importance_dict,
+                metrics={
+                    "f2": float(test_f2),
+                    "recall": float(test_recall),
+                    "precision": float(test_precision),
+                },
+                model_params=model_params,
+                data_info={
+                    "n_train": len(train_df),
+                    "n_val": len(val_df),
+                    "n_test": len(test_df),
+                    "n_total": len(df),
+                },
+                feature_method=fe_method,
+            )
+            history.save()
+
+            if verbose:
+                print(f"  - Saved to importance history ({len(history)} records)")
+
+                # Show top feature groups
+                print("\n  Top feature groups (permutation):")
+                for group, mean_decrease, std_decrease in perm_importance.top_groups[:3]:
+                    contrib = perm_importance.group_contribution.get(group, 0) * 100
+                    print(f"    {group}: {contrib:.1f}% (ΔF2: {mean_decrease:.4f})")
+
+        except Exception as e:
+            if verbose:
+                print(f"  Warning: Importance tracking failed: {e}")
+            # Continue without importance tracking
+
     # Create and save pipeline
     pipeline = Pipeline(
         [
@@ -551,6 +644,9 @@ def train_classifier(
         "data_path": str(data_path),
         "n_samples": len(df),
         "training_config": training_config.notebook,
+        # Feature importance (optional)
+        "shap_importance": shap_importance_dict,
+        "perm_importance": perm_importance_dict,
     }
 
     if verbose:
@@ -560,23 +656,40 @@ def train_classifier(
 
     # Log metrics and artifacts to MLflow
     if tracker:
-        tracker.log_metrics(
-            {
-                "test_f2": test_f2,
-                "test_recall": test_recall,
-                "test_precision": test_precision,
-                "threshold": optimal_threshold,
-                "threshold_recall": threshold_metrics["threshold_recall"],
-                "threshold_precision": threshold_metrics["threshold_precision"],
-                "threshold_f2": threshold_metrics["threshold_f2"],
-                "n_samples": len(df),
-            }
-        )
+        # Basic metrics
+        mlflow_metrics = {
+            "test_f2": test_f2,
+            "test_recall": test_recall,
+            "test_precision": test_precision,
+            "threshold": optimal_threshold,
+            "threshold_recall": threshold_metrics["threshold_recall"],
+            "threshold_precision": threshold_metrics["threshold_precision"],
+            "threshold_f2": threshold_metrics["threshold_f2"],
+            "n_samples": len(df),
+        }
+
+        # Add importance metrics if available
+        if perm_importance_dict:
+            for group, contrib in perm_importance_dict.get("group_contribution_pct", {}).items():
+                mlflow_metrics[f"importance_perm_{group}"] = contrib
+            mlflow_metrics["importance_baseline_f2"] = perm_importance_dict.get("baseline_score", 0.0)
+
+        tracker.log_metrics(mlflow_metrics)
         tracker.log_artifact(pipeline_path)
         tracker.log_model_config(config)
 
         # Log sklearn model for Model Registry
         tracker.log_sklearn_model(pipeline, artifact_path="model")
+
+    # Note: Novelty centroids are now fitted separately from OpenAI embeddings
+    # stored in the database during the labeling pipeline.
+    # Run: python scripts/fit_novelty_centroids.py
+    # This allows novelty detection to work regardless of the feature transformer
+    # method selected (TF-IDF, sentence transformer, etc.)
+    if verbose and classifier_type == ClassifierType.FP:
+        print("\n[Note] Novelty centroids should be fitted separately using:")
+        print("  python scripts/fit_novelty_centroids.py")
+        print("  (Uses OpenAI embeddings from the labeling pipeline)")
 
     if verbose:
         print("\n" + "=" * 60)
@@ -631,6 +744,7 @@ def main() -> int:
                     random_state=args.random_state,
                     verbose=args.verbose,
                     tracker=tracker,
+                    track_importance=not args.no_importance,
                 )
             elif classifier_type == ClassifierType.ESG:
                 print("Error: ESG classifier training not yet implemented")

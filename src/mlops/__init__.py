@@ -16,6 +16,11 @@ from .reference_data import (
     load_reference_dataset,
     get_reference_stats,
 )
+from .importance_tracking import (
+    ImportanceHistory,
+    ImportanceRecord,
+    StabilityAnalysis,
+)
 
 __all__ = [
     # Config
@@ -41,4 +46,8 @@ __all__ = [
     "load_prediction_logs",
     "load_reference_dataset",
     "get_reference_stats",
+    # Importance tracking
+    "ImportanceHistory",
+    "ImportanceRecord",
+    "StabilityAnalysis",
 ]

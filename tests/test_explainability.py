@@ -11,6 +11,7 @@ from src.fp3_nb.explainability import (
     TextExplainer,
     LIMEExplanation,
     FeatureGroupImportance,
+    PermutationImportance,
     PrototypeExplanation,
     get_fp_feature_groups,
     get_ep_feature_groups,
@@ -550,6 +551,159 @@ class TestFeatureGroupImportance:
         assert 'group_importance' in result
         assert 'group_contribution_pct' in result
         assert 'top_groups' in result
+
+
+# ============================================================================
+# PermutationImportance Dataclass Tests
+# ============================================================================
+
+class TestPermutationImportance:
+    """Tests for PermutationImportance dataclass and computation."""
+
+    def test_permutation_importance_basic(self, sample_feature_groups):
+        """Test basic permutation importance computation."""
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.datasets import make_classification
+
+        # Create simple data
+        X, y = make_classification(n_samples=100, n_features=20, n_informative=10, random_state=42)
+
+        # Train a real classifier
+        clf = RandomForestClassifier(n_estimators=10, random_state=42)
+        clf.fit(X, y)
+
+        # Create explainer
+        explainer = TextExplainer(
+            pipeline=clf,
+            feature_groups=sample_feature_groups,
+            class_names=['negative', 'positive'],
+        )
+
+        # Compute permutation importance
+        result = explainer.compute_permutation_importance(
+            X, y, n_repeats=3, random_state=42, scoring='f2'
+        )
+
+        assert isinstance(result, PermutationImportance)
+        assert result.baseline_score > 0
+        assert len(result.group_importance) == 3  # 3 feature groups
+        assert len(result.group_std) == 3
+        assert len(result.top_groups) == 3
+
+    def test_permutation_importance_contributions_sum_to_one(self, sample_feature_groups):
+        """Test that positive contributions sum to approximately 1."""
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.datasets import make_classification
+
+        X, y = make_classification(n_samples=100, n_features=20, n_informative=10, random_state=42)
+
+        clf = RandomForestClassifier(n_estimators=10, random_state=42)
+        clf.fit(X, y)
+
+        explainer = TextExplainer(
+            pipeline=clf,
+            feature_groups=sample_feature_groups,
+            class_names=['negative', 'positive'],
+        )
+
+        result = explainer.compute_permutation_importance(X, y, n_repeats=3, random_state=42)
+
+        # Contributions should sum to 1 (only positive contributions)
+        total = sum(result.group_contribution.values())
+        assert abs(total - 1.0) < 0.01  # Allow small floating point error
+
+    def test_permutation_importance_no_feature_groups_raises_error(self):
+        """Test that compute_permutation_importance raises error without feature groups."""
+        from sklearn.ensemble import RandomForestClassifier
+
+        clf = RandomForestClassifier(n_estimators=5, random_state=42)
+        clf.fit(np.random.rand(50, 20), np.random.randint(0, 2, 50))
+
+        explainer = TextExplainer(
+            pipeline=clf,
+            feature_groups={},  # Empty feature groups
+            class_names=['negative', 'positive'],
+        )
+
+        with pytest.raises(ValueError, match="feature_groups must be set"):
+            explainer.compute_permutation_importance(
+                np.random.rand(10, 20), np.random.randint(0, 2, 10)
+            )
+
+    def test_permutation_importance_top_groups_ordering(self):
+        """Test that top_groups is properly ordered by importance."""
+        importance = PermutationImportance(
+            group_importance={'a': 0.1, 'b': 0.3, 'c': 0.2},
+            group_std={'a': 0.01, 'b': 0.02, 'c': 0.015},
+            group_contribution={'a': 0.167, 'b': 0.5, 'c': 0.333},
+            top_groups=[('b', 0.3, 0.02), ('c', 0.2, 0.015), ('a', 0.1, 0.01)],
+            baseline_score=0.95,
+        )
+
+        # top_groups should be sorted by importance descending
+        assert importance.top_groups[0][0] == 'b'
+        assert importance.top_groups[1][0] == 'c'
+        assert importance.top_groups[2][0] == 'a'
+
+    def test_permutation_importance_as_dict(self):
+        """Test PermutationImportance as_dict method."""
+        importance = PermutationImportance(
+            group_importance={'a': 0.15, 'b': 0.35},
+            group_std={'a': 0.02, 'b': 0.03},
+            group_contribution={'a': 0.3, 'b': 0.7},
+            top_groups=[('b', 0.35, 0.03), ('a', 0.15, 0.02)],
+            baseline_score=0.92,
+        )
+
+        result = importance.as_dict()
+
+        assert 'baseline_score' in result
+        assert 'group_importance' in result
+        assert 'group_std' in result
+        assert 'group_contribution_pct' in result
+        assert 'top_groups' in result
+        assert result['baseline_score'] == 0.92
+        assert result['group_contribution_pct']['b'] == 70.0  # 0.7 * 100
+
+    def test_permutation_importance_as_dict_json_serializable(self):
+        """Test that as_dict returns JSON-serializable types."""
+        import json
+
+        importance = PermutationImportance(
+            group_importance={'a': np.float64(0.15), 'b': np.float64(0.35)},
+            group_std={'a': np.float64(0.02), 'b': np.float64(0.03)},
+            group_contribution={'a': np.float64(0.3), 'b': np.float64(0.7)},
+            top_groups=[('b', np.float64(0.35), np.float64(0.03)), ('a', np.float64(0.15), np.float64(0.02))],
+            baseline_score=np.float64(0.92),
+        )
+
+        result = importance.as_dict()
+
+        # Should be JSON serializable without errors
+        json_str = json.dumps(result)
+        assert json_str is not None
+
+    def test_permutation_importance_different_scorers(self, sample_feature_groups):
+        """Test permutation importance with different scoring metrics."""
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.datasets import make_classification
+
+        X, y = make_classification(n_samples=100, n_features=20, n_informative=10, random_state=42)
+
+        clf = RandomForestClassifier(n_estimators=10, random_state=42)
+        clf.fit(X, y)
+
+        explainer = TextExplainer(
+            pipeline=clf,
+            feature_groups=sample_feature_groups,
+            class_names=['negative', 'positive'],
+        )
+
+        # Test different scorers
+        for scorer in ['f2', 'recall', 'precision', 'accuracy']:
+            result = explainer.compute_permutation_importance(X, y, n_repeats=2, scoring=scorer)
+            assert result.baseline_score > 0
+            assert len(result.group_importance) == 3
 
 
 # ============================================================================

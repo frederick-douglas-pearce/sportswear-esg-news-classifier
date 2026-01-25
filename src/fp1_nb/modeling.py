@@ -736,7 +736,8 @@ def tune_lsa_components_fast(
     This is an optimized version of tune_feature_transformer() specifically for
     tuning lsa_n_components. It provides ~40-50% speedup by:
     1. Fitting TF-IDF vectorizer once (it doesn't depend on lsa_n_components)
-    2. Precomputing all non-LSA features once (NER, proximity, brand indicators)
+    2. Precomputing all non-LSA features once (NER, proximity, brand indicators,
+       brand summary, and metadata features)
     3. Only re-fitting the SVD decomposition for each lsa_n_components value
 
     Args:
@@ -807,6 +808,26 @@ def tune_lsa_components_fast(
     brand_indicators_fe = base_transformer._compute_brand_indicators(texts_fe)
     brand_indicators_cv = base_transformer._compute_brand_indicators(texts_cv)
 
+    # Brand summary features - Note: disabled for '_brands' methods in transformer
+    # (include_brand_summary = False for methods ending with '_brands')
+    # Only compute if the transformer has it enabled
+    brand_summary_fe = None
+    brand_summary_cv = None
+    if base_transformer.include_brand_summary:
+        brand_summary_fe = base_transformer._compute_brand_summary(texts_fe)
+        brand_summary_cv = base_transformer._compute_brand_summary(texts_cv)
+
+    # Metadata features (if enabled and source_names provided)
+    metadata_fe = None
+    metadata_cv = None
+    if base_transformer.include_metadata_features and fe_source_names is not None:
+        metadata_fe = base_transformer._compute_metadata_features(
+            fe_source_names, fe_categories or [None] * len(fe_source_names)
+        )
+        metadata_cv = base_transformer._compute_metadata_features(
+            cv_source_names, cv_categories or [None] * len(cv_source_names)
+        )
+
     # Fit scalers on training features
     ner_scaler = StandardScaler()
     ner_scaler.fit(ner_features_fe)
@@ -833,7 +854,25 @@ def tune_lsa_components_fast(
     fp_indicator_scaled_fe = fp_indicator_scaler.transform(fp_indicator_fe)
     fp_indicator_scaled_cv = fp_indicator_scaler.transform(fp_indicator_cv)
 
-    # Brand indicators don't need scaling (already 0/1)
+    # Brand indicators need scaling (transformer scales them)
+    brand_indicator_scaler = StandardScaler()
+    brand_indicator_scaler.fit(brand_indicators_fe)
+    brand_indicators_scaled_fe = brand_indicator_scaler.transform(brand_indicators_fe)
+    brand_indicators_scaled_cv = brand_indicator_scaler.transform(brand_indicators_cv)
+
+    # Brand summary features need scaling (if enabled)
+    brand_summary_scaled_cv = None
+    if brand_summary_fe is not None:
+        brand_summary_scaler = StandardScaler()
+        brand_summary_scaler.fit(brand_summary_fe)
+        brand_summary_scaled_cv = brand_summary_scaler.transform(brand_summary_cv)
+
+    # Metadata features need scaling (if computed)
+    metadata_scaled_cv = None
+    if metadata_fe is not None:
+        metadata_scaler = StandardScaler()
+        metadata_scaler.fit(metadata_fe)
+        metadata_scaled_cv = metadata_scaler.transform(metadata_cv)
 
     print(f"Testing {len(lsa_values)} LSA component values...")
 
@@ -846,21 +885,25 @@ def tune_lsa_components_fast(
         lsa_fe = lsa.fit_transform(tfidf_fe)
         lsa_cv = lsa.transform(tfidf_cv)
 
-        # Scale LSA features
-        lsa_scaler = StandardScaler()
-        lsa_scaled_fe = lsa_scaler.fit_transform(lsa_fe)
-        lsa_scaled_cv = lsa_scaler.transform(lsa_cv)
+        # Note: LSA features are NOT scaled in the transformer, so we use them raw
 
-        # Combine all features
-        X_cv_transformed = np.hstack([
-            lsa_scaled_cv,
+        # Combine all features (order must match transformer's _stack_optional_features)
+        feature_arrays = [
+            lsa_cv,
             ner_scaled_cv,
             brand_ner_scaled_cv,
             proximity_scaled_cv,
             neg_context_scaled_cv,
             fp_indicator_scaled_cv,
-            brand_indicators_cv,
-        ])
+        ]
+        # Add optional features in the same order as _stack_optional_features:
+        # 1. metadata, 2. brand_indicators, 3. brand_summary
+        if metadata_scaled_cv is not None:
+            feature_arrays.append(metadata_scaled_cv)
+        feature_arrays.append(brand_indicators_scaled_cv)
+        if brand_summary_scaled_cv is not None:
+            feature_arrays.append(brand_summary_scaled_cv)
+        X_cv_transformed = np.hstack(feature_arrays)
 
         # Run cross-validation
         cv_scores = cross_validate(

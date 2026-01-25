@@ -73,6 +73,32 @@ class FeatureGroupImportance:
 
 
 @dataclass
+class PermutationImportance:
+    """Permutation-based feature group importance.
+
+    Permutation importance is more stable than impurity-based importance
+    because it measures the actual impact on model performance when
+    feature values are shuffled, rather than relying on tree structure.
+    """
+
+    group_importance: Dict[str, float]  # Group name -> mean F2 decrease
+    group_std: Dict[str, float]  # Group name -> std of F2 decrease
+    group_contribution: Dict[str, float]  # Group name -> percentage of total
+    top_groups: List[Tuple[str, float, float]]  # Sorted by importance (name, mean, std)
+    baseline_score: float  # Original model F2 score
+
+    def as_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "baseline_score": float(round(self.baseline_score, 4)),
+            "group_importance": {k: float(round(v, 4)) for k, v in self.group_importance.items()},
+            "group_std": {k: float(round(v, 4)) for k, v in self.group_std.items()},
+            "group_contribution_pct": {k: float(round(v * 100, 1)) for k, v in self.group_contribution.items()},
+            "top_groups": [(g, float(round(m, 4)), float(round(s, 4))) for g, m, s in self.top_groups],
+        }
+
+
+@dataclass
 class PrototypeExplanation:
     """Prototype-based explanation using similar training examples."""
 
@@ -355,6 +381,120 @@ class TextExplainer:
             top_groups=top_groups,
         )
 
+    def compute_permutation_importance(
+        self,
+        X: Union[np.ndarray, sparse.spmatrix],
+        y: np.ndarray,
+        n_repeats: int = 10,
+        random_state: int = 42,
+        scoring: str = 'f2',
+    ) -> PermutationImportance:
+        """Compute permutation-based feature group importance.
+
+        Permutation importance measures how much model performance degrades
+        when features in a group are randomly shuffled. More stable than
+        impurity-based importance because it directly measures impact on
+        the scoring metric.
+
+        Args:
+            X: Feature matrix (n_samples, n_features)
+            y: True labels
+            n_repeats: Number of times to permute each feature group
+            random_state: Random seed for reproducibility
+            scoring: Scoring metric ('f2', 'recall', 'precision', 'accuracy')
+
+        Returns:
+            PermutationImportance with per-group metrics
+        """
+        from sklearn.metrics import fbeta_score, recall_score, precision_score, accuracy_score
+
+        if not self.feature_groups:
+            raise ValueError("feature_groups must be set to use this method")
+
+        # Convert sparse to dense if needed
+        if sparse.issparse(X):
+            X = X.toarray()
+
+        X = np.array(X, copy=True)  # Make a copy to avoid modifying original
+        rng = np.random.RandomState(random_state)
+
+        # Get classifier from pipeline
+        if hasattr(self.pipeline, 'named_steps'):
+            classifier = self.pipeline.named_steps.get('classifier', self.pipeline)
+        else:
+            classifier = self.pipeline
+
+        # Define scoring function
+        def score_fn(y_true, y_pred):
+            if scoring == 'f2':
+                return fbeta_score(y_true, y_pred, beta=2)
+            elif scoring == 'recall':
+                return recall_score(y_true, y_pred)
+            elif scoring == 'precision':
+                return precision_score(y_true, y_pred)
+            elif scoring == 'accuracy':
+                return accuracy_score(y_true, y_pred)
+            else:
+                raise ValueError(f"Unknown scoring: {scoring}")
+
+        # Compute baseline score
+        y_pred_baseline = classifier.predict(X)
+        baseline_score = score_fn(y, y_pred_baseline)
+
+        # Compute permutation importance for each feature group
+        group_importance = {}
+        group_std = {}
+
+        for group_name, indices in self.feature_groups.items():
+            # Handle range objects
+            if isinstance(indices, range):
+                indices = list(indices)
+            # Ensure indices are within bounds
+            valid_indices = [i for i in indices if i < X.shape[1]]
+
+            if not valid_indices:
+                group_importance[group_name] = 0.0
+                group_std[group_name] = 0.0
+                continue
+
+            # Permute and measure score decrease
+            score_decreases = []
+            for _ in range(n_repeats):
+                X_permuted = X.copy()
+                # Shuffle all features in the group together
+                shuffled_rows = rng.permutation(len(X))
+                X_permuted[:, valid_indices] = X[shuffled_rows][:, valid_indices]
+
+                y_pred_permuted = classifier.predict(X_permuted)
+                permuted_score = score_fn(y, y_pred_permuted)
+                score_decreases.append(baseline_score - permuted_score)
+
+            group_importance[group_name] = np.mean(score_decreases)
+            group_std[group_name] = np.std(score_decreases)
+
+        # Compute relative contribution (only from positive importance)
+        positive_importance = {k: max(v, 0) for k, v in group_importance.items()}
+        total_importance = sum(positive_importance.values())
+        if total_importance > 0:
+            group_contribution = {k: v / total_importance for k, v in positive_importance.items()}
+        else:
+            group_contribution = {k: 0.0 for k in group_importance}
+
+        # Sort by importance (descending)
+        top_groups = sorted(
+            [(k, group_importance[k], group_std[k]) for k in group_importance],
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        return PermutationImportance(
+            group_importance=group_importance,
+            group_std=group_std,
+            group_contribution=group_contribution,
+            top_groups=top_groups,
+            baseline_score=baseline_score,
+        )
+
     def fit_prototype_explainer(
         self,
         X_train: Union[np.ndarray, sparse.spmatrix],
@@ -460,6 +600,7 @@ def get_fp_feature_groups(
     method: str = 'sentence_transformer_ner_brands',
     lsa_n_components: int = 100,
     include_fp_indicators: bool = True,
+    include_negative_context: bool = True,
 ) -> Dict[str, range]:
     """Get feature group definitions for FP classifier.
 
@@ -467,6 +608,7 @@ def get_fp_feature_groups(
         method: Feature engineering method used
         lsa_n_components: Number of LSA components (for LSA-based methods)
         include_fp_indicators: Whether FP indicator features are included
+        include_negative_context: Whether negative context features are included
 
     Returns:
         Dictionary mapping group names to feature index ranges
@@ -485,15 +627,26 @@ def get_fp_feature_groups(
             'ner_features': range(384, 390),
         }
     elif method == 'sentence_transformer_ner_proximity':
-        # sentence_transformer (384) + NER (6) + proximity (4) + neg_context (4)
-        return {
-            'sentence_embeddings': range(0, 384),
-            'ner_features': range(384, 390),
-            'proximity_features': range(390, 394),
-            'negative_context': range(394, 398),
-        }
+        # sentence_transformer (384) + NER (6) + proximity (4) + optional neg_context (4)
+        idx = 0
+        groups = {}
+
+        groups['sentence_embeddings'] = range(idx, idx + 384)
+        idx += 384
+
+        groups['ner_features'] = range(idx, idx + 6)
+        idx += 6
+
+        groups['proximity_features'] = range(idx, idx + 4)
+        idx += 4
+
+        if include_negative_context:
+            groups['negative_context'] = range(idx, idx + 4)
+            idx += 4
+
+        return groups
     elif method == 'tfidf_lsa_ner_proximity':
-        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + neg_context (4) + optional FP indicators (8)
+        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + optional neg_context (4) + optional FP indicators (13)
         idx = 0
         groups = {}
 
@@ -509,8 +662,9 @@ def get_fp_feature_groups(
         groups['proximity_features'] = range(idx, idx + 4)
         idx += 4
 
-        groups['negative_context'] = range(idx, idx + 4)
-        idx += 4
+        if include_negative_context:
+            groups['negative_context'] = range(idx, idx + 4)
+            idx += 4
 
         if include_fp_indicators:
             groups['fp_indicators'] = range(idx, idx + 13)
@@ -518,7 +672,7 @@ def get_fp_feature_groups(
 
         return groups
     elif method == 'tfidf_lsa_ner_proximity_brands':
-        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + neg_context (4) + FP indicators (13) + brand_indicators (50) + brand_summary (3)
+        # LSA (n) + NER (6) + brand_ner (8) + proximity (4) + optional neg_context (4) + FP indicators (13) + brand_indicators (50) + brand_summary (3)
         idx = 0
         groups = {}
 
@@ -534,8 +688,9 @@ def get_fp_feature_groups(
         groups['proximity_features'] = range(idx, idx + 4)
         idx += 4
 
-        groups['negative_context'] = range(idx, idx + 4)
-        idx += 4
+        if include_negative_context:
+            groups['negative_context'] = range(idx, idx + 4)
+            idx += 4
 
         if include_fp_indicators:
             groups['fp_indicators'] = range(idx, idx + 13)
@@ -546,6 +701,11 @@ def get_fp_feature_groups(
 
         groups['brand_summary'] = range(idx, idx + 3)
         idx += 3
+
+        # Metadata features (8 features from _compute_metadata_features)
+        # Note: -1 because brand_summary overlaps with metadata in some configurations
+        groups['metadata_features'] = range(idx, idx + 7)
+        idx += 7
 
         return groups
     else:
