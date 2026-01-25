@@ -174,6 +174,22 @@ class LabelingSettings(BaseModel):
         default_factory=lambda: float(os.getenv("FP_CLASSIFIER_TIMEOUT", "30.0"))
     )
 
+    # Novelty scoring settings (for drift detection)
+    # Uses sentence-transformers (384-dim) for lower dimensionality clustering
+    # Computed for ALL articles before FP classification
+    novelty_enabled: bool = Field(
+        default_factory=lambda: os.getenv("NOVELTY_ENABLED", "true").lower() == "true"
+    )
+    novelty_centroids_path: str = Field(
+        default_factory=lambda: os.getenv(
+            "NOVELTY_CENTROIDS_PATH",
+            str(Path(__file__).parent.parent.parent / "models" / "novelty_centroids.pkl")
+        )
+    )
+    novelty_embedding_model: str = Field(
+        default_factory=lambda: os.getenv("NOVELTY_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    )
+
     model_config = ConfigDict(frozen=True)
 
 

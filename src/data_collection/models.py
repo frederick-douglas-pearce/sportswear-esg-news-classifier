@@ -281,6 +281,11 @@ class ClassifierPrediction(Base):
     # EP/ESG-specific fields (nullable for FP)
     esg_categories = Column(JSON)  # For ESG multi-label predictions
 
+    # Novelty scoring (for drift detection)
+    # Computed from sentence-transformer embeddings BEFORE FP classification
+    novelty_score = Column(Float)  # 0-1 score, higher = more novel topic
+    novelty_cluster = Column(Integer)  # Nearest cluster centroid index
+
     # Decision tracking
     action_taken = Column(String(50), nullable=False)  # 'skipped_llm', 'continued_to_llm', 'failed'
     skip_reason = Column(String(255))  # Reason for skipping LLM (if applicable)

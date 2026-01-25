@@ -45,6 +45,10 @@ class ClassifierPredictionRecord:
     # ESG-specific (future)
     esg_categories: dict[str, Any] | None = None
 
+    # Novelty scoring (computed from OpenAI embeddings)
+    novelty_score: float | None = None
+    novelty_cluster: int | None = None
+
     # Decision tracking
     skip_reason: str | None = None
     error_message: str | None = None

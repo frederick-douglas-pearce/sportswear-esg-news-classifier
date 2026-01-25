@@ -59,6 +59,7 @@ from .training_config import (
 # Import classifiers
 from .fp import FPClassifier
 from .ep import EPClassifier
+from .novelty import NoveltyScorer, NoveltyScore
 
 
 def create_classifier(classifier_type: ClassifierType) -> BaseClassifier:
@@ -95,6 +96,9 @@ __all__ = [
     "FPClassifier",
     "EPClassifier",
     "create_classifier",
+    # Novelty scoring
+    "NoveltyScorer",
+    "NoveltyScore",
     # Multi-classifier config
     "ClassifierType",
     "CLASSIFIER_CONFIG",

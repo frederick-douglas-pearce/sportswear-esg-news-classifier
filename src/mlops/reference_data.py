@@ -18,6 +18,7 @@ PREDICTION_LOG_COLUMNS = [
     "timestamp",
     "probability",
     "prediction",
+    "novelty_score",
 ]
 
 # Brands to track for drift detection (subset of most common)
@@ -108,6 +109,7 @@ def load_predictions_from_database(
                 cp.created_at as timestamp,
                 cp.probability,
                 cp.prediction,
+                cp.novelty_score,
                 cp.threshold_used as threshold,
                 cp.risk_level as confidence_level,
                 cp.action_taken,

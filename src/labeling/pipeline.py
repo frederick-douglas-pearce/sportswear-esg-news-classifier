@@ -3,11 +3,13 @@
 import logging
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from src.data_collection.database import db
 from src.data_collection.models import Article, ClassifierPrediction
+from src.deployment.novelty import NoveltyScorer
 
 from .chunker import ArticleChunker, Chunk
 from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
@@ -71,6 +73,7 @@ class LabelingPipeline:
         labeler: ArticleLabeler | None = None,
         fp_client: ClassifierClient | None = None,
         reranker: CrossEncoderReranker | None = None,
+        novelty_scorer: NoveltyScorer | None = None,
         prompt_version: str | None = None,
     ):
         """Initialize the pipeline.
@@ -82,6 +85,7 @@ class LabelingPipeline:
             labeler: Claude article labeler
             fp_client: FP classifier HTTP client
             reranker: Cross-encoder reranker for evidence matching
+            novelty_scorer: Novelty scorer for drift detection
             prompt_version: Version of prompts to use (default: production version)
         """
         self.database = database or labeling_db
@@ -90,6 +94,7 @@ class LabelingPipeline:
         self.labeler = labeler
         self.fp_client = fp_client
         self.reranker = reranker
+        self.novelty_scorer = novelty_scorer
         self.prompt_version = prompt_version
 
         # Lazy initialization of API clients
@@ -97,6 +102,7 @@ class LabelingPipeline:
         self._labeler_initialized = labeler is not None
         self._fp_client_initialized = fp_client is not None
         self._reranker_initialized = reranker is not None
+        self._novelty_scorer_initialized = novelty_scorer is not None
 
     def _ensure_embedder(self) -> OpenAIEmbedder:
         """Ensure embedder is initialized."""
@@ -142,6 +148,29 @@ class LabelingPipeline:
             self.reranker = CrossEncoderReranker()
             self._reranker_initialized = True
         return self.reranker
+
+    def _ensure_novelty_scorer(self) -> NoveltyScorer | None:
+        """Ensure novelty scorer is initialized if enabled.
+
+        Returns:
+            NoveltyScorer if novelty scoring is enabled and centroids exist, None otherwise.
+        """
+        if not labeling_settings.novelty_enabled:
+            return None
+
+        if not self._novelty_scorer_initialized:
+            centroids_path = Path(labeling_settings.novelty_centroids_path)
+            if centroids_path.exists():
+                self.novelty_scorer = NoveltyScorer(centroids_path)
+                logger.info(f"Loaded novelty scorer from {centroids_path}")
+            else:
+                logger.debug(
+                    f"Novelty centroids not found at {centroids_path}, "
+                    "novelty scoring disabled"
+                )
+                self.novelty_scorer = None
+            self._novelty_scorer_initialized = True
+        return self.novelty_scorer
 
     def _deduplicate_by_title(
         self,
@@ -224,24 +253,107 @@ class LabelingPipeline:
 
         return unique_articles, duplicate_articles
 
+    def _compute_novelty_batch(
+        self,
+        articles: list[dict[str, Any]],
+    ) -> dict[UUID, tuple[float | None, int | None]]:
+        """Compute novelty scores for all articles using sentence-transformer.
+
+        This runs BEFORE FP classification to ensure novelty is captured for
+        ALL articles, regardless of whether they pass the FP filter.
+
+        Args:
+            articles: List of article dicts with id, title, full_content, etc.
+
+        Returns:
+            Dict mapping article_id to (novelty_score, novelty_cluster)
+        """
+        novelty_scorer = self._ensure_novelty_scorer()
+        if novelty_scorer is None or not novelty_scorer.enabled:
+            return {article["id"]: (None, None) for article in articles}
+
+        if not articles:
+            return {}
+
+        # Prepare texts for novelty scoring (title + content)
+        article_ids = []
+        texts = []
+        for article in articles:
+            article_id = article["id"]
+            article_ids.append(article_id)
+
+            title = article.get("title", "")
+            content = article.get("full_content") or article.get("description") or ""
+            # Combine title and content for novelty scoring
+            text = f"{title}\n\n{content}" if title else content
+            texts.append(text)
+
+        # Batch compute novelty scores
+        results: dict[UUID, tuple[float | None, int | None]] = {}
+        try:
+            novelty_scores = novelty_scorer.score_texts(texts, show_progress=False)
+
+            for article_id, novelty_result in zip(article_ids, novelty_scores):
+                results[article_id] = (novelty_result.score, novelty_result.nearest_cluster)
+                logger.debug(
+                    f"Article {article_id} novelty: score={novelty_result.score:.3f}, "
+                    f"cluster={novelty_result.nearest_cluster}"
+                )
+
+            logger.info(
+                f"Computed novelty scores for {len(articles)} articles "
+                f"(mean={sum(r[0] for r in results.values() if r[0] is not None)/len(results):.3f})"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to compute novelty batch: {e}")
+            results = {article_id: (None, None) for article_id in article_ids}
+
+        return results
+
     def _run_fp_prefilter_batch(
         self,
         articles: list[dict[str, Any]],
+        novelty_scores: dict[UUID, tuple[float | None, int | None]] | None = None,
         dry_run: bool = False,
     ) -> dict[UUID, tuple[bool, ClassifierPredictionRecord | None]]:
         """Run FP classifier pre-filter on a batch of articles.
 
         Args:
             articles: List of article dicts with id, title, full_content, etc.
+            novelty_scores: Pre-computed novelty scores from _compute_novelty_batch
             dry_run: If True, don't save predictions to database
 
         Returns:
             Dict mapping article_id to (should_continue, prediction_record)
         """
+        novelty_scores = novelty_scores or {}
+
         fp_client = self._ensure_fp_client()
         if fp_client is None:
             # FP classifier not enabled - all articles continue
-            return {article["id"]: (True, None) for article in articles}
+            # But still save novelty scores if available
+            results = {}
+            for article in articles:
+                article_id = article["id"]
+                novelty_score, novelty_cluster = novelty_scores.get(article_id, (None, None))
+
+                if novelty_score is not None and not dry_run:
+                    # Save a minimal prediction record just for novelty tracking
+                    prediction = ClassifierPredictionRecord(
+                        classifier_type="fp",
+                        model_version="disabled",
+                        probability=1.0,  # Assume positive when disabled
+                        prediction=True,
+                        threshold_used=0.0,
+                        action_taken="fp_classifier_disabled",
+                        novelty_score=novelty_score,
+                        novelty_cluster=novelty_cluster,
+                    )
+                    self._save_classifier_prediction(article_id, prediction)
+                    results[article_id] = (True, prediction)
+                else:
+                    results[article_id] = (True, None)
+            return results
 
         if not articles:
             return {}
@@ -296,6 +408,9 @@ class LabelingPipeline:
                     )
                     logger.info(f"Article {article_id}: Skipping LLM - {skip_reason}")
 
+                # Get pre-computed novelty score
+                novelty_score, novelty_cluster = novelty_scores.get(article_id, (None, None))
+
                 prediction = ClassifierPredictionRecord(
                     classifier_type="fp",
                     model_version=model_version,
@@ -305,6 +420,8 @@ class LabelingPipeline:
                     action_taken=action,
                     confidence_level=result.confidence_level,
                     skip_reason=skip_reason,
+                    novelty_score=novelty_score,
+                    novelty_cluster=novelty_cluster,
                 )
 
                 if not dry_run:
@@ -323,7 +440,10 @@ class LabelingPipeline:
             )
 
             # Graceful degradation: all articles continue to LLM
+            # Still include novelty scores even when FP classifier fails
             for article_id in article_ids:
+                novelty_score, novelty_cluster = novelty_scores.get(article_id, (None, None))
+
                 prediction = ClassifierPredictionRecord(
                     classifier_type="fp",
                     model_version="unknown",
@@ -332,6 +452,8 @@ class LabelingPipeline:
                     threshold_used=labeling_settings.fp_skip_llm_threshold,
                     action_taken="failed",
                     error_message=str(e),
+                    novelty_score=novelty_score,
+                    novelty_cluster=novelty_cluster,
                 )
 
                 if not dry_run:
@@ -386,6 +508,8 @@ class LabelingPipeline:
                 action_taken=prediction.action_taken,
                 skip_reason=prediction.skip_reason,
                 error_message=prediction.error_message,
+                novelty_score=prediction.novelty_score,
+                novelty_cluster=prediction.novelty_cluster,
             )
             session.add(db_prediction)
             session.commit()
@@ -477,8 +601,14 @@ class LabelingPipeline:
 
             logger.info(f"Processing {len(article_data)} articles after deduplication")
 
+            # Compute novelty scores BEFORE FP classification
+            # This ensures we capture novelty for ALL articles, including those filtered as false positives
+            novelty_scores = self._compute_novelty_batch(article_data)
+
             # Run FP classifier batch pre-filter (single API call for all articles)
-            fp_prefilter_results = self._run_fp_prefilter_batch(article_data, dry_run)
+            fp_prefilter_results = self._run_fp_prefilter_batch(
+                article_data, novelty_scores=novelty_scores, dry_run=dry_run
+            )
 
             for article in article_data:
                 try:
@@ -689,7 +819,7 @@ class LabelingPipeline:
             result["chunks_count"] = len(chunks)
             logger.debug(f"Created {len(chunks)} chunks for article {article_id}")
 
-            # Step 2: Generate embeddings
+            # Step 2: Generate embeddings (for RAG/evidence matching)
             if not skip_embedding and chunks:
                 embedder = self._ensure_embedder()
                 texts = [chunk.text for chunk in chunks]

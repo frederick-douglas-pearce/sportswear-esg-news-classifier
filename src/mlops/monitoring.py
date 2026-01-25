@@ -19,6 +19,8 @@ DRIFT_CONFIG = {
     # Core prediction metrics - standard threshold
     "probability": ("ks", 0.05),
     "prediction": ("chisquare", 0.05),
+    # Novelty score - important for detecting novel topics
+    "novelty_score": ("ks", 0.05),
     # Brand columns - looser threshold (brands can vary naturally)
     "brand_": ("chisquare", 0.01),
 }
@@ -163,11 +165,11 @@ class DriftMonitor:
         Report = self._evidently["Report"]
         DataDriftPreset = self._evidently["DataDriftPreset"]
 
-        # Determine columns to analyze: probability, prediction, and brand columns
+        # Determine columns to analyze: probability, prediction, novelty, and brand columns
         columns_to_check = []
 
         # Core metrics
-        for col in ["probability", "prediction"]:
+        for col in ["probability", "prediction", "novelty_score"]:
             if col in current_data.columns and col in reference_data.columns:
                 columns_to_check.append(col)
 
@@ -272,6 +274,17 @@ class DriftMonitor:
         if "prediction" in current_data.columns:
             details["current_prediction_rate"] = float(current_data["prediction"].mean())
             details["reference_prediction_rate"] = float(reference_data["prediction"].mean())
+        if "novelty_score" in current_data.columns:
+            # Filter out NaN values for novelty stats
+            current_novelty = current_data["novelty_score"].dropna()
+            reference_novelty = reference_data["novelty_score"].dropna()
+            if len(current_novelty) > 0:
+                details["current_novelty_mean"] = float(current_novelty.mean())
+                details["current_novelty_p90"] = float(current_novelty.quantile(0.9))
+                details["current_high_novelty_pct"] = float((current_novelty > 0.7).mean())
+            if len(reference_novelty) > 0:
+                details["reference_novelty_mean"] = float(reference_novelty.mean())
+                details["reference_novelty_p90"] = float(reference_novelty.quantile(0.9))
 
         return DriftReport(
             classifier_type=self.classifier_type,
