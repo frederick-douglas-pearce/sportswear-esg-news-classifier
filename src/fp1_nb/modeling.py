@@ -796,9 +796,12 @@ def tune_lsa_components_fast(
     proximity_features_fe = base_transformer._compute_proximity_features(texts_fe)
     proximity_features_cv = base_transformer._compute_proximity_features(texts_cv)
 
-    # Negative context features
-    neg_context_fe = base_transformer._compute_negative_context_features(texts_fe)
-    neg_context_cv = base_transformer._compute_negative_context_features(texts_cv)
+    # Negative context features (if enabled)
+    neg_context_fe = None
+    neg_context_cv = None
+    if base_transformer.include_negative_context:
+        neg_context_fe = base_transformer._compute_negative_context_features(texts_fe)
+        neg_context_cv = base_transformer._compute_negative_context_features(texts_cv)
 
     # FP indicator features
     fp_indicator_fe = base_transformer._compute_fp_indicator_features(texts_fe)
@@ -844,10 +847,12 @@ def tune_lsa_components_fast(
     proximity_scaled_fe = proximity_scaler.transform(proximity_features_fe)
     proximity_scaled_cv = proximity_scaler.transform(proximity_features_cv)
 
-    neg_context_scaler = StandardScaler()
-    neg_context_scaler.fit(neg_context_fe)
-    neg_context_scaled_fe = neg_context_scaler.transform(neg_context_fe)
-    neg_context_scaled_cv = neg_context_scaler.transform(neg_context_cv)
+    # Negative context features need scaling (if enabled)
+    neg_context_scaled_cv = None
+    if neg_context_fe is not None:
+        neg_context_scaler = StandardScaler()
+        neg_context_scaler.fit(neg_context_fe)
+        neg_context_scaled_cv = neg_context_scaler.transform(neg_context_cv)
 
     fp_indicator_scaler = StandardScaler()
     fp_indicator_scaler.fit(fp_indicator_fe)
@@ -887,15 +892,17 @@ def tune_lsa_components_fast(
 
         # Note: LSA features are NOT scaled in the transformer, so we use them raw
 
-        # Combine all features (order must match transformer's _stack_optional_features)
+        # Combine all features (order must match transformer's transform method)
         feature_arrays = [
             lsa_cv,
             ner_scaled_cv,
             brand_ner_scaled_cv,
             proximity_scaled_cv,
-            neg_context_scaled_cv,
-            fp_indicator_scaled_cv,
         ]
+        # Add negative context features if enabled
+        if neg_context_scaled_cv is not None:
+            feature_arrays.append(neg_context_scaled_cv)
+        feature_arrays.append(fp_indicator_scaled_cv)
         # Add optional features in the same order as _stack_optional_features:
         # 1. metadata, 2. brand_indicators, 3. brand_summary
         if metadata_scaled_cv is not None:
