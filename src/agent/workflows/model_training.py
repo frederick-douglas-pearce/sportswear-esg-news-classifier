@@ -60,7 +60,7 @@ def export_training_data(workflow: Workflow, context: dict[str, Any]) -> dict[st
     # Standard output files that notebooks expect
     classifier_to_standard_file = {
         "fp": "data/fp_training_data.jsonl",
-        "ep": "data/esg-prefilter_training_data.jsonl",
+        "ep": "data/ep_training_data.jsonl",
     }
     classifiers = context.get("classifiers", ["fp", "ep"])
     if isinstance(classifiers, str):
@@ -138,7 +138,7 @@ def check_data_quality(workflow: Workflow, context: dict[str, Any]) -> dict[str,
     # Map classifier types to training data file names
     classifier_to_file = {
         "fp": "fp_training_data.jsonl",
-        "ep": "esg-prefilter_training_data.jsonl",
+        "ep": "ep_training_data.jsonl",
     }
 
     for classifier, dataset_info in context.get("datasets", {}).items():
