@@ -1,7 +1,7 @@
 {
   "prompt_type": "esg_labeling",
   "description": "ESG classification prompts for sportswear brand news articles",
-  "production": "v1.4.0",
+  "production": "v1.6.0",
   "versions": {
     "v1.0.0": {
       "created_at": "2025-01-09T00:00:00Z",
@@ -63,6 +63,34 @@
       "created_at": "2026-01-24T00:00:00Z",
       "commit_message": "Add explicit guidance for comparison/analogy brand mentions as false positives",
       "description": "Adds detailed guidance for identifying false positives when brands are mentioned only as comparisons, analogies, or reference points. New section covers color comparisons ('reminiscent of Nike's Infrared'), style comparisons ('Patagonia vibes'), quality references ('rivals Under Armour'), and aspiration analogies ('the Patagonia of baby clothes'). Includes quick-check question to help distinguish between articles ABOUT a brand vs articles using the brand as a reference point. Addresses cases like the Herman Miller gaming chair article that mentioned Nike only as a color comparison.",
+      "model_recommendations": {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "system",
+        "status": "superseded"
+      }
+    },
+    "v1.5.0": {
+      "created_at": "2026-01-26T00:00:00Z",
+      "commit_message": "Stricter governance criteria - decision tree and extensive negative examples",
+      "description": "Major update to prevent governance mislabeling. Adds decision tree for governance classification, extensive table of examples that should NOT receive governance labels (stock prices, earnings, analyst opinions, executive appointments, investments), and explicit 'critical test' for governance. Addresses EP classifier data quality issue where ~50% of ESG labels were governance-only articles that were actually financial news.",
+      "model_recommendations": {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "system",
+        "status": "superseded"
+      }
+    },
+    "v1.6.0": {
+      "created_at": "2026-01-26T12:00:00Z",
+      "commit_message": "Stricter Environmental and Social criteria - decision trees and negative examples",
+      "description": "Major update to prevent Environmental and Social mislabeling. Environmental: Adds decision tree clarifying that mentioning sustainable materials in product descriptions is NOT Environmental ESG - the article must be ABOUT the sustainability initiative, not just mention it as a product feature. Product reviews, shopping articles, and gift guides should never receive Environmental labels. Social: Adds decision tree and extensive examples for avoiding mislabeling store openings (retail news), celebrity endorsements (marketing), athlete sponsorships (business), and fashion events (lifestyle) as Social. Also adds Mizuno brand verification guidance to prevent false positives when articles mention actress Sonoya Mizuno rather than Mizuno sportswear.",
       "model_recommendations": {
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 2000,
