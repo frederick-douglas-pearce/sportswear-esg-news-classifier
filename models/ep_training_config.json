@@ -18,7 +18,7 @@
         5
       ],
       "char_max_features": 5000,
-      "lsa_n_components": 120,
+      "lsa_n_components": 250,
       "context_window_words": 20,
       "doc2vec_vector_size": 100,
       "doc2vec_min_count": 2,
@@ -35,25 +35,23 @@
     }
   },
   "model": {
-    "type": "RandomForest",
+    "type": "SVM",
     "params": {
+      "C": 1.0,
       "class_weight": "balanced",
-      "max_depth": 10,
-      "min_samples_leaf": 1,
-      "min_samples_split": 10,
-      "n_estimators": 180
+      "max_iter": 2000
     },
-    "calibrated": false
+    "calibrated": true
   },
   "cv_metrics": {
-    "f2": 0.8515141460689136,
-    "recall": 0.8593903638151424,
-    "precision": 0.8247228648544437,
-    "f1": 0.8406443929482105,
-    "accuracy": 0.8549019607843138,
-    "pr_auc": 0.8928136557455383,
+    "f2": 0.7091954965147792,
+    "recall": 0.7619047619047619,
+    "precision": 0.5566059293594927,
+    "f1": 0.6428498455450932,
+    "accuracy": 0.8491645246982946,
+    "pr_auc": 0.7132276363536514,
     "n_folds": 3
   },
-  "exported_at": "2025-12-29T15:49:00.105329",
+  "exported_at": "2026-01-26T02:45:18.772181",
   "notebook": "ep2_model_selection_tuning.ipynb"
 }
