@@ -10,6 +10,43 @@
 
 ---
 
+## 🏆 Sustainability Scorecard
+
+The live ESG News Feed now features a **Sustainability Scorecard** that ranks sportswear brands based on their recent ESG news coverage.
+
+**📊 [View Live Scorecard](https://frederick-douglas-pearce.github.io/projects/esg_classifier/)**
+
+### How It Works
+
+The scorecard analyzes ESG news from the last 14 days and assigns points based on sentiment:
+
+| Sentiment | Points | Example |
+|-----------|--------|---------|
+| **Positive** | +2 pts | "Nike launches carbon-neutral shoe line" |
+| **Neutral** | +1 pt | "Adidas reports quarterly sustainability metrics" |
+| **Negative** | -1 pt | "Factory labor violations discovered at supplier" |
+
+### Scorecard Features
+
+- **🥇🥈🥉 Top Performers**: Brands with the highest positive scores earn gold, silver, and bronze medals
+- **Back Performers**: Brands with negative scores are highlighted for transparency
+- **Category Breakdown**: See scores by Environmental (E), Social (S), Governance (G), and Digital Transformation (D)
+- **Deduplication**: Similar articles are automatically detected and deduplicated using sentence embeddings (cosine similarity ≥ 0.85)
+- **Rolling Window**: Scores update automatically based on the most recent 14-day period
+
+### Example Scorecard
+
+```
+🏆 Top Performers                    ⚠️ Back Performers
+├─ 🥇 Patagonia    +12 (E:+6 S:+4 G:+2)    ├─ Brand X    -3 (S:-3)
+├─ 🥈 Nike         +8  (E:+4 S:+2 D:+2)    ├─ Brand Y    -2 (G:-2)
+└─ 🥉 Adidas       +5  (E:+3 S:+2)         └─ Brand Z    -1 (E:-1)
+```
+
+The scorecard provides an at-a-glance view of which brands are leading—or lagging—in sustainability coverage.
+
+---
+
 ## Problem Description
 
 ### The Challenge
@@ -38,8 +75,10 @@ The classifier powers a **live ESG news feed** on my personal website that track
 **📊 [ESG News Feed](https://frederick-douglas-pearce.github.io/projects/esg_classifier/)** - A curated, searchable collection of ESG-related news articles
 
 **Features:**
+- **🏆 Sustainability Scorecard**: At-a-glance brand rankings with medal awards for top performers (see [Sustainability Scorecard](#-sustainability-scorecard) section above)
 - **Brand Filtering**: Filter articles by any of the 50 monitored sportswear brands
 - **ESG Category Filtering**: View articles by Environmental, Social, Governance, or Digital Transformation categories
+- **Date Range Filtering**: Quick presets (7/14/30 days) or custom date ranges
 - **Evidence Excerpts**: Each article shows relevant ESG quotes extracted from the source text
 - **Sentiment Indicators**: Color-coded badges show positive/neutral/negative sentiment for each category
 - **Source Links**: Direct links to original news articles
@@ -210,6 +249,7 @@ flowchart TB
 - [x] PostgreSQL + pgvector storage
 - [x] Automated cron scheduling (8x daily: 4 NewsData + 4 GDELT)
 - [x] Historical backfill script for GDELT
+- [x] Domain blacklist for filtering low-quality sources (press releases, spam)
 - [x] Target: 1,000-2,000 articles over 10-14 days
 
 ### Phase 2: Data Labeling ✅
@@ -217,6 +257,7 @@ flowchart TB
 - [x] Per-brand ESG category labels with ternary sentiment
 - [x] Article chunking for evidence extraction
 - [x] OpenAI embeddings for semantic evidence matching
+- [x] Cross-encoder reranking for improved evidence quality
 - [x] Evidence linking to source text chunks
 - [x] Labeling CLI with dry-run and batch support
 
@@ -270,9 +311,11 @@ flowchart TB
 ### Phase 7: Website Integration ✅
 - [x] Export script for JSON and Atom feeds (`scripts/export_website_feed.py`)
 - [x] Live ESG news feed on personal website
-- [x] Client-side filtering by brand and ESG category
+- [x] Client-side filtering by brand, ESG category, sentiment, and date range
 - [x] Evidence excerpts with sentiment indicators
 - [x] RSS/Atom feed for news aggregators
+- [x] **Sustainability Scorecard** with brand rankings and medal awards
+- [x] Article deduplication using sentence embeddings (cosine similarity ≥ 0.85)
 
 ### Phase 8: Agent Orchestrator ✅
 - [x] Hybrid orchestrator for automated maintenance workflows
@@ -289,6 +332,7 @@ flowchart TB
 
 ## Table of Contents
 
+- [Sustainability Scorecard](#-sustainability-scorecard) 🏆
 - [System Architecture](#system-architecture)
 - [Project Roadmap](#project-roadmap)
 - [Project Structure](#project-structure)
@@ -308,6 +352,7 @@ flowchart TB
 - [Troubleshooting](#troubleshooting)
 
 > ⭐ = Key sections for ML Zoomcamp evaluation
+> 🏆 = New feature for non-technical users
 
 ## Project Structure
 
@@ -319,7 +364,7 @@ The project follows a modular architecture:
 | `scripts/` | CLI tools: collection, labeling, training, deployment, monitoring |
 | `notebooks/` | ML classifier development: 6 notebooks (EDA → Tuning → Deployment) |
 | `models/` | Trained models, configs, and version registry |
-| `tests/` | Comprehensive test suite (664 tests) |
+| `tests/` | Comprehensive test suite (761 tests) |
 | `docs/` | Detailed documentation for each subsystem |
 
 **Key Files for ML Zoomcamp:**
@@ -621,6 +666,11 @@ Deployment is managed via `.github/workflows/deploy.yml`:
 The pipeline collects ESG-related news articles from two sources:
 - **NewsData.io** - Paid API with real-time news (requires API key)
 - **GDELT DOC 2.0** - Free API with 3 months of historical data
+
+**Data Quality Features:**
+- **Domain Blacklist**: Low-quality domains (e.g., press release sites) are automatically filtered during collection
+- **Language Detection**: Only English articles are processed
+- **Deduplication**: Articles with identical URLs or similar content are deduplicated
 
 ```bash
 # Quick test (dry run)
@@ -1547,7 +1597,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with **664 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, MLOps modules, and agent orchestration.
+The project includes a comprehensive test suite with **761 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, MLOps modules, and agent orchestration.
 
 ```bash
 # Run all tests
