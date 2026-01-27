@@ -821,11 +821,11 @@ def print_summary(articles: list[Article], json_data: dict | None = None) -> Non
                 print("\nTop Performers: None (no brands with positive scores)")
 
             if scorecard["bottom_brands"]:
-                print("\nLast Performers:")
+                print("\nBack Performers:")
                 for brand in scorecard["bottom_brands"]:
                     print(f"  {brand['brand']}: {brand['total']:+d} (E:{brand['environmental']:+d} S:{brand['social']:+d} G:{brand['governance']:+d} D:{brand['digital_transformation']:+d})")
             else:
-                print("\nLast Performers: None (no brands with negative scores)")
+                print("\nBack Performers: None (no brands with negative scores)")
 
     print("\n" + "=" * 60)
 
