@@ -27,7 +27,8 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -279,6 +280,219 @@ def sanitize_text(text: str | None) -> str | None:
     return emoji_pattern.sub("", text)
 
 
+# Scorecard configuration
+SCORECARD_PERIOD_DAYS = 14
+SCORECARD_TOP_N = 3
+SCORECARD_BOTTOM_N = 3
+SCORECARD_SIMILARITY_THRESHOLD = 0.85  # Articles with similarity >= this are considered duplicates
+
+# Sentiment to points mapping: positive=+2, neutral=+1, negative=-1
+SENTIMENT_POINTS = {1: 2, 0: 1, -1: -1}
+
+# ESG categories for scorecard
+SCORECARD_CATEGORIES = ['environmental', 'social', 'governance', 'digital_transformation']
+
+
+def deduplicate_articles(
+    articles: list[Article],
+    similarity_threshold: float = SCORECARD_SIMILARITY_THRESHOLD,
+) -> tuple[list[Article], int]:
+    """Deduplicate articles based on content similarity using sentence embeddings.
+
+    Uses the NoveltyScorer's sentence-transformer model (all-MiniLM-L6-v2) to compute
+    embeddings and identify duplicate stories across different sources.
+
+    Args:
+        articles: List of articles to deduplicate
+        similarity_threshold: Cosine similarity above which articles are considered duplicates
+
+    Returns:
+        Tuple of (deduplicated articles list, number of duplicates removed)
+    """
+    if len(articles) <= 1:
+        return articles, 0
+
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    from src.deployment.novelty import NoveltyScorer
+
+    logger = logging.getLogger(__name__)
+
+    # Get article texts (title + content for better matching)
+    texts = []
+    for article in articles:
+        # Use title + first part of content for embedding
+        content = article.full_content or article.description or ""
+        # Limit content length to avoid very long texts dominating
+        content_preview = content[:1000] if content else ""
+        texts.append(f"{article.title} {content_preview}")
+
+    # Compute embeddings using existing NoveltyScorer infrastructure
+    logger.info(f"Computing embeddings for {len(articles)} articles...")
+    scorer = NoveltyScorer()
+    embeddings = scorer.embed_texts(texts, show_progress=False)
+
+    # Compute pairwise similarities
+    sim_matrix = cosine_similarity(embeddings)
+
+    # Greedy clustering: keep first article, mark similar ones as duplicates
+    keep_indices = []
+    seen = set()
+
+    for i in range(len(articles)):
+        if i in seen:
+            continue
+        keep_indices.append(i)
+        # Mark all similar articles as duplicates (seen)
+        for j in range(i + 1, len(articles)):
+            if j not in seen and sim_matrix[i, j] >= similarity_threshold:
+                seen.add(j)
+
+    deduplicated = [articles[i] for i in keep_indices]
+    duplicates_removed = len(articles) - len(deduplicated)
+
+    if duplicates_removed > 0:
+        logger.info(
+            f"Deduplication: {len(articles)} -> {len(deduplicated)} articles "
+            f"({duplicates_removed} duplicates removed at threshold {similarity_threshold})"
+        )
+
+    return deduplicated, duplicates_removed
+
+
+def calculate_brand_scores(
+    articles: list[Article],
+    period_days: int = SCORECARD_PERIOD_DAYS,
+    dedupe: bool = True,
+    similarity_threshold: float = SCORECARD_SIMILARITY_THRESHOLD,
+) -> dict[str, Any]:
+    """Calculate ESG scores for each brand from recent articles.
+
+    Scoring: positive=+2, neutral=+1, negative=-1
+
+    Args:
+        articles: List of Article objects with brand_labels loaded
+        period_days: Number of days to look back for scoring
+        dedupe: Whether to deduplicate similar articles before scoring
+        similarity_threshold: Cosine similarity threshold for deduplication
+
+    Returns:
+        dict with:
+        - period_days: int
+        - period_start: str (ISO date)
+        - period_end: str (ISO date)
+        - articles_in_period: int (before deduplication)
+        - articles_after_dedup: int (after deduplication, if enabled)
+        - duplicates_removed: int
+        - top_brands: list (top N with positive scores)
+        - bottom_brands: list (bottom N, excluding top brands)
+        - all_brand_scores: list (full ranking)
+    """
+    now = datetime.now(timezone.utc)
+    period_start = now - timedelta(days=period_days)
+
+    # Filter articles within period
+    recent_articles = []
+    for article in articles:
+        pub_date = article.published_at
+        if pub_date:
+            if pub_date.tzinfo is None:
+                pub_date = pub_date.replace(tzinfo=timezone.utc)
+            if pub_date >= period_start:
+                recent_articles.append(article)
+
+    articles_in_period = len(recent_articles)
+    duplicates_removed = 0
+
+    # Deduplicate articles if enabled
+    if dedupe and len(recent_articles) > 1:
+        recent_articles, duplicates_removed = deduplicate_articles(
+            recent_articles, similarity_threshold=similarity_threshold
+        )
+
+    # Initialize scores per brand
+    # Structure: {brand: {category: score, 'total': score, 'article_count': count, 'article_ids': set}}
+    brand_scores: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            'environmental': 0,
+            'social': 0,
+            'governance': 0,
+            'digital_transformation': 0,
+            'total': 0,
+            'article_count': 0,
+            'article_ids': set(),
+        }
+    )
+
+    # Calculate scores from brand labels
+    for article in recent_articles:
+        for label in article.brand_labels:
+            brand = label.brand
+            scores = brand_scores[brand]
+
+            # Track unique articles per brand
+            article_id = str(article.id)
+            if article_id not in scores['article_ids']:
+                scores['article_ids'].add(article_id)
+                scores['article_count'] += 1
+
+            # Score each category
+            category_sentiment_map = [
+                ('environmental', label.environmental, label.environmental_sentiment),
+                ('social', label.social, label.social_sentiment),
+                ('governance', label.governance, label.governance_sentiment),
+                ('digital_transformation', label.digital_transformation, label.digital_sentiment),
+            ]
+
+            for category, applies, sentiment in category_sentiment_map:
+                if applies and sentiment is not None:
+                    points = SENTIMENT_POINTS.get(sentiment, 0)
+                    scores[category] += points
+                    scores['total'] += points
+
+    # Convert to list and sort by total score descending, then alphabetically
+    all_scores = []
+    for brand, scores in brand_scores.items():
+        all_scores.append({
+            'brand': brand,
+            'total': scores['total'],
+            'environmental': scores['environmental'],
+            'social': scores['social'],
+            'governance': scores['governance'],
+            'digital_transformation': scores['digital_transformation'],
+            'article_count': scores['article_count'],
+        })
+
+    # Sort by total score descending, then alphabetically by brand name
+    all_scores.sort(key=lambda x: (-x['total'], x['brand']))
+
+    # Top N brands with positive scores only
+    top_brands = [b for b in all_scores if b['total'] > 0][:SCORECARD_TOP_N]
+    top_brand_names = {b['brand'] for b in top_brands}
+
+    # Assign medals to top brands
+    medals = ['gold', 'silver', 'bronze']
+    for i, brand in enumerate(top_brands):
+        brand['medal'] = medals[i] if i < len(medals) else None
+
+    # Bottom N brands, excluding top brands, sorted worst first
+    remaining = [b for b in all_scores if b['brand'] not in top_brand_names]
+    # Take last N (worst scores) and reverse to show worst first
+    bottom_brands = remaining[-SCORECARD_BOTTOM_N:][::-1] if len(remaining) >= SCORECARD_BOTTOM_N else remaining[::-1]
+
+    return {
+        'period_days': period_days,
+        'period_start': period_start.strftime('%Y-%m-%d'),
+        'period_end': now.strftime('%Y-%m-%d'),
+        'articles_in_period': articles_in_period,
+        'articles_after_dedup': len(recent_articles),
+        'duplicates_removed': duplicates_removed,
+        'top_brands': top_brands,
+        'bottom_brands': bottom_brands,
+        'all_brand_scores': all_scores,
+    }
+
+
 def query_labeled_articles(session, limit: int | None = None) -> list[Article]:
     """Query labeled articles with all relationships loaded.
 
@@ -418,12 +632,20 @@ def format_article_for_json(
 def export_to_json(
     articles: list[Article],
     top_n_evidence_per_category: int = DEFAULT_TOP_N_EVIDENCE_PER_CATEGORY,
+    include_scorecard: bool = True,
+    scorecard_period_days: int = SCORECARD_PERIOD_DAYS,
+    scorecard_dedupe: bool = True,
+    scorecard_similarity_threshold: float = SCORECARD_SIMILARITY_THRESHOLD,
 ) -> dict[str, Any]:
     """Export articles to JSON format.
 
     Args:
         articles: List of Article objects
         top_n_evidence_per_category: Maximum evidence items per category (0 = no limit)
+        include_scorecard: Whether to include brand scorecard section
+        scorecard_period_days: Number of days for scorecard calculation
+        scorecard_dedupe: Whether to deduplicate articles for scorecard
+        scorecard_similarity_threshold: Cosine similarity threshold for deduplication
 
     Returns:
         Dictionary with full JSON structure
@@ -439,13 +661,25 @@ def export_to_json(
         all_brands.update(formatted["brands"])
         all_categories.update(formatted["categories"])
 
-    return {
+    result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "total_articles": len(formatted_articles),
         "brands": sorted(all_brands),
         "categories": sorted(all_categories),
-        "articles": formatted_articles,
     }
+
+    # Add scorecard section if requested
+    if include_scorecard:
+        result["scorecard"] = calculate_brand_scores(
+            articles,
+            period_days=scorecard_period_days,
+            dedupe=scorecard_dedupe,
+            similarity_threshold=scorecard_similarity_threshold,
+        )
+
+    result["articles"] = formatted_articles
+
+    return result
 
 
 def export_to_atom(articles: list[Article], base_url: str) -> str:
@@ -561,6 +795,38 @@ def print_summary(articles: list[Article], json_data: dict | None = None) -> Non
         for cat, count in category_counts.most_common():
             print(f"  {cat}: {count} articles")
 
+        # Scorecard summary
+        if "scorecard" in json_data:
+            scorecard = json_data["scorecard"]
+            print(f"\n{'-' * 40}")
+            print("SUSTAINABILITY SCORECARD")
+            print(f"Period: {scorecard['period_start']} to {scorecard['period_end']} ({scorecard['period_days']} days)")
+
+            # Show deduplication stats
+            articles_in_period = scorecard.get('articles_in_period', 0)
+            articles_after_dedup = scorecard.get('articles_after_dedup', articles_in_period)
+            duplicates_removed = scorecard.get('duplicates_removed', 0)
+            if duplicates_removed > 0:
+                print(f"Articles: {articles_in_period} total -> {articles_after_dedup} unique ({duplicates_removed} duplicates removed)")
+            else:
+                print(f"Articles: {articles_after_dedup} in period")
+
+            if scorecard["top_brands"]:
+                print("\nTop Performers:")
+                medal_emoji = {"gold": "🥇", "silver": "🥈", "bronze": "🥉"}
+                for brand in scorecard["top_brands"]:
+                    medal = medal_emoji.get(brand.get("medal", ""), "")
+                    print(f"  {medal} {brand['brand']}: +{brand['total']} (E:{brand['environmental']:+d} S:{brand['social']:+d} G:{brand['governance']:+d} D:{brand['digital_transformation']:+d})")
+            else:
+                print("\nTop Performers: None (no brands with positive scores)")
+
+            if scorecard["bottom_brands"]:
+                print("\nNeeds Improvement:")
+                for brand in scorecard["bottom_brands"]:
+                    print(f"  {brand['brand']}: {brand['total']:+d} (E:{brand['environmental']:+d} S:{brand['social']:+d} G:{brand['governance']:+d} D:{brand['digital_transformation']:+d})")
+            else:
+                print("\nNeeds Improvement: None")
+
     print("\n" + "=" * 60)
 
 
@@ -621,6 +887,28 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--no-scorecard",
+        action="store_true",
+        help="Exclude scorecard section from JSON export",
+    )
+    parser.add_argument(
+        "--scorecard-period-days",
+        type=int,
+        default=SCORECARD_PERIOD_DAYS,
+        help=f"Lookback period for scorecard calculation (default: {SCORECARD_PERIOD_DAYS})",
+    )
+    parser.add_argument(
+        "--no-dedupe",
+        action="store_true",
+        help="Disable article deduplication for scorecard",
+    )
+    parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=SCORECARD_SIMILARITY_THRESHOLD,
+        help=f"Cosine similarity threshold for deduplication (default: {SCORECARD_SIMILARITY_THRESHOLD})",
+    )
     return parser.parse_args()
 
 
@@ -661,7 +949,14 @@ def main() -> int:
 
         if args.format in ("json", "both"):
             logger.info("Generating JSON export...")
-            json_data = export_to_json(articles, top_n_evidence_per_category=args.top_n_evidence)
+            json_data = export_to_json(
+                articles,
+                top_n_evidence_per_category=args.top_n_evidence,
+                include_scorecard=not args.no_scorecard,
+                scorecard_period_days=args.scorecard_period_days,
+                scorecard_dedupe=not args.no_dedupe,
+                scorecard_similarity_threshold=args.similarity_threshold,
+            )
 
         if args.format in ("atom", "both"):
             logger.info("Generating Atom feed...")
