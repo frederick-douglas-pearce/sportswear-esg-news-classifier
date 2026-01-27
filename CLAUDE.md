@@ -144,13 +144,15 @@ See `queries/` folder for comprehensive SQL queries:
 ## Architecture
 
 ### Data Collection Pipeline (`src/data_collection/`)
-- `config.py` - Settings, brands list, keywords, and API configuration
+- `config.py` - Settings, brands list, keywords, blocked domains, and API configuration
 - `api_client.py` - NewsData.io API wrapper with OR-grouped query generation
 - `gdelt_client.py` - GDELT DOC 2.0 API wrapper (free, 3 months history)
 - `scraper.py` - Full article text extraction with language detection
 - `database.py` - PostgreSQL operations with SQLAlchemy
 - `models.py` - SQLAlchemy models (Article, CollectionRun, ArticleChunk, BrandLabel, LabelEvidence, LabelingRun)
-- `collector.py` - Orchestrates API collection + scraping with in-memory deduplication
+- `collector.py` - Orchestrates API collection + scraping with in-memory deduplication and domain filtering
+
+**Domain Blacklist:** Low-quality or AI-generated content sources are blocked via `BLOCKED_DOMAINS` in `config.py`. Articles from blocked domains are filtered during collection and tracked in `CollectionStats.articles_blocked_domain`.
 
 ### Labeling Pipeline (`src/labeling/`)
 - `config.py` - Labeling settings, Claude prompts, ESG category definitions
@@ -222,7 +224,7 @@ prompts/labeling/
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 664 tests
+### Test Suite (`tests/`) - 761 tests
 Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_integration
 
 ### Database Schema
@@ -312,7 +314,98 @@ GitHub Actions → Google Cloud Run. Secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY`, `G
 
 JSON/Atom feeds for Jekyll/al-folio site. Website repo: `/home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io`
 
+### Export Commands
+```bash
+# Full export with scorecard (default)
+uv run python scripts/export_website_feed.py --format both \
+  --json-output ~/website/_data/esg_news.json \
+  --atom-output ~/website/assets/feeds/esg_news.atom
+
+# Export without scorecard
+uv run python scripts/export_website_feed.py --format json --no-scorecard
+
+# Custom scorecard period (default: 14 days)
+uv run python scripts/export_website_feed.py --format json --scorecard-period-days 30
+
+# Disable article deduplication for scorecard
+uv run python scripts/export_website_feed.py --format json --no-dedupe
+
+# Custom similarity threshold for deduplication (default: 0.85)
+uv run python scripts/export_website_feed.py --format json --similarity-threshold 0.90
+```
+
+### Sustainability Scorecard
+
+The website displays a "Sportswear Sustainability Scorecard" ranking brands based on ESG news sentiment over a rolling 14-day window.
+
+**Scoring System:**
+| Sentiment | Points |
+|-----------|--------|
+| Positive (+1) | +2 points |
+| Neutral (0) | +1 point |
+| Negative (-1) | -1 point |
+
+**Key Rules:**
+- Each article contributes **one score per brand per category** (Environmental, Social, Governance, Digital)
+- Multiple evidence excerpts per category are for documentation only - they don't add extra points
+- **Top Performers**: Top 3 brands with positive total scores (with medals: 🥇🥈🥉)
+- **Back Performers**: Bottom 3 brands with negative total scores
+- A brand cannot appear in both lists
+
+**Article Deduplication:**
+Similar news stories from different sources are deduplicated before scoring using sentence embeddings (all-MiniLM-L6-v2, 384-dim). Articles with cosine similarity >= 0.85 are considered duplicates; only the first is counted.
+
+**Website Features:**
+- Date range filter with presets (7, 14, 30 days, All) and custom date inputs
+- Filter by brand, category, and sentiment
+- Collapsible evidence sections showing supporting excerpts
+
+**Files:**
+- `scripts/export_website_feed.py` - Export script with scorecard calculation
+- `_pages/esg-news.md` - Jekyll page template
+- `assets/js/esg_news_filter.js` - Client-side filtering
+- `_sass/_esg_news.scss` - Scorecard and filter styling
+
 ## Labeling Pipeline Changelog
+
+### 2026-01-27: Domain Blacklist for Data Collection
+
+Added ability to block low-quality news sources from data collection.
+
+**New features:**
+- `BLOCKED_DOMAINS` list in `src/data_collection/config.py`
+- `is_blocked_domain()` helper function in `collector.py`
+- Articles from blocked domains filtered during API collection
+- `articles_blocked_domain` stat tracked in `CollectionStats`
+
+**Initial blocklist:** `openpr.com` (AI-generated market reports with no real journalism)
+
+**To add a blocked domain:** Edit `BLOCKED_DOMAINS` in `src/data_collection/config.py`
+
+### 2026-01-26: Sustainability Scorecard for Website
+
+Added a "Sportswear Sustainability Scorecard" to the ESG news website, ranking brands based on recent news sentiment.
+
+**New features:**
+- Scorecard calculation in `scripts/export_website_feed.py`
+- Article deduplication using sentence embeddings (all-MiniLM-L6-v2)
+- Top 3 performers (positive scores only) with medal badges
+- Back 3 performers (negative scores only)
+- Category breakdown per brand (E, S, G, D)
+- Date range filter on website (7/14/30 days, All, custom)
+
+**Scoring:** Positive=+2 pts, Neutral=+1 pt, Negative=-1 pt
+
+**CLI options:**
+- `--no-scorecard` - Skip scorecard generation
+- `--scorecard-period-days N` - Custom period (default: 14)
+- `--no-dedupe` - Disable article deduplication
+- `--similarity-threshold N` - Custom similarity threshold (default: 0.85)
+
+**Website files:**
+- `_pages/esg-news.md` - Updated with scorecard section and date filter
+- `assets/js/esg_news_filter.js` - Date filtering logic
+- `_sass/_esg_news.scss` - Scorecard styling
 
 ### 2026-01-16: Expanded Stock Article Classification Guidelines
 
