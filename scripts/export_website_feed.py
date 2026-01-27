@@ -475,8 +475,8 @@ def calculate_brand_scores(
     for i, brand in enumerate(top_brands):
         brand['medal'] = medals[i] if i < len(medals) else None
 
-    # Bottom N brands, excluding top brands, sorted worst first
-    remaining = [b for b in all_scores if b['brand'] not in top_brand_names]
+    # Last N brands: must have negative scores, excluding top brands, sorted worst first
+    remaining = [b for b in all_scores if b['brand'] not in top_brand_names and b['total'] < 0]
     # Take last N (worst scores) and reverse to show worst first
     bottom_brands = remaining[-SCORECARD_BOTTOM_N:][::-1] if len(remaining) >= SCORECARD_BOTTOM_N else remaining[::-1]
 
@@ -821,11 +821,11 @@ def print_summary(articles: list[Article], json_data: dict | None = None) -> Non
                 print("\nTop Performers: None (no brands with positive scores)")
 
             if scorecard["bottom_brands"]:
-                print("\nNeeds Improvement:")
+                print("\nLast Performers:")
                 for brand in scorecard["bottom_brands"]:
                     print(f"  {brand['brand']}: {brand['total']:+d} (E:{brand['environmental']:+d} S:{brand['social']:+d} G:{brand['governance']:+d} D:{brand['digital_transformation']:+d})")
             else:
-                print("\nNeeds Improvement: None")
+                print("\nLast Performers: None (no brands with negative scores)")
 
     print("\n" + "=" * 60)
 
