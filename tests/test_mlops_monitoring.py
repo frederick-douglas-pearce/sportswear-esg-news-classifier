@@ -347,7 +347,7 @@ class TestEvidentlyDriftCheck:
 
     def test_evidently_drift_check_no_numeric_columns(self, mock_mlops_settings_enabled):
         """Test Evidently drift check when no numeric columns available."""
-        # Data without probability or text_length columns
+        # Data without probability, prediction, novelty_score, or brand_ columns
         current = pd.DataFrame({"other": ["a", "b", "c"]})
         reference = pd.DataFrame({"other": ["x", "y", "z"]})
 
@@ -357,47 +357,45 @@ class TestEvidentlyDriftCheck:
         monitor.threshold = 0.1
         monitor._evidently = {
             "Report": MagicMock(),
-            "ColumnMapping": MagicMock(),
-            "ColumnDriftMetric": MagicMock(),
-            "DatasetDriftMetric": MagicMock(),
-            "DatasetMissingValuesMetric": MagicMock(),
+            "ValueDrift": MagicMock(),
         }
 
         report = monitor._evidently_drift_check(current, reference, save_report=False)
 
         assert report.drift_detected is False
         assert "error" in report.details
-        assert "No numeric columns" in report.details["error"]
+        assert "No columns available for drift detection" in report.details["error"]
 
     def test_evidently_drift_check_with_valid_data(self, mock_mlops_settings_enabled):
         """Test Evidently drift check with valid data (mocked)."""
         current = pd.DataFrame({
             "probability": [0.5, 0.6, 0.7],
-            "text_length": [100, 200, 300],
+            "prediction": [0, 1, 1],
         })
         reference = pd.DataFrame({
             "probability": [0.4, 0.5, 0.6],
-            "text_length": [150, 250, 350],
+            "prediction": [0, 0, 1],
         })
 
-        # Mock Evidently report
-        mock_report = MagicMock()
-        mock_report.as_dict.return_value = {
+        # Mock Evidently report snapshot
+        mock_snapshot = MagicMock()
+        mock_snapshot.dict.return_value = {
             "metrics": [
                 {
-                    "metric": "DatasetDriftMetric",
-                    "result": {"dataset_drift": False, "drift_share": 0.0},
+                    "metric_name": "ValueDrift",
+                    "config": {"column": "probability", "threshold": 0.05},
+                    "value": 0.5,  # p-value > threshold means no drift
                 },
                 {
-                    "metric": "ColumnDriftMetric",
-                    "result": {
-                        "column_name": "probability",
-                        "drift_detected": False,
-                        "drift_score": 0.05,
-                    },
+                    "metric_name": "ValueDrift",
+                    "config": {"column": "prediction", "threshold": 0.05},
+                    "value": 0.3,  # p-value > threshold means no drift
                 },
             ]
         }
+
+        mock_report = MagicMock()
+        mock_report.run.return_value = mock_snapshot
 
         mock_Report = MagicMock(return_value=mock_report)
 
@@ -407,10 +405,7 @@ class TestEvidentlyDriftCheck:
         monitor.threshold = 0.1
         monitor._evidently = {
             "Report": mock_Report,
-            "ColumnMapping": MagicMock(),
-            "ColumnDriftMetric": MagicMock(),
-            "DatasetDriftMetric": MagicMock(),
-            "DatasetMissingValuesMetric": MagicMock(),
+            "ValueDrift": MagicMock(),
         }
 
         report = monitor._evidently_drift_check(current, reference, save_report=False)

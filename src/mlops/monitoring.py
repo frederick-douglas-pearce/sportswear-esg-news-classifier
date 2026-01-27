@@ -63,11 +63,11 @@ class DriftMonitor:
         """Initialize Evidently components using v0.7+ API."""
         try:
             from evidently import Report
-            from evidently.presets import DataDriftPreset
+            from evidently.metrics import ValueDrift
 
             self._evidently = {
                 "Report": Report,
-                "DataDriftPreset": DataDriftPreset,
+                "ValueDrift": ValueDrift,
             }
             logger.info("Evidently v0.7+ initialized successfully")
         except ImportError:
@@ -160,10 +160,8 @@ class DriftMonitor:
         Returns:
             DriftReport with results
         """
-        from evidently.metrics import ValueDrift
-
         Report = self._evidently["Report"]
-        DataDriftPreset = self._evidently["DataDriftPreset"]
+        ValueDrift = self._evidently["ValueDrift"]
 
         # Determine columns to analyze: probability, prediction, novelty, and brand columns
         columns_to_check = []

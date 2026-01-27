@@ -462,8 +462,7 @@ class TestPredictionLogColumns:
         assert "timestamp" in PREDICTION_LOG_COLUMNS
         assert "probability" in PREDICTION_LOG_COLUMNS
         assert "prediction" in PREDICTION_LOG_COLUMNS
-        assert "text_length" in PREDICTION_LOG_COLUMNS
-        assert "has_brand_context" in PREDICTION_LOG_COLUMNS
+        assert "novelty_score" in PREDICTION_LOG_COLUMNS
 
     def test_is_list(self):
         """Test that PREDICTION_LOG_COLUMNS is a list."""
