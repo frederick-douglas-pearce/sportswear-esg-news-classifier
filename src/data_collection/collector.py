@@ -5,9 +5,10 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlparse
 
 from .api_client import NewsDataClient
-from .config import settings
+from .config import BLOCKED_DOMAINS, settings
 from .database import Database, db
 from .gdelt_client import GDELTClient
 from .scraper import ArticleScraper
@@ -25,6 +26,40 @@ def normalize_title(title: str | None) -> str:
     return title.lower().strip()
 
 
+def is_blocked_domain(url: str | None, source_url: str | None) -> bool:
+    """Check if URL or source is from a blocked domain.
+
+    Args:
+        url: Article URL
+        source_url: Source domain URL from API
+
+    Returns:
+        True if domain is in BLOCKED_DOMAINS
+    """
+    if not BLOCKED_DOMAINS:
+        return False
+
+    # Check source_url first (most reliable)
+    if source_url:
+        source_lower = source_url.lower()
+        for blocked in BLOCKED_DOMAINS:
+            if blocked.lower() in source_lower:
+                return True
+
+    # Also check the article URL
+    if url:
+        try:
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+            for blocked in BLOCKED_DOMAINS:
+                if blocked.lower() in domain:
+                    return True
+        except Exception:
+            pass
+
+    return False
+
+
 @dataclass
 class CollectionStats:
     """Statistics from a collection run."""
@@ -34,6 +69,7 @@ class CollectionStats:
     articles_duplicates: int = 0
     articles_duplicate_title: int = 0  # Same title from different sources
     articles_no_brand: int = 0  # Filtered out - no tracked brand mentioned
+    articles_blocked_domain: int = 0  # Filtered out - from blocked source
     articles_scraped: int = 0
     articles_scrape_failed: int = 0
     errors: list[str] = field(default_factory=list)
@@ -160,20 +196,30 @@ class NewsCollector:
                 else:
                     stats.articles_no_brand += 1
 
+            # Filter out articles from blocked domains
+            allowed_articles = []
+            for article in branded_articles:
+                if is_blocked_domain(article.url, article.source_url):
+                    stats.articles_blocked_domain += 1
+                    logger.debug(f"Blocked domain: {article.source_url or article.url}")
+                else:
+                    allowed_articles.append(article)
+
             if dry_run:
-                stats.articles_fetched += len(branded_articles)
-                if branded_articles or unique_articles:
+                stats.articles_fetched += len(allowed_articles)
+                if allowed_articles or unique_articles:
                     dup_id = len(articles) - len(new_articles)
                     dup_title = len(new_articles) - len(unique_articles)
                     no_brand = len(unique_articles) - len(branded_articles)
+                    blocked = len(branded_articles) - len(allowed_articles)
                     logger.info(
-                        f"[DRY RUN] Would save {len(branded_articles)} articles "
-                        f"({dup_id} dup ID, {dup_title} dup title, {no_brand} no brand)"
+                        f"[DRY RUN] Would save {len(allowed_articles)} articles "
+                        f"({dup_id} dup ID, {dup_title} dup title, {no_brand} no brand, {blocked} blocked)"
                     )
                 continue
 
             with self.db.get_session() as session:
-                for article_data in branded_articles:
+                for article_data in allowed_articles:
                     try:
                         _, status = self.db.upsert_article(session, article_data)
                         if status == "new":
@@ -190,7 +236,8 @@ class NewsCollector:
         logger.info(
             f"API collection complete: {stats.api_calls} calls, "
             f"{stats.articles_fetched} new, {stats.articles_duplicates} dup ID, "
-            f"{stats.articles_duplicate_title} dup title, {stats.articles_no_brand} no brand"
+            f"{stats.articles_duplicate_title} dup title, {stats.articles_no_brand} no brand, "
+            f"{stats.articles_blocked_domain} blocked"
         )
         return stats
 

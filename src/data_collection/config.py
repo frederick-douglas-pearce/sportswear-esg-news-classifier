@@ -90,6 +90,11 @@ BRANDS: list[str] = [
     "Diadora"
 ]
 
+# Blocked domains - sources known to produce low-quality or AI-generated content
+BLOCKED_DOMAINS: list[str] = [
+    "openpr.com",  # AI-generated market reports with no real journalism
+]
+
 KEYWORDS: list[str] = [
     # Environmental
     "sustainability",
