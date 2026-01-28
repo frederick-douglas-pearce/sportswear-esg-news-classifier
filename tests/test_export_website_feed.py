@@ -393,7 +393,7 @@ class TestScorecardTieHandling:
         assert "Lululemon" in top_brand_names
 
     def test_top_performers_medals_with_ties(self):
-        """Only first 3 positions get medals even with ties."""
+        """Brands tied for a medal position get the same medal."""
         # Create articles with tie at 3rd place
         articles = [
             create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
@@ -404,11 +404,11 @@ class TestScorecardTieHandling:
 
         result = calculate_brand_scores(articles, period_days=14, dedupe=False)
 
-        # First 3 get medals, 4th does not
+        # First 3 get medals, 4th gets bronze too since tied with 3rd
         assert result["top_brands"][0]["medal"] == "gold"
         assert result["top_brands"][1]["medal"] == "silver"
         assert result["top_brands"][2]["medal"] == "bronze"
-        assert result["top_brands"][3]["medal"] is None
+        assert result["top_brands"][3]["medal"] == "bronze"  # Tied for 3rd, gets bronze
 
     def test_bottom_performers_no_ties(self):
         """Bottom performers with distinct scores should show exactly N brands."""

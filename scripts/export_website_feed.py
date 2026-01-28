@@ -476,10 +476,21 @@ def calculate_brand_scores(
         top_brands = [b for b in positive_brands if b['total'] >= cutoff_score]
     top_brand_names = {b['brand'] for b in top_brands}
 
-    # Assign medals to top brands (only first 3 get medals, even with ties)
+    # Assign medals to top brands (ties get the same medal)
     medals = ['gold', 'silver', 'bronze']
     for i, brand in enumerate(top_brands):
-        brand['medal'] = medals[i] if i < len(medals) else None
+        if i < len(medals):
+            brand['medal'] = medals[i]
+        else:
+            # Check if tied with a medal position (compare scores)
+            if len(top_brands) >= 3 and brand['total'] == top_brands[2]['total']:
+                brand['medal'] = 'bronze'
+            elif len(top_brands) >= 2 and brand['total'] == top_brands[1]['total']:
+                brand['medal'] = 'silver'
+            elif len(top_brands) >= 1 and brand['total'] == top_brands[0]['total']:
+                brand['medal'] = 'gold'
+            else:
+                brand['medal'] = None
 
     # Last N brands: must have negative scores, excluding top brands, sorted worst first
     # Include ties at the cutoff position
