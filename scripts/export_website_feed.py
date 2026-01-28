@@ -466,19 +466,32 @@ def calculate_brand_scores(
     # Sort by total score descending, then alphabetically by brand name
     all_scores.sort(key=lambda x: (-x['total'], x['brand']))
 
-    # Top N brands with positive scores only
-    top_brands = [b for b in all_scores if b['total'] > 0][:SCORECARD_TOP_N]
+    # Top N brands with positive scores only, including ties at the cutoff
+    positive_brands = [b for b in all_scores if b['total'] > 0]
+    if len(positive_brands) <= SCORECARD_TOP_N:
+        top_brands = positive_brands
+    else:
+        # Include all brands tied with the Nth position
+        cutoff_score = positive_brands[SCORECARD_TOP_N - 1]['total']
+        top_brands = [b for b in positive_brands if b['total'] >= cutoff_score]
     top_brand_names = {b['brand'] for b in top_brands}
 
-    # Assign medals to top brands
+    # Assign medals to top brands (only first 3 get medals, even with ties)
     medals = ['gold', 'silver', 'bronze']
     for i, brand in enumerate(top_brands):
         brand['medal'] = medals[i] if i < len(medals) else None
 
     # Last N brands: must have negative scores, excluding top brands, sorted worst first
-    remaining = [b for b in all_scores if b['brand'] not in top_brand_names and b['total'] < 0]
-    # Take last N (worst scores) and reverse to show worst first
-    bottom_brands = remaining[-SCORECARD_BOTTOM_N:][::-1] if len(remaining) >= SCORECARD_BOTTOM_N else remaining[::-1]
+    # Include ties at the cutoff position
+    negative_brands = [b for b in all_scores if b['brand'] not in top_brand_names and b['total'] < 0]
+    if len(negative_brands) <= SCORECARD_BOTTOM_N:
+        bottom_brands = negative_brands[::-1]  # Reverse to show worst first
+    else:
+        # Sort by score ascending (worst first) to find the cutoff
+        sorted_worst_first = sorted(negative_brands, key=lambda x: (x['total'], x['brand']))
+        cutoff_score = sorted_worst_first[SCORECARD_BOTTOM_N - 1]['total']
+        # Include all brands tied at or below the cutoff score
+        bottom_brands = [b for b in sorted_worst_first if b['total'] <= cutoff_score]
 
     return {
         'period_days': period_days,

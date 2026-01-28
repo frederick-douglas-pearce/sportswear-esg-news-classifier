@@ -1,7 +1,9 @@
 """Tests for the website feed export script."""
 
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -9,6 +11,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from export_website_feed import (
+    SCORECARD_BOTTOM_N,
+    SCORECARD_TOP_N,
+    calculate_brand_scores,
     extract_snippet,
     extract_snippet_char_based,
     extract_snippet_with_sentences,
@@ -297,3 +302,249 @@ class TestRealWorldScenarios:
         assert "Sentence number 11" in result
         # First sentences should not be included
         assert "Sentence number 0" not in result
+
+
+# ============================================================================
+# Scorecard Tie Handling Tests
+# ============================================================================
+
+
+def create_mock_article(brand_scores: dict[str, dict]) -> MagicMock:
+    """Create a mock Article with brand labels for testing.
+
+    Args:
+        brand_scores: Dict mapping brand names to their category sentiments.
+            Example: {"Nike": {"environmental": 1, "social": 0}}
+            Sentiment values: 1 (positive), 0 (neutral), -1 (negative)
+
+    Returns:
+        Mock Article object with brand_labels populated
+    """
+    article = MagicMock()
+    article.published_at = datetime.now()
+    article.brand_labels = []
+
+    for brand_name, categories in brand_scores.items():
+        brand_label = MagicMock()
+        brand_label.brand = brand_name
+        brand_label.is_sportswear_brand = True
+
+        # Set category sentiments (None if not in dict)
+        brand_label.environmental_sentiment = categories.get("environmental")
+        brand_label.social_sentiment = categories.get("social")
+        brand_label.governance_sentiment = categories.get("governance")
+        brand_label.digital_transformation_sentiment = categories.get("digital_transformation")
+
+        article.brand_labels.append(brand_label)
+
+    return article
+
+
+class TestScorecardTieHandling:
+    """Tests for scorecard tie handling in top and bottom performers."""
+
+    def test_top_performers_no_ties(self):
+        """Top performers with distinct scores should show exactly N brands."""
+        # Create articles with distinct positive scores
+        articles = [
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
+            create_mock_article({"Adidas": {"environmental": 1}}),  # +2
+            create_mock_article({"Puma": {"social": 0}}),  # +1
+            create_mock_article({"Lululemon": {"governance": 0}}),  # +1 (tie for 3rd)
+        ]
+
+        # But wait - Puma and Lululemon are tied, so this test should show 4 brands
+        # Let's adjust to have distinct scores
+        articles = [
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
+            create_mock_article({"Adidas": {"environmental": 1, "social": 0}}),  # +3
+            create_mock_article({"Puma": {"environmental": 1}}),  # +2
+            create_mock_article({"Lululemon": {"social": 0}}),  # +1
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        assert len(result["top_brands"]) == SCORECARD_TOP_N  # Should be exactly 3
+        assert result["top_brands"][0]["brand"] == "Nike"
+        assert result["top_brands"][0]["total"] == 4
+        assert result["top_brands"][1]["brand"] == "Adidas"
+        assert result["top_brands"][1]["total"] == 3
+        assert result["top_brands"][2]["brand"] == "Puma"
+        assert result["top_brands"][2]["total"] == 2
+
+    def test_top_performers_with_tie_at_cutoff(self):
+        """Top performers with tie at cutoff should include all tied brands."""
+        # Create articles where 3rd and 4th place are tied
+        articles = [
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
+            create_mock_article({"Adidas": {"environmental": 1, "social": 0}}),  # +3
+            create_mock_article({"Puma": {"environmental": 1}}),  # +2
+            create_mock_article({"Lululemon": {"social": 1}}),  # +2 (tied with Puma)
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Should include all 4 brands since Puma and Lululemon are tied for 3rd
+        assert len(result["top_brands"]) == 4
+        top_brand_names = {b["brand"] for b in result["top_brands"]}
+        assert "Nike" in top_brand_names
+        assert "Adidas" in top_brand_names
+        assert "Puma" in top_brand_names
+        assert "Lululemon" in top_brand_names
+
+    def test_top_performers_medals_with_ties(self):
+        """Only first 3 positions get medals even with ties."""
+        # Create articles with tie at 3rd place
+        articles = [
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
+            create_mock_article({"Adidas": {"environmental": 1, "social": 0}}),  # +3
+            create_mock_article({"Puma": {"environmental": 1}}),  # +2
+            create_mock_article({"Lululemon": {"social": 1}}),  # +2 (tied with Puma)
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # First 3 get medals, 4th does not
+        assert result["top_brands"][0]["medal"] == "gold"
+        assert result["top_brands"][1]["medal"] == "silver"
+        assert result["top_brands"][2]["medal"] == "bronze"
+        assert result["top_brands"][3]["medal"] is None
+
+    def test_bottom_performers_no_ties(self):
+        """Bottom performers with distinct scores should show exactly N brands."""
+        # Create articles with distinct negative scores
+        # Use multiple articles per brand to get different totals
+        articles = [
+            create_mock_article({"Nike": {"environmental": -1, "social": -1}}),  # -2
+            create_mock_article({"Adidas": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
+            create_mock_article({"Puma": {"social": -1}}),  # -1
+            # Lululemon: -4 (use two articles: -3 + -1 = -4)
+            create_mock_article({"Lululemon": {"governance": -1, "social": -1, "environmental": -1}}),  # -3
+            create_mock_article({"Lululemon": {"governance": -1}}),  # -1 more = -4 total
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Should show exactly 3 (Lululemon, Adidas, Nike)
+        assert len(result["bottom_brands"]) == SCORECARD_BOTTOM_N
+        # Worst first
+        assert result["bottom_brands"][0]["brand"] == "Lululemon"
+        assert result["bottom_brands"][0]["total"] == -4
+        assert result["bottom_brands"][1]["brand"] == "Adidas"
+        assert result["bottom_brands"][1]["total"] == -3
+        assert result["bottom_brands"][2]["brand"] == "Nike"
+        assert result["bottom_brands"][2]["total"] == -2
+
+    def test_bottom_performers_with_tie_at_cutoff(self):
+        """Bottom performers with tie at cutoff should include all tied brands.
+
+        Example: Nike: -6, Adidas: -4, Puma: -4, Lululemon: -4
+        Should show all 4 brands since Adidas, Puma, Lululemon are tied for 2nd-worst.
+        """
+        articles = [
+            create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
+            create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),  # -3 more = -6 total
+            create_mock_article({"Adidas": {"environmental": -1, "social": -1, "governance": -1, "digital_transformation": -1}}),  # -4
+            create_mock_article({"Puma": {"environmental": -1, "social": -1, "governance": -1, "digital_transformation": -1}}),  # -4
+            create_mock_article({"Lululemon": {"environmental": -1, "social": -1, "governance": -1, "digital_transformation": -1}}),  # -4
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Should include all 4 brands since 2nd, 3rd, 4th are tied
+        assert len(result["bottom_brands"]) == 4
+        bottom_brand_names = {b["brand"] for b in result["bottom_brands"]}
+        assert "Nike" in bottom_brand_names
+        assert "Adidas" in bottom_brand_names
+        assert "Puma" in bottom_brand_names
+        assert "Lululemon" in bottom_brand_names
+
+        # Nike should be first (worst)
+        assert result["bottom_brands"][0]["brand"] == "Nike"
+        assert result["bottom_brands"][0]["total"] == -6
+
+    def test_bottom_performers_excludes_better_scores_when_no_tie(self):
+        """Bottom performers should exclude brands with better scores when no tie.
+
+        Example: Nike: -6, Adidas: -4, Puma: -4, Lululemon: -3
+        Should show Nike, Adidas, Puma (Lululemon excluded since -3 > -4).
+        """
+        articles = [
+            # Nike: -6 total (two articles of -3 each)
+            create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
+            create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),  # -3 more = -6 total
+            # Adidas: -4 total (two articles: -3 + -1)
+            create_mock_article({"Adidas": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
+            create_mock_article({"Adidas": {"environmental": -1}}),  # -1 more = -4 total
+            # Puma: -4 total (two articles: -3 + -1)
+            create_mock_article({"Puma": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
+            create_mock_article({"Puma": {"environmental": -1}}),  # -1 more = -4 total
+            # Lululemon: -3 total
+            create_mock_article({"Lululemon": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Should show exactly 3: Nike (-6), Adidas (-4), Puma (-4)
+        # Lululemon (-3) is excluded since it's not tied with the 3rd worst
+        assert len(result["bottom_brands"]) == 3
+        bottom_brand_names = {b["brand"] for b in result["bottom_brands"]}
+        assert "Nike" in bottom_brand_names
+        assert "Adidas" in bottom_brand_names
+        assert "Puma" in bottom_brand_names
+        assert "Lululemon" not in bottom_brand_names
+
+    def test_fewer_than_n_positive_brands(self):
+        """Should handle fewer than N brands with positive scores."""
+        # Only 2 brands with positive scores
+        articles = [
+            create_mock_article({"Nike": {"environmental": 1}}),  # +2
+            create_mock_article({"Adidas": {"social": 0}}),  # +1
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Should show only the 2 positive brands
+        assert len(result["top_brands"]) == 2
+        assert result["top_brands"][0]["brand"] == "Nike"
+        assert result["top_brands"][1]["brand"] == "Adidas"
+
+    def test_fewer_than_n_negative_brands(self):
+        """Should handle fewer than N brands with negative scores."""
+        # Only 2 brands with negative scores
+        articles = [
+            create_mock_article({"Nike": {"environmental": -1, "social": -1}}),  # -2
+            create_mock_article({"Adidas": {"social": -1}}),  # -1
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Should show only the 2 negative brands
+        assert len(result["bottom_brands"]) == 2
+        assert result["bottom_brands"][0]["brand"] == "Nike"  # Worst first
+        assert result["bottom_brands"][1]["brand"] == "Adidas"
+
+    def test_alphabetical_tiebreaker(self):
+        """Brands with same score should be sorted alphabetically."""
+        # All brands have the same positive score
+        articles = [
+            create_mock_article({"Zebra": {"environmental": 1}}),  # +2
+            create_mock_article({"Apple": {"environmental": 1}}),  # +2
+            create_mock_article({"Mango": {"environmental": 1}}),  # +2
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # All 3 should be included (all tied), sorted alphabetically
+        assert len(result["top_brands"]) == 3
+        assert result["top_brands"][0]["brand"] == "Apple"
+        assert result["top_brands"][1]["brand"] == "Mango"
+        assert result["top_brands"][2]["brand"] == "Zebra"
+
+    def test_empty_articles_list(self):
+        """Should handle empty articles list gracefully."""
+        result = calculate_brand_scores([], period_days=14, dedupe=False)
+
+        assert result["top_brands"] == []
+        assert result["bottom_brands"] == []
+        assert result["all_brand_scores"] == []
