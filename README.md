@@ -346,6 +346,7 @@ flowchart TB
 - [Model Deployment Workflow](#model-deployment-workflow) ⭐
 - [MLOps](#mlops)
 - [Agent Orchestrator](#agent-orchestrator)
+  - [Claude Code Skills](#claude-code-skills)
 - [Database](#database)
 - [ESG Category Structure](#esg-category-structure)
 - [Testing](#testing)
@@ -1530,6 +1531,52 @@ uv run python -m src.agent status
 Each workflow generates detailed logs in `logs/agent/` and archives state to `~/.esg-agent/history/`.
 
 📖 See [docs/AGENT.md](docs/AGENT.md) for workflow details, configuration options, and architecture.
+
+### Claude Code Skills
+
+The project includes custom [Claude Code](https://claude.ai/code) skills for streamlined development workflows. Skills are invoked with `/skillname` in a Claude Code session.
+
+| Skill | Purpose |
+|-------|---------|
+| `/esg-status` | Quick project dashboard: collection stats, labeling progress, recent runs |
+| `/review-labels` | Review recent labeling for errors: sentiment breakdown, negative articles, false positives |
+
+**Usage:**
+
+```bash
+# Start Claude Code in the project directory
+cd sportswear-esg-news-classifier
+claude
+
+# Then invoke skills
+/esg-status       # Shows collection stats, labeling breakdown, recent runs with costs
+/review-labels    # Reviews articles labeled since last review, flags potential errors
+```
+
+**`/esg-status` output example:**
+```
+COLLECTION (Last 7 days)
+  Runs: 56, Fetched: 171, Scraped: 148, Failed: 23
+
+LABELING STATUS
+  labeled             293 (11.4%)
+  false_positive      417 (16.3%)
+  skipped            1248 (48.6%)
+  pending              19 (0.7%)
+  unlabelable         571 (22.3%)
+
+RECENT LABELING RUNS
+  2026-01-29: 1 runs, 22 articles, 6 brands, $0.53
+```
+
+**`/review-labels` features:**
+- Tracks last run date to avoid reviewing the same articles twice
+- Shows brand sentiment breakdown (E/S/G positive/negative counts)
+- Lists articles with negative sentiment for accuracy review
+- Spot-checks recent false positives for missed ESG content
+- Highlights multi-brand articles for consistency checking
+
+Skill definitions are in `.claude/skills/`.
 
 ## Database
 
