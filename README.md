@@ -358,13 +358,6 @@ The project follows a modular architecture:
 | `tests/` | Comprehensive test suite (761 tests) |
 | `docs/` | Detailed documentation for each subsystem |
 
-**Key Files for ML Zoomcamp:**
-- `notebooks/fp*.ipynb` - False Positive classifier pipeline
-- `notebooks/ep*.ipynb` - ESG Pre-filter classifier pipeline
-- `scripts/train.py` - CLI training script
-- `scripts/predict.py` - FastAPI prediction service
-- `Dockerfile` - Container deployment
-
 📁 See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for complete file listing.
 
 ## Quick Start
