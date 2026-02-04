@@ -349,7 +349,7 @@ The website displays a "Sportswear Sustainability Scorecard" ranking brands base
 - Each article contributes **one score per brand per category** (Environmental, Social, Governance, Digital)
 - Multiple evidence excerpts per category are for documentation only - they don't add extra points
 - **Top Performers**: Top 3 brands with positive total scores (with medals: 🥇🥈🥉)
-- **Back Performers**: Bottom 3 brands with negative total scores
+- **Back of the Pack**: Bottom 3 brands with negative total scores
 - A brand cannot appear in both lists
 
 **Article Deduplication:**

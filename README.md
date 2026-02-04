@@ -25,7 +25,7 @@ The scorecard analyzes ESG news from the last 14 days and assigns points based o
 ### Scorecard Features
 
 - **🥇🥈🥉 Top Performers**: Brands with the highest positive scores earn gold, silver, and bronze medals
-- **Back Performers**: Brands with negative scores are highlighted for transparency
+- **Back of the Pack**: Brands with negative scores are highlighted for transparency
 - **Category Breakdown**: See scores by Environmental (E), Social (S), Governance (G), and Digital Transformation (D)
 - **Deduplication**: Similar articles are automatically detected and deduplicated using sentence embeddings (cosine similarity ≥ 0.85)
 - **Rolling Window**: Scores update automatically based on the most recent 14-day period
@@ -33,7 +33,7 @@ The scorecard analyzes ESG news from the last 14 days and assigns points based o
 ### Example Scorecard
 
 ```
-🏆 Top Performers                    ⚠️ Back Performers
+🏆 Top Performers                    ⚠️ Back of the Pack
 ├─ 🥇 Patagonia    +12 (E:+6 S:+4 G:+2)    ├─ Brand X    -3 (S:-3)
 ├─ 🥈 Nike         +8  (E:+4 S:+2 D:+2)    ├─ Brand Y    -2 (G:-2)
 └─ 🥉 Adidas       +5  (E:+3 S:+2)         └─ Brand Z    -1 (E:-1)
