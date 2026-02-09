@@ -22,6 +22,8 @@ from src.dedup1_nb.evaluation import (
     compute_scorecard_stability,
     create_validation_pairs,
     threshold_sweep,
+    split_validation_pairs,
+    find_optimal_threshold_with_recall_constraint,
 )
 from src.dedup1_nb.visualization import (
     plot_threshold_analysis,
@@ -51,6 +53,8 @@ __all__ = [
     "compute_scorecard_stability",
     "create_validation_pairs",
     "threshold_sweep",
+    "split_validation_pairs",
+    "find_optimal_threshold_with_recall_constraint",
     # Visualization
     "plot_threshold_analysis",
     "plot_embedding_space",

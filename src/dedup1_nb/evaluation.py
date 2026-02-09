@@ -6,6 +6,97 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+def split_validation_pairs(
+    labeled_pairs: list[dict],
+    test_size: float = 0.3,
+    random_state: int = 42,
+    stratify_by_label: bool = True,
+) -> tuple[list[dict], list[dict]]:
+    """Split labeled pairs into tuning and holdout sets.
+
+    Args:
+        labeled_pairs: List of labeled pair dicts with 'is_duplicate' field
+        test_size: Fraction of pairs to use for holdout (default 0.3)
+        random_state: Random seed for reproducibility
+        stratify_by_label: If True, maintain duplicate/non-duplicate ratio in both sets
+
+    Returns:
+        Tuple of (tuning_pairs, holdout_pairs)
+    """
+    np.random.seed(random_state)
+
+    # Filter to only labeled pairs
+    labeled = [p for p in labeled_pairs if p.get("is_duplicate") is not None]
+
+    if stratify_by_label:
+        # Split by label to maintain ratio
+        duplicates = [p for p in labeled if p["is_duplicate"]]
+        non_duplicates = [p for p in labeled if not p["is_duplicate"]]
+
+        # Shuffle each group
+        np.random.shuffle(duplicates)
+        np.random.shuffle(non_duplicates)
+
+        # Split each group
+        n_dup_test = max(1, int(len(duplicates) * test_size))
+        n_nondup_test = max(1, int(len(non_duplicates) * test_size))
+
+        holdout = duplicates[:n_dup_test] + non_duplicates[:n_nondup_test]
+        tuning = duplicates[n_dup_test:] + non_duplicates[n_nondup_test:]
+    else:
+        # Simple random split
+        indices = np.random.permutation(len(labeled))
+        n_test = int(len(labeled) * test_size)
+
+        holdout = [labeled[i] for i in indices[:n_test]]
+        tuning = [labeled[i] for i in indices[n_test:]]
+
+    return tuning, holdout
+
+
+def find_optimal_threshold_with_recall_constraint(
+    results: list[dict],
+    min_recall: float = 0.98,
+    recall_key: str = "pair_recall",
+    precision_key: str = "pair_precision",
+) -> dict:
+    """Find optimal config that maximizes precision while meeting recall constraint.
+
+    Args:
+        results: List of result dicts from threshold sweep or clustering comparison
+        min_recall: Minimum required recall (default 0.98)
+        recall_key: Key for recall metric in results
+        precision_key: Key for precision metric in results
+
+    Returns:
+        Dict with optimal config and metrics, or best recall config if constraint not met
+    """
+    # Filter configs that meet recall constraint
+    valid_configs = [r for r in results if r.get(recall_key, 0) >= min_recall]
+
+    if valid_configs:
+        # Among valid configs, find one with highest precision
+        best = max(valid_configs, key=lambda x: x.get(precision_key, 0))
+        return {
+            "config": best,
+            "meets_recall_constraint": True,
+            "min_recall_target": min_recall,
+            "achieved_recall": best.get(recall_key),
+            "achieved_precision": best.get(precision_key),
+        }
+    else:
+        # No config meets constraint - return best recall
+        best_recall = max(results, key=lambda x: x.get(recall_key, 0))
+        return {
+            "config": best_recall,
+            "meets_recall_constraint": False,
+            "min_recall_target": min_recall,
+            "achieved_recall": best_recall.get(recall_key),
+            "achieved_precision": best_recall.get(precision_key),
+            "note": f"No config achieved recall >= {min_recall}. Returning best recall.",
+        }
+
+
 def calculate_cluster_metrics(
     embeddings: np.ndarray,
     cluster_labels: list[int],

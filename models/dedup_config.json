@@ -1,16 +1,26 @@
 {
   "embedding_model": "all-MiniLM-L6-v2",
-  "similarity_threshold": 0.72,
-  "text_max_length": 1500,
+  "similarity_threshold": 0.7,
+  "text_max_length": 1000,
   "include_title": true,
   "algorithm": "greedy_cosine",
-  "analysis_date": "2026-02-09T09:28:12.588145+00:00",
+  "analysis_date": "2026-02-09T10:09:10.897210+00:00",
+  "optimization_target": "max_precision_with_recall_>=0.98",
   "metrics": {
     "articles_analyzed": 128,
     "period_days": 30,
-    "labeled_pairs": 70,
-    "best_f1": 0.9591836734693878,
-    "best_precision": 1.0,
-    "best_recall": 0.9215686274509803
+    "tuning": {
+      "n_pairs": 85,
+      "precision": 0.8166666666666667,
+      "recall": 0.98,
+      "f1": 0.890909090909091
+    },
+    "holdout": {
+      "n_pairs": 35,
+      "precision": 0.72,
+      "recall": 0.8571428571428571,
+      "f1": 0.782608695652174,
+      "note": "Unbiased estimate from held-out test set"
+    }
   }
 }
