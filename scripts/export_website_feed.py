@@ -284,7 +284,7 @@ def sanitize_text(text: str | None) -> str | None:
 SCORECARD_PERIOD_DAYS = 14
 SCORECARD_TOP_N = 3
 SCORECARD_BOTTOM_N = 3
-SCORECARD_SIMILARITY_THRESHOLD = 0.85  # Articles with similarity >= this are considered duplicates
+SCORECARD_SIMILARITY_THRESHOLD = 0.75  # Articles with similarity >= this are considered duplicates
 
 # Sentiment to points mapping: positive=+2, neutral=+1, negative=-1
 SENTIMENT_POINTS = {1: 2, 0: 1, -1: -1}

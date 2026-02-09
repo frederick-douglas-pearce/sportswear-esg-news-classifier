@@ -330,7 +330,7 @@ uv run python scripts/export_website_feed.py --format json --scorecard-period-da
 # Disable article deduplication for scorecard
 uv run python scripts/export_website_feed.py --format json --no-dedupe
 
-# Custom similarity threshold for deduplication (default: 0.85)
+# Custom similarity threshold for deduplication (default: 0.75)
 uv run python scripts/export_website_feed.py --format json --similarity-threshold 0.90
 ```
 
@@ -353,7 +353,7 @@ The website displays a "Sportswear Sustainability Scorecard" ranking brands base
 - A brand cannot appear in both lists
 
 **Article Deduplication:**
-Similar news stories from different sources are deduplicated before scoring using sentence embeddings (all-MiniLM-L6-v2, 384-dim). Articles with cosine similarity >= 0.85 are considered duplicates; only the first is counted.
+Similar news stories from different sources are deduplicated before scoring using sentence embeddings (all-MiniLM-L6-v2, 384-dim). Articles with cosine similarity >= 0.75 are considered duplicates; only the first is counted.
 
 **Website Features:**
 - Date range filter with presets (7, 14, 30 days, All) and custom date inputs
@@ -400,7 +400,7 @@ Added a "Sportswear Sustainability Scorecard" to the ESG news website, ranking b
 - `--no-scorecard` - Skip scorecard generation
 - `--scorecard-period-days N` - Custom period (default: 14)
 - `--no-dedupe` - Disable article deduplication
-- `--similarity-threshold N` - Custom similarity threshold (default: 0.85)
+- `--similarity-threshold N` - Custom similarity threshold (default: 0.75)
 
 **Website files:**
 - `_pages/esg-news.md` - Updated with scorecard section and date filter
