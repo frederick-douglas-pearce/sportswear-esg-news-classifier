@@ -32,6 +32,7 @@ data/*.jsonl
 # Exception: training data files needed for notebook reproducibility
 !data/fp_training_data.jsonl
 !data/ep_training_data.jsonl
+!data/dedup_validation_pairs.jsonl
 
 # Distribution
 dist/
