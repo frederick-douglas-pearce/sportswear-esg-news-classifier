@@ -4,7 +4,7 @@
   "text_max_length": 1500,
   "include_title": true,
   "algorithm": "greedy_cosine",
-  "analysis_date": "2026-02-09T09:22:59.024880+00:00",
+  "analysis_date": "2026-02-09T09:28:12.588145+00:00",
   "metrics": {
     "articles_analyzed": 128,
     "period_days": 30,
