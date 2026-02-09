@@ -96,6 +96,7 @@ def hdbscan_clustering(
         - Dict with clustering metadata
     """
     import hdbscan
+    from sklearn.metrics.pairwise import cosine_distances
 
     n_articles = len(embeddings)
     if n_articles == 0:
@@ -109,14 +110,25 @@ def hdbscan_clustering(
             "duplicates_removed": 0,
         }
 
-    # Fit HDBSCAN
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        min_samples=min_samples,
-        cluster_selection_epsilon=cluster_selection_epsilon,
-        metric=metric,
-    )
-    cluster_labels = clusterer.fit_predict(embeddings)
+    # For cosine metric, use precomputed distance matrix
+    # (HDBSCAN's BallTree doesn't support cosine for high-dim data)
+    if metric == "cosine":
+        distance_matrix = cosine_distances(embeddings).astype(np.float64)
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            cluster_selection_epsilon=cluster_selection_epsilon,
+            metric="precomputed",
+        )
+        cluster_labels = clusterer.fit_predict(distance_matrix)
+    else:
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            cluster_selection_epsilon=cluster_selection_epsilon,
+            metric=metric,
+        )
+        cluster_labels = clusterer.fit_predict(embeddings)
 
     # Select representatives: first article in each cluster, plus all noise (-1)
     keep_indices = []
