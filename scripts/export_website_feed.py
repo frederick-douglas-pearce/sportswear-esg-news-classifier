@@ -285,6 +285,7 @@ SCORECARD_PERIOD_DAYS = 14
 SCORECARD_TOP_N = 3
 SCORECARD_BOTTOM_N = 3
 SCORECARD_SIMILARITY_THRESHOLD = 0.70  # Articles with similarity >= this are considered duplicates
+SCORECARD_REQUIRE_LABEL_MATCH = True  # Require identical ESG labels for deduplication
 
 # Sentiment to points mapping: positive=+2, neutral=+1, negative=-1
 SENTIMENT_POINTS = {1: 2, 0: 1, -1: -1}
@@ -293,18 +294,43 @@ SENTIMENT_POINTS = {1: 2, 0: 1, -1: -1}
 SCORECARD_CATEGORIES = ['environmental', 'social', 'governance', 'digital_transformation']
 
 
+def get_article_labels(article: Article) -> frozenset[tuple[str, str]]:
+    """Extract ESG labels from an article as (brand, category) pairs.
+
+    Args:
+        article: Article with brand_labels relationship loaded
+
+    Returns:
+        Frozenset of (brand, category) tuples for hashable comparison
+    """
+    labels = set()
+    for bl in article.brand_labels:
+        for ev in bl.evidence:
+            labels.add((bl.brand, ev.category))
+    return frozenset(labels)
+
+
 def deduplicate_articles(
     articles: list[Article],
     similarity_threshold: float = SCORECARD_SIMILARITY_THRESHOLD,
+    require_label_match: bool = SCORECARD_REQUIRE_LABEL_MATCH,
 ) -> tuple[list[Article], int]:
-    """Deduplicate articles based on content similarity using sentence embeddings.
+    """Deduplicate articles based on content similarity and label matching.
 
     Uses the NoveltyScorer's sentence-transformer model (all-MiniLM-L6-v2) to compute
     embeddings and identify duplicate stories across different sources.
 
+    Two articles are considered duplicates only if:
+    1. Their cosine similarity >= threshold
+    2. AND they have identical ESG labels (if require_label_match=True)
+
+    This ensures articles with additional ESG category coverage are preserved,
+    even if they cover the same underlying news story.
+
     Args:
         articles: List of articles to deduplicate
         similarity_threshold: Cosine similarity above which articles are considered duplicates
+        require_label_match: If True, only dedupe articles with identical labels
 
     Returns:
         Tuple of (deduplicated articles list, number of duplicates removed)
@@ -327,6 +353,11 @@ def deduplicate_articles(
         content_preview = content[:1000] if content else ""
         texts.append(f"{article.title} {content_preview}")
 
+    # Pre-compute article labels if label matching is required
+    article_labels = None
+    if require_label_match:
+        article_labels = [get_article_labels(article) for article in articles]
+
     # Compute embeddings using existing NoveltyScorer infrastructure
     logger.info(f"Computing embeddings for {len(articles)} articles...")
     scorer = NoveltyScorer()
@@ -338,6 +369,7 @@ def deduplicate_articles(
     # Greedy clustering: keep first article, mark similar ones as duplicates
     keep_indices = []
     seen = set()
+    label_mismatch_preserved = 0  # Track articles kept due to different labels
 
     for i in range(len(articles)):
         if i in seen:
@@ -345,16 +377,25 @@ def deduplicate_articles(
         keep_indices.append(i)
         # Mark all similar articles as duplicates (seen)
         for j in range(i + 1, len(articles)):
-            if j not in seen and sim_matrix[i, j] >= similarity_threshold:
+            if j in seen:
+                continue
+            if sim_matrix[i, j] >= similarity_threshold:
+                # Check label matching if required
+                if require_label_match and article_labels:
+                    if article_labels[i] != article_labels[j]:
+                        # Different labels - not a duplicate, preserve this article
+                        label_mismatch_preserved += 1
+                        continue
                 seen.add(j)
 
     deduplicated = [articles[i] for i in keep_indices]
     duplicates_removed = len(articles) - len(deduplicated)
 
-    if duplicates_removed > 0:
+    if duplicates_removed > 0 or label_mismatch_preserved > 0:
         logger.info(
             f"Deduplication: {len(articles)} -> {len(deduplicated)} articles "
-            f"({duplicates_removed} duplicates removed at threshold {similarity_threshold})"
+            f"({duplicates_removed} duplicates removed at threshold {similarity_threshold}"
+            f"{f', {label_mismatch_preserved} preserved due to different labels' if label_mismatch_preserved else ''})"
         )
 
     return deduplicated, duplicates_removed
@@ -365,6 +406,7 @@ def calculate_brand_scores(
     period_days: int = SCORECARD_PERIOD_DAYS,
     dedupe: bool = True,
     similarity_threshold: float = SCORECARD_SIMILARITY_THRESHOLD,
+    require_label_match: bool = SCORECARD_REQUIRE_LABEL_MATCH,
 ) -> dict[str, Any]:
     """Calculate ESG scores for each brand from recent articles.
 
@@ -375,6 +417,7 @@ def calculate_brand_scores(
         period_days: Number of days to look back for scoring
         dedupe: Whether to deduplicate similar articles before scoring
         similarity_threshold: Cosine similarity threshold for deduplication
+        require_label_match: If True, only dedupe articles with identical labels
 
     Returns:
         dict with:
@@ -407,7 +450,9 @@ def calculate_brand_scores(
     # Deduplicate articles if enabled
     if dedupe and len(recent_articles) > 1:
         recent_articles, duplicates_removed = deduplicate_articles(
-            recent_articles, similarity_threshold=similarity_threshold
+            recent_articles,
+            similarity_threshold=similarity_threshold,
+            require_label_match=require_label_match,
         )
 
     # Initialize scores per brand
@@ -660,6 +705,7 @@ def export_to_json(
     scorecard_period_days: int = SCORECARD_PERIOD_DAYS,
     scorecard_dedupe: bool = True,
     scorecard_similarity_threshold: float = SCORECARD_SIMILARITY_THRESHOLD,
+    scorecard_require_label_match: bool = SCORECARD_REQUIRE_LABEL_MATCH,
 ) -> dict[str, Any]:
     """Export articles to JSON format.
 
@@ -670,6 +716,7 @@ def export_to_json(
         scorecard_period_days: Number of days for scorecard calculation
         scorecard_dedupe: Whether to deduplicate articles for scorecard
         scorecard_similarity_threshold: Cosine similarity threshold for deduplication
+        scorecard_require_label_match: If True, only dedupe articles with identical labels
 
     Returns:
         Dictionary with full JSON structure
@@ -699,6 +746,7 @@ def export_to_json(
             period_days=scorecard_period_days,
             dedupe=scorecard_dedupe,
             similarity_threshold=scorecard_similarity_threshold,
+            require_label_match=scorecard_require_label_match,
         )
 
     result["articles"] = formatted_articles
@@ -933,6 +981,11 @@ def parse_args() -> argparse.Namespace:
         default=SCORECARD_SIMILARITY_THRESHOLD,
         help=f"Cosine similarity threshold for deduplication (default: {SCORECARD_SIMILARITY_THRESHOLD})",
     )
+    parser.add_argument(
+        "--no-label-match",
+        action="store_true",
+        help="Disable label matching for deduplication (only use similarity threshold)",
+    )
     return parser.parse_args()
 
 
@@ -980,6 +1033,7 @@ def main() -> int:
                 scorecard_period_days=args.scorecard_period_days,
                 scorecard_dedupe=not args.no_dedupe,
                 scorecard_similarity_threshold=args.similarity_threshold,
+                scorecard_require_label_match=not args.no_label_match,
             )
 
         if args.format in ("atom", "both"):

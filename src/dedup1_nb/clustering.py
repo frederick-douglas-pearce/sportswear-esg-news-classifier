@@ -9,6 +9,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 def greedy_cosine_clustering(
     embeddings: np.ndarray,
     threshold: float = 0.75,
+    article_labels: Optional[list[frozenset]] = None,
+    require_label_match: bool = False,
 ) -> tuple[list[int], dict]:
     """Greedy clustering based on cosine similarity threshold.
 
@@ -19,6 +21,11 @@ def greedy_cosine_clustering(
     Args:
         embeddings: Embedding matrix (n_articles x embedding_dim)
         threshold: Cosine similarity above which articles are considered duplicates
+        article_labels: Optional list of label sets (frozenset of (brand, category) tuples)
+                       for each article. If provided with require_label_match=True,
+                       articles are only considered duplicates if they have identical labels.
+        require_label_match: If True and article_labels provided, require identical labels
+                            for deduplication (Option A label matching)
 
     Returns:
         Tuple of:
@@ -39,6 +46,7 @@ def greedy_cosine_clustering(
     keep_indices = []
     seen = set()
     cluster_labels = [-1] * n_articles  # -1 means "duplicate of another"
+    label_mismatch_preserved = 0
 
     cluster_id = 0
     for i in range(n_articles):
@@ -51,7 +59,15 @@ def greedy_cosine_clustering(
 
         # Mark all similar articles as duplicates (assign to same cluster)
         for j in range(i + 1, n_articles):
-            if j not in seen and sim_matrix[i, j] >= threshold:
+            if j in seen:
+                continue
+            if sim_matrix[i, j] >= threshold:
+                # Check label matching if required
+                if require_label_match and article_labels:
+                    if article_labels[i] != article_labels[j]:
+                        # Different labels - not a duplicate, preserve this article
+                        label_mismatch_preserved += 1
+                        continue
                 seen.add(j)
                 cluster_labels[j] = cluster_id
 
@@ -65,6 +81,8 @@ def greedy_cosine_clustering(
         "duplicates_removed": duplicates_removed,
         "threshold": threshold,
         "method": "greedy_cosine",
+        "require_label_match": require_label_match,
+        "label_mismatch_preserved": label_mismatch_preserved,
     }
 
     return keep_indices, metadata
