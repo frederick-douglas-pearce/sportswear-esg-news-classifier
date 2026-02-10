@@ -32,7 +32,16 @@ The script will output:
 - Scorecard summary (top/back performers)
 - File paths written
 
-## Step 2: Check for Changes in Website Repo
+## Step 2: Format Files with Prettier
+
+Run prettier to format the exported files (required for GitHub Actions CI):
+
+```bash
+cd /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io && \
+npx prettier --write _data/esg_news.json assets/feeds/esg_news.atom
+```
+
+## Step 3: Check for Changes in Website Repo
 
 ```bash
 cd /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io && \
@@ -41,7 +50,7 @@ git status --short _data/esg_news.json assets/feeds/esg_news.atom
 
 If no changes are shown, inform the user that the feed is already up to date and skip the remaining steps.
 
-## Step 3: Commit Changes
+## Step 4: Commit Changes
 
 If there are changes, commit them:
 
@@ -56,7 +65,7 @@ EOF
 )"
 ```
 
-## Step 4: Push to Remote
+## Step 5: Push to Remote
 
 Push the commit to trigger a GitHub Pages rebuild:
 
@@ -65,7 +74,7 @@ cd /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.g
 git push
 ```
 
-## Step 5: Summary
+## Step 6: Summary
 
 After completing all steps, provide a summary:
 - Number of articles exported
@@ -76,8 +85,8 @@ After completing all steps, provide a summary:
 
 The user may specify optional arguments after `/export-feed`:
 
-- `--dry-run`: Run export without committing (skip steps 3-4)
+- `--dry-run`: Run export without committing (skip steps 4-5)
 - `--no-scorecard`: Export without scorecard calculation
 - `--scorecard-period-days N`: Custom scorecard period (default: 14)
 
-If the user specifies `--dry-run`, only run steps 1-2 and report what would be committed.
+If the user specifies `--dry-run`, only run steps 1-3 and report what would be committed.
