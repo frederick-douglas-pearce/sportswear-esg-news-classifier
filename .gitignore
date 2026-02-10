@@ -64,3 +64,6 @@ mlruns/
 mlruns.db
 logs/agent/
 reports/daily_labeling/
+
+# Claude skills runtime state
+.claude/skills/*/last_run.txt
