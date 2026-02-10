@@ -32,14 +32,16 @@ The script will output:
 - Scorecard summary (top/back performers)
 - File paths written
 
-## Step 2: Format Files with Prettier
+## Step 2: Format JSON with Prettier
 
-Run prettier to format the exported files (required for GitHub Actions CI):
+Run prettier to format the JSON file (required for GitHub Actions CI):
 
 ```bash
 cd /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io && \
-npx prettier --write _data/esg_news.json assets/feeds/esg_news.atom
+npx prettier --write _data/esg_news.json
 ```
+
+Note: The Atom feed (.atom) is not formatted because prettier doesn't have a built-in XML parser. The Atom file format doesn't cause CI issues.
 
 ## Step 3: Check for Changes in Website Repo
 
