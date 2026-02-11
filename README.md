@@ -356,7 +356,7 @@ The project follows a modular architecture:
 | `scripts/` | CLI tools: collection, labeling, training, deployment, monitoring |
 | `notebooks/` | ML classifier development: 6 notebooks (EDA → Tuning → Deployment) |
 | `models/` | Trained models, configs, and version registry |
-| `tests/` | Comprehensive test suite (818 tests) |
+| `tests/` | Comprehensive test suite (884 tests) |
 | `docs/` | Detailed documentation for each subsystem |
 
 📁 See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for complete file listing.
@@ -853,7 +853,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with **818 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, MLOps modules, and agent orchestration.
+The project includes a comprehensive test suite with **884 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, MLOps modules, and agent orchestration.
 
 ```bash
 # Run all tests
