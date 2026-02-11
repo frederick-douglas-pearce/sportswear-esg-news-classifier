@@ -1,5 +1,6 @@
 """Website feed export workflow."""
 
+import json
 import logging
 import subprocess
 from datetime import datetime, timezone
@@ -65,9 +66,72 @@ def export_feeds(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     return export_result
 
 
+def save_scorecard_snapshot(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Save scorecard data to the database for historical tracking.
+
+    This step reads the scorecard from the exported JSON file and saves it
+    to the scorecard_snapshots and scorecard_brand_scores tables.
+    """
+    if context.get("export_skipped"):
+        return {"scorecard_skipped": True, "reason": "export_skipped"}
+
+    if not context.get("export_success"):
+        return {"scorecard_skipped": True, "reason": "export_failed"}
+
+    json_path = context.get("json_output")
+    if not json_path:
+        return {"scorecard_skipped": True, "reason": "no_json_output"}
+
+    dry_run = context.get("dry_run", False)
+    if dry_run:
+        logger.info("Dry run - skipping scorecard database save")
+        return {"scorecard_skipped": True, "reason": "dry_run"}
+
+    # Read the exported JSON to get scorecard data
+    try:
+        with open(json_path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        logger.error(f"Failed to read JSON for scorecard: {e}")
+        return {"scorecard_saved": False, "error": str(e)}
+
+    scorecard_data = data.get("scorecard")
+    if not scorecard_data:
+        logger.warning("No scorecard data found in exported JSON")
+        return {"scorecard_skipped": True, "reason": "no_scorecard_in_json"}
+
+    # Save to database
+    try:
+        from src.data_collection.database import db
+        from src.scorecard.database import scorecard_db
+
+        db.init_db()
+
+        with db.get_session() as session:
+            snapshot = scorecard_db.save_scorecard_snapshot(session, scorecard_data)
+            brand_count = len(scorecard_data.get("all_brand_scores", []))
+
+            logger.info(
+                f"Saved scorecard snapshot: {brand_count} brands, "
+                f"period={scorecard_data['period_start']} to {scorecard_data['period_end']}"
+            )
+
+            return {
+                "scorecard_saved": True,
+                "snapshot_id": str(snapshot.id),
+                "brand_count": brand_count,
+                "period_days": scorecard_data["period_days"],
+                "period_start": scorecard_data["period_start"],
+                "period_end": scorecard_data["period_end"],
+            }
+
+    except Exception as e:
+        logger.error(f"Failed to save scorecard snapshot: {e}")
+        return {"scorecard_saved": False, "error": str(e)}
+
+
 def validate_export(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     """Validate that exported files are valid JSON/XML."""
-    import json
     import xml.etree.ElementTree as ET
 
     if context.get("export_skipped"):
@@ -255,9 +319,10 @@ class WebsiteExportWorkflow(Workflow):
 
     Steps:
     1. Export JSON and Atom feeds
-    2. Validate exported files
-    3. Commit and push to website repository
-    4. Send error notification (only if there was a failure)
+    2. Save scorecard snapshot to database
+    3. Validate exported files
+    4. Commit and push to website repository
+    5. Send error notification (only if there was a failure)
     """
 
     name = "website_export"
@@ -268,6 +333,12 @@ class WebsiteExportWorkflow(Workflow):
             name="export_feeds",
             description="Export JSON and Atom feeds to website repository",
             handler=export_feeds,
+        ),
+        StepDefinition(
+            name="save_scorecard_snapshot",
+            description="Save scorecard data to database for historical tracking",
+            handler=save_scorecard_snapshot,
+            skip_on_dry_run=True,
         ),
         StepDefinition(
             name="validate_export",

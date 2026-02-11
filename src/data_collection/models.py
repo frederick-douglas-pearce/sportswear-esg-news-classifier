@@ -301,3 +301,80 @@ class ClassifierPrediction(Base):
 
     def __repr__(self) -> str:
         return f"<ClassifierPrediction(type={self.classifier_type!r}, action={self.action_taken!r})>"
+
+
+# =============================================================================
+# Scorecard History Models
+# =============================================================================
+
+
+class ScorecardSnapshot(Base):
+    """Daily sustainability scorecard snapshot metadata.
+
+    Stores the settings and article counts for each scorecard calculation.
+    One row per day per period length (e.g., 14-day rolling window).
+    """
+
+    __tablename__ = "scorecard_snapshots"
+    __table_args__ = (
+        Index("ix_scorecard_snapshots_period_day", "period_days", "period_end", unique=True),
+        Index("ix_scorecard_snapshots_period_end", text("period_end DESC")),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    period_days = Column(Integer, nullable=False)
+    period_start = Column(DateTime, nullable=False)
+    period_end = Column(DateTime, nullable=False)
+    articles_in_period = Column(Integer, nullable=False, default=0)
+    articles_after_dedup = Column(Integer, nullable=False, default=0)
+    duplicates_removed = Column(Integer, nullable=False, default=0)
+    similarity_threshold = Column(Float, nullable=False, default=0.70)
+    require_label_match = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    brand_scores = relationship(
+        "ScorecardBrandScore", back_populates="snapshot", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<ScorecardSnapshot(period_end={self.period_end!r}, period_days={self.period_days})>"
+
+
+class ScorecardBrandScore(Base):
+    """Per-brand ESG scores for a scorecard snapshot.
+
+    Stores the category-level and total scores for each brand, along with
+    ranking information (position, top/bottom performer status, medal).
+    """
+
+    __tablename__ = "scorecard_brand_scores"
+    __table_args__ = (
+        Index("ix_scorecard_brand_scores_snapshot_brand", "snapshot_id", "brand", unique=True),
+        Index("ix_scorecard_brand_scores_brand", "brand"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    snapshot_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("scorecard_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    brand = Column(String(100), nullable=False)
+    environmental = Column(Integer, nullable=False, default=0)
+    social = Column(Integer, nullable=False, default=0)
+    governance = Column(Integer, nullable=False, default=0)
+    digital_transformation = Column(Integer, nullable=False, default=0)
+    total = Column(Integer, nullable=False, default=0)
+    article_count = Column(Integer, nullable=False, default=0)
+    rank_position = Column(Integer, nullable=False)
+    is_top_performer = Column(Boolean, nullable=False, default=False)
+    is_bottom_performer = Column(Boolean, nullable=False, default=False)
+    medal = Column(String(10))  # 'gold', 'silver', 'bronze', or NULL
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    snapshot = relationship("ScorecardSnapshot", back_populates="brand_scores")
+
+    def __repr__(self) -> str:
+        return f"<ScorecardBrandScore(brand={self.brand!r}, total={self.total}, rank={self.rank_position})>"
