@@ -29,6 +29,7 @@ The scorecard analyzes ESG news from the last 14 days and assigns points based o
 - **Category Breakdown**: See scores by Environmental (E), Social (S), Governance (G), and Digital Transformation (D)
 - **Deduplication**: Similar articles are automatically detected and deduplicated using sentence embeddings (cosine similarity ≥ 0.85)
 - **Rolling Window**: Scores update automatically based on the most recent 14-day period
+- **Historical Tracking**: Daily snapshots stored in database for trend analysis (see `queries/scorecard_queries.sql`)
 
 ### Example Scorecard
 
@@ -355,7 +356,7 @@ The project follows a modular architecture:
 | `scripts/` | CLI tools: collection, labeling, training, deployment, monitoring |
 | `notebooks/` | ML classifier development: 6 notebooks (EDA → Tuning → Deployment) |
 | `models/` | Trained models, configs, and version registry |
-| `tests/` | Comprehensive test suite (761 tests) |
+| `tests/` | Comprehensive test suite (818 tests) |
 | `docs/` | Detailed documentation for each subsystem |
 
 📁 See [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for complete file listing.
@@ -794,6 +795,8 @@ PostgreSQL with pgvector stores articles, labels, embeddings, and classifier pre
 | `brand_labels` | Per-brand ESG classifications with sentiment |
 | `article_chunks` | Text chunks with embeddings for evidence matching |
 | `classifier_predictions` | ML classifier audit trail |
+| `scorecard_snapshots` | Daily scorecard metadata for historical tracking |
+| `scorecard_brand_scores` | Per-brand scores per snapshot (category scores, rank, medals) |
 
 ### Quick Commands
 
@@ -850,7 +853,7 @@ The classifier will categorize articles into these ESG categories:
 
 ## Testing
 
-The project includes a comprehensive test suite with **761 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, MLOps modules, and agent orchestration.
+The project includes a comprehensive test suite with **818 tests** covering data collection, labeling pipelines, ML deployment, retraining workflows, MLOps modules, and agent orchestration.
 
 ```bash
 # Run all tests
