@@ -140,6 +140,7 @@ See `queries/` folder for comprehensive SQL queries:
 - `labeling_queries.sql` - Labeling progress, brand labels, historical review
 - `article_queries.sql` - Article search, brand analysis, content analysis
 - `evidence_queries.sql` - Evidence matching and chunk analysis
+- `scorecard_queries.sql` - Scorecard history, brand trends, medal tracking
 
 ## Architecture
 
@@ -204,9 +205,14 @@ prompts/labeling/
   - `base.py` - Workflow base class and registry
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
   - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
-  - `website_export.py` - JSON/Atom feed generation with git integration
+  - `website_export.py` - JSON/Atom feed generation + scorecard history storage
   - `model_training.py` - Data export → quality check → pause → comparison → promotion → deploy
 - `__main__.py` - CLI entry point (run, continue, status, list, history)
+
+### Scorecard History (`src/scorecard/`)
+- `database.py` - ScorecardDatabase class for save/query operations
+- Stores daily scorecard snapshots with brand scores for trend analysis
+- Integrated into `website_export` workflow (saves after each export)
 
 ### ML Classifier Notebooks (`notebooks/`)
 
@@ -224,8 +230,8 @@ prompts/labeling/
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 761 tests
-Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_integration
+### Test Suite (`tests/`) - 806 tests
+Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_integration
 
 ### Database Schema
 - **articles**: Article metadata + scraped content + labeling_status
@@ -235,6 +241,8 @@ Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, te
 - **label_evidence**: Supporting excerpts linked to chunks (rerank_score, match_method)
 - **labeling_runs**: Labeling batch tracking
 - **classifier_predictions**: ML classifier predictions audit trail
+- **scorecard_snapshots**: Daily scorecard metadata (period, article counts, dedup settings)
+- **scorecard_brand_scores**: Per-brand scores per snapshot (category scores, rank, medals)
 
 ### Environment Variables
 ```
@@ -367,6 +375,32 @@ Similar news stories from different sources are deduplicated before scoring usin
 - `_sass/_esg_news.scss` - Scorecard and filter styling
 
 ## Labeling Pipeline Changelog
+
+### 2026-02-11: Scorecard History Storage
+
+Added database storage for daily scorecard snapshots, enabling historical trend analysis and brand performance tracking over time.
+
+**New tables:**
+- `scorecard_snapshots` - Daily snapshot metadata (period, article counts, dedup settings)
+- `scorecard_brand_scores` - Per-brand scores with category breakdown, rank, and medals
+
+**New module:** `src/scorecard/`
+- `ScorecardDatabase` class with methods for saving and querying scorecard history
+- Query methods: `get_brand_score_history()`, `get_medal_history()`, `get_deduplication_stats()`
+
+**Integration:**
+- `website_export` workflow now saves scorecard to database after each export
+- Step is skipped in dry-run mode
+- Uses upsert semantics (safe to re-run on same day)
+
+**Key design decisions:**
+- Only brands with labeled articles during the period are stored (not all 50 tracked brands)
+- Full brand coverage analysis can be achieved by joining with `brand_labels` table
+- All category scores stored (E, S, G, D) plus total, rank, and medal status
+
+**Migration:** `psql $DATABASE_URL -f migrations/006_scorecard_history.sql`
+
+**Query examples:** See `queries/scorecard_queries.sql` for trend analysis, medal history, etc.
 
 ### 2026-01-27: Domain Blacklist for Data Collection
 
