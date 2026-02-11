@@ -92,55 +92,11 @@ uv run python -m src.agent history                 # Show workflow history
 ./scripts/setup_cron.sh status                     # Check cron status
 ```
 
-## Data Collection Status Reporting
+## Status Reporting & SQL Queries
 
-When the user asks about data collection progress, run:
+For collection/labeling status reporting, see [docs/COLLECTION.md](docs/COLLECTION.md#status-reporting).
 
-```python
-uv run python -c "
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-engine = create_engine(os.getenv('DATABASE_URL'))
-
-with engine.connect() as conn:
-    print('=' * 60)
-    print('DATA COLLECTION STATUS REPORT')
-    print('=' * 60)
-
-    result = conn.execute(text('''
-        SELECT COUNT(*) as runs, SUM(articles_fetched) as fetched,
-               SUM(articles_scraped) as scraped, SUM(articles_scrape_failed) as failed
-        FROM collection_runs WHERE started_at >= NOW() - INTERVAL '7 days'
-    '''))
-    row = result.fetchone()
-    print(f'Last 7 days: {row.runs} runs, {row.fetched} fetched, {row.scraped} scraped, {row.failed} failed')
-
-    print('\nLABELING STATUS')
-    total = conn.execute(text('SELECT COUNT(*) FROM articles')).scalar()
-    for status in ['labeled', 'false_positive', 'skipped', 'pending', 'unlabelable']:
-        count = conn.execute(text(f\"SELECT COUNT(*) FROM articles WHERE labeling_status = '{status}'\")).scalar()
-        print(f'  {status:<16} {count:>6} ({count/total*100:.1f}%)')
-    print(f'  TOTAL           {total:>6}')
-"
-```
-
-### Labeling Status Definitions
-- **labeled**: Successfully processed by LLM with ESG categories assigned
-- **false_positive**: Brand name matched but article is not about sportswear
-- **skipped**: Deliberately skipped (insufficient content, duplicate, etc.)
-- **pending**: Awaiting labeling (scraped successfully, ready to process)
-- **unlabelable**: Cannot be labeled (scrape failed, paywall, anti-bot, non-English)
-
-### SQL Queries
-See `queries/` folder for comprehensive SQL queries:
-- `collection_queries.sql` - Collection runs, scrape errors, diagnostics
-- `labeling_queries.sql` - Labeling progress, brand labels, historical review
-- `article_queries.sql` - Article search, brand analysis, content analysis
-- `evidence_queries.sql` - Evidence matching and chunk analysis
-- `scorecard_queries.sql` - Scorecard history, brand trends, medal tracking
+SQL query examples in `queries/` folder: `collection_queries.sql`, `labeling_queries.sql`, `article_queries.sql`, `evidence_queries.sql`, `scorecard_queries.sql`
 
 ## Architecture
 
@@ -374,151 +330,14 @@ Similar news stories from different sources are deduplicated before scoring usin
 - `assets/js/esg_news_filter.js` - Client-side filtering
 - `_sass/_esg_news.scss` - Scorecard and filter styling
 
-## Labeling Pipeline Changelog
+## Changelog
 
-### 2026-02-11: Scorecard History Storage
+For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
-Added database storage for daily scorecard snapshots, enabling historical trend analysis and brand performance tracking over time.
+**Recent changes:**
+- **2026-02-11**: Scorecard history storage - daily snapshots saved to `scorecard_snapshots` and `scorecard_brand_scores` tables
+- **2026-01-27**: Domain blacklist for data collection - block low-quality sources via `BLOCKED_DOMAINS`
+- **2026-01-26**: Sustainability scorecard for website - brand ranking with deduplication
+- **2026-01-20**: Cross-encoder reranking for evidence quality
 
-**New tables:**
-- `scorecard_snapshots` - Daily snapshot metadata (period, article counts, dedup settings)
-- `scorecard_brand_scores` - Per-brand scores with category breakdown, rank, and medals
-
-**New module:** `src/scorecard/`
-- `ScorecardDatabase` class with methods for saving and querying scorecard history
-- Query methods: `get_brand_score_history()`, `get_medal_history()`, `get_deduplication_stats()`
-
-**Integration:**
-- `website_export` workflow now saves scorecard to database after each export
-- Step is skipped in dry-run mode
-- Uses upsert semantics (safe to re-run on same day)
-
-**Key design decisions:**
-- Only brands with labeled articles during the period are stored (not all 50 tracked brands)
-- Full brand coverage analysis can be achieved by joining with `brand_labels` table
-- All category scores stored (E, S, G, D) plus total, rank, and medal status
-
-**Migration:** `psql $DATABASE_URL -f migrations/006_scorecard_history.sql`
-
-**Query examples:** See `queries/scorecard_queries.sql` for trend analysis, medal history, etc.
-
-### 2026-01-27: Domain Blacklist for Data Collection
-
-Added ability to block low-quality news sources from data collection.
-
-**New features:**
-- `BLOCKED_DOMAINS` list in `src/data_collection/config.py`
-- `is_blocked_domain()` helper function in `collector.py`
-- Articles from blocked domains filtered during API collection
-- `articles_blocked_domain` stat tracked in `CollectionStats`
-
-**Initial blocklist:** `openpr.com` (AI-generated market reports with no real journalism)
-
-**To add a blocked domain:** Edit `BLOCKED_DOMAINS` in `src/data_collection/config.py`
-
-### 2026-01-26: Sustainability Scorecard for Website
-
-Added a "Sportswear Sustainability Scorecard" to the ESG news website, ranking brands based on recent news sentiment.
-
-**New features:**
-- Scorecard calculation in `scripts/export_website_feed.py`
-- Article deduplication using sentence embeddings (all-MiniLM-L6-v2)
-- Top 3 performers (positive scores only) with medal badges
-- Back 3 performers (negative scores only)
-- Category breakdown per brand (E, S, G, D)
-- Date range filter on website (7/14/30 days, All, custom)
-
-**Scoring:** Positive=+2 pts, Neutral=+1 pt, Negative=-1 pt
-
-**CLI options:**
-- `--no-scorecard` - Skip scorecard generation
-- `--scorecard-period-days N` - Custom period (default: 14)
-- `--no-dedupe` - Disable article deduplication
-- `--similarity-threshold N` - Custom similarity threshold (default: 0.75)
-
-**Website files:**
-- `_pages/esg-news.md` - Updated with scorecard section and date filter
-- `assets/js/esg_news_filter.js` - Date filtering logic
-- `_sass/_esg_news.scss` - Scorecard styling
-
-### 2026-01-16: Expanded Stock Article Classification Guidelines
-
-Clarified criteria for distinguishing between `false_positive` (pure metrics) and `skipped` (substantive content) for stock/finance articles. This matters because FP classifier bypasses LLM - articles incorrectly marked `false_positive` are permanently excluded from future labeling.
-
-**Substantive Content Indicators (→ `skipped`, send to LLM):**
-- Named analyst firms with specific ratings (e.g., "Citigroup reiterates neutral", "BNP Paribas upgrades to hold")
-- Consensus rating breakdowns (e.g., "1 Buy, 5 Hold, 1 Sell")
-- Earnings results with context or CEO commentary
-- Hedge fund/institutional investor activity with specifics (e.g., "GAMMA Investing grew position by 30%")
-- Price targets from analysts
-- Any editorial analysis or reasoning about the company
-
-**Raw Metrics Only (→ `false_positive`, skip LLM):**
-- Just stock price, PE ratio, moving averages
-- Short interest numbers without analyst context
-- Boilerplate company descriptions (template text)
-- Pure ticker data (e.g., "NKE $78.50 +2.3%")
-
-| Article Type | Example | Has Substantive Content? | Label |
-|-------------|---------|-------------------------|-------|
-| Raw metrics | "NKE stock up 4% today, 50-day MA $94.67" | ❌ No | `false_positive` |
-| Short interest only | "ANTA short interest up 535%, ratio 0.8 days" | ❌ No | `false_positive` |
-| Analyst ratings | "Citigroup neutral, BNP upgrades to hold, consensus: Hold" | ✅ Yes | `skipped` |
-| Hedge fund activity | "GAMMA Investing grew position by 30.1% to $161K" | ✅ Yes | `skipped` |
-| Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | ✅ Yes | `skipped` |
-| Analyst with targets | "Deutsche Bank reiterates buy, $146 target" | ✅ Yes | `skipped` |
-
-**FP Classifier Limitation:** The FP classifier may underweight less common brands (Anta, Puma, Xtep) compared to Nike/Adidas/Lululemon. Review FP classifier predictions for these brands during labeling audits.
-
-### 2026-01-14: Clarified is_sportswear_brand Policy for Stock Articles
-
-`is_sportswear_brand` is about **substantive content**, not just identity:
-- `true` → Article has substantive content (products, business news, strategy, analyst commentary with reasoning)
-- `false` → Brand refers to something else OR pure stock metrics only (no substantive content)
-
-**Finance Category Test:** Would this be useful with a "Finance" category? YES → `is_sportswear_brand: true`. Just raw Yahoo Finance metrics → `false`.
-
-| Article | Substantive? | Label |
-|---------|-------------|-------|
-| "NKE stock up 4% today" | No | `false_positive` |
-| "Jim Cramer says Nike CEO is reinventing the company" | Yes | `skipped` |
-| "Nike shares surge after CEO announces restructuring" | Yes | `skipped` |
-
-### 2026-01-20: Cross-Encoder Reranking for Evidence Quality
-
-Integrated cross-encoder reranking (`cross-encoder/ms-marco-MiniLM-L-6-v2`) to improve evidence matching quality. The reranker jointly encodes (excerpt, chunk) pairs for more accurate relevance scoring than bi-encoder embeddings.
-
-**New features:**
-- `src/labeling/reranker.py` - CrossEncoderReranker class with lazy model loading
-- `rerank_score` and `match_method` columns in `label_evidence` table
-- Website export sorts evidence by `rerank_score` (falling back to `relevance_score`)
-- Configurable top-N evidence per category in export (`--top-n-evidence`)
-- Backfill script for existing articles: `scripts/backfill_rerank_scores.py`
-
-**Configuration:**
-- `RERANK_ENABLED=true` (default) - Enable/disable reranking
-- `RERANK_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2` - Model to use
-- `RERANK_TOP_K=10` - Candidates to rerank per excerpt
-- `RERANK_WEIGHT=0.6` - Weight for combined score: `(1-w)*initial + w*rerank`
-
-**Migration:** `psql $DATABASE_URL -f migrations/004_rerank_scores.sql`
-
-### 2025-12-29: MLOps Improvements
-
-Added `src/mlops/` module: MLflow tracking, Evidently drift detection, webhook alerts, daily monitoring cron job.
-
-### 2025-12-29: FP Classifier Batch API
-
-Optimized to batch API calls (N articles → 1 call). Fixed Docker deployment issues.
-
-### 2025-12-28: FP Classifier Pre-filter Integration
-
-FP classifier as optional pre-filter: articles with probability < threshold marked `false_positive`, skip LLM.
-- `FP_CLASSIFIER_ENABLED=true`, `FP_SKIP_LLM_THRESHOLD=0.5`
-- Migration: `psql $DATABASE_URL -f migrations/002_classifier_predictions.sql`
-
-### 2025-12-26: Added skipped_at Timestamp & Tangential Brand Mention Guidance
-
-Added `skipped_at` column for tracking. Updated prompts to identify false positives for tangential brand mentions (biographical, stock-only, incidental references).
-
-Migration: `ALTER TABLE articles ADD COLUMN skipped_at TIMESTAMP WITH TIME ZONE;`
+**Stock article classification guidelines:** See [docs/LABELING.md#stock-article-classification](docs/LABELING.md#stock-article-classification)

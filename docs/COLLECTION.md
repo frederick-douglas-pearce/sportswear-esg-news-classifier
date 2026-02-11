@@ -141,3 +141,57 @@ uv run python scripts/collect_news.py --scrape-only --scrape-limit 50
 | `--start-date DATE` | GDELT only: start date for historical collection (YYYY-MM-DD) | - |
 | `--end-date DATE` | GDELT only: end date for historical collection (YYYY-MM-DD) | - |
 | `-v, --verbose` | Enable verbose/debug logging | False |
+
+## Status Reporting
+
+To check collection and labeling progress:
+
+```bash
+uv run python -c "
+from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+engine = create_engine(os.getenv('DATABASE_URL'))
+
+with engine.connect() as conn:
+    print('=' * 60)
+    print('DATA COLLECTION STATUS REPORT')
+    print('=' * 60)
+
+    result = conn.execute(text('''
+        SELECT COUNT(*) as runs, SUM(articles_fetched) as fetched,
+               SUM(articles_scraped) as scraped, SUM(articles_scrape_failed) as failed
+        FROM collection_runs WHERE started_at >= NOW() - INTERVAL '7 days'
+    '''))
+    row = result.fetchone()
+    print(f'Last 7 days: {row.runs} runs, {row.fetched} fetched, {row.scraped} scraped, {row.failed} failed')
+
+    print('\nLABELING STATUS')
+    total = conn.execute(text('SELECT COUNT(*) FROM articles')).scalar()
+    for status in ['labeled', 'false_positive', 'skipped', 'pending', 'unlabelable']:
+        count = conn.execute(text(f\"SELECT COUNT(*) FROM articles WHERE labeling_status = '{status}'\")).scalar()
+        print(f'  {status:<16} {count:>6} ({count/total*100:.1f}%)')
+    print(f'  TOTAL           {total:>6}')
+"
+```
+
+### Labeling Status Definitions
+
+| Status | Description |
+|--------|-------------|
+| `labeled` | Successfully processed by LLM with ESG categories assigned |
+| `false_positive` | Brand name matched but article is not about sportswear |
+| `skipped` | Deliberately skipped (insufficient content, duplicate, etc.) |
+| `pending` | Awaiting labeling (scraped successfully, ready to process) |
+| `unlabelable` | Cannot be labeled (scrape failed, paywall, anti-bot, non-English) |
+
+### SQL Queries
+
+See `queries/` folder for comprehensive SQL queries:
+- `collection_queries.sql` - Collection runs, scrape errors, diagnostics
+- `labeling_queries.sql` - Labeling progress, brand labels, historical review
+- `article_queries.sql` - Article search, brand analysis, content analysis
+- `evidence_queries.sql` - Evidence matching and chunk analysis
+- `scorecard_queries.sql` - Scorecard history, brand trends, medal tracking

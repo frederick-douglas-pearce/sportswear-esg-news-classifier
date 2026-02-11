@@ -135,3 +135,46 @@ The project is designed to train three progressively complex classifiers that ca
 - **Output**: Multi-label (Environmental, Social, Governance, Digital Transformation) with ternary sentiment (-1, 0, +1)
 - **Training Data**: 554 records from `--dataset esg-labels` export
 - **Impact**: Replace Claude API calls entirely for high-confidence predictions
+
+## Stock Article Classification
+
+Guidelines for distinguishing between `false_positive` (pure metrics) and `skipped` (substantive content) for stock/finance articles. This matters because the FP classifier bypasses LLM - articles incorrectly marked `false_positive` are permanently excluded from future labeling.
+
+### Substantive Content Indicators (→ `skipped`, send to LLM)
+
+- Named analyst firms with specific ratings (e.g., "Citigroup reiterates neutral", "BNP Paribas upgrades to hold")
+- Consensus rating breakdowns (e.g., "1 Buy, 5 Hold, 1 Sell")
+- Earnings results with context or CEO commentary
+- Hedge fund/institutional investor activity with specifics (e.g., "GAMMA Investing grew position by 30%")
+- Price targets from analysts
+- Any editorial analysis or reasoning about the company
+
+### Raw Metrics Only (→ `false_positive`, skip LLM)
+
+- Just stock price, PE ratio, moving averages
+- Short interest numbers without analyst context
+- Boilerplate company descriptions (template text)
+- Pure ticker data (e.g., "NKE $78.50 +2.3%")
+
+### Classification Examples
+
+| Article Type | Example | Has Substantive Content? | Label |
+|-------------|---------|-------------------------|-------|
+| Raw metrics | "NKE stock up 4% today, 50-day MA $94.67" | ❌ No | `false_positive` |
+| Short interest only | "ANTA short interest up 535%, ratio 0.8 days" | ❌ No | `false_positive` |
+| Analyst ratings | "Citigroup neutral, BNP upgrades to hold, consensus: Hold" | ✅ Yes | `skipped` |
+| Hedge fund activity | "GAMMA Investing grew position by 30.1% to $161K" | ✅ Yes | `skipped` |
+| Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | ✅ Yes | `skipped` |
+| Analyst with targets | "Deutsche Bank reiterates buy, $146 target" | ✅ Yes | `skipped` |
+
+### is_sportswear_brand Policy
+
+`is_sportswear_brand` is about **substantive content**, not just identity:
+- `true` → Article has substantive content (products, business news, strategy, analyst commentary with reasoning)
+- `false` → Brand refers to something else OR pure stock metrics only (no substantive content)
+
+**Finance Category Test:** Would this be useful with a "Finance" category? YES → `is_sportswear_brand: true`. Just raw Yahoo Finance metrics → `false`.
+
+### FP Classifier Limitation
+
+The FP classifier may underweight less common brands (Anta, Puma, Xtep) compared to Nike/Adidas/Lululemon. Review FP classifier predictions for these brands during labeling audits.
