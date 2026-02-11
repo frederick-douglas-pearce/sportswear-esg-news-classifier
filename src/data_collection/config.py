@@ -34,6 +34,14 @@ class Settings(BaseModel):
         default_factory=lambda: Path(__file__).parent.parent.parent
     )
 
+    # Deduplication settings for scorecard
+    dedup_similarity_threshold: float = Field(
+        default_factory=lambda: float(os.getenv("DEDUP_SIMILARITY_THRESHOLD", "0.56"))
+    )
+    dedup_require_label_match: bool = Field(
+        default_factory=lambda: os.getenv("DEDUP_REQUIRE_LABEL_MATCH", "true").lower() == "true"
+    )
+
     model_config = ConfigDict(frozen=True)
 
 

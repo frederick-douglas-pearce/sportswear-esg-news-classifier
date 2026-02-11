@@ -9,6 +9,7 @@ from sqlalchemy import and_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from src.data_collection.config import settings
 from src.data_collection.database import Database, db
 from src.data_collection.models import ScorecardBrandScore, ScorecardSnapshot
 
@@ -54,7 +55,9 @@ class ScorecardDatabase:
         period_days = scorecard_data["period_days"]
 
         # Extract settings (use defaults if not present)
-        similarity_threshold = scorecard_data.get("similarity_threshold", 0.70)
+        similarity_threshold = scorecard_data.get(
+            "similarity_threshold", settings.dedup_similarity_threshold
+        )
         require_label_match = scorecard_data.get("require_label_match", True)
 
         # Check for existing snapshot

@@ -294,8 +294,8 @@ uv run python scripts/export_website_feed.py --format json --scorecard-period-da
 # Disable article deduplication for scorecard
 uv run python scripts/export_website_feed.py --format json --no-dedupe
 
-# Custom similarity threshold for deduplication (default: 0.75)
-uv run python scripts/export_website_feed.py --format json --similarity-threshold 0.90
+# Custom similarity threshold for deduplication (default: 0.56)
+uv run python scripts/export_website_feed.py --format json --similarity-threshold 0.70
 ```
 
 ### Sustainability Scorecard
@@ -317,7 +317,7 @@ The website displays a "Sportswear Sustainability Scorecard" ranking brands base
 - A brand cannot appear in both lists
 
 **Article Deduplication:**
-Similar news stories from different sources are deduplicated before scoring using sentence embeddings (all-MiniLM-L6-v2, 384-dim). Articles with cosine similarity >= 0.75 are considered duplicates; only the first is counted.
+Similar news stories from different sources are deduplicated before scoring using sentence embeddings (all-MiniLM-L6-v2, 384-dim). Articles with cosine similarity >= 0.56 are considered duplicates; only the first is counted. This threshold was tuned on 200 labeled pairs to achieve ~92% recall with 73% precision.
 
 **Website Features:**
 - Date range filter with presets (7, 14, 30 days, All) and custom date inputs

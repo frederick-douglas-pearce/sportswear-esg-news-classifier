@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from src.data_collection.config import settings
 from src.data_collection.database import Database
 from src.data_collection.models import Base, ScorecardBrandScore, ScorecardSnapshot
 from src.scorecard.database import ScorecardDatabase
@@ -63,7 +64,7 @@ def sample_scorecard_data():
         "articles_in_period": 100,
         "articles_after_dedup": 85,
         "duplicates_removed": 15,
-        "similarity_threshold": 0.70,
+        "similarity_threshold": settings.dedup_similarity_threshold,
         "require_label_match": True,
         "top_brands": [
             {
@@ -181,7 +182,7 @@ class TestSaveScorecard:
             assert snapshot.articles_in_period == 100
             assert snapshot.articles_after_dedup == 85
             assert snapshot.duplicates_removed == 15
-            assert snapshot.similarity_threshold == 0.70
+            assert snapshot.similarity_threshold == settings.dedup_similarity_threshold
             assert snapshot.require_label_match is True
 
             # Capture id before session closes

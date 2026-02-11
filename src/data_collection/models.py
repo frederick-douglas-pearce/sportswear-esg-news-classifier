@@ -328,7 +328,7 @@ class ScorecardSnapshot(Base):
     articles_in_period = Column(Integer, nullable=False, default=0)
     articles_after_dedup = Column(Integer, nullable=False, default=0)
     duplicates_removed = Column(Integer, nullable=False, default=0)
-    similarity_threshold = Column(Float, nullable=False, default=0.70)
+    similarity_threshold = Column(Float, nullable=False, default=0.56)
     require_label_match = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

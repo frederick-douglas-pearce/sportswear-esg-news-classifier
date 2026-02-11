@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy.orm import joinedload
 
+from src.data_collection.config import settings
 from src.data_collection.database import db
 from src.data_collection.models import Article, ArticleChunk, BrandLabel, LabelEvidence
 from src.labeling.evidence_matcher import _get_confidence_label
@@ -284,8 +285,9 @@ def sanitize_text(text: str | None) -> str | None:
 SCORECARD_PERIOD_DAYS = 14
 SCORECARD_TOP_N = 3
 SCORECARD_BOTTOM_N = 3
-SCORECARD_SIMILARITY_THRESHOLD = 0.70  # Articles with similarity >= this are considered duplicates
-SCORECARD_REQUIRE_LABEL_MATCH = True  # Require identical ESG labels for deduplication
+# Deduplication settings loaded from central config (can be overridden via env vars)
+SCORECARD_SIMILARITY_THRESHOLD = settings.dedup_similarity_threshold
+SCORECARD_REQUIRE_LABEL_MATCH = settings.dedup_require_label_match
 
 # Sentiment to points mapping: positive=+2, neutral=+1, negative=-1
 SENTIMENT_POINTS = {1: 2, 0: 1, -1: -1}
