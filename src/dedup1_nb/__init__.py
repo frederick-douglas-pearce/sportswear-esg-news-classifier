@@ -24,6 +24,9 @@ from src.dedup1_nb.evaluation import (
     threshold_sweep,
     split_validation_pairs,
     find_optimal_threshold_with_recall_constraint,
+    score_pairs_with_cross_encoder,
+    evaluate_cross_encoder_dedup,
+    cross_encoder_threshold_sweep,
 )
 from src.dedup1_nb.visualization import (
     plot_threshold_analysis,
@@ -55,6 +58,9 @@ __all__ = [
     "threshold_sweep",
     "split_validation_pairs",
     "find_optimal_threshold_with_recall_constraint",
+    "score_pairs_with_cross_encoder",
+    "evaluate_cross_encoder_dedup",
+    "cross_encoder_threshold_sweep",
     # Visualization
     "plot_threshold_analysis",
     "plot_embedding_space",

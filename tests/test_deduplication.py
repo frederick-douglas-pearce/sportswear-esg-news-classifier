@@ -609,3 +609,144 @@ class TestClusteringFactory:
 
         with pytest.raises(ValueError, match="Unknown clustering method"):
             get_clustering_method("unknown-method")
+
+
+class TestCrossEncoderEvaluation:
+    """Tests for cross-encoder evaluation functions."""
+
+    def test_evaluate_cross_encoder_dedup_perfect_scores(self):
+        """Should correctly evaluate when cross-encoder perfectly predicts duplicates."""
+        from src.dedup1_nb.evaluation import evaluate_cross_encoder_dedup
+
+        # High scores for duplicates, low scores for non-duplicates
+        pairs = [
+            {"cross_encoder_score": 0.9, "is_duplicate": True},
+            {"cross_encoder_score": 0.8, "is_duplicate": True},
+            {"cross_encoder_score": 0.2, "is_duplicate": False},
+            {"cross_encoder_score": 0.1, "is_duplicate": False},
+        ]
+
+        result = evaluate_cross_encoder_dedup(pairs, threshold=0.5)
+
+        assert result["precision"] == 1.0
+        assert result["recall"] == 1.0
+        assert result["f1"] == 1.0
+        assert result["true_positives"] == 2
+        assert result["true_negatives"] == 2
+        assert result["false_positives"] == 0
+        assert result["false_negatives"] == 0
+
+    def test_evaluate_cross_encoder_dedup_with_errors(self):
+        """Should correctly count false positives and negatives."""
+        from src.dedup1_nb.evaluation import evaluate_cross_encoder_dedup
+
+        pairs = [
+            {"cross_encoder_score": 0.9, "is_duplicate": True},   # TP
+            {"cross_encoder_score": 0.3, "is_duplicate": True},   # FN (score < threshold)
+            {"cross_encoder_score": 0.7, "is_duplicate": False},  # FP (score >= threshold)
+            {"cross_encoder_score": 0.2, "is_duplicate": False},  # TN
+        ]
+
+        result = evaluate_cross_encoder_dedup(pairs, threshold=0.5)
+
+        assert result["true_positives"] == 1
+        assert result["false_negatives"] == 1
+        assert result["false_positives"] == 1
+        assert result["true_negatives"] == 1
+        assert result["precision"] == 0.5  # 1 TP / (1 TP + 1 FP)
+        assert result["recall"] == 0.5  # 1 TP / (1 TP + 1 FN)
+
+    def test_evaluate_cross_encoder_dedup_skips_missing_data(self):
+        """Should skip pairs with missing scores or labels."""
+        from src.dedup1_nb.evaluation import evaluate_cross_encoder_dedup
+
+        pairs = [
+            {"cross_encoder_score": 0.9, "is_duplicate": True},
+            {"cross_encoder_score": None, "is_duplicate": True},  # Missing score
+            {"cross_encoder_score": 0.8, "is_duplicate": None},   # Missing label
+            {"cross_encoder_score": 0.2, "is_duplicate": False},
+        ]
+
+        result = evaluate_cross_encoder_dedup(pairs, threshold=0.5)
+
+        # Only 2 pairs should be evaluated
+        assert result["evaluated_pairs"] == 2
+
+    def test_cross_encoder_threshold_sweep(self):
+        """Should return results for all thresholds."""
+        from src.dedup1_nb.evaluation import cross_encoder_threshold_sweep
+
+        pairs = [
+            {"cross_encoder_score": 0.9, "is_duplicate": True},
+            {"cross_encoder_score": 0.7, "is_duplicate": True},
+            {"cross_encoder_score": 0.5, "is_duplicate": False},
+            {"cross_encoder_score": 0.3, "is_duplicate": False},
+        ]
+
+        results = cross_encoder_threshold_sweep(
+            pairs,
+            thresholds=[0.4, 0.6, 0.8],
+        )
+
+        assert len(results) == 3
+        assert all("threshold" in r for r in results)
+        assert all("precision" in r for r in results)
+        assert all("recall" in r for r in results)
+        assert all("f1" in r for r in results)
+
+    def test_score_pairs_with_cross_encoder_mocked(self):
+        """Should score pairs using cross-encoder (mocked)."""
+        from src.dedup1_nb.evaluation import score_pairs_with_cross_encoder
+
+        pairs = [
+            {"article_id_1": "a1", "article_id_2": "a2"},
+            {"article_id_1": "a2", "article_id_2": "a3"},
+        ]
+        texts = ["Article one text", "Article two text", "Article three text"]
+        article_ids = ["a1", "a2", "a3"]
+
+        # Mock the CrossEncoder at the sentence_transformers module level
+        with patch("sentence_transformers.CrossEncoder") as mock_ce:
+            mock_model = MagicMock()
+            mock_model.predict.return_value = [2.0, -1.0]  # Raw logits
+            mock_ce.return_value = mock_model
+
+            result = score_pairs_with_cross_encoder(
+                pairs, texts, article_ids,
+                model_name="test-model",
+                show_progress=False,
+            )
+
+        assert len(result) == 2
+        assert "cross_encoder_score" in result[0]
+        assert "cross_encoder_score" in result[1]
+        # Scores should be sigmoid-normalized (0-1)
+        assert 0 <= result[0]["cross_encoder_score"] <= 1
+        assert 0 <= result[1]["cross_encoder_score"] <= 1
+
+    def test_score_pairs_skips_invalid_article_ids(self):
+        """Should skip pairs with invalid article IDs."""
+        from src.dedup1_nb.evaluation import score_pairs_with_cross_encoder
+
+        pairs = [
+            {"article_id_1": "a1", "article_id_2": "invalid"},  # Invalid ID
+            {"article_id_1": "a1", "article_id_2": "a2"},       # Valid
+        ]
+        texts = ["Article one", "Article two"]
+        article_ids = ["a1", "a2"]
+
+        with patch("sentence_transformers.CrossEncoder") as mock_ce:
+            mock_model = MagicMock()
+            mock_model.predict.return_value = [1.5]  # Only one valid pair
+            mock_ce.return_value = mock_model
+
+            result = score_pairs_with_cross_encoder(
+                pairs, texts, article_ids,
+                model_name="test-model",
+                show_progress=False,
+            )
+
+        # First pair should have None score (invalid ID)
+        assert result[0]["cross_encoder_score"] is None
+        # Second pair should have a score
+        assert result[1]["cross_encoder_score"] is not None

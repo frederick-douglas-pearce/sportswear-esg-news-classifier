@@ -453,3 +453,179 @@ def threshold_sweep(
         results.append(result)
 
     return results
+
+
+def score_pairs_with_cross_encoder(
+    pairs: list[dict],
+    texts: list[str],
+    article_ids: list[str],
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    show_progress: bool = True,
+) -> list[dict]:
+    """Score article pairs using a cross-encoder model.
+
+    Cross-encoders jointly encode both texts and produce a relevance/similarity
+    score, which can be more accurate than bi-encoder cosine similarity for
+    determining if articles are duplicates.
+
+    Args:
+        pairs: List of pair dicts with 'article_id_1', 'article_id_2'
+        texts: List of text representations for each article
+        article_ids: List of article IDs matching texts order
+        model_name: HuggingFace cross-encoder model name
+        show_progress: Whether to show progress bar
+
+    Returns:
+        List of pair dicts with added 'cross_encoder_score' field
+    """
+    from sentence_transformers import CrossEncoder
+
+    # Build article_id to index mapping
+    id_to_idx = {aid: i for i, aid in enumerate(article_ids)}
+
+    # Load cross-encoder
+    print(f"Loading cross-encoder: {model_name}")
+    cross_encoder = CrossEncoder(model_name)
+
+    # Prepare pairs for scoring
+    text_pairs = []
+    valid_pair_indices = []
+
+    for i, pair in enumerate(pairs):
+        aid1 = pair.get("article_id_1")
+        aid2 = pair.get("article_id_2")
+
+        if aid1 in id_to_idx and aid2 in id_to_idx:
+            idx1 = id_to_idx[aid1]
+            idx2 = id_to_idx[aid2]
+            text_pairs.append((texts[idx1], texts[idx2]))
+            valid_pair_indices.append(i)
+
+    print(f"Scoring {len(text_pairs)} pairs...")
+
+    # Score all pairs
+    if text_pairs:
+        raw_scores = cross_encoder.predict(
+            text_pairs,
+            show_progress_bar=show_progress,
+        )
+
+        # Normalize scores to 0-1 using sigmoid (ms-marco outputs logits)
+        import math
+
+        def sigmoid(x: float) -> float:
+            try:
+                return 1 / (1 + math.exp(-x))
+            except OverflowError:
+                return 0.0 if x < 0 else 1.0
+
+        normalized_scores = [sigmoid(float(s)) for s in raw_scores]
+    else:
+        normalized_scores = []
+
+    # Add scores to pairs
+    result_pairs = []
+    score_idx = 0
+
+    for i, pair in enumerate(pairs):
+        pair_copy = pair.copy()
+        if i in valid_pair_indices:
+            pair_copy["cross_encoder_score"] = normalized_scores[score_idx]
+            score_idx += 1
+        else:
+            pair_copy["cross_encoder_score"] = None
+        result_pairs.append(pair_copy)
+
+    return result_pairs
+
+
+def evaluate_cross_encoder_dedup(
+    scored_pairs: list[dict],
+    threshold: float = 0.5,
+    score_key: str = "cross_encoder_score",
+) -> dict:
+    """Evaluate cross-encoder scores against human duplicate labels.
+
+    Args:
+        scored_pairs: List of pairs with cross_encoder_score and is_duplicate
+        threshold: Score threshold for predicting duplicate (default 0.5)
+        score_key: Key for the score field to evaluate
+
+    Returns:
+        Dict with precision, recall, f1, and confusion matrix
+    """
+    true_positives = 0
+    false_positives = 0
+    true_negatives = 0
+    false_negatives = 0
+    evaluated = 0
+
+    for pair in scored_pairs:
+        score = pair.get(score_key)
+        is_duplicate = pair.get("is_duplicate")
+
+        if score is None or is_duplicate is None:
+            continue
+
+        evaluated += 1
+        predicted_duplicate = score >= threshold
+
+        if is_duplicate and predicted_duplicate:
+            true_positives += 1
+        elif is_duplicate and not predicted_duplicate:
+            false_negatives += 1
+        elif not is_duplicate and predicted_duplicate:
+            false_positives += 1
+        else:
+            true_negatives += 1
+
+    # Calculate metrics
+    precision = (
+        true_positives / (true_positives + false_positives)
+        if (true_positives + false_positives) > 0
+        else 0.0
+    )
+    recall = (
+        true_positives / (true_positives + false_negatives)
+        if (true_positives + false_negatives) > 0
+        else 0.0
+    )
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    return {
+        "threshold": threshold,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "true_positives": true_positives,
+        "false_positives": false_positives,
+        "true_negatives": true_negatives,
+        "false_negatives": false_negatives,
+        "evaluated_pairs": evaluated,
+    }
+
+
+def cross_encoder_threshold_sweep(
+    scored_pairs: list[dict],
+    thresholds: Optional[list[float]] = None,
+    score_key: str = "cross_encoder_score",
+) -> list[dict]:
+    """Sweep through cross-encoder thresholds and compute metrics.
+
+    Args:
+        scored_pairs: Pairs with cross_encoder_score and is_duplicate labels
+        thresholds: Thresholds to test (default: 0.3-0.9 in 0.05 steps)
+        score_key: Key for the score field
+
+    Returns:
+        List of evaluation results for each threshold
+    """
+    if thresholds is None:
+        thresholds = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
+
+    results = []
+    for threshold in thresholds:
+        result = evaluate_cross_encoder_dedup(scored_pairs, threshold, score_key)
+        results.append(result)
+
+    return results
