@@ -4,22 +4,22 @@
   "text_max_length": 1500,
   "include_title": true,
   "algorithm": "greedy_cosine",
-  "analysis_date": "2026-02-11T10:03:36.601820+00:00",
+  "analysis_date": "2026-02-11T10:21:56.632569+00:00",
   "optimization_target": "max_precision_with_recall_>=0.98",
   "metrics": {
     "articles_analyzed": 144,
     "period_days": 30,
     "tuning": {
       "n_pairs": 85,
-      "precision": 0.8103448275862069,
-      "recall": 0.94,
-      "f1": 0.8703703703703703
+      "precision": 0.9193548387096774,
+      "recall": 0.95,
+      "f1": 0.9344262295081968
     },
     "holdout": {
       "n_pairs": 35,
-      "precision": 0.72,
-      "recall": 0.8571428571428571,
-      "f1": 0.782608695652174,
+      "precision": 1.0,
+      "recall": 0.84,
+      "f1": 0.9130434782608696,
       "note": "Unbiased estimate from held-out test set"
     }
   }

@@ -4,170 +4,170 @@
     "quora": "cross-encoder/quora-distilroberta-base",
     "stsb": "cross-encoder/stsb-distilroberta-base"
   },
-  "analysis_date": "2026-02-11T10:03:36.576183+00:00",
+  "analysis_date": "2026-02-11T10:21:56.612734+00:00",
   "cosine_baseline": {
     "threshold": 0.7,
-    "holdout_f1": 0.782608695652174,
-    "holdout_precision": 0.72,
-    "holdout_recall": 0.8571428571428571
+    "holdout_f1": 0.9130434782608696,
+    "holdout_precision": 1.0,
+    "holdout_recall": 0.84
   },
   "cross_encoder_models": {
     "ms-marco": {
       "model_path": "cross-encoder/ms-marco-MiniLM-L-6-v2",
-      "optimal_threshold": 0.4,
+      "optimal_threshold": 0.5,
       "tuning_set": {
-        "precision": 0.7538461538461538,
-        "recall": 0.98,
-        "f1": 0.8521739130434782
+        "precision": 0.9016393442622951,
+        "recall": 0.9166666666666666,
+        "f1": 0.9090909090909091
       },
       "holdout_set": {
-        "precision": 0.6206896551724138,
-        "recall": 0.8571428571428571,
-        "f1": 0.7200000000000001
+        "precision": 0.8846153846153846,
+        "recall": 0.92,
+        "f1": 0.9019607843137256
       },
       "threshold_sweep": [
         {
           "threshold": 0.3,
-          "precision": 0.7142857142857143,
-          "recall": 1.0,
-          "f1": 0.8333333333333333,
-          "true_positives": 50,
-          "false_positives": 20,
-          "true_negatives": 11,
-          "false_negatives": 0,
-          "evaluated_pairs": 81
+          "precision": 0.8285714285714286,
+          "recall": 0.9666666666666667,
+          "f1": 0.8923076923076922,
+          "true_positives": 58,
+          "false_positives": 12,
+          "true_negatives": 10,
+          "false_negatives": 2,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.35,
-          "precision": 0.746268656716418,
-          "recall": 1.0,
-          "f1": 0.8547008547008548,
-          "true_positives": 50,
-          "false_positives": 17,
-          "true_negatives": 14,
-          "false_negatives": 0,
-          "evaluated_pairs": 81
+          "precision": 0.8529411764705882,
+          "recall": 0.9666666666666667,
+          "f1": 0.90625,
+          "true_positives": 58,
+          "false_positives": 10,
+          "true_negatives": 12,
+          "false_negatives": 2,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.4,
-          "precision": 0.7538461538461538,
-          "recall": 0.98,
-          "f1": 0.8521739130434782,
-          "true_positives": 49,
-          "false_positives": 16,
-          "true_negatives": 15,
-          "false_negatives": 1,
-          "evaluated_pairs": 81
+          "precision": 0.8636363636363636,
+          "recall": 0.95,
+          "f1": 0.9047619047619048,
+          "true_positives": 57,
+          "false_positives": 9,
+          "true_negatives": 13,
+          "false_negatives": 3,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.45,
-          "precision": 0.75,
-          "recall": 0.96,
-          "f1": 0.8421052631578947,
-          "true_positives": 48,
-          "false_positives": 16,
-          "true_negatives": 15,
-          "false_negatives": 2,
-          "evaluated_pairs": 81
+          "precision": 0.875,
+          "recall": 0.9333333333333333,
+          "f1": 0.9032258064516129,
+          "true_positives": 56,
+          "false_positives": 8,
+          "true_negatives": 14,
+          "false_negatives": 4,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.5,
-          "precision": 0.7741935483870968,
-          "recall": 0.96,
-          "f1": 0.8571428571428571,
-          "true_positives": 48,
-          "false_positives": 14,
-          "true_negatives": 17,
-          "false_negatives": 2,
-          "evaluated_pairs": 81
+          "precision": 0.9016393442622951,
+          "recall": 0.9166666666666666,
+          "f1": 0.9090909090909091,
+          "true_positives": 55,
+          "false_positives": 6,
+          "true_negatives": 16,
+          "false_negatives": 5,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.55,
-          "precision": 0.7796610169491526,
-          "recall": 0.92,
-          "f1": 0.8440366972477064,
-          "true_positives": 46,
-          "false_positives": 13,
-          "true_negatives": 18,
-          "false_negatives": 4,
-          "evaluated_pairs": 81
+          "precision": 0.9137931034482759,
+          "recall": 0.8833333333333333,
+          "f1": 0.8983050847457628,
+          "true_positives": 53,
+          "false_positives": 5,
+          "true_negatives": 17,
+          "false_negatives": 7,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.6,
-          "precision": 0.7894736842105263,
-          "recall": 0.9,
-          "f1": 0.8411214953271027,
-          "true_positives": 45,
-          "false_positives": 12,
-          "true_negatives": 19,
-          "false_negatives": 5,
-          "evaluated_pairs": 81
+          "precision": 0.9122807017543859,
+          "recall": 0.8666666666666667,
+          "f1": 0.8888888888888888,
+          "true_positives": 52,
+          "false_positives": 5,
+          "true_negatives": 17,
+          "false_negatives": 8,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.65,
-          "precision": 0.7818181818181819,
-          "recall": 0.86,
-          "f1": 0.819047619047619,
-          "true_positives": 43,
-          "false_positives": 12,
-          "true_negatives": 19,
-          "false_negatives": 7,
-          "evaluated_pairs": 81
+          "precision": 0.9107142857142857,
+          "recall": 0.85,
+          "f1": 0.8793103448275861,
+          "true_positives": 51,
+          "false_positives": 5,
+          "true_negatives": 17,
+          "false_negatives": 9,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.7,
-          "precision": 0.7777777777777778,
-          "recall": 0.84,
-          "f1": 0.8076923076923077,
-          "true_positives": 42,
-          "false_positives": 12,
-          "true_negatives": 19,
-          "false_negatives": 8,
-          "evaluated_pairs": 81
+          "precision": 0.9090909090909091,
+          "recall": 0.8333333333333334,
+          "f1": 0.8695652173913043,
+          "true_positives": 50,
+          "false_positives": 5,
+          "true_negatives": 17,
+          "false_negatives": 10,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.75,
-          "precision": 0.7924528301886793,
-          "recall": 0.84,
-          "f1": 0.8155339805825242,
-          "true_positives": 42,
-          "false_positives": 11,
-          "true_negatives": 20,
-          "false_negatives": 8,
-          "evaluated_pairs": 81
+          "precision": 0.9259259259259259,
+          "recall": 0.8333333333333334,
+          "f1": 0.8771929824561403,
+          "true_positives": 50,
+          "false_positives": 4,
+          "true_negatives": 18,
+          "false_negatives": 10,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.8,
-          "precision": 0.7884615384615384,
-          "recall": 0.82,
-          "f1": 0.803921568627451,
-          "true_positives": 41,
-          "false_positives": 11,
-          "true_negatives": 20,
-          "false_negatives": 9,
-          "evaluated_pairs": 81
+          "precision": 0.9245283018867925,
+          "recall": 0.8166666666666667,
+          "f1": 0.8672566371681416,
+          "true_positives": 49,
+          "false_positives": 4,
+          "true_negatives": 18,
+          "false_negatives": 11,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.85,
-          "precision": 0.8260869565217391,
-          "recall": 0.76,
-          "f1": 0.7916666666666667,
-          "true_positives": 38,
-          "false_positives": 8,
-          "true_negatives": 23,
-          "false_negatives": 12,
-          "evaluated_pairs": 81
+          "precision": 0.9583333333333334,
+          "recall": 0.7666666666666667,
+          "f1": 0.8518518518518519,
+          "true_positives": 46,
+          "false_positives": 2,
+          "true_negatives": 20,
+          "false_negatives": 14,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.9,
-          "precision": 0.8095238095238095,
-          "recall": 0.68,
-          "f1": 0.7391304347826089,
-          "true_positives": 34,
-          "false_positives": 8,
-          "true_negatives": 23,
-          "false_negatives": 16,
-          "evaluated_pairs": 81
+          "precision": 0.9534883720930233,
+          "recall": 0.6833333333333333,
+          "f1": 0.7961165048543688,
+          "true_positives": 41,
+          "false_positives": 2,
+          "true_negatives": 20,
+          "false_negatives": 19,
+          "evaluated_pairs": 82
         }
       ]
     },
@@ -175,81 +175,81 @@
       "model_path": "cross-encoder/quora-distilroberta-base",
       "optimal_threshold": 0.3,
       "tuning_set": {
-        "precision": 0.6172839506172839,
+        "precision": 0.7317073170731707,
         "recall": 1.0,
-        "f1": 0.7633587786259541
+        "f1": 0.8450704225352113
       },
       "holdout_set": {
-        "precision": 0.6,
+        "precision": 0.7352941176470589,
         "recall": 1.0,
-        "f1": 0.7499999999999999
+        "f1": 0.8474576271186441
       },
       "threshold_sweep": [
         {
           "threshold": 0.3,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.35,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.4,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.45,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.5,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.55,
           "precision": 1.0,
-          "recall": 0.04,
-          "f1": 0.07692307692307693,
+          "recall": 0.03333333333333333,
+          "f1": 0.06451612903225806,
           "true_positives": 2,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 48,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 58,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.6,
@@ -258,9 +258,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.65,
@@ -269,9 +269,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.7,
@@ -280,9 +280,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.75,
@@ -291,9 +291,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.8,
@@ -302,9 +302,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.85,
@@ -313,9 +313,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.9,
@@ -324,9 +324,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         }
       ]
     },
@@ -334,103 +334,103 @@
       "model_path": "cross-encoder/stsb-distilroberta-base",
       "optimal_threshold": 0.3,
       "tuning_set": {
-        "precision": 0.6172839506172839,
+        "precision": 0.7317073170731707,
         "recall": 1.0,
-        "f1": 0.7633587786259541
+        "f1": 0.8450704225352113
       },
       "holdout_set": {
-        "precision": 0.6,
+        "precision": 0.7352941176470589,
         "recall": 1.0,
-        "f1": 0.7499999999999999
+        "f1": 0.8474576271186441
       },
       "threshold_sweep": [
         {
           "threshold": 0.3,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.35,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.4,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.45,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.5,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.55,
-          "precision": 0.6172839506172839,
+          "precision": 0.7317073170731707,
           "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "f1": 0.8450704225352113,
+          "true_positives": 60,
+          "false_positives": 22,
           "true_negatives": 0,
           "false_negatives": 0,
-          "evaluated_pairs": 81
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.6,
-          "precision": 0.6172839506172839,
-          "recall": 1.0,
-          "f1": 0.7633587786259541,
-          "true_positives": 50,
-          "false_positives": 31,
+          "precision": 0.7283950617283951,
+          "recall": 0.9833333333333333,
+          "f1": 0.8368794326241135,
+          "true_positives": 59,
+          "false_positives": 22,
           "true_negatives": 0,
-          "false_negatives": 0,
-          "evaluated_pairs": 81
+          "false_negatives": 1,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.65,
-          "precision": 0.7142857142857143,
+          "precision": 0.9230769230769231,
           "recall": 0.4,
-          "f1": 0.5128205128205129,
-          "true_positives": 20,
-          "false_positives": 8,
-          "true_negatives": 23,
-          "false_negatives": 30,
-          "evaluated_pairs": 81
+          "f1": 0.5581395348837209,
+          "true_positives": 24,
+          "false_positives": 2,
+          "true_negatives": 20,
+          "false_negatives": 36,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.7,
@@ -439,9 +439,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.75,
@@ -450,9 +450,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.8,
@@ -461,9 +461,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.85,
@@ -472,9 +472,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         },
         {
           "threshold": 0.9,
@@ -483,9 +483,9 @@
           "f1": 0.0,
           "true_positives": 0,
           "false_positives": 0,
-          "true_negatives": 31,
-          "false_negatives": 50,
-          "evaluated_pairs": 81
+          "true_negatives": 22,
+          "false_negatives": 60,
+          "evaluated_pairs": 82
         }
       ]
     }
