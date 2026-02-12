@@ -108,6 +108,8 @@ def _parse_labeling_output(output: str) -> dict[str, Any]:
     """Parse labeling script output for statistics."""
     stats = {}
     lines = output.strip().split("\n")
+    in_error_breakdown = False
+    error_types = {}
 
     for line in lines:
         # Look for key metrics in output
@@ -134,6 +136,27 @@ def _parse_labeling_output(output: str) -> dict[str, Any]:
             stats["fp_classifier_calls"] = _extract_number(line)
         elif "Skipped LLM:" in line:
             stats["fp_skipped_llm"] = _extract_number(line)
+        elif "Error Type Breakdown:" in line:
+            in_error_breakdown = True
+        elif in_error_breakdown:
+            # Parse error type lines like "    connection: 5"
+            line_stripped = line.strip()
+            if line_stripped and ":" in line_stripped and not line_stripped.startswith("-"):
+                try:
+                    error_type, count = line_stripped.split(":", 1)
+                    error_type = error_type.strip()
+                    count = int(count.strip())
+                    if error_type and count > 0:
+                        error_types[error_type] = count
+                except (ValueError, IndexError):
+                    # End of error type section
+                    in_error_breakdown = False
+            elif line_stripped.startswith("-") or "Individual Errors:" in line:
+                # End of error type section
+                in_error_breakdown = False
+
+    if error_types:
+        stats["error_types"] = error_types
 
     return stats
 

@@ -17,7 +17,7 @@ from .config import labeling_settings
 from .database import LabelingDatabase, labeling_db
 from .embedder import OpenAIEmbedder
 from .evidence_matcher import EvidenceMatcher, match_all_evidence
-from .labeler import ArticleLabeler
+from .labeler import ArticleLabeler, classify_api_error
 from .models import LabelingResponse
 from .reranker import CrossEncoderReranker
 
@@ -46,6 +46,8 @@ class LabelingStats:
     input_tokens: int = 0
     output_tokens: int = 0
     errors: list[str] = field(default_factory=list)
+    # Error type breakdown for diagnostics
+    errors_by_type: dict[str, int] = field(default_factory=dict)
     # FP classifier stats
     fp_classifier_calls: int = 0
     fp_classifier_skipped: int = 0
@@ -638,8 +640,13 @@ class LabelingPipeline:
                     else:
                         stats.articles_failed += 1
                         if result.get("error"):
+                            error_type = result.get("error_type", "unknown")
                             stats.errors.append(
-                                f"Article {article['id']}: {result['error']}"
+                                f"Article {article['id']} [{error_type}]: {result['error']}"
+                            )
+                            # Track error types for diagnostics
+                            stats.errors_by_type[error_type] = (
+                                stats.errors_by_type.get(error_type, 0) + 1
                             )
 
                     stats.chunks_created += result.get("chunks_count", 0)
@@ -659,9 +666,15 @@ class LabelingPipeline:
                             stats.fp_classifier_errors += 1
 
                 except Exception as e:
-                    logger.error(f"Failed to process article {article['id']}: {e}")
+                    error_type, error_msg = classify_api_error(e)
+                    logger.error(
+                        f"[{error_type}] Failed to process article {article['id']}: {error_msg}"
+                    )
                     stats.articles_failed += 1
-                    stats.errors.append(f"Article {article['id']}: {str(e)}")
+                    stats.errors.append(f"Article {article['id']} [{error_type}]: {error_msg}")
+                    stats.errors_by_type[error_type] = (
+                        stats.errors_by_type.get(error_type, 0) + 1
+                    )
 
             # Complete labeling run
             if not dry_run and run:
@@ -740,6 +753,7 @@ class LabelingPipeline:
             "false_positive": False,
             "false_positive_brands": 0,
             "error": None,
+            "error_type": None,  # Categorized error type for diagnostics
             "brands_count": 0,
             "chunks_count": 0,
             "embeddings_count": 0,
@@ -856,13 +870,17 @@ class LabelingPipeline:
         result["output_tokens"] = label_result.output_tokens
 
         if not label_result.success:
-            logger.warning(f"Labeling failed for article {article_id}: {label_result.error}")
+            error_type = label_result.error_type or "unknown"
+            logger.warning(
+                f"[{error_type}] Labeling failed for article {article_id}: {label_result.error}"
+            )
             if not dry_run:
                 with self.database.db.get_session() as session:
                     self.database.update_article_labeling_status(
                         session, article_id, "failed", label_result.error
                     )
             result["error"] = label_result.error
+            result["error_type"] = error_type
             return result
 
         response = label_result.response

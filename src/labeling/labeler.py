@@ -7,7 +7,15 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
-from anthropic import Anthropic, RateLimitError
+from anthropic import (
+    Anthropic,
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    InternalServerError,
+    RateLimitError,
+)
 
 from .config import (
     LABELING_SYSTEM_PROMPT,
@@ -28,12 +36,85 @@ class LabelingResult:
     success: bool
     response: LabelingResponse | None = None
     error: str | None = None
+    error_type: str | None = None  # Categorized error type for diagnostics
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
     prompt_version: str = ""
     prompt_system_hash: str = ""
     prompt_user_hash: str = ""
+
+
+def classify_api_error(error: Exception) -> tuple[str, str]:
+    """Classify an API error into a category and detailed message.
+
+    Returns:
+        Tuple of (error_type, detailed_message)
+
+    Error types:
+        - authentication: Invalid or missing API key
+        - rate_limit: Too many requests
+        - timeout: Request timed out
+        - connection: Network/connection issues (internet outage, DNS, etc.)
+        - server_error: Anthropic server issues (500, 502, 503, etc.)
+        - api_error: Other API errors
+        - unknown: Unrecognized errors
+    """
+    error_str = str(error)
+
+    if isinstance(error, AuthenticationError):
+        return "authentication", f"API authentication failed: {error_str}"
+
+    if isinstance(error, RateLimitError):
+        return "rate_limit", f"API rate limit exceeded: {error_str}"
+
+    if isinstance(error, APITimeoutError):
+        return "timeout", f"API request timed out: {error_str}"
+
+    if isinstance(error, APIConnectionError):
+        # Check for specific connection issues
+        error_lower = error_str.lower()
+        if "connection refused" in error_lower:
+            return "connection", f"Connection refused (service unavailable): {error_str}"
+        if "name or service not known" in error_lower or "dns" in error_lower:
+            return "connection", f"DNS resolution failed (possible internet outage): {error_str}"
+        if "network is unreachable" in error_lower:
+            return "connection", f"Network unreachable (internet outage): {error_str}"
+        if "connection reset" in error_lower:
+            return "connection", f"Connection reset by server: {error_str}"
+        if "ssl" in error_lower or "certificate" in error_lower:
+            return "connection", f"SSL/TLS error: {error_str}"
+        return "connection", f"API connection error: {error_str}"
+
+    if isinstance(error, InternalServerError):
+        return "server_error", f"Anthropic server error (500): {error_str}"
+
+    if isinstance(error, APIStatusError):
+        status_code = getattr(error, "status_code", None)
+        if status_code:
+            if status_code == 502:
+                return "server_error", f"Anthropic bad gateway (502): {error_str}"
+            if status_code == 503:
+                return "server_error", f"Anthropic service unavailable (503): {error_str}"
+            if status_code == 504:
+                return "server_error", f"Anthropic gateway timeout (504): {error_str}"
+            if status_code >= 500:
+                return "server_error", f"Anthropic server error ({status_code}): {error_str}"
+            if status_code == 400:
+                return "api_error", f"Bad request (400): {error_str}"
+            if status_code == 404:
+                return "api_error", f"Not found (404) - check model name: {error_str}"
+        return "api_error", f"API status error: {error_str}"
+
+    # Check for network-related errors that might not be wrapped
+    error_lower = error_str.lower()
+    if any(
+        keyword in error_lower
+        for keyword in ["connection", "network", "socket", "timeout", "dns", "unreachable"]
+    ):
+        return "connection", f"Network error: {error_str}"
+
+    return "unknown", f"Unexpected error: {type(error).__name__}: {error_str}"
 
 
 class ArticleLabeler:
@@ -225,10 +306,12 @@ class ArticleLabeler:
                 )
 
         except Exception as e:
-            logger.error(f"Labeling failed: {e}")
+            error_type, error_msg = classify_api_error(e)
+            logger.error(f"[{error_type}] Labeling failed: {error_msg}")
             return LabelingResult(
                 success=False,
-                error=str(e),
+                error=error_msg,
+                error_type=error_type,
                 model=self.model,
                 prompt_version=self.prompt_version,
                 prompt_system_hash=self.prompt_system_hash,
@@ -256,7 +339,7 @@ class ArticleLabeler:
     def _call_api_with_retry(
         self, user_prompt: str, system_prompt: str
     ) -> tuple[str, int, int]:
-        """Call Claude API with automatic retry for rate limits.
+        """Call Claude API with automatic retry for rate limits and transient errors.
 
         Args:
             user_prompt: The user message content
@@ -264,8 +347,13 @@ class ArticleLabeler:
 
         Returns:
             Tuple of (response_text, input_tokens, output_tokens)
+
+        Raises:
+            Various Anthropic exceptions with detailed error classification
         """
         delay = self.retry_delay
+        last_error: Exception | None = None
+        last_error_type: str | None = None
 
         for attempt in range(self.max_retries):
             try:
@@ -283,18 +371,107 @@ class ArticleLabeler:
                 return response_text, input_tokens, output_tokens
 
             except RateLimitError as e:
+                error_type, error_msg = classify_api_error(e)
+                last_error = e
+                last_error_type = error_type
                 if attempt < self.max_retries - 1:
                     logger.warning(
-                        f"Rate limit hit, retrying in {delay}s "
-                        f"(attempt {attempt + 1}/{self.max_retries})"
+                        f"[{error_type}] Rate limit hit, retrying in {delay}s "
+                        f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}"
                     )
                     time.sleep(delay)
                     delay *= 2
                 else:
+                    logger.error(
+                        f"[{error_type}] Rate limit exceeded after {self.max_retries} attempts: {error_msg}"
+                    )
+                    raise
+
+            except APITimeoutError as e:
+                error_type, error_msg = classify_api_error(e)
+                last_error = e
+                last_error_type = error_type
+                if attempt < self.max_retries - 1:
+                    logger.warning(
+                        f"[{error_type}] Request timed out, retrying in {delay}s "
+                        f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}"
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(
+                        f"[{error_type}] Timeout after {self.max_retries} attempts: {error_msg}"
+                    )
+                    raise
+
+            except APIConnectionError as e:
+                error_type, error_msg = classify_api_error(e)
+                last_error = e
+                last_error_type = error_type
+                if attempt < self.max_retries - 1:
+                    logger.warning(
+                        f"[{error_type}] Connection error, retrying in {delay}s "
+                        f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}"
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(
+                        f"[{error_type}] Connection failed after {self.max_retries} attempts: {error_msg}"
+                    )
+                    raise
+
+            except InternalServerError as e:
+                error_type, error_msg = classify_api_error(e)
+                last_error = e
+                last_error_type = error_type
+                if attempt < self.max_retries - 1:
+                    logger.warning(
+                        f"[{error_type}] Server error, retrying in {delay}s "
+                        f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}"
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(
+                        f"[{error_type}] Server error after {self.max_retries} attempts: {error_msg}"
+                    )
+                    raise
+
+            except AuthenticationError as e:
+                # Don't retry authentication errors
+                error_type, error_msg = classify_api_error(e)
+                logger.error(f"[{error_type}] {error_msg}")
+                raise
+
+            except APIStatusError as e:
+                error_type, error_msg = classify_api_error(e)
+                last_error = e
+                last_error_type = error_type
+                status_code = getattr(e, "status_code", None)
+
+                # Retry on 5xx errors, don't retry on 4xx (client errors)
+                if status_code and status_code >= 500 and attempt < self.max_retries - 1:
+                    logger.warning(
+                        f"[{error_type}] Server error ({status_code}), retrying in {delay}s "
+                        f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}"
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(f"[{error_type}] {error_msg}")
                     raise
 
             except Exception as e:
-                logger.error(f"API call failed: {e}")
+                # Catch any other unexpected errors
+                error_type, error_msg = classify_api_error(e)
+                last_error = e
+                last_error_type = error_type
+                logger.error(
+                    f"[{error_type}] Unexpected error in API call "
+                    f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}"
+                )
+                # Don't retry unknown errors
                 raise
 
         raise RuntimeError("API call failed after all retries")

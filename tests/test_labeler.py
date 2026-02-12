@@ -684,3 +684,160 @@ class TestArticleLabelerStats:
             # Input: $3.00 per 1M, Output: $15.00 per 1M
             expected_cost = 3.00 + 15.00
             assert abs(stats["estimated_cost_usd"] - expected_cost) < 0.01
+
+
+
+class TestClassifyApiError:
+    """Tests for API error classification."""
+
+    def test_authentication_error(self):
+        """Should classify authentication errors."""
+        from anthropic import AuthenticationError
+        from src.labeling.labeler import classify_api_error
+
+        # Create a mock error that passes isinstance check
+        class MockAuthError(AuthenticationError):
+            def __init__(self):
+                pass  # Skip parent __init__
+
+            def __str__(self):
+                return "Invalid API key"
+
+        error = MockAuthError()
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "authentication"
+        assert "authentication" in error_msg.lower()
+
+    def test_rate_limit_error(self):
+        """Should classify rate limit errors."""
+        from anthropic import RateLimitError
+        from src.labeling.labeler import classify_api_error
+
+        # Create a mock error that passes isinstance check
+        class MockRateLimitError(RateLimitError):
+            def __init__(self):
+                pass  # Skip parent __init__
+
+            def __str__(self):
+                return "Rate limit exceeded"
+
+        error = MockRateLimitError()
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "rate_limit"
+        assert "rate limit" in error_msg.lower()
+
+    def test_timeout_error(self):
+        """Should classify timeout errors."""
+        from anthropic import APITimeoutError
+        from src.labeling.labeler import classify_api_error
+
+        # Create a mock error that passes isinstance check
+        class MockTimeoutError(APITimeoutError):
+            def __init__(self):
+                pass  # Skip parent __init__
+
+            def __str__(self):
+                return "Request timed out"
+
+        error = MockTimeoutError()
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "timeout"
+        assert "timed out" in error_msg.lower()
+
+    def test_connection_error(self):
+        """Should classify connection errors."""
+        from anthropic import APIConnectionError
+        from src.labeling.labeler import classify_api_error
+
+        # Create a mock error that passes isinstance check
+        class MockConnectionError(APIConnectionError):
+            def __init__(self):
+                pass  # Skip parent __init__
+
+            def __str__(self):
+                return "Connection failed"
+
+        error = MockConnectionError()
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "connection"
+        assert "connection" in error_msg.lower()
+
+    def test_connection_error_dns_failure(self):
+        """Should detect DNS resolution failures."""
+        from anthropic import APIConnectionError
+        from src.labeling.labeler import classify_api_error
+
+        # Create a mock error with DNS-related message
+        class MockConnectionError(APIConnectionError):
+            def __init__(self):
+                pass
+
+            def __str__(self):
+                return "Name or service not known"
+
+        error = MockConnectionError()
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "connection"
+        assert "dns" in error_msg.lower()
+
+    def test_connection_error_network_unreachable(self):
+        """Should detect network unreachable errors."""
+        from anthropic import APIConnectionError
+        from src.labeling.labeler import classify_api_error
+
+        class MockConnectionError(APIConnectionError):
+            def __init__(self):
+                pass
+
+            def __str__(self):
+                return "Network is unreachable"
+
+        error = MockConnectionError()
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "connection"
+        assert "internet outage" in error_msg.lower()
+
+    def test_server_error(self):
+        """Should classify internal server errors."""
+        from anthropic import InternalServerError
+        from src.labeling.labeler import classify_api_error
+
+        # Create a mock error that passes isinstance check
+        class MockServerError(InternalServerError):
+            def __init__(self):
+                pass  # Skip parent __init__
+
+            def __str__(self):
+                return "Internal server error"
+
+        error = MockServerError()
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "server_error"
+        assert "500" in error_msg or "server" in error_msg.lower()
+
+    def test_unknown_error(self):
+        """Should classify unknown errors."""
+        from src.labeling.labeler import classify_api_error
+
+        error = ValueError("Some unknown error")
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "unknown"
+        assert "ValueError" in error_msg
+
+    def test_network_keyword_in_generic_error(self):
+        """Should detect network keywords in generic errors."""
+        from src.labeling.labeler import classify_api_error
+
+        error = Exception("Socket connection timeout occurred")
+        error_type, error_msg = classify_api_error(error)
+
+        assert error_type == "connection"
+        assert "network" in error_msg.lower()

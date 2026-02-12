@@ -265,10 +265,22 @@ def main() -> int:
 
         if stats.errors:
             print(f"\nErrors ({len(stats.errors)}):")
+
+            # Show error type breakdown for diagnostics
+            if stats.errors_by_type:
+                print("\n  Error Type Breakdown:")
+                for error_type, count in sorted(
+                    stats.errors_by_type.items(), key=lambda x: -x[1]
+                ):
+                    print(f"    {error_type}: {count}")
+                print()
+
+            # Show individual errors
+            print("  Individual Errors:")
             for error in stats.errors[:5]:
-                print(f"  - {error}")
+                print(f"    - {error}")
             if len(stats.errors) > 5:
-                print(f"  ... and {len(stats.errors) - 5} more")
+                print(f"    ... and {len(stats.errors) - 5} more")
 
         return 0 if not stats.errors else 1
 
