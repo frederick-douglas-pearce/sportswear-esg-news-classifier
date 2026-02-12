@@ -410,6 +410,28 @@ class TestScorecardTieHandling:
         assert result["top_brands"][2]["medal"] == "bronze"
         assert result["top_brands"][3]["medal"] == "bronze"  # Tied for 3rd, gets bronze
 
+    def test_top_performers_medals_tied_for_gold(self):
+        """Brands tied for gold both get gold, next tier gets silver."""
+        # Two brands tied for first place (+6), one for second (+4)
+        # All 3 make the cutoff (SCORECARD_TOP_N=3)
+        articles = [
+            create_mock_article({"Adidas": {"environmental": 1, "social": 1, "governance": 1}}),  # +6
+            create_mock_article({"Anta": {"environmental": 1, "social": 1, "governance": 1}}),  # +6 (tied)
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Both +6 brands get gold (tied for 1st)
+        adidas = next(b for b in result["top_brands"] if b["brand"] == "Adidas")
+        anta = next(b for b in result["top_brands"] if b["brand"] == "Anta")
+        assert adidas["medal"] == "gold"
+        assert anta["medal"] == "gold"
+
+        # +4 brand gets silver (2nd tier, not bronze!)
+        nike = next(b for b in result["top_brands"] if b["brand"] == "Nike")
+        assert nike["medal"] == "silver"
+
     def test_bottom_performers_no_ties(self):
         """Bottom performers with distinct scores should show exactly N brands."""
         # Create articles with distinct negative scores
