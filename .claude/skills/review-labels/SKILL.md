@@ -67,7 +67,9 @@ with engine.connect() as conn:
                SUM(CASE WHEN bl.social_sentiment = 1 THEN 1 ELSE 0 END) as soc_pos,
                SUM(CASE WHEN bl.social_sentiment = -1 THEN 1 ELSE 0 END) as soc_neg,
                SUM(CASE WHEN bl.governance_sentiment = 1 THEN 1 ELSE 0 END) as gov_pos,
-               SUM(CASE WHEN bl.governance_sentiment = -1 THEN 1 ELSE 0 END) as gov_neg
+               SUM(CASE WHEN bl.governance_sentiment = -1 THEN 1 ELSE 0 END) as gov_neg,
+               SUM(CASE WHEN bl.digital_sentiment = 1 THEN 1 ELSE 0 END) as dig_pos,
+               SUM(CASE WHEN bl.digital_sentiment = -1 THEN 1 ELSE 0 END) as dig_neg
         FROM articles a
         JOIN brand_labels bl ON a.id = bl.article_id
         WHERE a.labeled_at >= :since_date
@@ -75,7 +77,7 @@ with engine.connect() as conn:
         ORDER BY labels DESC
     '''), {'since_date': since_date})
     for r in result:
-        print(f'  {r.brand}: {r.labels} labels | E(+{r.env_pos}/-{r.env_neg}) S(+{r.soc_pos}/-{r.soc_neg}) G(+{r.gov_pos}/-{r.gov_neg})')
+        print(f'  {r.brand}: {r.labels} labels | E(+{r.env_pos}/-{r.env_neg}) S(+{r.soc_pos}/-{r.soc_neg}) G(+{r.gov_pos}/-{r.gov_neg}) D(+{r.dig_pos}/-{r.dig_neg})')
 
     # 2. Articles with negative sentiment (potential issues to review)
     print('\n' + '-' * 70)
@@ -143,7 +145,9 @@ with engine.connect() as conn:
                    COALESCE(CASE WHEN bl.social_sentiment IS NOT NULL
                             THEN 'S' || bl.social_sentiment END, '') ||
                    COALESCE(CASE WHEN bl.governance_sentiment IS NOT NULL
-                            THEN 'G' || bl.governance_sentiment END, ''),
+                            THEN 'G' || bl.governance_sentiment END, '') ||
+                   COALESCE(CASE WHEN bl.digital_sentiment IS NOT NULL
+                            THEN 'D' || bl.digital_sentiment END, ''),
                    ' | ') as brand_labels,
                a.url
         FROM articles a
