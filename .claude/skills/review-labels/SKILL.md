@@ -133,7 +133,56 @@ with engine.connect() as conn:
     else:
         print('  No false positives in this period')
 
-    # 4. Articles with multiple brands (check consistency)
+    # 4. Mislabeled analyst articles (should be skipped, not false_positive)
+    # Per docs/LABELING.md: analyst ratings/price targets have substantive content
+    print('\n' + '-' * 70)
+    print('MISLABELED ANALYST ARTICLES (false_positive -> should be skipped)')
+    print('-' * 70)
+    result = conn.execute(text('''
+        SELECT id, title, source_name
+        FROM articles
+        WHERE labeling_status = 'false_positive'
+          AND (
+            LOWER(title) LIKE '%analyst%'
+            OR LOWER(title) LIKE '%rating%'
+            OR LOWER(title) LIKE '%upgrade%'
+            OR LOWER(title) LIKE '%downgrade%'
+            OR LOWER(title) LIKE '%price target%'
+            OR LOWER(title) LIKE '%raises%target%'
+            OR LOWER(title) LIKE '%lowers%target%'
+            OR LOWER(title) LIKE '%forecasters%'
+            OR LOWER(title) LIKE '%consensus%'
+          )
+          AND (
+            LOWER(title) LIKE '%columbia sportswear%'
+            OR LOWER(title) LIKE '%under armour%'
+            OR LOWER(title) LIKE '%nike%'
+            OR LOWER(title) LIKE '%nke%'
+            OR LOWER(title) LIKE '%lululemon%'
+            OR LOWER(title) LIKE '%lulu%'
+            OR LOWER(title) LIKE '%adidas%'
+            OR LOWER(title) LIKE '%addyy%'
+            OR LOWER(title) LIKE '%puma se%'
+            OR LOWER(title) LIKE '%pumsy%'
+            OR LOWER(title) LIKE '%deckers%'
+            OR LOWER(title) LIKE '%deck%'
+            OR LOWER(title) LIKE '%anta%'
+            OR LOWER(title) LIKE '%asics%'
+          )
+        ORDER BY created_at DESC
+        LIMIT 10
+    '''))
+    rows = result.fetchall()
+    if rows:
+        print(f'  ⚠️  Found {len(rows)} articles that may need correction:')
+        for r in rows:
+            print(f'  [{r.source_name}] {r.title[:60]}...')
+            print(f'    ID: {r.id}')
+        print('  → These have analyst content and should likely be skipped, not false_positive')
+    else:
+        print('  ✓ No mislabeled analyst articles found')
+
+    # 5. Articles with multiple brands (check consistency)
     print('\n' + '-' * 70)
     print('MULTI-BRAND ARTICLES (Check for consistent labeling)')
     print('-' * 70)
@@ -188,6 +237,14 @@ After running the queries:
 
 3. **False Positives**: Spot check a few to ensure they truly aren't ESG-relevant
 
-4. **Multi-Brand Articles**: Verify brands in the same article got consistent treatment
+4. **Mislabeled Analyst Articles**: Per [docs/LABELING.md](../../docs/LABELING.md#stock-article-classification), articles with analyst ratings, price targets, or substantive financial commentary should be `skipped` (sent to LLM), not `false_positive`. If any are found:
+   - Verify they contain substantive content (named analysts, specific ratings/targets)
+   - Update status from `false_positive` to `skipped` using:
+     ```sql
+     UPDATE articles SET labeling_status = 'skipped', skipped_at = NOW()
+     WHERE id = 'article-uuid-here';
+     ```
+
+5. **Multi-Brand Articles**: Verify brands in the same article got consistent treatment
 
 Summarize findings and flag any articles that may need relabeling or further investigation.
