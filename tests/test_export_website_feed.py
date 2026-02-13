@@ -562,36 +562,64 @@ class TestScorecardTieHandling:
         assert result["bottom_brands"][0]["brand"] == "Nike"
         assert result["bottom_brands"][0]["total"] == -6
 
-    def test_bottom_performers_excludes_better_scores_when_no_tie(self):
-        """Bottom performers should exclude brands with better scores when no tie.
+    def test_bottom_n_limits_included_brands(self):
+        """SCORECARD_BOTTOM_N limits which score tiers are included.
 
-        Example: Nike: -6, Adidas: -4, Puma: -4, Lululemon: -3
-        Should show Nike, Adidas, Puma (Lululemon excluded since -3 > -4).
+        With BOTTOM_N=3, only brands in the bottom 3 distinct score tiers are shown.
+        Brands in the 4th tier (better scores) are excluded.
         """
         articles = [
-            # Nike: -6 total (two articles of -3 each)
+            # Nike: -6 (worst tier)
             create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
             create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),  # -3 more = -6 total
-            # Adidas: -4 total (two articles: -3 + -1)
+            # Adidas: -4 (2nd worst tier)
             create_mock_article({"Adidas": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
             create_mock_article({"Adidas": {"environmental": -1}}),  # -1 more = -4 total
-            # Puma: -4 total (two articles: -3 + -1)
+            # Puma: -3 (3rd worst tier)
             create_mock_article({"Puma": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
-            create_mock_article({"Puma": {"environmental": -1}}),  # -1 more = -4 total
-            # Lululemon: -3 total
-            create_mock_article({"Lululemon": {"environmental": -1, "social": -1, "governance": -1}}),  # -3
+            # Lululemon: -1 (4th worst tier - excluded)
+            create_mock_article({"Lululemon": {"environmental": -1}}),  # -1
         ]
 
         result = calculate_brand_scores(articles, period_days=14, dedupe=False)
 
-        # Should show exactly 3: Nike (-6), Adidas (-4), Puma (-4)
-        # Lululemon (-3) is excluded since it's not tied with the 3rd worst
+        # Only 3 brands included (bottom 3 distinct scores: -6, -4, -3)
+        # Lululemon (-1) is excluded since it's the 4th distinct score tier
         assert len(result["bottom_brands"]) == 3
         bottom_brand_names = {b["brand"] for b in result["bottom_brands"]}
         assert "Nike" in bottom_brand_names
         assert "Adidas" in bottom_brand_names
         assert "Puma" in bottom_brand_names
         assert "Lululemon" not in bottom_brand_names
+
+    def test_bottom_performers_includes_all_brands_in_tier(self):
+        """All brands with the same score are included when that score tier qualifies.
+
+        With 3 distinct scores (-6, -4, -3) and BOTTOM_N=3, all brands are included
+        even if there are ties within a tier.
+        """
+        articles = [
+            # Nike: -6 (worst)
+            create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),
+            create_mock_article({"Nike": {"environmental": -1, "social": -1, "governance": -1}}),
+            # Adidas and Puma: -4 (tied, 2nd worst tier)
+            create_mock_article({"Adidas": {"environmental": -1, "social": -1, "governance": -1}}),
+            create_mock_article({"Adidas": {"environmental": -1}}),
+            create_mock_article({"Puma": {"environmental": -1, "social": -1, "governance": -1}}),
+            create_mock_article({"Puma": {"environmental": -1}}),
+            # Lululemon: -3 (3rd worst tier)
+            create_mock_article({"Lululemon": {"environmental": -1, "social": -1, "governance": -1}}),
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # All 4 brands included (3 distinct tiers: -6, -4, -3)
+        assert len(result["bottom_brands"]) == 4
+        bottom_brand_names = {b["brand"] for b in result["bottom_brands"]}
+        assert "Nike" in bottom_brand_names
+        assert "Adidas" in bottom_brand_names
+        assert "Puma" in bottom_brand_names
+        assert "Lululemon" in bottom_brand_names
 
     def test_fewer_than_n_positive_brands(self):
         """Should handle fewer than N brands with positive scores."""

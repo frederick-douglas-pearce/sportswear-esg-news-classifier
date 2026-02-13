@@ -285,6 +285,7 @@ def sanitize_text(text: str | None) -> str | None:
 SCORECARD_PERIOD_DAYS = 14
 # Number of distinct score tiers to show in top performers (must be >= 3 for medals)
 SCORECARD_TOP_N = 3
+# Number of distinct score tiers to show in bottom performers
 SCORECARD_BOTTOM_N = 3
 # Deduplication settings loaded from central config (can be overridden via env vars)
 SCORECARD_SIMILARITY_THRESHOLD = settings.dedup_similarity_threshold
@@ -536,17 +537,19 @@ def calculate_brand_scores(
 
     top_brand_names = {b['brand'] for b in top_brands}
 
-    # Last N brands: must have negative scores, excluding top brands, sorted worst first
-    # Include ties at the cutoff position
+    # Bottom performers: brands with one of the bottom N distinct negative scores
+    # Excludes any brand already in top performers
     negative_brands = [b for b in all_scores if b['brand'] not in top_brand_names and b['total'] < 0]
-    if len(negative_brands) <= SCORECARD_BOTTOM_N:
-        bottom_brands = negative_brands[::-1]  # Reverse to show worst first
-    else:
-        # Sort by score ascending (worst first) to find the cutoff
-        sorted_worst_first = sorted(negative_brands, key=lambda x: (x['total'], x['brand']))
-        cutoff_score = sorted_worst_first[SCORECARD_BOTTOM_N - 1]['total']
-        # Include all brands tied at or below the cutoff score
-        bottom_brands = [b for b in sorted_worst_first if b['total'] <= cutoff_score]
+
+    # Find distinct score tiers among negative brands (sorted ascending = worst first)
+    distinct_negative_scores = sorted(set(b['total'] for b in negative_brands))
+
+    # Include all brands with one of the bottom N distinct scores
+    bottom_n_scores = set(distinct_negative_scores[:SCORECARD_BOTTOM_N])
+    bottom_brands = [b for b in negative_brands if b['total'] in bottom_n_scores]
+
+    # Sort worst first (ascending by score, then alphabetically)
+    bottom_brands.sort(key=lambda x: (x['total'], x['brand']))
 
     return {
         'period_days': period_days,
