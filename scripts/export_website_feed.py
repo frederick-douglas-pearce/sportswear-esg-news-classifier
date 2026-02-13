@@ -283,6 +283,7 @@ def sanitize_text(text: str | None) -> str | None:
 
 # Scorecard configuration
 SCORECARD_PERIOD_DAYS = 14
+# Number of distinct score tiers to show in top performers (must be >= 3 for medals)
 SCORECARD_TOP_N = 3
 SCORECARD_BOTTOM_N = 3
 # Deduplication settings loaded from central config (can be overridden via env vars)
@@ -513,26 +514,27 @@ def calculate_brand_scores(
     # Sort by total score descending, then alphabetically by brand name
     all_scores.sort(key=lambda x: (-x['total'], x['brand']))
 
-    # Top N brands with positive scores only, including ties at the cutoff
+    # Top performers: brands with one of the top N distinct positive scores
+    # Find all positive-scoring brands first
     positive_brands = [b for b in all_scores if b['total'] > 0]
-    if len(positive_brands) <= SCORECARD_TOP_N:
-        top_brands = positive_brands
-    else:
-        # Include all brands tied with the Nth position
-        cutoff_score = positive_brands[SCORECARD_TOP_N - 1]['total']
-        top_brands = [b for b in positive_brands if b['total'] >= cutoff_score]
-    top_brand_names = {b['brand'] for b in top_brands}
 
-    # Assign medals by score tier (ties get the same medal)
-    # Find distinct score tiers among top brands
-    distinct_scores = sorted(set(b['total'] for b in top_brands), reverse=True)
+    # Find distinct score tiers among all positive brands
+    distinct_scores = sorted(set(b['total'] for b in positive_brands), reverse=True)
+
+    # Include all brands with one of the top N distinct scores
+    top_n_scores = set(distinct_scores[:SCORECARD_TOP_N])
+    top_brands = [b for b in positive_brands if b['total'] in top_n_scores]
+
+    # Assign medals to top 3 score tiers only
     medal_names = ['gold', 'silver', 'bronze']
     score_to_medal = {}
-    for i, score in enumerate(distinct_scores[:3]):  # Only first 3 tiers get medals
+    for i, score in enumerate(distinct_scores[:3]):
         score_to_medal[score] = medal_names[i]
 
     for brand in top_brands:
-        brand['medal'] = score_to_medal.get(brand['total'])
+        brand['medal'] = score_to_medal.get(brand['total'])  # None if outside top 3 tiers
+
+    top_brand_names = {b['brand'] for b in top_brands}
 
     # Last N brands: must have negative scores, excluding top brands, sorted worst first
     # Include ties at the cutoff position

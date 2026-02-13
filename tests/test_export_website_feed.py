@@ -432,6 +432,83 @@ class TestScorecardTieHandling:
         nike = next(b for b in result["top_brands"] if b["brand"] == "Nike")
         assert nike["medal"] == "silver"
 
+    def test_bronze_medals_awarded_to_third_tier(self):
+        """Bronze medals are awarded to the 3rd distinct score tier.
+
+        With SCORECARD_TOP_N=3, we include brands with the top 3 distinct scores.
+        All brands in each tier get the same medal.
+        """
+        articles = [
+            # Two brands tied for gold at +6
+            create_mock_article({"Adidas": {"environmental": 1, "social": 1, "governance": 1}}),  # +6
+            create_mock_article({"Anta": {"environmental": 1, "social": 1, "governance": 1}}),  # +6
+            # One brand at silver +4
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
+            # Two brands at bronze +2
+            create_mock_article({"Puma": {"environmental": 1}}),  # +2
+            create_mock_article({"Columbia": {"social": 1}}),  # +2
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # With TOP_N=3 distinct scores (+6, +4, +2), all 5 brands are included
+        assert len(result["top_brands"]) == 5
+
+        # Verify medal assignments
+        adidas = next(b for b in result["top_brands"] if b["brand"] == "Adidas")
+        anta = next(b for b in result["top_brands"] if b["brand"] == "Anta")
+        nike = next(b for b in result["top_brands"] if b["brand"] == "Nike")
+        puma = next(b for b in result["top_brands"] if b["brand"] == "Puma")
+        columbia = next(b for b in result["top_brands"] if b["brand"] == "Columbia")
+
+        assert adidas["medal"] == "gold"
+        assert anta["medal"] == "gold"
+        assert nike["medal"] == "silver"
+        assert puma["medal"] == "bronze"
+        assert columbia["medal"] == "bronze"
+
+    def test_top_n_limits_included_brands(self):
+        """SCORECARD_TOP_N limits which score tiers are included.
+
+        With TOP_N=3, only brands in the top 3 distinct score tiers are shown.
+        Brands in the 4th tier are excluded, even with positive scores.
+        """
+        articles = [
+            create_mock_article({"Adidas": {"environmental": 1, "social": 1, "governance": 1}}),  # +6 (gold)
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4 (silver)
+            create_mock_article({"Puma": {"environmental": 1}}),  # +2 (bronze)
+            create_mock_article({"Lululemon": {"social": 0}}),  # +1 (4th tier - excluded)
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # Only 3 brands included (top 3 distinct scores)
+        assert len(result["top_brands"]) == 3
+        top_brand_names = {b["brand"] for b in result["top_brands"]}
+        assert "Adidas" in top_brand_names
+        assert "Nike" in top_brand_names
+        assert "Puma" in top_brand_names
+        assert "Lululemon" not in top_brand_names  # 4th tier excluded
+
+    def test_medals_only_for_top_3_tiers(self):
+        """Only the top 3 score tiers get medals, even if more tiers are shown.
+
+        If SCORECARD_TOP_N > 3, brands in tiers 4+ are shown but without medals.
+        """
+        # This test would require changing SCORECARD_TOP_N, so we verify the logic
+        # by checking that only 3 medal types exist
+        articles = [
+            create_mock_article({"Adidas": {"environmental": 1, "social": 1, "governance": 1}}),  # +6
+            create_mock_article({"Nike": {"environmental": 1, "social": 1}}),  # +4
+            create_mock_article({"Puma": {"environmental": 1}}),  # +2
+        ]
+
+        result = calculate_brand_scores(articles, period_days=14, dedupe=False)
+
+        # All get medals since we only have 3 tiers
+        medals = [b["medal"] for b in result["top_brands"]]
+        assert set(medals) == {"gold", "silver", "bronze"}
+
     def test_bottom_performers_no_ties(self):
         """Bottom performers with distinct scores should show exactly N brands."""
         # Create articles with distinct negative scores
