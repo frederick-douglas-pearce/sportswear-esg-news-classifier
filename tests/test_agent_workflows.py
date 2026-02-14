@@ -419,6 +419,85 @@ class TestDailyLabelingWorkflow:
         assert result["articles_fetched_24h"] == 100
 
 
+class TestParseLabelingOutput:
+    """Tests for _parse_labeling_output helper function."""
+
+    def test_parse_basic_stats(self):
+        """Test parsing basic labeling stats."""
+        from src.agent.workflows.daily_labeling import _parse_labeling_output
+
+        output = """
+=== Labeling Results ===
+Articles processed:     10
+Articles labeled:       7
+Articles skipped:       1
+False positives:        2
+Articles failed:        0
+LLM API calls:          8
+Estimated cost:         $0.1234
+"""
+        stats = _parse_labeling_output(output)
+
+        assert stats["articles_processed"] == 10
+        assert stats["articles_labeled"] == 7
+        assert stats["articles_skipped"] == 1
+        assert stats["false_positives"] == 2
+        assert stats["articles_failed"] == 0
+        assert stats["llm_calls"] == 8
+        assert stats["estimated_cost_usd"] == 0.1234
+
+    def test_parse_fp_classifier_stats(self):
+        """Test parsing FP classifier pre-filter stats including cost savings."""
+        from src.agent.workflows.daily_labeling import _parse_labeling_output
+
+        output = """
+=== Labeling Results ===
+Articles processed:     20
+Articles labeled:       10
+Articles failed:        0
+LLM API calls:          12
+Estimated cost:         $0.5000
+
+=== FP Classifier Pre-filter ===
+FP classifier calls:    20
+Skipped LLM:            8
+Continued to LLM:       12
+Est. LLM cost saved:    $0.0960
+"""
+        stats = _parse_labeling_output(output)
+
+        assert stats["articles_processed"] == 20
+        assert stats["fp_classifier_calls"] == 20
+        assert stats["fp_skipped_llm"] == 8
+        assert stats["fp_continued_llm"] == 12
+        assert stats["fp_cost_saved_usd"] == 0.0960
+
+    def test_parse_error_type_breakdown(self):
+        """Test parsing error type breakdown section."""
+        from src.agent.workflows.daily_labeling import _parse_labeling_output
+
+        output = """
+=== Labeling Results ===
+Articles processed:     15
+Articles failed:        5
+
+Errors (5):
+
+  Error Type Breakdown:
+    connection: 3
+    timeout: 2
+
+  Individual Errors:
+    - Article 1: connection error
+"""
+        stats = _parse_labeling_output(output)
+
+        assert stats["articles_failed"] == 5
+        assert "error_types" in stats
+        assert stats["error_types"]["connection"] == 3
+        assert stats["error_types"]["timeout"] == 2
+
+
 class TestWebsiteExportWorkflow:
     """Tests for WebsiteExportWorkflow."""
 

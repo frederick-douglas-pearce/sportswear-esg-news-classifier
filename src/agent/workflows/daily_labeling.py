@@ -136,6 +136,15 @@ def _parse_labeling_output(output: str) -> dict[str, Any]:
             stats["fp_classifier_calls"] = _extract_number(line)
         elif "Skipped LLM:" in line:
             stats["fp_skipped_llm"] = _extract_number(line)
+        elif "Continued to LLM:" in line:
+            stats["fp_continued_llm"] = _extract_number(line)
+        elif "Est. LLM cost saved:" in line:
+            # Extract cost like "$0.1234"
+            try:
+                cost_str = line.split("$")[1].strip()
+                stats["fp_cost_saved_usd"] = float(cost_str)
+            except (IndexError, ValueError):
+                pass
         elif "Error Type Breakdown:" in line:
             in_error_breakdown = True
         elif in_error_breakdown:
@@ -357,6 +366,7 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
             "estimated_cost_usd": labeling_output.get("estimated_cost_usd", 0),
             "fp_classifier_calls": labeling_output.get("fp_classifier_calls", 0),
             "fp_skipped_llm": labeling_output.get("fp_skipped_llm", 0),
+            "fp_cost_saved_usd": labeling_output.get("fp_cost_saved_usd", 0),
         }
 
     # Quality metrics
@@ -435,21 +445,31 @@ def send_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
             additional_details={"skipped": True, "reason": labeling.get("reason")},
         )
     else:
+        # Build additional details
+        additional_details = {
+            "articles_skipped": labeling.get("articles_skipped", 0),
+            "articles_pending_at_start": context.get("articles_pending", 0),
+            "collection_runs_24h": report.get("collection", {}).get("runs_24h", 0),
+            "articles_fetched_24h": report.get("collection", {}).get("articles_fetched", 0),
+            "articles_scraped_24h": report.get("collection", {}).get("articles_scraped", 0),
+            "error_rate": report.get("quality", {}).get("error_rate", 0),
+            "fp_rate": report.get("quality", {}).get("fp_rate", 0),
+        }
+
+        # Add FP classifier stats if available
+        if labeling.get("fp_classifier_calls", 0) > 0:
+            additional_details["fp_classifier_calls"] = labeling.get("fp_classifier_calls", 0)
+            additional_details["fp_skipped_llm"] = labeling.get("fp_skipped_llm", 0)
+            if labeling.get("fp_cost_saved_usd", 0) > 0:
+                additional_details["fp_cost_saved"] = f"${labeling.get('fp_cost_saved_usd', 0):.4f}"
+
         result = send_labeling_summary(
             articles_processed=labeling.get("articles_processed", 0),
             articles_labeled=labeling.get("articles_labeled", 0),
             false_positives=labeling.get("false_positives", 0),
             articles_failed=labeling.get("articles_failed", 0),
             estimated_cost=labeling.get("estimated_cost_usd"),
-            additional_details={
-                "articles_skipped": labeling.get("articles_skipped", 0),
-                "articles_pending_at_start": context.get("articles_pending", 0),
-                "collection_runs_24h": report.get("collection", {}).get("runs_24h", 0),
-                "articles_fetched_24h": report.get("collection", {}).get("articles_fetched", 0),
-                "articles_scraped_24h": report.get("collection", {}).get("articles_scraped", 0),
-                "error_rate": report.get("quality", {}).get("error_rate", 0),
-                "fp_rate": report.get("quality", {}).get("fp_rate", 0),
-            },
+            additional_details=additional_details,
         )
 
     # Determine what channels were used
@@ -490,6 +510,8 @@ def _log_summary(report: dict[str, Any]) -> None:
         if labeling.get("fp_classifier_calls"):
             print(f"  FP Classifier Calls: {labeling.get('fp_classifier_calls', 0)}")
             print(f"  FP Skipped LLM: {labeling.get('fp_skipped_llm', 0)}")
+            if labeling.get("fp_cost_saved_usd"):
+                print(f"  FP Cost Saved: ${labeling.get('fp_cost_saved_usd', 0):.4f}")
 
     quality = report.get("quality", {})
     print(f"\nQuality:")
