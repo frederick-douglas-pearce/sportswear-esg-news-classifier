@@ -41,7 +41,7 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (p
 CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
 
 # Testing
-uv run pytest                              # Run all tests (664 tests)
+uv run pytest                              # Run all tests (1046 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -90,6 +90,16 @@ uv run python -m src.agent status                  # Show workflow status
 uv run python -m src.agent history                 # Show workflow history
 ./scripts/setup_cron.sh install-agent              # Install all agent cron jobs
 ./scripts/setup_cron.sh status                     # Check cron status
+
+# Workflow Learning (record workflows to generate Agent Skills)
+uv run python -m src.workflow_learning start "workflow-name"        # Start recording session
+uv run python -m src.workflow_learning start "workflow-name" -d "description"
+uv run python -m src.workflow_learning stop                         # Stop recording session
+uv run python -m src.workflow_learning list                         # List all sessions
+uv run python -m src.workflow_learning show <session-id>            # Show session details
+uv run python -m src.workflow_learning analyze <session-id>         # Analyze and generate skill
+uv run python -m src.workflow_learning analyze <session-id> --skill-name "custom-name"
+uv run python -m src.workflow_learning delete <session-id>          # Delete a session
 ```
 
 ## Status Reporting & SQL Queries
@@ -170,6 +180,37 @@ prompts/labeling/
 - Stores daily scorecard snapshots with brand scores for trend analysis
 - Integrated into `website_export` workflow (saves after each export)
 
+### Workflow Learning (`src/workflow_learning/`)
+
+Records user workflows via Screenpipe and generates replayable Agent Skills using Claude analysis.
+
+- `config.py` - Settings (Screenpipe URL, output directories, analysis model)
+- `models.py` - Pydantic models (RecordingSession, ScreenContent, AudioTranscript, WorkflowStep)
+- `screenpipe_client.py` - Screenpipe REST API wrapper for screen OCR and audio transcription
+- `session_manager.py` - YAML-based session state persistence
+- `analyzer.py` - Claude Sonnet integration for extracting workflow steps from recordings
+- `skill_generator.py` - Generates SKILL.md files matching `.claude/skills/` format
+- `__main__.py` - CLI entry point (start, stop, list, show, analyze, delete)
+
+**Prerequisites:** Screenpipe must be running (`screenpipe` command) to record screen content and audio.
+
+**Usage Flow:**
+1. Start Screenpipe: `screenpipe`
+2. Start recording: `uv run python -m src.workflow_learning start "model-training"`
+3. Demonstrate workflow while narrating what you're doing
+4. Stop recording: `uv run python -m src.workflow_learning stop`
+5. Analyze and generate skill: `uv run python -m src.workflow_learning analyze <session-id>`
+6. Review generated skill: `.claude/skills/learned/<workflow-name>/SKILL.md`
+
+**Output Directories:**
+- Session state: `data/workflow_recordings/sessions/`
+- Generated skills: `.claude/skills/learned/`
+
+**Limitations (MVP):**
+- Each recording creates a new session; no multi-session analysis yet
+- Running analyze with same skill name overwrites previous skill
+- Future: iterative refinement by combining multiple recordings or refining existing skills
+
 ### ML Classifier Notebooks (`notebooks/`)
 
 **False Positive Classifier (3 notebooks):** fp1_EDA_FE.ipynb → fp2_model_selection_tuning.ipynb → fp3_model_evaluation_deployment.ipynb
@@ -186,8 +227,8 @@ prompts/labeling/
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 921 tests
-Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_integration
+### Test Suite (`tests/`) - 1046 tests
+Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_workflow_learning/*, test_integration
 
 ### Database Schema
 - **articles**: Article metadata + scraped content + labeling_status
@@ -230,6 +271,12 @@ RESEND_API_KEY=  # Recommended for email (resend.com, 3000/month free)
 AGENT_LLM_ANALYSIS=true  # Enable Claude analysis of labeling results
 AGENT_LLM_ERROR_THRESHOLD=0.0  # 0.0 = always run, >0 = only if error_rate exceeds
 AGENT_LLM_MODEL=claude-sonnet-4-20250514  # Model for LLM analysis
+
+# Workflow Learning
+SCREENPIPE_API_URL=http://localhost:3030  # Screenpipe REST API
+WORKFLOW_RECORDING_DIR=data/workflow_recordings  # Session storage
+WORKFLOW_SKILLS_DIR=.claude/skills/learned  # Generated skills output
+WORKFLOW_ANALYSIS_MODEL=claude-sonnet-4-20250514  # Model for analysis
 ```
 
 ## ESG Category Structure
@@ -335,6 +382,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-02-16**: Workflow learning module - record workflows via Screenpipe and generate Agent Skills with Claude analysis
 - **2026-02-11**: Scorecard history storage - daily snapshots saved to `scorecard_snapshots` and `scorecard_brand_scores` tables
 - **2026-01-27**: Domain blacklist for data collection - block low-quality sources via `BLOCKED_DOMAINS`
 - **2026-01-26**: Sustainability scorecard for website - brand ranking with deduplication
