@@ -146,7 +146,7 @@ class ScreenpipeClient:
 
                 for item in data:
                     content = item.get("content", {})
-                    if content.get("type") == "OCR":
+                    if item.get("type") == "OCR":
                         results.append(
                             ScreenContent(
                                 timestamp=self._parse_timestamp(content.get("timestamp", "")),
@@ -205,7 +205,7 @@ class ScreenpipeClient:
 
                 for item in data:
                     content = item.get("content", {})
-                    if content.get("type") == "Audio":
+                    if item.get("type") == "Audio":
                         results.append(
                             AudioTranscript(
                                 timestamp=self._parse_timestamp(

@@ -134,8 +134,8 @@ class TestScreenpipeClient:
         mock_response.json.return_value = {
             "data": [
                 {
+                    "type": "OCR",
                     "content": {
-                        "type": "OCR",
                         "timestamp": "2024-01-01T12:30:00Z",
                         "app_name": "Terminal",
                         "window_name": "bash",
@@ -143,8 +143,8 @@ class TestScreenpipeClient:
                     }
                 },
                 {
+                    "type": "OCR",
                     "content": {
-                        "type": "OCR",
                         "timestamp": "2024-01-01T12:31:00Z",
                         "app_name": "VSCode",
                         "window_name": "editor.py",
@@ -174,8 +174,8 @@ class TestScreenpipeClient:
         mock_response.json.return_value = {
             "data": [
                 {
+                    "type": "OCR",
                     "content": {
-                        "type": "OCR",
                         "timestamp": f"2024-01-01T12:{i:02d}:00Z",
                         "app_name": "Terminal",
                         "window_name": "bash",
@@ -208,8 +208,8 @@ class TestScreenpipeClient:
         mock_response.json.return_value = {
             "data": [
                 {
+                    "type": "Audio",
                     "content": {
-                        "type": "Audio",
                         "timestamp": "2024-01-01T12:30:00Z",
                         "transcription": "Now I'm going to run the training script",
                         "duration_secs": 3.5,
@@ -273,8 +273,8 @@ class TestScreenpipeClientPagination:
         page1_response.json.return_value = {
             "data": [
                 {
+                    "type": "OCR",
                     "content": {
-                        "type": "OCR",
                         "timestamp": f"2024-01-01T12:{i:02d}:00Z",
                         "app_name": "Terminal",
                         "window_name": "bash",
@@ -291,8 +291,8 @@ class TestScreenpipeClientPagination:
         page2_response.json.return_value = {
             "data": [
                 {
+                    "type": "OCR",
                     "content": {
-                        "type": "OCR",
                         "timestamp": "2024-01-01T12:50:00Z",
                         "app_name": "Terminal",
                         "window_name": "bash",

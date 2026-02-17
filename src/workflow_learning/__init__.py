@@ -21,8 +21,12 @@ Usage:
     uv run python -m src.workflow_learning analyze <session-id>
 """
 
-from .analyzer import RecordingAnalyzer
-from .config import workflow_learning_settings
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from .analyzer import RecordingAnalyzer  # noqa: E402
+from .config import workflow_learning_settings  # noqa: E402
 from .models import (
     AnalysisResult,
     AudioTranscript,
