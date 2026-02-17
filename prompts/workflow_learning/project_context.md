@@ -49,6 +49,35 @@ All commands use `uv run` to execute within the project virtual environment.
 - **Agent Orchestrator** (`src/agent/`): Automated workflow runner with state management, retries, and notifications.
 - **Claude Code CLI**: The primary interface for interacting with the project. Supports tool use, file editing, and running commands.
 
+## Jupyter MCP Server Tools
+
+When a workflow involves Jupyter notebooks, use these MCP tools instead of manual browser steps:
+
+### Execute notebook code
+Tool: `mcp__ide__executeCode`
+- Executes Python code in the active Jupyter kernel
+- State persists across calls (variables, imports carry over)
+- Returns cell output (text, errors, figures)
+- Usage: Run cells sequentially, check output between cells
+
+### Get diagnostics
+Tool: `mcp__ide__getDiagnostics`
+- Returns language diagnostics (errors, warnings) from the IDE
+
+### Notebook Execution Patterns
+- Open notebook in IDE first, then use executeCode to run cells
+- Run setup/import cells first, then data loading, then analysis
+- After model training cells: check metrics in output
+- After plotting cells: take screenshots to review figures
+- Key metrics to watch: F2 score, recall, precision, AUC
+
+### Notebook Workflow Pattern
+1. Open notebook file in IDE
+2. Execute cells sequentially using mcp__ide__executeCode
+3. At checkpoint cells: inspect output for expected metrics/patterns
+4. If results don't meet criteria: adjust parameters and rerun relevant cells
+5. After final cells: verify all success criteria met
+
 ## Key Conventions
 
 - Always use `uv run` to execute Python scripts (ensures correct virtual environment)

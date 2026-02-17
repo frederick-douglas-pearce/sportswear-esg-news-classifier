@@ -54,6 +54,13 @@ class WorkflowStep(BaseModel):
     evidence: list[str] = Field(default_factory=list)  # Supporting OCR/transcript snippets
     notes: str = ""  # Additional context from voice narration
 
+    # Notebook-aware and decision-making fields
+    tool_type: str = "bash"  # "bash", "jupyter", "review", "manual"
+    expected_output: str = ""  # What the output should look like / contain
+    success_criteria: str = ""  # How to verify the step succeeded
+    on_failure: str = ""  # What to do if the step fails or criteria not met
+    category: str = ""  # "setup", "core", "verification"
+
 
 class RecordingSession(BaseModel):
     """A workflow recording session."""
