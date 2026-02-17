@@ -67,3 +67,6 @@ reports/daily_labeling/
 
 # Claude skills runtime state
 .claude/skills/*/last_run.txt
+
+# Workflow learning session recordings (ephemeral, contain personal screen/audio data)
+data/workflow_recordings/
