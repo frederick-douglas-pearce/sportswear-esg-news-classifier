@@ -4,6 +4,8 @@ import json
 import logging
 import re
 import time
+from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any
 
 from anthropic import Anthropic, RateLimitError
@@ -19,16 +21,21 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Path to project context file
+PROJECT_CONTEXT_PATH = (
+    Path(__file__).parent.parent.parent / "prompts" / "workflow_learning" / "project_context.md"
+)
+
 
 ANALYSIS_SYSTEM_PROMPT = """You are an expert at analyzing workflow recordings to extract replayable step-by-step instructions.
 
-Your task is to analyze screen content (OCR text) and audio transcriptions from a user demonstrating a workflow. You should:
+Your task is to analyze a chronological timeline of screen content (OCR text) and audio narration from a user demonstrating a workflow. You should:
 
-1. Correlate screen content with voice narration to understand what the user is doing
-2. Identify discrete actions performed (running commands, editing files, clicking UI elements)
-3. Extract the sequential workflow steps in order
-4. Infer the purpose of each step from narration and context
-5. Generate executable commands where possible
+1. Prioritize audio narration for understanding intent — screen content is supporting evidence
+2. Correlate screen content with nearby narration to understand what the user is doing
+3. Identify discrete workflow actions (running commands, editing files, reviewing output)
+4. Skip navigation noise (cd, ls, directory browsing, switching windows) unless it's a meaningful part of the workflow
+5. Generate executable commands that match project conventions (see Project Context below)
 
 Focus on:
 - Terminal/command-line commands (look for shell prompts, command outputs)
@@ -36,7 +43,14 @@ Focus on:
 - Key decisions explained in narration
 - Sequence and dependencies between steps
 
-Output should be practical and actionable - another user should be able to follow the steps.
+When identifying commands:
+- Use project-specific tools when available (e.g., the Jupyter MCP server for notebook execution, the agent orchestrator for automated workflows)
+- Prefer `uv run` for all Python execution
+- Reference the Project Context below for available CLI commands and conventions
+
+Output should be practical and actionable — another user should be able to follow the steps.
+
+{project_context}
 
 Respond with a JSON object containing your analysis."""
 
@@ -48,17 +62,12 @@ ANALYSIS_USER_PROMPT = """Analyze this workflow recording and extract step-by-st
 - Description: {description}
 - Duration: {duration}
 
-## Screen Content (OCR)
-The following is a chronological list of screen content captured during the recording.
-Each entry shows the timestamp, application, window title, and visible text.
+## Timeline
+The following is a chronological timeline interleaving screen content (OCR) and audio narration.
+SCREEN entries show what was visible on screen. AUDIO entries show what the user said.
+Use the timestamps to correlate what the user was doing with what they were saying.
 
-{screen_content}
-
-## Audio Transcription (Voice Narration)
-The following is the user's voice narration during the recording.
-Use this to understand the intent and purpose of each action.
-
-{audio_transcript}
+{timeline}
 
 ## Instructions
 
@@ -76,6 +85,7 @@ Analyze the above recording and respond with a JSON object in this format:
             "target": "What they acted on",
             "purpose": "Why they did it",
             "command": "Exact command if applicable, or null",
+            "category": "setup | core | verification",
             "evidence": ["Relevant OCR text snippets", "Relevant transcription snippets"],
             "notes": "Additional context from narration"
         }}
@@ -87,7 +97,9 @@ Analyze the above recording and respond with a JSON object in this format:
 ```
 
 Important guidelines:
-- Extract ALL distinct steps, not just major ones
+- Commands should match project conventions (use `uv run`, project module paths, etc.)
+- Skip setup/navigation steps (cd, ls, window switching) that aren't part of the core workflow
+- Categorize each step: "setup" for preparation, "core" for main workflow actions, "verification" for checking results
 - Include exact commands when visible in terminal output
 - Preserve file paths exactly as shown
 - Note any environment variables or configuration mentioned
@@ -142,9 +154,19 @@ class RecordingAnalyzer:
                 model=self.model,
             )
 
-        # Format content for the prompt
-        screen_text = self._format_screen_content(session.screen_content)
-        audio_text = self._format_audio_transcripts(session.audio_transcripts)
+        # Deduplicate screen frames
+        deduped_frames = self._deduplicate_frames(session.screen_content)
+
+        # Build interleaved timeline
+        timeline = self._format_timeline(deduped_frames, session.audio_transcripts)
+
+        # Load project context
+        project_context = self._load_project_context()
+
+        # Format system prompt with project context
+        system_prompt = ANALYSIS_SYSTEM_PROMPT.format(
+            project_context=project_context,
+        )
 
         # Calculate duration
         duration = "Unknown"
@@ -158,11 +180,108 @@ class RecordingAnalyzer:
             workflow_name=session.workflow_name,
             description=session.description or "No description provided",
             duration=duration,
-            screen_content=screen_text or "No screen content captured",
-            audio_transcript=audio_text or "No audio transcription captured",
+            timeline=timeline or "No content captured",
         )
 
-        return self._call_api(user_prompt)
+        return self._call_api(user_prompt, system_prompt)
+
+    def _deduplicate_frames(
+        self,
+        frames: list[ScreenContent],
+        similarity_threshold: float = 0.85,
+    ) -> list[ScreenContent]:
+        """Remove consecutive frames with nearly identical OCR text.
+
+        Uses SequenceMatcher to compare adjacent frames. Keeps a frame only
+        if its content differs meaningfully from the previous kept frame.
+
+        Args:
+            frames: List of screen captures
+            similarity_threshold: Ratio above which frames are considered duplicates
+
+        Returns:
+            Deduplicated list of frames
+        """
+        if len(frames) <= 1:
+            return list(frames)
+
+        kept = [frames[0]]
+
+        for frame in frames[1:]:
+            prev_text = kept[-1].ocr_text.strip()
+            curr_text = frame.ocr_text.strip()
+
+            ratio = SequenceMatcher(None, prev_text, curr_text).ratio()
+            if ratio < similarity_threshold:
+                kept.append(frame)
+
+        # Always keep the last frame if it was deduplicated away
+        if frames[-1] not in kept:
+            kept.append(frames[-1])
+
+        removed = len(frames) - len(kept)
+        if removed > 0:
+            logger.info(
+                f"Deduplicated {removed} of {len(frames)} screen frames "
+                f"(threshold={similarity_threshold})"
+            )
+
+        return kept
+
+    def _format_timeline(
+        self,
+        screen_content: list[ScreenContent],
+        audio_transcripts: list[AudioTranscript],
+        max_chars: int = 60000,
+    ) -> str:
+        """Build a chronologically interleaved timeline of screen and audio content.
+
+        Args:
+            screen_content: Deduplicated screen captures
+            audio_transcripts: Audio transcriptions
+            max_chars: Maximum characters budget for the timeline
+
+        Returns:
+            Formatted timeline string
+        """
+        # Build unified list of (timestamp, type, formatted_entry)
+        entries: list[tuple[float, str]] = []
+
+        for sc in screen_content:
+            text = sc.ocr_text.strip()[:2000]
+            entry = (
+                f"### [{sc.timestamp.strftime('%H:%M:%S')}] "
+                f"SCREEN | {sc.app_name} - {sc.window_title}\n{text}"
+            )
+            entries.append((sc.timestamp.timestamp(), entry))
+
+        for at in audio_transcripts:
+            if not at.text.strip():
+                continue
+            entry = (
+                f"### [{at.timestamp.strftime('%H:%M:%S')}] AUDIO\n"
+                f'"{at.text.strip()}"'
+            )
+            entries.append((at.timestamp.timestamp(), entry))
+
+        if not entries:
+            return ""
+
+        # Sort by timestamp
+        entries.sort(key=lambda x: x[0])
+
+        # Build output within budget
+        lines = []
+        total_chars = 0
+
+        for _, entry in entries:
+            if total_chars + len(entry) > max_chars:
+                lines.append("\n... (truncated)")
+                break
+            lines.append(entry)
+            total_chars += len(entry)
+
+        return "\n\n".join(lines)
 
     def _format_screen_content(
         self, screen_content: list[ScreenContent], max_chars: int = 50000
@@ -228,8 +347,28 @@ class RecordingAnalyzer:
 
         return "\n".join(lines)
 
-    def _call_api(self, user_prompt: str) -> AnalysisResult:
+    def _load_project_context(self, context_path: Path | None = None) -> str:
+        """Load project context from file.
+
+        Args:
+            context_path: Path to context file (default: PROJECT_CONTEXT_PATH)
+
+        Returns:
+            Formatted project context string, or empty section if file not found
+        """
+        path = context_path or PROJECT_CONTEXT_PATH
+
+        try:
+            content = path.read_text().strip()
+            return f"## Project Context\n\n{content}"
+        except FileNotFoundError:
+            logger.warning(f"Project context file not found: {path}")
+            return "## Project Context\n\nNo project context available."
+
+    def _call_api(self, user_prompt: str, system_prompt: str | None = None) -> AnalysisResult:
         """Call Claude API with retry logic."""
+        system = system_prompt or ANALYSIS_SYSTEM_PROMPT
+
         for attempt in range(self.max_retries):
             try:
                 logger.info(f"Calling Claude API for analysis (attempt {attempt + 1})")
@@ -237,7 +376,7 @@ class RecordingAnalyzer:
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=4000,
-                    system=ANALYSIS_SYSTEM_PROMPT,
+                    system=system,
                     messages=[{"role": "user", "content": user_prompt}],
                 )
 
