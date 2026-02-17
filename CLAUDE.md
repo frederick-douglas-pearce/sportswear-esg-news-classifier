@@ -99,6 +99,7 @@ uv run python -m src.workflow_learning list                         # List all s
 uv run python -m src.workflow_learning show <session-id>            # Show session details
 uv run python -m src.workflow_learning analyze <session-id>         # Analyze and generate skill
 uv run python -m src.workflow_learning analyze <session-id> --skill-name "custom-name"
+uv run python -m src.workflow_learning analyze <session-id> --refine "skill-name"  # Refine existing skill with new recording
 uv run python -m src.workflow_learning delete <session-id>          # Delete a session
 ```
 
@@ -201,15 +202,19 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 4. Stop recording: `uv run python -m src.workflow_learning stop`
 5. Analyze and generate skill: `uv run python -m src.workflow_learning analyze <session-id>`
 6. Review generated skill: `.claude/skills/learned/<workflow-name>/SKILL.md`
+7. (Optional) Refine with additional recording: record another session, then `analyze <new-id> --refine "skill-name"`
+
+**Skill Refinement:** Multiple recording sessions can contribute to a single skill. Use `--refine` to merge a new recording into an existing skill — the analyzer preserves existing steps while adding detail or new steps from the new recording. This supports notebook-heavy workflows where a first session captures the overall flow and subsequent sessions add detail about specific cells, metrics, and decision points.
+
+**Notebook-Aware Skills:** When recordings involve Jupyter notebooks, the analyzer generates steps with `tool_type: "jupyter"` that reference `mcp__ide__executeCode` for cell execution, plus checkpoint steps with `success_criteria` and `on_failure` guidance for metric verification.
 
 **Output Directories:**
 - Session state: `data/workflow_recordings/sessions/`
 - Generated skills: `.claude/skills/learned/`
 
 **Limitations (MVP):**
-- Each recording creates a new session; no multi-session analysis yet
 - Running analyze with same skill name overwrites previous skill
-- Future: iterative refinement by combining multiple recordings or refining existing skills
+- Refinement requires an existing skill file at `.claude/skills/learned/<name>/SKILL.md`
 
 ### ML Classifier Notebooks (`notebooks/`)
 
@@ -227,7 +232,7 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 1046 tests
+### Test Suite (`tests/`) - 1055 tests
 Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_workflow_learning/*, test_integration
 
 ### Database Schema

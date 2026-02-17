@@ -17,7 +17,9 @@ Record user workflows via Screenpipe and generate replayable Agent Skills using 
 - [Usage](#usage)
   - [Recording a Workflow](#recording-a-workflow)
   - [Analyzing and Generating a Skill](#analyzing-and-generating-a-skill)
+  - [Refining a Skill with Additional Recordings](#refining-a-skill-with-additional-recordings)
   - [Managing Sessions](#managing-sessions)
+- [Notebook-Aware Skills](#notebook-aware-skills)
 - [Example: FP Classifier Training](#example-fp-classifier-training)
 - [Screenpipe Details](#screenpipe-details)
   - [Default Settings](#default-settings)
@@ -139,6 +141,35 @@ uv run python -m src.workflow_learning analyze <session-id> --skill-name "custom
 
 The generated skill is saved to `.claude/skills/learned/<workflow-name>/SKILL.md`.
 
+### Refining a Skill with Additional Recordings
+
+Multiple recording sessions can contribute to a single skill using the `--refine` flag. This is useful for:
+
+- Adding detail to an existing skill (e.g., a first session captures the overall flow, a second adds notebook-specific metrics and decision points)
+- Filling in gaps discovered after reviewing the initial skill
+- Updating a skill when the workflow changes
+
+```bash
+# 1. Record an additional session focused on specific details
+uv run python -m src.workflow_learning start "fp-notebook-detail" \
+  -d "Detailed walkthrough of FP notebook cells and expected metrics"
+
+# ... demonstrate and narrate ...
+
+uv run python -m src.workflow_learning stop
+
+# 2. Refine the existing skill with the new recording
+uv run python -m src.workflow_learning analyze <new-session-id> --refine "model-training-fp"
+```
+
+When refining, the analyzer:
+- Preserves existing steps that the new recording doesn't contradict
+- Adds detail to steps that the new recording elaborates on (e.g., specific metric thresholds, expected outputs)
+- Inserts new steps if the recording reveals previously missed actions
+- Updates `success_criteria` and `expected_output` with specifics from narration
+
+The `--refine` flag requires an existing skill at `.claude/skills/learned/<skill-name>/SKILL.md`.
+
 ### Managing Sessions
 
 ```bash
@@ -150,6 +181,54 @@ uv run python -m src.workflow_learning show <session-id>
 
 # Delete a session
 uv run python -m src.workflow_learning delete <session-id>
+```
+
+## Notebook-Aware Skills
+
+When recordings involve Jupyter notebooks, the analyzer generates skills with notebook-specific step types and checkpoint logic.
+
+### Step Types
+
+Each workflow step has a `tool_type` that determines how it's formatted in the generated skill:
+
+| Tool Type | Use Case | Rendered As |
+|-----------|----------|-------------|
+| `bash` | Shell commands (default) | ` ```bash ` code block |
+| `jupyter` | Notebook cell execution | ` ```python ` code block with `mcp__ide__executeCode` reference |
+| `review` | Output/figure inspection | Expected output description with success criteria |
+| `manual` | Browser or GUI actions | Generic code block |
+
+### Checkpoint Fields
+
+Steps can include decision-making metadata for verifying results:
+
+- **`expected_output`** — What the output should look like (e.g., "Confusion matrix with diagonal dominance")
+- **`success_criteria`** — How to verify success (e.g., "F2 score > 0.95, Recall > 98%")
+- **`on_failure`** — What to do if criteria aren't met (e.g., "Adjust class weights and rerun from Step 3")
+
+These fields are populated when the user narrates what to look for during the recording. They enable the generated skill to guide an agent through iterative notebook workflows where results need verification before proceeding.
+
+### Example Generated Step
+
+A jupyter step in the generated SKILL.md looks like:
+
+```markdown
+### Step 3: Train Random Forest model
+
+Fit the model on feature-engineered training data.
+
+**Tool**: Jupyter MCP (`mcp__ide__executeCode`)
+
+    ```python
+    model = RandomForestClassifier(n_estimators=100)
+    model.fit(X_train, y_train)
+    ```
+
+**Expected output**: Training completes, shows feature importances
+
+**Success criteria**: Model trains without errors
+
+**If criteria not met**: Check for data loading errors in previous cells
 ```
 
 ## Example: FP Classifier Training
@@ -182,7 +261,14 @@ uv run python -m src.workflow_learning analyze <session-id> --skill-name "model-
 # 6. Review the generated skill
 cat .claude/skills/learned/model-training-fp/SKILL.md
 
-# 7. Stop Screenpipe (Ctrl+C in its terminal)
+# 7. (Optional) Record a detailed notebook walkthrough and refine
+uv run python -m src.workflow_learning start "fp-notebook-detail" \
+  -d "Detailed walkthrough of FP notebook cells, metrics to check, and decision points"
+# ... walk through notebook cells, narrate expected metrics and what to look for ...
+uv run python -m src.workflow_learning stop
+uv run python -m src.workflow_learning analyze <new-session-id> --refine "model-training-fp"
+
+# 8. Stop Screenpipe (Ctrl+C in its terminal)
 ```
 
 **Note:** The notebooks take a long time to run. Since Screenpipe captures at 1 FPS continuously, long idle periods generate many frames. For a trial run, consider recording in short segments (e.g., just the export + notebook launch step) to validate the pipeline before committing to a full recording.
@@ -249,7 +335,7 @@ Environment variables (set in `.env`):
 ## Limitations
 
 - **No pause/resume:** Each recording is a single continuous session. For long workflows (e.g., notebook training), consider recording in segments.
-- **No multi-session analysis:** Each recording creates a new session. Combining multiple sessions into a single skill is not yet supported.
-- **Overwrites on re-analyze:** Running `analyze` with the same skill name overwrites the previous skill file.
+- **Overwrites on re-analyze:** Running `analyze` with the same skill name (or `--refine`) overwrites the previous skill file.
+- **Refinement requires existing skill:** The `--refine` flag requires a SKILL.md file already exists at `.claude/skills/learned/<name>/SKILL.md`.
 - **No selective Screenpipe cleanup:** Cannot delete recordings for a specific time window via CLI.
-- **Future planned:** Pause/resume support, iterative skill refinement, Screenpipe data trimming to session windows only.
+- **Future planned:** Pause/resume support, Screenpipe data trimming to session windows only.
