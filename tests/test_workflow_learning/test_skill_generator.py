@@ -272,6 +272,173 @@ class TestSkillGenerator:
         assert "**Notes**: Important: run this in the project root" in content
 
 
+class TestNotebookStepFormatting:
+    """Tests for notebook step formatting in generated skills."""
+
+    def test_jupyter_step_renders_python_block(self, temp_skills_dir, sample_session):
+        """Test that jupyter tool_type renders with python code block and MCP reference."""
+        analysis = AnalysisResult(
+            success=True,
+            steps=[
+                WorkflowStep(
+                    step_number=1,
+                    action="Train Random Forest model",
+                    purpose="Fit the model on training data",
+                    command="model = RandomForestClassifier(n_estimators=100)\nmodel.fit(X_train, y_train)",
+                    tool_type="jupyter",
+                    category="core",
+                )
+            ],
+            summary="Test",
+            skill_name="test-skill",
+            skill_description="Test",
+        )
+
+        generator = SkillGenerator(output_dir=temp_skills_dir)
+        skill_path = generator.generate_skill(session=sample_session, analysis=analysis)
+        content = skill_path.read_text()
+
+        assert "```python" in content
+        assert "```bash" not in content
+        assert "mcp__ide__executeCode" in content
+        assert "model.fit(X_train, y_train)" in content
+
+    def test_review_step_renders_expected_output(self, temp_skills_dir, sample_session):
+        """Test that review tool_type renders expected_output and success_criteria."""
+        analysis = AnalysisResult(
+            success=True,
+            steps=[
+                WorkflowStep(
+                    step_number=1,
+                    action="Review confusion matrix",
+                    purpose="Check classifier performance",
+                    tool_type="review",
+                    expected_output="Diagonal should dominate, few false negatives",
+                    success_criteria="False negative count < 5% of total positives",
+                    on_failure="Adjust class weights and rerun training",
+                    category="verification",
+                )
+            ],
+            summary="Test",
+            skill_name="test-skill",
+            skill_description="Test",
+        )
+
+        generator = SkillGenerator(output_dir=temp_skills_dir)
+        skill_path = generator.generate_skill(session=sample_session, analysis=analysis)
+        content = skill_path.read_text()
+
+        assert "**Expected output**: Diagonal should dominate" in content
+        assert "**Success criteria**: False negative count < 5%" in content
+        assert "**If criteria not met**: Adjust class weights" in content
+
+    def test_on_failure_renders_as_conditional(self, temp_skills_dir, sample_session):
+        """Test that on_failure renders with 'If criteria not met' prefix."""
+        analysis = AnalysisResult(
+            success=True,
+            steps=[
+                WorkflowStep(
+                    step_number=1,
+                    action="Check metrics",
+                    on_failure="Rerun from Step 3 with different params",
+                )
+            ],
+            summary="Test",
+            skill_name="test-skill",
+            skill_description="Test",
+        )
+
+        generator = SkillGenerator(output_dir=temp_skills_dir)
+        skill_path = generator.generate_skill(session=sample_session, analysis=analysis)
+        content = skill_path.read_text()
+
+        assert "**If criteria not met**: Rerun from Step 3" in content
+
+    def test_bash_step_still_renders_correctly(self, temp_skills_dir, sample_session):
+        """Test backwards compatibility — bash tool_type renders as before."""
+        analysis = AnalysisResult(
+            success=True,
+            steps=[
+                WorkflowStep(
+                    step_number=1,
+                    action="Run training script",
+                    command="uv run python scripts/train.py --classifier fp",
+                    tool_type="bash",
+                )
+            ],
+            summary="Test",
+            skill_name="test-skill",
+            skill_description="Test",
+        )
+
+        generator = SkillGenerator(output_dir=temp_skills_dir)
+        skill_path = generator.generate_skill(session=sample_session, analysis=analysis)
+        content = skill_path.read_text()
+
+        assert "```bash" in content
+        assert "```python" not in content
+        assert "mcp__ide__executeCode" not in content
+
+    def test_step_without_new_fields_renders_identically(self, temp_skills_dir, sample_session):
+        """Test that steps without new fields render the same as before."""
+        analysis = AnalysisResult(
+            success=True,
+            steps=[
+                WorkflowStep(
+                    step_number=1,
+                    action="Export data",
+                    target="FP dataset",
+                    purpose="Generate training data",
+                    command="uv run python scripts/export_training_data.py --dataset fp",
+                    evidence=["Exported 500 examples"],
+                    notes="Creates JSONL file",
+                    # No new fields — all defaults
+                )
+            ],
+            summary="Test",
+            skill_name="test-skill",
+            skill_description="Test",
+        )
+
+        generator = SkillGenerator(output_dir=temp_skills_dir)
+        skill_path = generator.generate_skill(session=sample_session, analysis=analysis)
+        content = skill_path.read_text()
+
+        # Should have bash block, evidence, notes — but no expected_output/success_criteria/on_failure
+        assert "```bash" in content
+        assert "**Expected output**" not in content
+        assert "**Success criteria**" not in content
+        assert "**If criteria not met**" not in content
+        assert "**Notes**: Creates JSONL file" in content
+        assert "Supporting evidence" in content
+
+    def test_manual_step_renders_generic_code_block(self, temp_skills_dir, sample_session):
+        """Test that manual tool_type renders command in generic code block."""
+        analysis = AnalysisResult(
+            success=True,
+            steps=[
+                WorkflowStep(
+                    step_number=1,
+                    action="Open notebook in browser",
+                    command="Navigate to http://localhost:8888/notebooks/fp1_EDA_FE.ipynb",
+                    tool_type="manual",
+                )
+            ],
+            summary="Test",
+            skill_name="test-skill",
+            skill_description="Test",
+        )
+
+        generator = SkillGenerator(output_dir=temp_skills_dir)
+        skill_path = generator.generate_skill(session=sample_session, analysis=analysis)
+        content = skill_path.read_text()
+
+        # Should not have bash or python language markers
+        assert "```\nNavigate to http://localhost:8888" in content
+        assert "```bash" not in content
+        assert "```python" not in content
+
+
 class TestGenerateSkillFromSession:
     """Tests for the convenience function."""
 

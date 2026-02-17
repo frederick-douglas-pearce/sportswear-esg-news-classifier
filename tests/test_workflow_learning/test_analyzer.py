@@ -231,6 +231,203 @@ class TestRecordingAnalyzer:
         assert "Rate limit exceeded" in result.error
 
 
+class TestRefineSkill:
+    """Tests for skill refinement mode."""
+
+    def test_refine_skill_sends_existing_skill_in_prompt(self, mock_anthropic, sample_session):
+        """Test that refine_skill includes existing skill content in prompt."""
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(text='{"skill_name": "test", "summary": "Refined", "steps": []}')
+        ]
+        mock_response.usage = MagicMock(input_tokens=2000, output_tokens=600)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        analyzer = RecordingAnalyzer(api_key="test-key")
+        existing_skill = "# Train FP Classifier\n\n## Steps\n\n### Step 1: Export data\n"
+
+        result = analyzer.refine_skill(existing_skill, sample_session)
+
+        assert result.success is True
+
+        # Check that existing skill content is in the user prompt
+        call_args = mock_client.messages.create.call_args
+        user_msg = call_args[1]["messages"][0]["content"]
+        assert "# Train FP Classifier" in user_msg
+        assert "## Existing Skill" in user_msg
+
+    def test_refine_skill_uses_refinement_system_prompt(self, mock_anthropic, sample_session):
+        """Test that refine_skill uses the refinement-specific system prompt."""
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(text='{"skill_name": "test", "summary": "", "steps": []}')
+        ]
+        mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        analyzer = RecordingAnalyzer(api_key="test-key")
+        analyzer.refine_skill("existing skill content", sample_session)
+
+        call_args = mock_client.messages.create.call_args
+        system_prompt = call_args[1]["system"]
+        assert "refining workflow skills" in system_prompt.lower()
+
+    def test_refine_skill_includes_timeline(self, mock_anthropic, sample_session):
+        """Test that refine_skill includes the new recording timeline."""
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(text='{"skill_name": "test", "summary": "", "steps": []}')
+        ]
+        mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        analyzer = RecordingAnalyzer(api_key="test-key")
+        analyzer.refine_skill("existing skill", sample_session)
+
+        call_args = mock_client.messages.create.call_args
+        user_msg = call_args[1]["messages"][0]["content"]
+        assert "SCREEN |" in user_msg
+        assert "AUDIO" in user_msg
+
+    def test_refine_skill_includes_project_context(self, mock_anthropic, sample_session):
+        """Test that refine_skill includes project context in system prompt."""
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(text='{"skill_name": "test", "summary": "", "steps": []}')
+        ]
+        mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        analyzer = RecordingAnalyzer(api_key="test-key")
+        analyzer.refine_skill("existing skill", sample_session)
+
+        call_args = mock_client.messages.create.call_args
+        system_prompt = call_args[1]["system"]
+        assert "Project Context" in system_prompt
+
+    def test_refine_skill_empty_session_fails(self, mock_anthropic):
+        """Test that refine_skill fails with empty session."""
+        analyzer = RecordingAnalyzer(api_key="test-key")
+
+        empty_session = RecordingSession(
+            session_id="empty",
+            workflow_name="empty",
+            started_at=datetime.now(timezone.utc),
+        )
+
+        result = analyzer.refine_skill("existing skill", empty_session)
+        assert result.success is False
+        assert "No screen content" in result.error
+
+    def test_refine_skill_parses_new_fields(self, mock_anthropic, sample_session):
+        """Test that refine_skill parses notebook-aware fields from response."""
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(
+                text="""```json
+{
+    "skill_name": "train-fp",
+    "summary": "Refined workflow",
+    "steps": [
+        {
+            "step_number": 1,
+            "action": "Train model in notebook",
+            "command": "model.fit(X_train, y_train)",
+            "tool_type": "jupyter",
+            "category": "core",
+            "expected_output": "Training completes successfully",
+            "success_criteria": "F2 > 0.95",
+            "on_failure": "Check data quality"
+        }
+    ]
+}
+```"""
+            )
+        ]
+        mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        analyzer = RecordingAnalyzer(api_key="test-key")
+        result = analyzer.refine_skill("existing skill", sample_session)
+
+        assert result.success is True
+        assert len(result.steps) == 1
+        step = result.steps[0]
+        assert step.tool_type == "jupyter"
+        assert step.expected_output == "Training completes successfully"
+        assert step.success_criteria == "F2 > 0.95"
+        assert step.on_failure == "Check data quality"
+        assert step.category == "core"
+
+
+class TestAnalyzeSessionNewFields:
+    """Tests for new field parsing in analyze_session."""
+
+    def test_analyze_session_parses_notebook_fields(self, mock_anthropic, sample_session):
+        """Test that analyze_session correctly parses tool_type and other new fields."""
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(
+                text="""```json
+{
+    "skill_name": "notebook-workflow",
+    "summary": "Notebook-based workflow",
+    "steps": [
+        {
+            "step_number": 1,
+            "action": "Execute training cell",
+            "tool_type": "jupyter",
+            "command": "model.fit(X, y)",
+            "category": "core",
+            "expected_output": "Model trained",
+            "success_criteria": "No errors",
+            "on_failure": "Check imports"
+        },
+        {
+            "step_number": 2,
+            "action": "Review confusion matrix",
+            "tool_type": "review",
+            "expected_output": "Diagonal dominates",
+            "success_criteria": "FN < 5%",
+            "category": "verification"
+        }
+    ]
+}
+```"""
+            )
+        ]
+        mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        analyzer = RecordingAnalyzer(api_key="test-key")
+        result = analyzer.analyze_session(sample_session)
+
+        assert result.success is True
+        assert len(result.steps) == 2
+        assert result.steps[0].tool_type == "jupyter"
+        assert result.steps[0].command == "model.fit(X, y)"
+        assert result.steps[1].tool_type == "review"
+        assert result.steps[1].success_criteria == "FN < 5%"
+
+
 class TestDeduplicateFrames:
     """Tests for OCR frame deduplication."""
 

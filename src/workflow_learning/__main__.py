@@ -13,6 +13,9 @@ Usage:
     # Analyze a session and generate skill
     uv run python -m src.workflow_learning analyze <session-id> [--skill-name "..."]
 
+    # Refine an existing skill with a new recording
+    uv run python -m src.workflow_learning analyze <session-id> --refine "skill-name"
+
     # Show session details
     uv run python -m src.workflow_learning show <session-id>
 """
@@ -21,8 +24,10 @@ import argparse
 import logging
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .analyzer import RecordingAnalyzer
+from .config import workflow_learning_settings
 from .models import SessionStatus
 from .screenpipe_client import ScreenpipeClient, ScreenpipeError
 from .session_manager import SessionManager
@@ -215,12 +220,28 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             print(f"ERROR: Failed to retrieve content: {e}")
             return 1
 
+    # Determine if this is a refinement
+    refine_name = getattr(args, "refine", None)
+    is_refinement = bool(refine_name)
+
     # Analyze with Claude
     print()
-    print("Analyzing recording with Claude...")
     try:
         analyzer = RecordingAnalyzer()
-        result = analyzer.analyze_session(session)
+
+        if is_refinement:
+            # Load existing skill
+            skill_path = workflow_learning_settings.skills_output_dir / refine_name / "SKILL.md"
+            if not skill_path.exists():
+                print(f"ERROR: Existing skill not found at: {skill_path}")
+                return 1
+
+            existing_skill = skill_path.read_text()
+            print(f"Refining existing skill '{refine_name}' with new recording...")
+            result = analyzer.refine_skill(existing_skill, session)
+        else:
+            print("Analyzing recording with Claude...")
+            result = analyzer.analyze_session(session)
 
         if not result.success:
             print(f"ERROR: Analysis failed: {result.error}")
@@ -245,12 +266,17 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     # Generate skill
     print()
-    print("Generating skill...")
+    if is_refinement:
+        print(f"Updating skill '{refine_name}'...")
+    else:
+        print("Generating skill...")
+
     generator = SkillGenerator()
+    skill_name = refine_name or args.skill_name
     skill_path = generator.generate_skill(
         session=session,
         analysis=result,
-        skill_name=args.skill_name,
+        skill_name=skill_name,
     )
 
     session.skill_path = str(skill_path)
@@ -320,6 +346,12 @@ def main() -> int:
     analyze_parser.add_argument("session_id", help="Session ID to analyze")
     analyze_parser.add_argument(
         "--skill-name", "-n", help="Override skill name (default: from analysis)"
+    )
+    analyze_parser.add_argument(
+        "--refine",
+        "-r",
+        metavar="SKILL_NAME",
+        help="Refine an existing skill instead of creating new (e.g., 'model-training-fp')",
     )
 
     # delete command

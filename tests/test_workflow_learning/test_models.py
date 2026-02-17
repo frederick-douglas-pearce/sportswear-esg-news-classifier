@@ -119,6 +119,61 @@ class TestWorkflowStep:
         assert step.command is None
         assert step.evidence == []
         assert step.notes == ""
+        assert step.tool_type == "bash"
+        assert step.expected_output == ""
+        assert step.success_criteria == ""
+        assert step.on_failure == ""
+        assert step.category == ""
+
+    def test_workflow_step_notebook_fields(self):
+        """Test WorkflowStep with notebook-specific fields."""
+        step = WorkflowStep(
+            step_number=1,
+            action="Train model",
+            command="model.fit(X_train, y_train)",
+            tool_type="jupyter",
+            expected_output="Training completes, shows feature importances",
+            success_criteria="F2 score > 0.95",
+            on_failure="Adjust hyperparameters and retrain",
+            category="core",
+        )
+        assert step.tool_type == "jupyter"
+        assert step.expected_output == "Training completes, shows feature importances"
+        assert step.success_criteria == "F2 score > 0.95"
+        assert step.on_failure == "Adjust hyperparameters and retrain"
+        assert step.category == "core"
+
+    def test_workflow_step_serialization_with_new_fields(self):
+        """Test that new fields are included in serialization."""
+        step = WorkflowStep(
+            step_number=1,
+            action="Review output",
+            tool_type="review",
+            expected_output="Confusion matrix looks good",
+            success_criteria="Recall > 95%",
+            on_failure="Check training data balance",
+            category="verification",
+        )
+        data = step.model_dump()
+        assert data["tool_type"] == "review"
+        assert data["expected_output"] == "Confusion matrix looks good"
+        assert data["success_criteria"] == "Recall > 95%"
+        assert data["on_failure"] == "Check training data balance"
+        assert data["category"] == "verification"
+
+    def test_workflow_step_deserialization_without_new_fields(self):
+        """Test backwards compatibility — old data without new fields still works."""
+        data = {
+            "step_number": 1,
+            "action": "Run script",
+            "command": "uv run python scripts/train.py",
+        }
+        step = WorkflowStep(**data)
+        assert step.tool_type == "bash"
+        assert step.expected_output == ""
+        assert step.success_criteria == ""
+        assert step.on_failure == ""
+        assert step.category == ""
 
 
 class TestRecordingSession:

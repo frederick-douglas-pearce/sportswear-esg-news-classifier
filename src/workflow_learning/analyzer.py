@@ -48,6 +48,14 @@ When identifying commands:
 - Prefer `uv run` for all Python execution
 - Reference the Project Context below for available CLI commands and conventions
 
+When the recording shows notebook content (Jupyter cells, output, plots):
+- Identify which cells are important and what their output means
+- Extract metrics mentioned in narration with their expected values/thresholds
+- Note figure descriptions from narration (what a good result looks like)
+- Generate steps using tool_type "jupyter" with executeCode for cell execution
+- Include success_criteria and on_failure for checkpoint steps
+- When the user describes what a figure "should look like", capture that in expected_output
+
 Output should be practical and actionable — another user should be able to follow the steps.
 
 {project_context}
@@ -85,7 +93,11 @@ Analyze the above recording and respond with a JSON object in this format:
             "target": "What they acted on",
             "purpose": "Why they did it",
             "command": "Exact command if applicable, or null",
+            "tool_type": "bash | jupyter | review | manual",
             "category": "setup | core | verification",
+            "expected_output": "What the output should look like (for checkpoints)",
+            "success_criteria": "How to verify this step succeeded",
+            "on_failure": "What to do if criteria not met",
             "evidence": ["Relevant OCR text snippets", "Relevant transcription snippets"],
             "notes": "Additional context from narration"
         }}
@@ -105,6 +117,88 @@ Important guidelines:
 - Note any environment variables or configuration mentioned
 - If a step depends on a previous step's output, note that
 - Use evidence from BOTH screen content AND audio to justify each step
+- For notebook workflows: use tool_type "jupyter" for cell execution, "review" for output inspection
+- Include expected_output and success_criteria for checkpoint steps where the user verifies results
+- Include on_failure guidance when the user explains what to do if results aren't satisfactory
+"""
+
+
+REFINEMENT_SYSTEM_PROMPT = """You are an expert at refining workflow skills by incorporating new recording data.
+
+You have an existing skill (step-by-step workflow instructions) and a new recording session. Your task is to produce an improved, merged version of the workflow steps.
+
+Rules for refinement:
+1. Merge new information into the existing skill structure
+2. Add detail to steps that the new recording elaborates on (e.g., specific metrics, expected outputs)
+3. Add new steps if the recording reveals previously missed actions
+4. Update success_criteria and expected_output with specifics from narration
+5. Preserve steps from the existing skill that the new recording doesn't contradict
+6. Do NOT discard existing steps just because the new recording doesn't cover them
+7. If the new recording shows a different approach for a step, note both approaches in the notes
+
+When the recording shows notebook content (Jupyter cells, output, plots):
+- Identify which cells are important and what their output means
+- Extract metrics mentioned in narration with their expected values/thresholds
+- Note figure descriptions from narration (what a good result looks like)
+- Generate steps using tool_type "jupyter" with executeCode for cell execution
+- Include success_criteria and on_failure for checkpoint steps
+
+{project_context}
+
+Respond with a JSON object containing your refined analysis."""
+
+
+REFINEMENT_USER_PROMPT = """Refine the existing skill with information from a new recording session.
+
+## Existing Skill
+
+{existing_skill}
+
+## New Recording Session
+- Name: {workflow_name}
+- Description: {description}
+- Duration: {duration}
+
+## Timeline
+{timeline}
+
+## Instructions
+
+Merge the new recording information into the existing skill and respond with a JSON object in this format:
+
+```json
+{{
+    "skill_name": "short-kebab-case-name",
+    "skill_description": "One-sentence description of what this workflow does",
+    "summary": "2-3 sentence overview of the workflow",
+    "steps": [
+        {{
+            "step_number": 1,
+            "action": "What the user did (verb phrase)",
+            "target": "What they acted on",
+            "purpose": "Why they did it",
+            "command": "Exact command if applicable, or null",
+            "tool_type": "bash | jupyter | review | manual",
+            "category": "setup | core | verification",
+            "expected_output": "What the output should look like (for checkpoints)",
+            "success_criteria": "How to verify this step succeeded",
+            "on_failure": "What to do if criteria not met",
+            "evidence": ["Relevant OCR text snippets", "Relevant transcription snippets"],
+            "notes": "Additional context from narration"
+        }}
+    ],
+    "prerequisites": ["List of prerequisites or setup required"],
+    "environment_variables": ["ENV_VAR_NAME=description"],
+    "file_dependencies": ["path/to/required/file"]
+}}
+```
+
+Important guidelines:
+- Preserve existing steps that the new recording doesn't contradict
+- Add detail from the new recording to existing steps where applicable
+- Add new steps discovered in the recording at the appropriate position
+- Update expected_output and success_criteria with specific values from narration
+- For notebook workflows: use tool_type "jupyter" for cell execution, "review" for output inspection
 """
 
 
@@ -177,6 +271,62 @@ class RecordingAnalyzer:
             duration = f"{minutes}m {seconds}s"
 
         user_prompt = ANALYSIS_USER_PROMPT.format(
+            workflow_name=session.workflow_name,
+            description=session.description or "No description provided",
+            duration=duration,
+            timeline=timeline or "No content captured",
+        )
+
+        return self._call_api(user_prompt, system_prompt)
+
+    def refine_skill(
+        self,
+        existing_skill: str,
+        session: RecordingSession,
+    ) -> AnalysisResult:
+        """Refine an existing skill with new recording data.
+
+        Takes an existing SKILL.md content and a new recording session,
+        producing an improved analysis that merges both sources.
+
+        Args:
+            existing_skill: Content of the current SKILL.md file
+            session: New recording session with screen_content and audio_transcripts
+
+        Returns:
+            AnalysisResult with refined steps
+        """
+        if not session.screen_content and not session.audio_transcripts:
+            return AnalysisResult(
+                success=False,
+                error="No screen content or audio transcriptions to analyze",
+                model=self.model,
+            )
+
+        # Deduplicate screen frames
+        deduped_frames = self._deduplicate_frames(session.screen_content)
+
+        # Build interleaved timeline
+        timeline = self._format_timeline(deduped_frames, session.audio_transcripts)
+
+        # Load project context
+        project_context = self._load_project_context()
+
+        # Format system prompt with project context
+        system_prompt = REFINEMENT_SYSTEM_PROMPT.format(
+            project_context=project_context,
+        )
+
+        # Calculate duration
+        duration = "Unknown"
+        if session.started_at and session.stopped_at:
+            delta = session.stopped_at - session.started_at
+            minutes = int(delta.total_seconds() / 60)
+            seconds = int(delta.total_seconds() % 60)
+            duration = f"{minutes}m {seconds}s"
+
+        user_prompt = REFINEMENT_USER_PROMPT.format(
+            existing_skill=existing_skill,
             workflow_name=session.workflow_name,
             description=session.description or "No description provided",
             duration=duration,
@@ -398,6 +548,11 @@ class RecordingAnalyzer:
                             command=step_data.get("command"),
                             evidence=step_data.get("evidence", []),
                             notes=step_data.get("notes", ""),
+                            tool_type=step_data.get("tool_type", "bash"),
+                            expected_output=step_data.get("expected_output", ""),
+                            success_criteria=step_data.get("success_criteria", ""),
+                            on_failure=step_data.get("on_failure", ""),
+                            category=step_data.get("category", ""),
                         )
                     )
 

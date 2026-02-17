@@ -136,6 +136,12 @@ class SkillGenerator:
     def _format_step(self, step: WorkflowStep) -> list[str]:
         """Format a workflow step for the skill file.
 
+        Handles different tool_type values:
+        - "bash": Shell commands in bash code blocks (default)
+        - "jupyter": Python code blocks with MCP tool reference
+        - "review": Output inspection with expected_output description
+        - "manual": Plain text instructions
+
         Args:
             step: The workflow step
 
@@ -159,12 +165,51 @@ class SkillGenerator:
             lines.append(f"**Target**: {step.target}")
             lines.append("")
 
-        # Command block
+        # Command block — format depends on tool_type
         if step.command:
+            if step.tool_type == "jupyter":
+                lines.append("**Tool**: Jupyter MCP (`mcp__ide__executeCode`)")
+                lines.append("")
+                lines.extend([
+                    "```python",
+                    step.command,
+                    "```",
+                    "",
+                ])
+            elif step.tool_type == "bash" or not step.tool_type:
+                lines.extend([
+                    "```bash",
+                    step.command,
+                    "```",
+                    "",
+                ])
+            else:
+                # manual or other types — just show the command as text
+                lines.extend([
+                    "```",
+                    step.command,
+                    "```",
+                    "",
+                ])
+
+        # Expected output
+        if step.expected_output:
             lines.extend([
-                "```bash",
-                step.command,
-                "```",
+                f"**Expected output**: {step.expected_output}",
+                "",
+            ])
+
+        # Success criteria
+        if step.success_criteria:
+            lines.extend([
+                f"**Success criteria**: {step.success_criteria}",
+                "",
+            ])
+
+        # On failure guidance
+        if step.on_failure:
+            lines.extend([
+                f"**If criteria not met**: {step.on_failure}",
                 "",
             ])
 
