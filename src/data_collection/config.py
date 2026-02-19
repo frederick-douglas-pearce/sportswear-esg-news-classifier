@@ -101,6 +101,7 @@ BRANDS: list[str] = [
 # Blocked domains - sources known to produce low-quality or AI-generated content
 BLOCKED_DOMAINS: list[str] = [
     "openpr.com",  # AI-generated market reports with no real journalism
+    "kicksonfire.com",  # Sneaker product catalog listings, not news articles
 ]
 
 KEYWORDS: list[str] = [
