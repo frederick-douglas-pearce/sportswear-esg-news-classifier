@@ -3,54 +3,54 @@
     "name": "tfidf_lsa_ner_proximity_brands",
     "classifier": "LogisticRegression",
     "n_features": 191,
-    "cv_f2": 0.9539316492252022,
-    "cv_f2_std": 0.004091908943991661,
-    "cv_recall": 0.9627371273712737,
-    "cv_precision": 0.9205136402387041
+    "cv_f2": 0.9503987015278845,
+    "cv_f2_std": 0.0008772497416345282,
+    "cv_recall": 0.95679012345679,
+    "cv_precision": 0.9259039117569817
   },
   {
     "name": "tfidf_lsa_ner_proximity_brands",
     "classifier": "RandomForest",
     "n_features": 191,
-    "cv_f2": 0.9712232284549458,
-    "cv_f2_std": 0.00424063534184811,
-    "cv_recall": 0.983739837398374,
-    "cv_precision": 0.9243736220905091
+    "cv_f2": 0.9747795065242443,
+    "cv_f2_std": 0.0015788874658360253,
+    "cv_recall": 0.9862825788751715,
+    "cv_precision": 0.9315725103946265
   },
   {
     "name": "tfidf_lsa_ner_proximity_brands",
     "classifier": "HistGradientBoosting",
     "n_features": 191,
-    "cv_f2": 0.9662363841173415,
-    "cv_f2_std": 0.007977659739138896,
-    "cv_recall": 0.9742547425474255,
-    "cv_precision": 0.935770444112476
+    "cv_f2": 0.9686321603018575,
+    "cv_f2_std": 0.003968179640462455,
+    "cv_recall": 0.9746227709190672,
+    "cv_precision": 0.9455412519644087
   },
   {
     "name": "doc2vec_ner_brands",
     "classifier": "LogisticRegression",
     "n_features": 172,
-    "cv_f2": 0.926872870426818,
-    "cv_f2_std": 0.007802909928668543,
-    "cv_recall": 0.9261517615176151,
-    "cv_precision": 0.9300926762527514
+    "cv_f2": 0.9280498708927837,
+    "cv_f2_std": 0.009331479139758276,
+    "cv_recall": 0.929355281207133,
+    "cv_precision": 0.9231133522826683
   },
   {
     "name": "doc2vec_ner_brands",
     "classifier": "RandomForest",
     "n_features": 172,
-    "cv_f2": 0.9693625237980587,
-    "cv_f2_std": 0.002251913397349254,
-    "cv_recall": 0.9945799457994581,
-    "cv_precision": 0.8803241792939765
+    "cv_f2": 0.9699397116546802,
+    "cv_f2_std": 0.0006601335356430984,
+    "cv_recall": 0.9958847736625515,
+    "cv_precision": 0.8784308959787642
   },
   {
     "name": "doc2vec_ner_brands",
     "classifier": "HistGradientBoosting",
     "n_features": 172,
-    "cv_f2": 0.9600581928095547,
-    "cv_f2_std": 0.007491062083833248,
-    "cv_recall": 0.9715447154471545,
-    "cv_precision": 0.9171379321517095
+    "cv_f2": 0.968326262615168,
+    "cv_f2_std": 0.002945338257580412,
+    "cv_recall": 0.9814814814814814,
+    "cv_precision": 0.9191611632169222
   }
 ]
