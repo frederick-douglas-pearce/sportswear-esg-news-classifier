@@ -140,40 +140,54 @@ The project is designed to train three progressively complex classifiers that ca
 
 Guidelines for distinguishing between `false_positive` (pure metrics) and `skipped` (substantive content) for stock/finance articles. This matters because the FP classifier bypasses LLM - articles incorrectly marked `false_positive` are permanently excluded from future labeling.
 
-### Substantive Content Indicators (→ `skipped`, send to LLM)
+### Substantive Content (→ `skipped`, send to LLM)
 
-- Named analyst firms with specific ratings (e.g., "Citigroup reiterates neutral", "BNP Paribas upgrades to hold")
-- Consensus rating breakdowns (e.g., "1 Buy, 5 Hold, 1 Sell")
-- Earnings results with context or CEO commentary
-- Hedge fund/institutional investor activity with specifics (e.g., "GAMMA Investing grew position by 30%")
-- Price targets from analysts
-- Any editorial analysis or reasoning about the company
+Articles with human-written analysis or commentary about the brand's business:
 
-### Raw Metrics Only (→ `false_positive`, skip LLM)
+- Analyst reports **with reasoning** (e.g., "Needham downgrades Nike citing brand weakness in North America")
+- Earnings coverage **with context** (e.g., "Deckers reports record revenue as global demand for Hoka continues")
+- CEO/CFO quotes or business strategy discussion
+- Investment thesis articles with company-specific analysis
+- Competitive analysis or market position commentary
 
-- Just stock price, PE ratio, moving averages
-- Short interest numbers without analyst context
-- Boilerplate company descriptions (template text)
-- Pure ticker data (e.g., "NKE $78.50 +2.3%")
+### Template / Raw Metrics (→ `false_positive`, skip LLM)
+
+Auto-generated or template content with no human analysis:
+
+- **Institutional holdings** (13F filings): "Midwest Trust Co Invests $1.64M in NIKE" — just SEC filing data
+- **Stock price/volume**: "Adidas Sees Strong Trading Volume" — just price and volume numbers
+- **Short interest**: "Short Interest in Adidas AG Rises By 88.3%" — just share counts
+- **Boilerplate analyst roundups**: "Columbia Sportswear Receives Consensus Rating of Hold" — rating lists without reasoning
+- **Stock comparisons**: "Oxford Industries vs. Under Armour Head to Head" — side-by-side financial metrics
+- **Return calculators**: "$100 Invested In Deckers 20 Years Ago" — just math
+- **Shopping/deals**: "Skechers slippers reduced to £19" — product promotion, not business news
+
+**Telltale signs of template articles:** "Get Free Report", "according to its most recent 13F filing", "200-day moving average of $X", "Several other research analysts also recently issued reports", "shares of the footwear maker". Sources like MarketBeat, MarketScreener, HoldingsChannel, tickerreport.com, themarketsdaily.com.
 
 ### Classification Examples
 
 | Article Type | Example | Has Substantive Content? | Label |
 |-------------|---------|-------------------------|-------|
-| Raw metrics | "NKE stock up 4% today, 50-day MA $94.67" | ❌ No | `false_positive` |
-| Short interest only | "ANTA short interest up 535%, ratio 0.8 days" | ❌ No | `false_positive` |
-| Analyst ratings | "Citigroup neutral, BNP upgrades to hold, consensus: Hold" | ✅ Yes | `skipped` |
-| Hedge fund activity | "GAMMA Investing grew position by 30.1% to $161K" | ✅ Yes | `skipped` |
-| Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | ✅ Yes | `skipped` |
-| Analyst with targets | "Deutsche Bank reiterates buy, $146 target" | ✅ Yes | `skipped` |
+| Raw metrics | "NKE stock up 4% today, 50-day MA $94.67" | No | `false_positive` |
+| Short interest | "ANTA short interest up 535%, ratio 0.8 days" | No | `false_positive` |
+| Institutional 13F | "Vontobel Holding Boosts Position in Under Armour" | No | `false_positive` |
+| Boilerplate ratings | "Columbia Sportswear Receives Consensus PT of $60.50" | No | `false_positive` |
+| Stock comparison | "Reviewing Victoria's Secret & Allbirds" (just metrics) | No | `false_positive` |
+| Shopping/deals | "Patagonia winter sale deals — 8 picks" | No | `false_positive` |
+| Analyst with reasoning | "Needham downgrades Nike citing brand weakness" | Yes | `skipped` |
+| Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | Yes | `skipped` |
+| Investment thesis | "Sinking 48%, Is Lululemon a Buying Opportunity?" | Yes | `skipped` |
+| Business analysis | "Deckers record revenue driven by Hoka global demand" | Yes | `skipped` |
 
 ### is_sportswear_brand Policy
 
 `is_sportswear_brand` is about **substantive content**, not just identity:
-- `true` → Article has substantive content (products, business news, strategy, analyst commentary with reasoning)
-- `false` → Brand refers to something else OR pure stock metrics only (no substantive content)
+- `true` → Article has substantive content (products, business news, strategy, analyst commentary **with reasoning**)
+- `false` → Brand refers to something else OR pure stock metrics/template content only
 
-**Finance Category Test:** Would this be useful with a "Finance" category? YES → `is_sportswear_brand: true`. Just raw Yahoo Finance metrics → `false`.
+**The critical distinction:** Does the article contain **human-written analysis or commentary** about the brand's business? Or is it **auto-generated/template content** that just plugs financial data into a standard format? Template content = false positive.
+
+**Finance Category Test:** Would this be useful with a "Finance" category? YES → `is_sportswear_brand: true`. Just raw Yahoo Finance metrics or template 13F data → `false`.
 
 ### FP Classifier Limitation
 

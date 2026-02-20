@@ -1,7 +1,7 @@
 {
   "prompt_type": "esg_labeling",
   "description": "ESG classification prompts for sportswear brand news articles",
-  "production": "v1.6.0",
+  "production": "v1.7.0",
   "versions": {
     "v1.0.0": {
       "created_at": "2025-01-09T00:00:00Z",
@@ -91,6 +91,20 @@
       "created_at": "2026-01-26T12:00:00Z",
       "commit_message": "Stricter Environmental and Social criteria - decision trees and negative examples",
       "description": "Major update to prevent Environmental and Social mislabeling. Environmental: Adds decision tree clarifying that mentioning sustainable materials in product descriptions is NOT Environmental ESG - the article must be ABOUT the sustainability initiative, not just mention it as a product feature. Product reviews, shopping articles, and gift guides should never receive Environmental labels. Social: Adds decision tree and extensive examples for avoiding mislabeling store openings (retail news), celebrity endorsements (marketing), athlete sponsorships (business), and fashion events (lifestyle) as Social. Also adds Mizuno brand verification guidance to prevent false positives when articles mention actress Sonoya Mizuno rather than Mizuno sportswear.",
+      "model_recommendations": {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "system",
+        "status": "superseded"
+      }
+    },
+    "v1.7.0": {
+      "created_at": "2026-02-19T00:00:00Z",
+      "commit_message": "Stricter financial article classification with extensive examples",
+      "description": "Major expansion of is_sportswear_brand guidance for financial articles. Addresses persistent mislabeling of auto-generated stock articles (13F filings, institutional holdings, short interest, moving averages, boilerplate analyst roundups, stock comparisons) as sportswear when they should be false positives. Adds 30+ specific real-world examples organized by article type: institutional holdings templates, stock price/volume articles, short interest updates, boilerplate analyst rating roundups, stock comparison tables, auto-generated return calculators, and shopping/deals articles. Clarifies the decision boundary: human-written analysis or commentary = sportswear, auto-generated template content = false positive. Based on review of 129 mislabeled articles in training data.",
       "model_recommendations": {
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 2000,
