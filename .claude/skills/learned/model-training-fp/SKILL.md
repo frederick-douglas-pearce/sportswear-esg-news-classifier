@@ -39,7 +39,7 @@ Launch notebook interface for potential model development
 **Target**: Jupyter Lab environment
 
 ```bash
-uv run --with jupyter jupyter lab
+uv run jupyter lab
 ```
 
 **Notes**: Used uv run to ensure proper virtual environment activation
