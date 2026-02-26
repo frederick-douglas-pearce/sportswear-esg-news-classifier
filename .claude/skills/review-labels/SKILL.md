@@ -133,10 +133,12 @@ with engine.connect() as conn:
     else:
         print('  No false positives in this period')
 
-    # 4. Mislabeled analyst articles (should be skipped, not false_positive)
-    # Per docs/LABELING.md: analyst ratings/price targets have substantive content
+    # 4. Substantive analyst articles mislabeled as false_positive
+    # Per docs/LABELING.md v1.7.0: boilerplate template stock articles = false_positive (correct)
+    # but substantive analyst articles (named analysts, specific commentary) = skipped
+    # Exclude known boilerplate aggregator sources that are correctly false_positive
     print('\n' + '-' * 70)
-    print('MISLABELED ANALYST ARTICLES (false_positive -> should be skipped)')
+    print('SUBSTANTIVE ANALYST ARTICLES (false_positive -> should be skipped)')
     print('-' * 70)
     result = conn.execute(text('''
         SELECT id, title, source_name
@@ -169,18 +171,26 @@ with engine.connect() as conn:
             OR LOWER(title) LIKE '%anta%'
             OR LOWER(title) LIKE '%asics%'
           )
+          AND LOWER(source_name) NOT IN (
+            'marketbeat', 'defenseworld net', 'defenseworld.net',
+            'americanbankingnews', 'themarketsdaily.com', 'markets daily',
+            'the markets daily', 'daily political', 'dailypolitical.com',
+            'the lincolnian online', 'tickerreport.com', 'ticker report',
+            'bbns', 'zolmax', 'thelincolnianonline'
+          )
         ORDER BY created_at DESC
         LIMIT 10
     '''))
     rows = result.fetchall()
     if rows:
-        print(f'  ⚠️  Found {len(rows)} articles that may need correction:')
+        print(f'  ⚠️  Found {len(rows)} potentially mislabeled articles:')
         for r in rows:
             print(f'  [{r.source_name}] {r.title[:60]}...')
             print(f'    ID: {r.id}')
-        print('  → These have analyst content and should likely be skipped, not false_positive')
+        print('  → Verify these contain substantive analyst commentary (not just templates)')
+        print('  → If substantive: change from false_positive to skipped')
     else:
-        print('  ✓ No mislabeled analyst articles found')
+        print('  ✓ No mislabeled substantive analyst articles found')
 
     # 5. Articles with multiple brands (check consistency)
     print('\n' + '-' * 70)
@@ -237,9 +247,11 @@ After running the queries:
 
 3. **False Positives**: Spot check a few to ensure they truly aren't ESG-relevant
 
-4. **Mislabeled Analyst Articles**: Per [docs/LABELING.md](../../docs/LABELING.md#stock-article-classification), articles with analyst ratings, price targets, or substantive financial commentary should be `skipped` (sent to LLM), not `false_positive`. If any are found:
-   - Verify they contain substantive content (named analysts, specific ratings/targets)
-   - Update status from `false_positive` to `skipped` using:
+4. **Substantive Analyst Articles**: Per [docs/LABELING.md](../../docs/LABELING.md#stock-article-classification) v1.7.0:
+   - **Boilerplate template articles** (MarketBeat, DefenseWorld, DailyPolitical, etc.) → correctly `false_positive` — these are auto-generated aggregations with no original analysis
+   - **Substantive analyst articles** (named analysts with specific commentary, original analysis from reputable sources like Reuters, Bloomberg, Seeking Alpha) → should be `skipped`, not `false_positive`
+   - The query excludes known boilerplate aggregator sources, so flagged articles are likely genuine mislabels
+   - If flagged articles contain real analyst commentary, fix with:
      ```sql
      UPDATE articles SET labeling_status = 'skipped', skipped_at = NOW()
      WHERE id = 'article-uuid-here';
