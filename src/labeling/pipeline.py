@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 # 0.9 means titles must be 90% similar to be considered duplicates
 TITLE_SIMILARITY_THRESHOLD = 0.90
 
+# Error types that are transient (API/network issues) — articles should stay pending for retry
+TRANSIENT_ERROR_TYPES = {"server_error", "timeout", "connection", "rate_limit"}
+
 
 @dataclass
 class LabelingStats:
@@ -667,9 +670,15 @@ class LabelingPipeline:
 
                 except Exception as e:
                     error_type, error_msg = classify_api_error(e)
-                    logger.error(
-                        f"[{error_type}] Failed to process article {article['id']}: {error_msg}"
-                    )
+                    if error_type in TRANSIENT_ERROR_TYPES:
+                        logger.warning(
+                            f"[{error_type}] Transient error for article {article['id']}, "
+                            f"keeping as pending for retry: {error_msg}"
+                        )
+                    else:
+                        logger.error(
+                            f"[{error_type}] Failed to process article {article['id']}: {error_msg}"
+                        )
                     stats.articles_failed += 1
                     stats.errors.append(f"Article {article['id']} [{error_type}]: {error_msg}")
                     stats.errors_by_type[error_type] = (
@@ -871,14 +880,20 @@ class LabelingPipeline:
 
         if not label_result.success:
             error_type = label_result.error_type or "unknown"
-            logger.warning(
-                f"[{error_type}] Labeling failed for article {article_id}: {label_result.error}"
-            )
-            if not dry_run:
-                with self.database.db.get_session() as session:
-                    self.database.update_article_labeling_status(
-                        session, article_id, "failed", label_result.error
-                    )
+            if error_type in TRANSIENT_ERROR_TYPES:
+                logger.warning(
+                    f"[{error_type}] Transient error for article {article_id}, "
+                    f"keeping as pending for retry: {label_result.error}"
+                )
+            else:
+                logger.warning(
+                    f"[{error_type}] Labeling failed for article {article_id}: {label_result.error}"
+                )
+                if not dry_run:
+                    with self.database.db.get_session() as session:
+                        self.database.update_article_labeling_status(
+                            session, article_id, "failed", label_result.error
+                        )
             result["error"] = label_result.error
             result["error_type"] = error_type
             return result

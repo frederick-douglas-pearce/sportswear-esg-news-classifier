@@ -6,8 +6,13 @@ from uuid import uuid4
 
 import pytest
 
+from src.labeling.labeler import LabelingResult
 from src.labeling.models import BrandAnalysis, CategoryLabel, LabelingResponse
-from src.labeling.pipeline import LabelingPipeline, LabelingStats
+from src.labeling.pipeline import (
+    TRANSIENT_ERROR_TYPES,
+    LabelingPipeline,
+    LabelingStats,
+)
 
 
 class TestLabelingStats:
@@ -309,3 +314,203 @@ class TestLabelingPipelineGetStats:
 
         assert "embedder" in stats
         assert stats["embedder"]["total_tokens"] == 500
+
+
+class TestTransientErrorHandling:
+    """Tests that transient API errors keep articles pending instead of marking failed."""
+
+    def create_mock_article(self, **kwargs):
+        """Helper to create mock article dict."""
+        return {
+            "id": kwargs.get("id", uuid4()),
+            "title": kwargs.get("title", "Test Article"),
+            "full_content": kwargs.get("full_content", "Test content " * 50),
+            "description": kwargs.get("description", "Test description"),
+            "brands_mentioned": kwargs.get("brands_mentioned", ["Nike"]),
+            "published_at": kwargs.get("published_at", datetime.now()),
+            "source_name": kwargs.get("source_name", "Test Source"),
+        }
+
+    def test_transient_error_types_defined(self):
+        """TRANSIENT_ERROR_TYPES should include all API/network error categories."""
+        assert "server_error" in TRANSIENT_ERROR_TYPES
+        assert "timeout" in TRANSIENT_ERROR_TYPES
+        assert "connection" in TRANSIENT_ERROR_TYPES
+        assert "rate_limit" in TRANSIENT_ERROR_TYPES
+
+    def test_permanent_errors_not_transient(self):
+        """Permanent errors should not be in TRANSIENT_ERROR_TYPES."""
+        assert "authentication" not in TRANSIENT_ERROR_TYPES
+        assert "api_error" not in TRANSIENT_ERROR_TYPES
+        assert "unknown" not in TRANSIENT_ERROR_TYPES
+
+    @pytest.mark.parametrize(
+        "error_type",
+        ["server_error", "timeout", "connection", "rate_limit"],
+    )
+    def test_transient_error_does_not_mark_failed(self, error_type):
+        """Articles should stay pending when LLM returns a transient error."""
+        mock_database = MagicMock()
+        mock_labeler = MagicMock()
+
+        mock_label_result = LabelingResult(
+            success=False,
+            error=f"Simulated {error_type} error",
+            error_type=error_type,
+        )
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        article = self.create_mock_article()
+        result = pipeline._process_article(
+            article, dry_run=False, skip_chunking=True, skip_embedding=True
+        )
+
+        assert result["error_type"] == error_type
+        assert result["labeled"] is False
+        # The key assertion: no status update call with 'failed'
+        for call in mock_database.update_article_labeling_status.call_args_list:
+            assert call[0][2] != "failed", (
+                f"Article should not be marked 'failed' for transient error {error_type}"
+            )
+
+    @pytest.mark.parametrize(
+        "error_type",
+        ["authentication", "api_error", "unknown"],
+    )
+    def test_permanent_error_marks_failed(self, error_type):
+        """Articles should be marked failed for permanent errors."""
+        mock_database = MagicMock()
+        mock_labeler = MagicMock()
+
+        mock_label_result = LabelingResult(
+            success=False,
+            error=f"Simulated {error_type} error",
+            error_type=error_type,
+        )
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        article = self.create_mock_article()
+        result = pipeline._process_article(
+            article, dry_run=False, skip_chunking=True, skip_embedding=True
+        )
+
+        assert result["error_type"] == error_type
+        assert result["labeled"] is False
+        # Should have a call that sets status to 'failed'
+        failed_calls = [
+            call for call in mock_database.update_article_labeling_status.call_args_list
+            if call[0][2] == "failed"
+        ]
+        assert len(failed_calls) == 1, (
+            f"Expected exactly one 'failed' status update for {error_type}"
+        )
+
+    def test_server_error_500_keeps_pending(self):
+        """Simulates the Feb 25 outage scenario: Claude API returns 500s."""
+        mock_database = MagicMock()
+        mock_labeler = MagicMock()
+
+        mock_label_result = LabelingResult(
+            success=False,
+            error="Anthropic server error (500): Internal Server Error",
+            error_type="server_error",
+        )
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        article = self.create_mock_article()
+        result = pipeline._process_article(
+            article, dry_run=False, skip_chunking=True, skip_embedding=True
+        )
+
+        assert result["error"] == "Anthropic server error (500): Internal Server Error"
+        assert result["error_type"] == "server_error"
+        # Article stays pending — no 'failed' status update
+        for call in mock_database.update_article_labeling_status.call_args_list:
+            assert call[0][2] != "failed", "Article should not be marked failed for server error"
+
+    def test_transient_error_dry_run(self):
+        """Transient errors in dry run should also not touch database."""
+        mock_database = MagicMock()
+        mock_labeler = MagicMock()
+
+        mock_label_result = LabelingResult(
+            success=False,
+            error="API timeout",
+            error_type="timeout",
+        )
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        article = self.create_mock_article()
+        result = pipeline._process_article(article, dry_run=True)
+
+        assert result["error_type"] == "timeout"
+        mock_database.update_article_labeling_status.assert_not_called()
+
+    def test_permanent_error_dry_run_no_db_update(self):
+        """Even permanent errors should not update DB in dry run."""
+        mock_database = MagicMock()
+        mock_labeler = MagicMock()
+
+        mock_label_result = LabelingResult(
+            success=False,
+            error="Auth failed",
+            error_type="authentication",
+        )
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        article = self.create_mock_article()
+        result = pipeline._process_article(article, dry_run=True)
+
+        assert result["error_type"] == "authentication"
+        mock_database.update_article_labeling_status.assert_not_called()
+
+    def test_multiple_transient_errors_all_stay_pending(self):
+        """When all articles hit transient errors, none should be marked failed."""
+        mock_database = MagicMock()
+        mock_labeler = MagicMock()
+
+        # Simulate API outage - every call returns server_error
+        mock_label_result = LabelingResult(
+            success=False,
+            error="Anthropic server error (500): Internal Server Error",
+            error_type="server_error",
+        )
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        # Process 5 articles (simulating a batch during an outage)
+        for _ in range(5):
+            article = self.create_mock_article()
+            result = pipeline._process_article(
+                article, dry_run=False, skip_chunking=True, skip_embedding=True
+            )
+            assert result["error_type"] == "server_error"
+
+        # None should have been marked failed
+        for call in mock_database.update_article_labeling_status.call_args_list:
+            assert call[0][2] != "failed", (
+                "No articles should be marked failed during an API outage"
+            )
