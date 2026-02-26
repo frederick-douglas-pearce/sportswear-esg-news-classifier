@@ -514,3 +514,203 @@ class TestTransientErrorHandling:
             assert call[0][2] != "failed", (
                 "No articles should be marked failed during an API outage"
             )
+
+
+class TestEmptyBrandLabelFiltering:
+    """Tests for filtering brands with no applicable ESG categories."""
+
+    def create_mock_article(self, **kwargs):
+        """Helper to create mock article dict."""
+        return {
+            "id": kwargs.get("id", uuid4()),
+            "title": kwargs.get("title", "Test Article"),
+            "full_content": kwargs.get("full_content", "Test content " * 50),
+            "description": kwargs.get("description", "Test description"),
+            "brands_mentioned": kwargs.get("brands_mentioned", ["Nike", "Anta"]),
+            "published_at": kwargs.get("published_at", datetime.now()),
+            "source_name": kwargs.get("source_name", "Test Source"),
+        }
+
+    def _make_brand_analysis(self, brand, has_esg=True, is_sportswear=True):
+        """Create a BrandAnalysis with or without applicable ESG categories."""
+        if has_esg:
+            categories = {
+                "environmental": CategoryLabel(applies=False, sentiment=None, evidence=[]),
+                "social": CategoryLabel(applies=True, sentiment=1, evidence=["Evidence"]),
+                "governance": CategoryLabel(applies=False, sentiment=None, evidence=[]),
+                "digital_transformation": CategoryLabel(
+                    applies=False, sentiment=None, evidence=[]
+                ),
+            }
+        else:
+            categories = {
+                "environmental": CategoryLabel(applies=False, sentiment=None, evidence=[]),
+                "social": CategoryLabel(applies=False, sentiment=None, evidence=[]),
+                "governance": CategoryLabel(applies=False, sentiment=None, evidence=[]),
+                "digital_transformation": CategoryLabel(
+                    applies=False, sentiment=None, evidence=[]
+                ),
+            }
+        return BrandAnalysis(
+            brand=brand,
+            is_sportswear_brand=is_sportswear,
+            not_sportswear_reason=None if is_sportswear else "Not sportswear",
+            categories=categories if is_sportswear else {},
+            confidence=0.9,
+            reasoning=f"Test reasoning for {brand}",
+        )
+
+    def test_multi_brand_filters_empty_labels_in_pipeline(self):
+        """Multi-brand article should only save brands with ESG content."""
+        mock_database = MagicMock()
+        mock_database.db.get_session.return_value.__enter__ = MagicMock()
+        mock_database.db.get_session.return_value.__exit__ = MagicMock()
+        mock_database.save_brand_labels.return_value = [MagicMock()]
+        mock_labeler = MagicMock()
+
+        # Anta has ESG content, Nike does not (all categories false)
+        response = LabelingResponse(
+            brand_analyses=[
+                self._make_brand_analysis("Anta", has_esg=True),
+                self._make_brand_analysis("Nike", has_esg=False),
+            ],
+            article_summary="Test summary",
+        )
+
+        mock_label_result = MagicMock()
+        mock_label_result.success = True
+        mock_label_result.response = response
+        mock_label_result.input_tokens = 100
+        mock_label_result.output_tokens = 50
+        mock_label_result.model = "test-model"
+        mock_label_result.prompt_version = "v1.8.0"
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        article = self.create_mock_article()
+        result = pipeline._process_article(
+            article, dry_run=True, skip_chunking=True, skip_embedding=True
+        )
+
+        # Article should still be labeled (Anta has ESG content)
+        assert result["labeled"] is True
+
+    def test_all_brands_empty_labels_skips_article(self):
+        """Article where all sportswear brands have no ESG content should be skipped."""
+        mock_database = MagicMock()
+        mock_database.db.get_session.return_value.__enter__ = MagicMock()
+        mock_database.db.get_session.return_value.__exit__ = MagicMock()
+        mock_labeler = MagicMock()
+
+        # Both brands have all-false categories
+        response = LabelingResponse(
+            brand_analyses=[
+                self._make_brand_analysis("Anta", has_esg=False),
+                self._make_brand_analysis("Nike", has_esg=False),
+            ],
+            article_summary="Test summary",
+        )
+
+        mock_label_result = MagicMock()
+        mock_label_result.success = True
+        mock_label_result.response = response
+        mock_label_result.input_tokens = 100
+        mock_label_result.output_tokens = 50
+        mock_label_result.model = "test-model"
+        mock_labeler.label_article.return_value = mock_label_result
+
+        pipeline = LabelingPipeline(
+            database=mock_database, labeler=mock_labeler
+        )
+
+        article = self.create_mock_article()
+        result = pipeline._process_article(
+            article, dry_run=False, skip_chunking=True, skip_embedding=True
+        )
+
+        # Should be skipped since no brand has ESG content
+        assert result["skipped"] is True
+        assert result["labeled"] is False
+
+    def test_save_brand_labels_skips_empty_categories(self):
+        """save_brand_labels should not save brands with all categories false."""
+        from src.labeling.database import LabelingDatabase
+
+        mock_db = MagicMock()
+        mock_session = MagicMock()
+
+        labeling_db = LabelingDatabase(database=mock_db)
+
+        brand_analyses = [
+            self._make_brand_analysis("Anta", has_esg=True),
+            self._make_brand_analysis("Nike", has_esg=False),
+        ]
+
+        labels = labeling_db.save_brand_labels(
+            mock_session,
+            uuid4(),
+            brand_analyses,
+            model_version="test",
+            prompt_version="v1.8.0",
+        )
+
+        # Only Anta should be saved (1 label), Nike should be skipped
+        assert len(labels) == 1
+        assert labels[0].brand == "Anta"
+
+    def test_save_brand_labels_saves_all_with_esg(self):
+        """save_brand_labels should save all brands that have ESG content."""
+        from src.labeling.database import LabelingDatabase
+
+        mock_db = MagicMock()
+        mock_session = MagicMock()
+
+        labeling_db = LabelingDatabase(database=mock_db)
+
+        brand_analyses = [
+            self._make_brand_analysis("Anta", has_esg=True),
+            self._make_brand_analysis("Nike", has_esg=True),
+        ]
+
+        labels = labeling_db.save_brand_labels(
+            mock_session,
+            uuid4(),
+            brand_analyses,
+            model_version="test",
+            prompt_version="v1.8.0",
+        )
+
+        # Both should be saved
+        assert len(labels) == 2
+        brands_saved = {l.brand for l in labels}
+        assert brands_saved == {"Anta", "Nike"}
+
+    def test_save_brand_labels_skips_non_sportswear_and_empty(self):
+        """save_brand_labels should skip both non-sportswear and empty-category brands."""
+        from src.labeling.database import LabelingDatabase
+
+        mock_db = MagicMock()
+        mock_session = MagicMock()
+
+        labeling_db = LabelingDatabase(database=mock_db)
+
+        brand_analyses = [
+            self._make_brand_analysis("Anta", has_esg=True),
+            self._make_brand_analysis("Nike", has_esg=False),  # empty categories
+            self._make_brand_analysis("Puma", is_sportswear=False),  # non-sportswear
+        ]
+
+        labels = labeling_db.save_brand_labels(
+            mock_session,
+            uuid4(),
+            brand_analyses,
+            model_version="test",
+            prompt_version="v1.8.0",
+        )
+
+        # Only Anta should be saved
+        assert len(labels) == 1
+        assert labels[0].brand == "Anta"

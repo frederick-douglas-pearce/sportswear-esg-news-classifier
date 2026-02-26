@@ -157,6 +157,13 @@ class LabelingDatabase:
                 )
                 continue
 
+            # Skip brands where all ESG categories are False (no applicable content)
+            if not analysis.get_applicable_categories():
+                logger.info(
+                    f"Skipping brand '{analysis.brand}': no ESG categories apply"
+                )
+                continue
+
             categories = analysis.categories
 
             label = BrandLabel(
