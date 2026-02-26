@@ -31,6 +31,26 @@ from ..notifications import Notification, NotificationManager, NotificationType
 from ..runner import run_export_training_data, run_script
 from .base import StepDefinition, Workflow, WorkflowRegistry
 
+# Lazy imports for experiment tracking (avoid import errors if not needed)
+_ExperimentTracker = None
+_ExperimentReflector = None
+
+
+def _get_tracker_class():
+    global _ExperimentTracker
+    if _ExperimentTracker is None:
+        from src.experiment_log.tracker import ExperimentTracker
+        _ExperimentTracker = ExperimentTracker
+    return _ExperimentTracker
+
+
+def _get_reflector_class():
+    global _ExperimentReflector
+    if _ExperimentReflector is None:
+        from src.experiment_log.reflection import ExperimentReflector
+        _ExperimentReflector = ExperimentReflector
+    return _ExperimentReflector
+
 logger = logging.getLogger(__name__)
 
 # Minimum records required for training
@@ -214,6 +234,25 @@ def check_data_quality(workflow: Workflow, context: dict[str, Any]) -> dict[str,
             logger.error(f"Error checking {classifier} data quality: {e}")
 
         quality_results["datasets"][classifier] = classifier_result
+
+    # --- Experiment tracking: create experiments for successful exports ---
+    experiment_ids = {}
+    for classifier, dataset_info in context.get("datasets", {}).items():
+        if not dataset_info.get("success"):
+            continue
+        try:
+            TrackerClass = _get_tracker_class()
+            tracker = TrackerClass(classifier=classifier)
+            # Merge export context with quality results for richer state
+            combined = {**context, **quality_results}
+            exp_id = tracker.create_experiment(combined)
+            experiment_ids[classifier] = exp_id
+            logger.info(f"Created experiment {exp_id} for {classifier}")
+        except Exception as e:
+            logger.warning(f"Failed to create experiment for {classifier}: {e}")
+
+    if experiment_ids:
+        quality_results["experiment_ids"] = experiment_ids
 
     return quality_results
 
@@ -452,6 +491,21 @@ def compare_models(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
 
     print("=" * 60 + "\n")
 
+    # --- Experiment tracking: record observations ---
+    experiment_ids = context.get("experiment_ids", {})
+    for classifier in classifiers:
+        exp_id = experiment_ids.get(classifier)
+        if not exp_id:
+            continue
+        try:
+            TrackerClass = _get_tracker_class()
+            tracker = TrackerClass(classifier=classifier)
+            tracker.resume(exp_id)
+            tracker.record_observation(comparison_results)
+            logger.info(f"Recorded observation for experiment {exp_id}")
+        except Exception as e:
+            logger.warning(f"Failed to record observation for {classifier}: {e}")
+
     return comparison_results
 
 
@@ -683,6 +737,65 @@ def trigger_deployment(workflow: Workflow, context: dict[str, Any]) -> dict[str,
     return deployment_results
 
 
+def finalize_experiments(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Finalize experiment entries with reward, reflection, and completion.
+
+    For each classifier with an experiment_id in context:
+    - Record reward (promoted or not)
+    - Optional LLM reflection (gated by agent settings)
+    - Complete the experiment
+    """
+    experiment_ids = context.get("experiment_ids", {})
+    promoted = context.get("promoted", [])
+    finalized = []
+
+    for classifier, exp_id in experiment_ids.items():
+        try:
+            TrackerClass = _get_tracker_class()
+            tracker = TrackerClass(classifier=classifier)
+            tracker.resume(exp_id)
+
+            # Record reward
+            is_promoted = classifier in promoted
+            reason = "improvement" if is_promoted else "no_improvement"
+            tracker.record_reward(
+                promoted=is_promoted,
+                promoted_as=context.get("classifiers", {}).get(classifier, {}).get(
+                    "production", {}
+                ).get("version")
+                if is_promoted
+                else None,
+                reason=reason,
+            )
+
+            # Optional LLM reflection
+            if (
+                agent_settings.llm_analysis_enabled
+                and agent_settings.anthropic_api_key
+                and tracker.experiment is not None
+            ):
+                try:
+                    ReflectorClass = _get_reflector_class()
+                    reflector = ReflectorClass(
+                        api_key=agent_settings.anthropic_api_key,
+                        model=agent_settings.llm_analysis_model,
+                    )
+                    reflection = reflector.reflect(tracker.experiment)
+                    tracker.record_reflection(reflection)
+                    logger.info(f"Recorded reflection for {exp_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to reflect on {exp_id}: {e}")
+
+            tracker.complete()
+            finalized.append(exp_id)
+            logger.info(f"Finalized experiment {exp_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to finalize experiment {exp_id}: {e}")
+
+    return {"experiments_finalized": finalized}
+
+
 @WorkflowRegistry.register
 class ModelTrainingWorkflow(Workflow):
     """Model training workflow with manual notebook execution.
@@ -692,13 +805,14 @@ class ModelTrainingWorkflow(Workflow):
 
     Steps:
     1. Export training data (fp + ep datasets)
-    2. Check data quality (min records, class balance)
+    2. Check data quality (min records, class balance) + create experiments
     3. Notify user and pause for notebook execution
     4. [User runs notebooks manually]
-    5. Compare new models to production
+    5. Compare new models to production + record observations
     6. Prompt for promotion approval
     7. Promote approved models
     8. Trigger Cloud Run deployment (via GitHub Actions)
+    9. Finalize experiment entries (reward, reflection, completion)
     """
 
     name = "model_training"
@@ -743,5 +857,10 @@ class ModelTrainingWorkflow(Workflow):
             description="Trigger Cloud Run deployment via GitHub Actions",
             handler=trigger_deployment,
             skip_on_dry_run=True,
+        ),
+        StepDefinition(
+            name="finalize_experiments",
+            description="Finalize experiment log entries with reward and reflection",
+            handler=finalize_experiments,
         ),
     ]
