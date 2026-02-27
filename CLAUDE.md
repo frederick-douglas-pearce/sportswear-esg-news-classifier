@@ -41,7 +41,7 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (p
 CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
 
 # Testing
-uv run pytest                              # Run all tests (1046 tests)
+uv run pytest                              # Run all tests (1142 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -173,13 +173,26 @@ prompts/labeling/
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
   - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
   - `website_export.py` - JSON/Atom feed generation + scorecard history storage
-  - `model_training.py` - Data export → quality check → pause → comparison → promotion → deploy
+  - `model_training.py` - Data export → quality check → pause → comparison → promotion → deploy → experiment finalization
 - `__main__.py` - CLI entry point (run, continue, status, list, history)
 
 ### Scorecard History (`src/scorecard/`)
 - `database.py` - ScorecardDatabase class for save/query operations
 - Stores daily scorecard snapshots with brand scores for trend analysis
 - Integrated into `website_export` workflow (saves after each export)
+
+### Experiment Log (`src/experiment_log/`)
+
+YAML-based experiment tracking for ML agent learning, following an RL-parallel structure (state → action → observation → reward → reflection).
+
+- `models.py` - 19 Pydantic models (ExperimentEntry, Decision, KnowledgeBase, etc.)
+- `store.py` - YAML-based ExperimentStore with CRUD, index, knowledge base management
+- `tracker.py` - ExperimentTracker: lifecycle orchestration (create → observe → reward → reflect → complete)
+- `reflection.py` - ExperimentReflector: LLM-based reflection on completed experiments via Claude API
+
+**Integration with model training workflow:** The `model_training` workflow automatically creates experiment entries at `check_data_quality`, records observations at `compare_models`, and finalizes with reward + optional LLM reflection in the `finalize_experiments` step. All tracking is wrapped in try/except so failures never block the training workflow. Experiment IDs persist in workflow context across pause/resume.
+
+**Data directory:** `data/experiments/{classifier}/exp_*.yaml` with `data/experiments/index.yaml` for quick lookup.
 
 ### Workflow Learning (`src/workflow_learning/`)
 
@@ -232,8 +245,8 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 1055 tests
-Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_workflow_learning/*, test_integration
+### Test Suite (`tests/`) - 1142 tests
+Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_experiment_log/*, test_workflow_learning/*, test_integration
 
 ### Database Schema
 - **articles**: Article metadata + scraped content + labeling_status
@@ -387,6 +400,8 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-02-26**: Experiment log workflow integration - automatic experiment tracking in model training workflow with LLM reflection
+- **2026-02-26**: Experiment log schema - YAML-based experiment store with RL-parallel structure (state/action/observation/reward/reflection)
 - **2026-02-16**: Workflow learning module - record workflows via Screenpipe and generate Agent Skills with Claude analysis
 - **2026-02-11**: Scorecard history storage - daily snapshots saved to `scorecard_snapshots` and `scorecard_brand_scores` tables
 - **2026-01-27**: Domain blacklist for data collection - block low-quality sources via `BLOCKED_DOMAINS`
