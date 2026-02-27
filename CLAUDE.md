@@ -41,7 +41,7 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (p
 CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
 
 # Testing
-uv run pytest                              # Run all tests (1142 tests)
+uv run pytest                              # Run all tests (1162 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -101,6 +101,15 @@ uv run python -m src.workflow_learning analyze <session-id>         # Analyze an
 uv run python -m src.workflow_learning analyze <session-id> --skill-name "custom-name"
 uv run python -m src.workflow_learning analyze <session-id> --refine "skill-name"  # Refine existing skill with new recording
 uv run python -m src.workflow_learning delete <session-id>          # Delete a session
+
+# Experiment Log CLI (knowledge base queries + decision recording)
+uv run python -m src.experiment_log heuristics --classifier fp                     # Look up learned heuristics
+uv run python -m src.experiment_log record-decision --classifier fp \
+  --experiment-id EXP_ID --phase feature_engineering \
+  --trigger "NER features not contributing" --chosen "remove_ner" \
+  --reasoning "F2 unchanged with NER"                                              # Record a decision
+uv run python -m src.experiment_log update-heuristic --classifier fp \
+  --trigger "NER features not contributing" --success true                          # Update heuristic outcome
 ```
 
 ## Status Reporting & SQL Queries
@@ -189,8 +198,12 @@ YAML-based experiment tracking for ML agent learning, following an RL-parallel s
 - `store.py` - YAML-based ExperimentStore with CRUD, index, knowledge base management
 - `tracker.py` - ExperimentTracker: lifecycle orchestration (create → observe → reward → reflect → complete)
 - `reflection.py` - ExperimentReflector: LLM-based reflection on completed experiments via Claude API
+- `cli.py` - CLI utilities for replay-time knowledge base queries and decision recording
+- `__main__.py` - CLI entry point (`uv run python -m src.experiment_log <command>`)
 
-**Integration with model training workflow:** The `model_training` workflow automatically creates experiment entries at `check_data_quality`, records observations at `compare_models`, and finalizes with reward + optional LLM reflection in the `finalize_experiments` step. All tracking is wrapped in try/except so failures never block the training workflow. Experiment IDs persist in workflow context across pause/resume.
+**CLI commands:** `heuristics` (look up learned heuristics), `record-decision` (save a decision during replay), `update-heuristic` (update outcome counters and confidence).
+
+**Integration with model training workflow:** The `model_training` workflow automatically creates experiment entries at `check_data_quality`, records observations at `compare_models`, and finalizes with reward + optional LLM reflection + heuristic counter updates in the `finalize_experiments` step. All tracking is wrapped in try/except so failures never block the training workflow. Experiment IDs persist in workflow context across pause/resume.
 
 **Data directory:** `data/experiments/{classifier}/exp_*.yaml` with `data/experiments/index.yaml` for quick lookup.
 
@@ -199,11 +212,12 @@ YAML-based experiment tracking for ML agent learning, following an RL-parallel s
 Records user workflows via Screenpipe and generates replayable Agent Skills using Claude analysis.
 
 - `config.py` - Settings (Screenpipe URL, output directories, analysis model)
-- `models.py` - Pydantic models (RecordingSession, ScreenContent, AudioTranscript, WorkflowStep)
+- `models.py` - Pydantic models (RecordingSession, ScreenContent, AudioTranscript, WorkflowStep, ExtractedDecision)
 - `screenpipe_client.py` - Screenpipe REST API wrapper for screen OCR and audio transcription
 - `session_manager.py` - YAML-based session state persistence
-- `analyzer.py` - Claude Sonnet integration for extracting workflow steps from recordings
-- `skill_generator.py` - Generates SKILL.md files matching `.claude/skills/` format
+- `analyzer.py` - Claude Sonnet integration for extracting workflow steps and decisions from recordings
+- `skill_generator.py` - Generates SKILL.md files with KB lookup directives at checkpoint steps
+- `experiment_bridge.py` - Bridges extracted decisions to experiment log (Decision entries + Pattern/Heuristic seeds)
 - `__main__.py` - CLI entry point (start, stop, list, show, analyze, delete)
 
 **Prerequisites:** Screenpipe must be running (`screenpipe` command) to record screen content and audio.
@@ -220,6 +234,8 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 **Skill Refinement:** Multiple recording sessions can contribute to a single skill. Use `--refine` to merge a new recording into an existing skill — the analyzer preserves existing steps while adding detail or new steps from the new recording. This supports notebook-heavy workflows where a first session captures the overall flow and subsequent sessions add detail about specific cells, metrics, and decision points.
 
 **Notebook-Aware Skills:** When recordings involve Jupyter notebooks, the analyzer generates steps with `tool_type: "jupyter"` that reference `mcp__ide__executeCode` for cell execution, plus checkpoint steps with `success_criteria` and `on_failure` guidance for metric verification.
+
+**Decision Extraction & Knowledge Bridge:** The analyzer extracts structured decisions from narration (e.g., "NER features aren't helping, removing them") as `ExtractedDecision` objects. At analyze time, the `experiment_bridge` module saves these as `Decision` entries in the experiment log and seeds `Pattern`/`Heuristic` entries in the knowledge base. Generated SKILL.md files include KB lookup directives (`uv run python -m src.experiment_log heuristics --classifier {classifier}`) at checkpoint steps so the agent can consult past decisions during future replays.
 
 **Output Directories:**
 - Session state: `data/workflow_recordings/sessions/`
@@ -245,7 +261,7 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 1142 tests
+### Test Suite (`tests/`) - 1162 tests
 Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_experiment_log/*, test_workflow_learning/*, test_integration
 
 ### Database Schema
@@ -400,6 +416,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-02-26**: Workflow learning ↔ experiment log bridge - decision extraction from narration, KB seeding, heuristic CLI, replay-time knowledge consultation
 - **2026-02-26**: Experiment log workflow integration - automatic experiment tracking in model training workflow with LLM reflection
 - **2026-02-26**: Experiment log schema - YAML-based experiment store with RL-parallel structure (state/action/observation/reward/reflection)
 - **2026-02-16**: Workflow learning module - record workflows via Screenpipe and generate Agent Skills with Claude analysis
