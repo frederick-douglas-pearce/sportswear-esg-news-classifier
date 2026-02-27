@@ -17,6 +17,7 @@ The ESG News Classifier includes a custom-built agent orchestrator that automate
 - [Notifications](#notifications)
 - [State Management](#state-management)
 - [LLM Intelligence](#llm-intelligence)
+  - [Knowledge Base & Heuristic Learning](#knowledge-base--heuristic-learning)
 - [Troubleshooting](#troubleshooting)
 
 ## Overview
@@ -99,7 +100,22 @@ src/agent/
     ├── daily_labeling.py    # Daily labeling workflow
     ├── drift_monitoring.py  # Classifier drift detection
     ├── website_export.py    # Jekyll feed export
-    └── model_training.py    # Model training with notebook pause
+    └── model_training.py    # Model training with notebook pause + heuristic updates
+
+src/experiment_log/
+├── __init__.py
+├── __main__.py          # CLI entry point (uv run python -m src.experiment_log)
+├── models.py            # Pydantic models (ExperimentEntry, Decision, KnowledgeBase, etc.)
+├── store.py             # YAML-based storage with CRUD, index, knowledge base
+├── tracker.py           # Experiment lifecycle orchestration
+├── reflection.py        # LLM-based reflection via Claude API
+└── cli.py               # Replay-time CLI (heuristics, record-decision, update-heuristic)
+
+src/workflow_learning/
+├── ...
+├── analyzer.py          # Claude analysis (steps + decision extraction)
+├── skill_generator.py   # SKILL.md generation with KB lookup directives
+└── experiment_bridge.py # Bridge: decisions → experiment log + knowledge base
 ```
 
 ## Workflows
@@ -199,7 +215,7 @@ LLM Analysis:
 | 6. `prompt_promotion` | Pause for promotion approval |
 | 7. `promote_model` | Update model registry |
 | 8. `trigger_deployment` | Trigger GitHub Actions deployment |
-| 9. `finalize_experiments` | Record reward, LLM reflection, and complete experiment log entries |
+| 9. `finalize_experiments` | Record reward, LLM reflection, update heuristic counters, and complete experiment log entries |
 
 **Resume Command**:
 ```bash
@@ -522,6 +538,64 @@ The reflector receives the full experiment context (production state, training d
 - **Confidence**: Assessment reliability (low / medium / high)
 
 Reflections are stored in the experiment YAML files at `data/experiments/{classifier}/exp_*.yaml` and are available for future knowledge base extraction.
+
+### Knowledge Base & Heuristic Learning
+
+The experiment log includes a per-classifier knowledge base (`data/experiments/knowledge/{classifier}_knowledge.yaml`) that accumulates patterns and heuristics from both workflow recordings and training experiments.
+
+**How knowledge flows in:**
+
+1. **From workflow recordings** (analyze time): When the user records a notebook walkthrough and narrates decisions (e.g., "NER features aren't helping, F2 dropped, so I'm removing them"), the workflow learning analyzer extracts structured `ExtractedDecision` objects. The `experiment_bridge` module then:
+   - Saves each decision as a `Decision` entry in the experiment log
+   - Seeds `Pattern` entries when a decision has a trigger + observed outcome
+   - Seeds `Heuristic` entries when a decision has a trigger + chosen option + reasoning
+   - New entries start at `confidence="low"` and upgrade with successful applications
+
+2. **From training experiments** (finalize time): The `finalize_experiments` step loads all decisions recorded during an experiment and updates matching heuristic counters (`times_applied`, `times_successful`). After enough successful applications (3+ with 70%+ success rate), heuristic confidence upgrades to `"high"`.
+
+**How knowledge flows out:**
+
+1. **In generated SKILL.md files**: Checkpoint steps (those with both `success_criteria` and `on_failure`) include a KB lookup directive:
+   ```bash
+   uv run python -m src.experiment_log heuristics --classifier fp
+   ```
+   This allows the agent to consult past decisions before making choices during skill replay.
+
+2. **Via CLI during replay**: The agent (or user) can record decisions and update heuristics:
+   ```bash
+   # Look up heuristics before a decision point
+   uv run python -m src.experiment_log heuristics --classifier fp
+
+   # Record a decision made during replay
+   uv run python -m src.experiment_log record-decision \
+     --classifier fp --experiment-id fp_20260226_143000 \
+     --phase feature_engineering \
+     --trigger "NER features not contributing" \
+     --chosen "remove_ner" \
+     --reasoning "F2 unchanged with NER"
+
+   # Update heuristic outcome after observing result
+   uv run python -m src.experiment_log update-heuristic \
+     --classifier fp \
+     --trigger "NER features not contributing" \
+     --success true
+   ```
+
+**Architecture:**
+
+```
+Analyze time (workflow recording → knowledge):
+  Screenpipe recording
+    → RecordingAnalyzer (extended prompt → steps + decisions)
+    → SkillGenerator (SKILL.md with KB lookup directives)
+    → ExperimentBridge (decisions → Decision entries + Pattern/Heuristic seeds)
+
+Replay time (knowledge → agent decisions):
+  Agent follows SKILL.md
+    → At checkpoints: consult heuristics CLI
+    → Records decisions: record-decision CLI
+    → finalize_experiments: updates heuristic counters from decisions
+```
 
 ## Troubleshooting
 
