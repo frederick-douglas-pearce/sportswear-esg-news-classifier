@@ -192,13 +192,14 @@ LLM Analysis:
 | Step | Description |
 |------|-------------|
 | 1. `export_training_data` | Export FP and EP training datasets |
-| 2. `check_data_quality` | Validate record counts, class balance |
+| 2. `check_data_quality` | Validate record counts, class balance; create experiment log entries |
 | 3. `notify_and_pause` | Send email, pause for notebook execution |
 | 4. *User runs notebooks* | Manual: fp1 → fp2 → fp3 (or ep1 → ep2 → ep3) |
-| 5. `compare_models` | Compare new model metrics to production |
+| 5. `compare_models` | Compare new model metrics to production; record observations in experiment log |
 | 6. `prompt_promotion` | Pause for promotion approval |
 | 7. `promote_model` | Update model registry |
 | 8. `trigger_deployment` | Trigger GitHub Actions deployment |
+| 9. `finalize_experiments` | Record reward, LLM reflection, and complete experiment log entries |
 
 **Resume Command**:
 ```bash
@@ -442,7 +443,14 @@ uv run python -m src.agent continue model_training
 
 ## LLM Intelligence
 
-The agent integrates Claude Sonnet to analyze labeling results and detect potential issues:
+The agent integrates Claude Sonnet for two purposes:
+
+1. **Labeling analysis** (daily_labeling workflow): Detects potential errors in article labeling
+2. **Experiment reflection** (model_training workflow): Analyzes completed training experiments to assess hypothesis outcomes, identify surprises, and suggest next steps
+
+### Labeling Analysis
+
+Claude analyzes labeling results and detects potential issues:
 
 ### What It Analyzes
 
@@ -488,7 +496,7 @@ The agent integrates Claude Sonnet to analyze labeling results and detect potent
 }
 ```
 
-### Configuration
+### Labeling Analysis Configuration
 
 ```bash
 # Always run LLM analysis (default)
@@ -500,6 +508,20 @@ AGENT_LLM_ERROR_THRESHOLD=0.10
 # Disable LLM analysis
 AGENT_LLM_ANALYSIS=false
 ```
+
+### Experiment Reflection
+
+After a model training run completes, the `finalize_experiments` step optionally calls Claude to reflect on the experiment. This is gated by the same `AGENT_LLM_ANALYSIS` setting.
+
+The reflector receives the full experiment context (production state, training data stats, observed metrics, promotion outcome) and returns:
+
+- **Summary**: What happened and why
+- **Hypothesis result**: confirmed / refuted / inconclusive
+- **Surprises**: Unexpected findings
+- **Next steps**: Recommended actions
+- **Confidence**: Assessment reliability (low / medium / high)
+
+Reflections are stored in the experiment YAML files at `data/experiments/{classifier}/exp_*.yaml` and are available for future knowledge base extraction.
 
 ## Troubleshooting
 
