@@ -48,8 +48,11 @@ class SkillGenerator:
         skill_dir.mkdir(parents=True, exist_ok=True)
         skill_file = skill_dir / "SKILL.md"
 
+        # Infer classifier from skill name for KB lookup directives
+        classifier = self._infer_classifier(name)
+
         # Generate content
-        content = self._generate_content(session, analysis, name)
+        content = self._generate_content(session, analysis, name, classifier)
 
         # Write file
         skill_file.write_text(content)
@@ -57,11 +60,21 @@ class SkillGenerator:
 
         return skill_file
 
+    @staticmethod
+    def _infer_classifier(name: str) -> str | None:
+        """Infer classifier type from skill name."""
+        name_lower = name.lower()
+        for classifier in ("fp", "ep", "esg"):
+            if classifier in name_lower:
+                return classifier
+        return None
+
     def _generate_content(
         self,
         session: RecordingSession,
         analysis: AnalysisResult,
         skill_name: str,
+        classifier: str | None = None,
     ) -> str:
         """Generate the SKILL.md content.
 
@@ -69,6 +82,7 @@ class SkillGenerator:
             session: The recording session
             analysis: The analysis result
             skill_name: The skill name
+            classifier: Optional classifier type for KB lookup directives
 
         Returns:
             Markdown content for SKILL.md
@@ -111,7 +125,7 @@ class SkillGenerator:
             ])
 
             for step in analysis.steps:
-                lines.extend(self._format_step(step))
+                lines.extend(self._format_step(step, classifier=classifier))
 
         # Additional metadata
         lines.extend([
@@ -133,7 +147,9 @@ class SkillGenerator:
 
         return "\n".join(lines)
 
-    def _format_step(self, step: WorkflowStep) -> list[str]:
+    def _format_step(
+        self, step: WorkflowStep, classifier: str | None = None
+    ) -> list[str]:
         """Format a workflow step for the skill file.
 
         Handles different tool_type values:
@@ -144,6 +160,7 @@ class SkillGenerator:
 
         Args:
             step: The workflow step
+            classifier: Optional classifier type for KB lookup directives
 
         Returns:
             List of markdown lines
@@ -196,6 +213,17 @@ class SkillGenerator:
         if step.expected_output:
             lines.extend([
                 f"**Expected output**: {step.expected_output}",
+                "",
+            ])
+
+        # KB lookup directive at checkpoint steps
+        if step.success_criteria and step.on_failure and classifier:
+            lines.extend([
+                "**Consult knowledge base** before deciding:",
+                "",
+                "```bash",
+                f"uv run python -m src.experiment_log heuristics --classifier {classifier}",
+                "```",
                 "",
             ])
 

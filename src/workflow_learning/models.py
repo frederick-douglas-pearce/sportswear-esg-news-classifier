@@ -148,11 +148,25 @@ class RecordingSession(BaseModel):
         )
 
 
+class ExtractedDecision(BaseModel):
+    """A decision extracted from workflow narration."""
+
+    trigger: str
+    trigger_type: str = "metric_observation"  # metric_observation | error_pattern | hypothesis_test | user_preference
+    options: list[dict[str, str]] = Field(default_factory=list)
+    chosen: str = ""
+    reasoning: str = ""
+    phase: str = ""  # feature_engineering | model_selection | evaluation | etc.
+    evidence: list[str] = Field(default_factory=list)
+    outcome: str = ""
+
+
 class AnalysisResult(BaseModel):
     """Result of Claude analysis of a recording."""
 
     success: bool
     steps: list[WorkflowStep] = Field(default_factory=list)
+    decisions: list[ExtractedDecision] = Field(default_factory=list)
     summary: str = ""
     skill_name: str = ""
     skill_description: str = ""

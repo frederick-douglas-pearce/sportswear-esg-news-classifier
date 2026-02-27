@@ -14,6 +14,7 @@ from .config import workflow_learning_settings
 from .models import (
     AnalysisResult,
     AudioTranscript,
+    ExtractedDecision,
     RecordingSession,
     ScreenContent,
     WorkflowStep,
@@ -104,7 +105,19 @@ Analyze the above recording and respond with a JSON object in this format:
     ],
     "prerequisites": ["List of prerequisites or setup required"],
     "environment_variables": ["ENV_VAR_NAME=description"],
-    "file_dependencies": ["path/to/required/file"]
+    "file_dependencies": ["path/to/required/file"],
+    "decisions": [
+        {{
+            "trigger": "What prompted the decision (e.g., metric drop, error observed)",
+            "trigger_type": "metric_observation | error_pattern | hypothesis_test | user_preference",
+            "options": [{{"id": "opt_a", "description": "First option", "expected_outcome": "What would happen"}}, {{"id": "opt_b", "description": "Second option", "expected_outcome": "What would happen"}}],
+            "chosen": "opt_a",
+            "reasoning": "Why this option was chosen over alternatives",
+            "phase": "feature_engineering | model_selection | evaluation | hyperparameter_tuning | data_preprocessing",
+            "evidence": ["Relevant narration quotes that explain this decision"],
+            "outcome": "What happened after the decision, if visible in the recording"
+        }}
+    ]
 }}
 ```
 
@@ -120,6 +133,11 @@ Important guidelines:
 - For notebook workflows: use tool_type "jupyter" for cell execution, "review" for output inspection
 - Include expected_output and success_criteria for checkpoint steps where the user verifies results
 - Include on_failure guidance when the user explains what to do if results aren't satisfactory
+- Extract decisions from narration where the user explains WHY they made a choice
+- A decision has a trigger (what prompted it), options (what was considered), chosen option, and reasoning
+- Look for phrases like "I'm removing...", "I decided to...", "this isn't working so...", "let's try... instead"
+- If the recording shows the outcome of a decision, include it
+- Only include decisions array if decisions were found; omit or use empty array otherwise
 """
 
 
@@ -189,7 +207,19 @@ Merge the new recording information into the existing skill and respond with a J
     ],
     "prerequisites": ["List of prerequisites or setup required"],
     "environment_variables": ["ENV_VAR_NAME=description"],
-    "file_dependencies": ["path/to/required/file"]
+    "file_dependencies": ["path/to/required/file"],
+    "decisions": [
+        {{
+            "trigger": "What prompted the decision",
+            "trigger_type": "metric_observation | error_pattern | hypothesis_test | user_preference",
+            "options": [{{"id": "opt_a", "description": "First option", "expected_outcome": "What would happen"}}],
+            "chosen": "opt_a",
+            "reasoning": "Why this option was chosen",
+            "phase": "feature_engineering | model_selection | evaluation | hyperparameter_tuning | data_preprocessing",
+            "evidence": ["Narration quotes"],
+            "outcome": "What happened after, if visible"
+        }}
+    ]
 }}
 ```
 
@@ -199,6 +229,8 @@ Important guidelines:
 - Add new steps discovered in the recording at the appropriate position
 - Update expected_output and success_criteria with specific values from narration
 - For notebook workflows: use tool_type "jupyter" for cell execution, "review" for output inspection
+- Extract decisions from narration where the user explains WHY they made a choice
+- Look for phrases like "I'm removing...", "I decided to...", "this isn't working so...", "let's try... instead"
 """
 
 
@@ -556,9 +588,26 @@ class RecordingAnalyzer:
                         )
                     )
 
+                # Extract decisions
+                decisions = []
+                for dec_data in analysis.get("decisions", []):
+                    decisions.append(
+                        ExtractedDecision(
+                            trigger=dec_data.get("trigger", ""),
+                            trigger_type=dec_data.get("trigger_type", "metric_observation"),
+                            options=dec_data.get("options", []),
+                            chosen=dec_data.get("chosen", ""),
+                            reasoning=dec_data.get("reasoning", ""),
+                            phase=dec_data.get("phase", ""),
+                            evidence=dec_data.get("evidence", []),
+                            outcome=dec_data.get("outcome", ""),
+                        )
+                    )
+
                 return AnalysisResult(
                     success=True,
                     steps=steps,
+                    decisions=decisions,
                     summary=analysis.get("summary", ""),
                     skill_name=analysis.get("skill_name", ""),
                     skill_description=analysis.get("skill_description", ""),

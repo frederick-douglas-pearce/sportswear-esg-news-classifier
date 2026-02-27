@@ -1,6 +1,8 @@
 """Experiment logging for ML agent learning."""
 
 from .models import (
+    Decision,
+    DecisionOption,
     ExperimentAction,
     ExperimentChange,
     ExperimentEntry,
@@ -14,6 +16,8 @@ from .store import ExperimentStore
 from .tracker import ExperimentTracker
 
 __all__ = [
+    "Decision",
+    "DecisionOption",
     "ExperimentAction",
     "ExperimentChange",
     "ExperimentEntry",

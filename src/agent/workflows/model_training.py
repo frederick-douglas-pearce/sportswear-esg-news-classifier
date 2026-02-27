@@ -790,6 +790,21 @@ def finalize_experiments(workflow: Workflow, context: dict[str, Any]) -> dict[st
             finalized.append(exp_id)
             logger.info(f"Finalized experiment {exp_id}")
 
+            # Update heuristic counters from decisions recorded during experiment
+            try:
+                from src.experiment_log.cli import update_heuristic_outcome
+                decisions = tracker.store.load_decisions(exp_id)
+                for dec in decisions:
+                    if dec.outcome_success is not None:
+                        update_heuristic_outcome(
+                            classifier,
+                            dec.trigger_description,
+                            dec.outcome_success,
+                            store=tracker.store,
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to update heuristics for {exp_id}: {e}")
+
         except Exception as e:
             logger.warning(f"Failed to finalize experiment {exp_id}: {e}")
 

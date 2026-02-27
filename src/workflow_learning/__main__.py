@@ -285,6 +285,33 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     manager.update_session(session)
 
     print(f"  - Skill generated: {skill_path}")
+
+    # Bridge extracted decisions to experiment log
+    try:
+        from .experiment_bridge import (
+            save_decisions_from_analysis,
+            seed_knowledge_from_decisions,
+        )
+
+        if result.decisions:
+            saved_ids = save_decisions_from_analysis(
+                analysis=result, workflow_name=session.workflow_name
+            )
+            if saved_ids:
+                print(f"  - Saved {len(saved_ids)} decisions to experiment log")
+            kb_stats = seed_knowledge_from_decisions(
+                analysis=result, workflow_name=session.workflow_name
+            )
+            if kb_stats["patterns_added"] or kb_stats["heuristics_added"]:
+                print(
+                    f"  - Seeded knowledge base: {kb_stats['patterns_added']} patterns, "
+                    f"{kb_stats['heuristics_added']} heuristics"
+                )
+        else:
+            print("  - No decisions extracted from narration")
+    except Exception as e:
+        logger.warning(f"Failed to bridge to experiment log: {e}")
+
     print()
     print("Done! Review the generated skill at:")
     print(f"  {skill_path}")
