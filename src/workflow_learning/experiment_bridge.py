@@ -35,6 +35,17 @@ def _infer_classifier(workflow_name: str) -> str | None:
     return None
 
 
+def _resolve_classifier(classifier: str | None, workflow_name: str) -> str:
+    """Resolve classifier from explicit value or infer from workflow name."""
+    resolved = classifier or _infer_classifier(workflow_name) or "unknown"
+    if resolved == "unknown":
+        logger.warning(
+            "Could not infer classifier from workflow '%s', using 'unknown'",
+            workflow_name,
+        )
+    return resolved
+
+
 def _build_decision_options(raw_options: list[dict[str, str]]) -> list[DecisionOption]:
     """Convert raw option dicts from extracted decisions to DecisionOption models.
 
@@ -80,15 +91,10 @@ def save_decisions_from_analysis(
         List of saved decision IDs.
     """
     if not analysis.decisions:
-        logger.info("No decisions to save for workflow '%s'", workflow_name)
+        logger.debug("No decisions to save for workflow '%s'", workflow_name)
         return []
 
-    classifier = classifier or _infer_classifier(workflow_name) or "unknown"
-    if classifier == "unknown":
-        logger.warning(
-            "Could not infer classifier from workflow '%s', using 'unknown'",
-            workflow_name,
-        )
+    classifier = _resolve_classifier(classifier, workflow_name)
 
     try:
         store = store or ExperimentStore()
@@ -99,7 +105,7 @@ def save_decisions_from_analysis(
     if not experiment_id:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         experiment_id = f"recording_{timestamp}"
-        logger.info(
+        logger.debug(
             "No experiment_id provided, using placeholder: %s", experiment_id
         )
 
@@ -128,7 +134,7 @@ def save_decisions_from_analysis(
 
             store.save_decision(decision)
             saved_ids.append(decision_id)
-            logger.info(
+            logger.debug(
                 "Saved decision %d/%d: %s (trigger: %s)",
                 i + 1,
                 len(analysis.decisions),
@@ -155,12 +161,10 @@ def save_decisions_from_analysis(
             )
 
     logger.info(
-        "Saved %d/%d decisions for workflow '%s' (classifier=%s, experiment=%s)",
+        "Saved %d/%d decisions for workflow '%s'",
         len(saved_ids),
         len(analysis.decisions),
         workflow_name,
-        classifier,
-        experiment_id,
     )
     return saved_ids
 
@@ -189,15 +193,10 @@ def seed_knowledge_from_decisions(
     result = {"patterns_added": 0, "heuristics_added": 0}
 
     if not analysis.decisions:
-        logger.info("No decisions to seed knowledge from for workflow '%s'", workflow_name)
+        logger.debug("No decisions to seed knowledge from for workflow '%s'", workflow_name)
         return result
 
-    classifier = classifier or _infer_classifier(workflow_name) or "unknown"
-    if classifier == "unknown":
-        logger.warning(
-            "Could not infer classifier from workflow '%s', using 'unknown'",
-            workflow_name,
-        )
+    classifier = _resolve_classifier(classifier, workflow_name)
 
     try:
         store = store or ExperimentStore()
@@ -243,7 +242,7 @@ def seed_knowledge_from_decisions(
                     )
                     existing_pattern_texts.add(pattern_text.lower())
                     result["patterns_added"] += 1
-                    logger.info(
+                    logger.debug(
                         "Created pattern from decision %d: %s",
                         i,
                         pattern_text[:100],
@@ -253,7 +252,7 @@ def seed_knowledge_from_decisions(
                         "Invalid data for pattern from decision %d: %s", i, e
                     )
             else:
-                logger.info(
+                logger.debug(
                     "Skipping duplicate pattern from decision %d: %s",
                     i,
                     pattern_text[:80],
@@ -277,7 +276,7 @@ def seed_knowledge_from_decisions(
                     )
                     existing_heuristic_triggers.add(dec.trigger.lower())
                     result["heuristics_added"] += 1
-                    logger.info(
+                    logger.debug(
                         "Created heuristic from decision %d: trigger='%s'",
                         i,
                         dec.trigger[:80],
@@ -287,7 +286,7 @@ def seed_knowledge_from_decisions(
                         "Invalid data for heuristic from decision %d: %s", i, e
                     )
             else:
-                logger.info(
+                logger.debug(
                     "Skipping duplicate heuristic from decision %d: trigger='%s'",
                     i,
                     dec.trigger[:80],
@@ -322,10 +321,9 @@ def seed_knowledge_from_decisions(
             result["patterns_added"] = 0
             result["heuristics_added"] = 0
     else:
-        logger.info(
-            "No new knowledge to seed for workflow '%s' (classifier=%s)",
+        logger.debug(
+            "No new knowledge to seed for workflow '%s'",
             workflow_name,
-            classifier,
         )
 
     return result
