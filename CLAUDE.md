@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Interaction Preferences
+
+- Explain trade-offs between alternative approaches before committing to one
+- Push back if the proposed approach seems suboptimal — suggest a better path
+- Flag assumptions being made, especially about intent, scope, or constraints
+
 ## Project Overview
 
 ESG News Classifier for sportswear brands - a multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for brands including Nike, Adidas, Puma, Under Armour, Lululemon, Patagonia, Columbia Sportswear, New Balance, ASICS, and Reebok.
