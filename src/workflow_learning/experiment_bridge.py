@@ -35,6 +35,31 @@ def _infer_classifier(workflow_name: str) -> str | None:
     return None
 
 
+def _build_decision_options(raw_options: list[dict[str, str]]) -> list[DecisionOption]:
+    """Convert raw option dicts from extracted decisions to DecisionOption models.
+
+    Handles missing keys gracefully with sensible defaults.
+    """
+    options = []
+    for idx, opt in enumerate(raw_options):
+        if not isinstance(opt, dict):
+            logger.warning(
+                "Skipping non-dict option at index %d: %s", idx, type(opt).__name__
+            )
+            continue
+        try:
+            options.append(
+                DecisionOption(
+                    id=opt.get("id", f"opt_{idx}"),
+                    description=opt.get("description", ""),
+                    expected_outcome=opt.get("expected_outcome", ""),
+                )
+            )
+        except (TypeError, ValueError) as e:
+            logger.warning("Skipping invalid option at index %d: %s", idx, e)
+    return options
+
+
 def save_decisions_from_analysis(
     analysis: AnalysisResult,
     workflow_name: str,
@@ -55,32 +80,36 @@ def save_decisions_from_analysis(
         List of saved decision IDs.
     """
     if not analysis.decisions:
+        logger.info("No decisions to save for workflow '%s'", workflow_name)
         return []
+
+    classifier = classifier or _infer_classifier(workflow_name) or "unknown"
+    if classifier == "unknown":
+        logger.warning(
+            "Could not infer classifier from workflow '%s', using 'unknown'",
+            workflow_name,
+        )
 
     try:
         store = store or ExperimentStore()
-        classifier = classifier or _infer_classifier(workflow_name) or "unknown"
+    except Exception as e:
+        logger.error("Failed to initialize ExperimentStore: %s", e)
+        return []
 
-        # Use placeholder experiment ID if none provided
-        if not experiment_id:
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            experiment_id = f"recording_{timestamp}"
+    if not experiment_id:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        experiment_id = f"recording_{timestamp}"
+        logger.info(
+            "No experiment_id provided, using placeholder: %s", experiment_id
+        )
 
-        saved_ids = []
-        for i, dec in enumerate(analysis.decisions):
+    saved_ids = []
+    for i, dec in enumerate(analysis.decisions):
+        try:
             timestamp = datetime.now(timezone.utc)
             decision_id = f"dec_{classifier}_{timestamp.strftime('%Y%m%d_%H%M%S')}_{i}"
 
-            # Convert options
-            options = []
-            for opt in dec.options:
-                options.append(
-                    DecisionOption(
-                        id=opt.get("id", f"opt_{len(options)}"),
-                        description=opt.get("description", ""),
-                        expected_outcome=opt.get("expected_outcome", ""),
-                    )
-                )
+            options = _build_decision_options(dec.options)
 
             decision = Decision(
                 decision_id=decision_id,
@@ -99,12 +128,41 @@ def save_decisions_from_analysis(
 
             store.save_decision(decision)
             saved_ids.append(decision_id)
+            logger.info(
+                "Saved decision %d/%d: %s (trigger: %s)",
+                i + 1,
+                len(analysis.decisions),
+                decision_id,
+                dec.trigger[:80],
+            )
+        except (TypeError, ValueError) as e:
+            logger.error(
+                "Invalid data for decision %d (trigger: '%s'): %s",
+                i,
+                dec.trigger[:80] if dec.trigger else "empty",
+                e,
+            )
+        except OSError as e:
+            logger.error(
+                "File I/O error saving decision %d (%s): %s",
+                i,
+                decision_id,
+                e,
+            )
+        except Exception as e:
+            logger.error(
+                "Unexpected error saving decision %d: %s", i, e, exc_info=True
+            )
 
-        return saved_ids
-
-    except Exception as e:
-        logger.warning(f"Failed to save decisions from analysis: {e}")
-        return []
+    logger.info(
+        "Saved %d/%d decisions for workflow '%s' (classifier=%s, experiment=%s)",
+        len(saved_ids),
+        len(analysis.decisions),
+        workflow_name,
+        classifier,
+        experiment_id,
+    )
+    return saved_ids
 
 
 def seed_knowledge_from_decisions(
@@ -131,25 +189,43 @@ def seed_knowledge_from_decisions(
     result = {"patterns_added": 0, "heuristics_added": 0}
 
     if not analysis.decisions:
+        logger.info("No decisions to seed knowledge from for workflow '%s'", workflow_name)
         return result
+
+    classifier = classifier or _infer_classifier(workflow_name) or "unknown"
+    if classifier == "unknown":
+        logger.warning(
+            "Could not infer classifier from workflow '%s', using 'unknown'",
+            workflow_name,
+        )
 
     try:
         store = store or ExperimentStore()
-        classifier = classifier or _infer_classifier(workflow_name) or "unknown"
+    except Exception as e:
+        logger.error("Failed to initialize ExperimentStore: %s", e)
+        return result
 
+    try:
         kb = store.load_knowledge(classifier)
+    except Exception as e:
+        logger.error(
+            "Failed to load knowledge base for classifier '%s': %s",
+            classifier,
+            e,
+        )
+        return result
 
-        # Collect existing triggers for deduplication
-        existing_pattern_texts = {p.pattern.lower() for p in kb.patterns}
-        existing_heuristic_triggers = {h.trigger.lower() for h in kb.heuristics}
+    existing_pattern_texts = {p.pattern.lower() for p in kb.patterns}
+    existing_heuristic_triggers = {h.trigger.lower() for h in kb.heuristics}
 
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-        for dec in analysis.decisions:
-            # Create Pattern if trigger + outcome exist
-            if dec.trigger and dec.outcome:
-                pattern_text = f"When {dec.trigger}, then {dec.outcome}"
-                if pattern_text.lower() not in existing_pattern_texts:
+    for i, dec in enumerate(analysis.decisions):
+        # Create Pattern if trigger + outcome exist
+        if dec.trigger and dec.outcome:
+            pattern_text = f"When {dec.trigger}, then {dec.outcome}"
+            if pattern_text.lower() not in existing_pattern_texts:
+                try:
                     pattern_id = f"pat_{classifier}_{len(kb.patterns) + 1}"
                     kb.patterns.append(
                         Pattern(
@@ -167,10 +243,26 @@ def seed_knowledge_from_decisions(
                     )
                     existing_pattern_texts.add(pattern_text.lower())
                     result["patterns_added"] += 1
+                    logger.info(
+                        "Created pattern from decision %d: %s",
+                        i,
+                        pattern_text[:100],
+                    )
+                except (TypeError, ValueError) as e:
+                    logger.error(
+                        "Invalid data for pattern from decision %d: %s", i, e
+                    )
+            else:
+                logger.info(
+                    "Skipping duplicate pattern from decision %d: %s",
+                    i,
+                    pattern_text[:80],
+                )
 
-            # Create Heuristic if trigger + chosen + reasoning exist
-            if dec.trigger and dec.chosen and dec.reasoning:
-                if dec.trigger.lower() not in existing_heuristic_triggers:
+        # Create Heuristic if trigger + chosen + reasoning exist
+        if dec.trigger and dec.chosen and dec.reasoning:
+            if dec.trigger.lower() not in existing_heuristic_triggers:
+                try:
                     heuristic_id = f"heur_{classifier}_{len(kb.heuristics) + 1}"
                     kb.heuristics.append(
                         Heuristic(
@@ -185,13 +277,55 @@ def seed_knowledge_from_decisions(
                     )
                     existing_heuristic_triggers.add(dec.trigger.lower())
                     result["heuristics_added"] += 1
+                    logger.info(
+                        "Created heuristic from decision %d: trigger='%s'",
+                        i,
+                        dec.trigger[:80],
+                    )
+                except (TypeError, ValueError) as e:
+                    logger.error(
+                        "Invalid data for heuristic from decision %d: %s", i, e
+                    )
+            else:
+                logger.info(
+                    "Skipping duplicate heuristic from decision %d: trigger='%s'",
+                    i,
+                    dec.trigger[:80],
+                )
 
-        # Save if anything changed
-        if result["patterns_added"] > 0 or result["heuristics_added"] > 0:
+    # Save if anything changed
+    if result["patterns_added"] > 0 or result["heuristics_added"] > 0:
+        try:
             store.save_knowledge(kb)
+            logger.info(
+                "Saved knowledge base for '%s': %d patterns, %d heuristics added",
+                classifier,
+                result["patterns_added"],
+                result["heuristics_added"],
+            )
+        except OSError as e:
+            logger.error(
+                "File I/O error saving knowledge base for '%s': %s",
+                classifier,
+                e,
+            )
+            # Reset counts since save failed - entries were not persisted
+            result["patterns_added"] = 0
+            result["heuristics_added"] = 0
+        except Exception as e:
+            logger.error(
+                "Unexpected error saving knowledge base for '%s': %s",
+                classifier,
+                e,
+                exc_info=True,
+            )
+            result["patterns_added"] = 0
+            result["heuristics_added"] = 0
+    else:
+        logger.info(
+            "No new knowledge to seed for workflow '%s' (classifier=%s)",
+            workflow_name,
+            classifier,
+        )
 
-        return result
-
-    except Exception as e:
-        logger.warning(f"Failed to seed knowledge from decisions: {e}")
-        return result
+    return result
