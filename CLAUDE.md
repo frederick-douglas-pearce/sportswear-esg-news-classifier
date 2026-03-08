@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ESG News Classifier for sportswear brands - a multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for brands including Nike, Adidas, Puma, Under Armour, Lululemon, Patagonia, Columbia Sportswear, New Balance, ASICS, and Reebok.
+ESG News Classifier for sportswear brands - a multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for 50 sportswear/outdoor brands (see `src/data_collection/config.py` for full list).
 
 ## Commands
 
@@ -47,7 +47,7 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (p
 CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
 
 # Testing
-uv run pytest                              # Run all tests (1162 tests)
+uv run pytest                              # Run all tests (1186 tests)
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
@@ -153,7 +153,7 @@ SQL query examples in `queries/` folder: `collection_queries.sql`, `labeling_que
 ```
 prompts/labeling/
 ├── registry.json          # Version registry with metadata
-├── v1.0.0/, v1.1.0/, v1.2.0/
+├── v1.0.0/ through v1.8.0/
     ├── config.json, system_prompt.txt, user_prompt.txt
 ```
 
@@ -254,10 +254,10 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 ### ML Classifier Notebooks (`notebooks/`)
 
 **False Positive Classifier (3 notebooks):** fp1_EDA_FE.ipynb → fp2_model_selection_tuning.ipynb → fp3_model_evaluation_deployment.ipynb
-- **Best Model:** Random Forest with sentence-transformer + NER features (Test F2: 0.974, Recall: 98.8%)
+- **Production (v2.5.0):** Random Forest with TF-IDF + LSA + NER + proximity + brand features (Test F2: 0.987, Recall: 99.7%)
 
 **ESG Pre-filter Classifier (3 notebooks):** ep1_EDA_FE.ipynb → ep2_model_selection_tuning.ipynb → ep3_model_evaluation_deployment.ipynb
-- **Best Model:** Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%)
+- **Production (v1.0.0):** Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%) — on hold, insufficient data for significant improvement
 
 **Notebook Standards:** All imports in Setup section, grouped: stdlib → third-party → project modules
 
@@ -267,7 +267,7 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 1162 tests
+### Test Suite (`tests/`) - 1186 tests
 Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_experiment_log/*, test_workflow_learning/*, test_integration
 
 ### Database Schema
@@ -330,8 +330,8 @@ Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
 
 ## ML Classifier Opportunities
 
-1. **False Positive Classifier** ✅ - Filter non-sportswear brand matches (Test F2: 0.974)
-2. **ESG Pre-filter Classifier** ✅ - Identify ESG content before Claude (Test F2: 0.931, Recall: 100%)
+1. **False Positive Classifier** ✅ - Filter non-sportswear brand matches (Production v2.5.0, Test F2: 0.987)
+2. **ESG Pre-filter Classifier** ✅ - Identify ESG content before Claude (Production v1.0.0, Test F2: 0.931) — on hold
 3. **ESG Multi-label Classifier** - Planned
 
 ## Project Phases
