@@ -135,6 +135,7 @@ class ArticleLabeler:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         max_tokens: int = 2000,
+        temperature: float = 0.0,
         prompt_version: str | None = None,
     ):
         """Initialize the labeler.
@@ -145,6 +146,7 @@ class ArticleLabeler:
             max_retries: Maximum retry attempts for rate limits
             retry_delay: Initial delay between retries in seconds
             max_tokens: Maximum output tokens
+            temperature: Sampling temperature (0.0 for deterministic classification)
             prompt_version: Version of prompts to use (default: production version)
         """
         self.api_key = api_key or labeling_settings.anthropic_api_key
@@ -152,6 +154,7 @@ class ArticleLabeler:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.max_tokens = max_tokens
+        self.temperature = temperature
 
         if not self.api_key:
             raise ValueError(
@@ -360,6 +363,7 @@ class ArticleLabeler:
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=self.max_tokens,
+                    temperature=self.temperature,
                     system=system_prompt,
                     messages=[{"role": "user", "content": user_prompt}],
                 )

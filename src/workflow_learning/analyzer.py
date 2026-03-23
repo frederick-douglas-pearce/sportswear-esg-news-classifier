@@ -558,6 +558,7 @@ class RecordingAnalyzer:
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=4000,
+                    temperature=0.0,
                     system=system,
                     messages=[{"role": "user", "content": user_prompt}],
                 )

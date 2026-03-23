@@ -121,6 +121,7 @@ class ExperimentReflector:
                 response = self.client.messages.create(
                     model=self.model,
                     max_tokens=1000,
+                    temperature=0.0,
                     system=REFLECTION_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_prompt}],
                 )
