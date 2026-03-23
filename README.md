@@ -930,3 +930,7 @@ docker logs esg_news_db
 # Test connection
 psql postgresql://postgres:postgres@localhost:5434/esg_news
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, branching conventions, and PR process.
