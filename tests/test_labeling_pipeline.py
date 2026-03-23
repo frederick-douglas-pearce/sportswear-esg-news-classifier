@@ -457,7 +457,9 @@ class TestTransientErrorHandling:
         )
 
         article = self.create_mock_article()
-        result = pipeline._process_article(article, dry_run=True)
+        result = pipeline._process_article(
+            article, dry_run=True, skip_chunking=True, skip_embedding=True
+        )
 
         assert result["error_type"] == "timeout"
         mock_database.update_article_labeling_status.assert_not_called()
@@ -479,7 +481,9 @@ class TestTransientErrorHandling:
         )
 
         article = self.create_mock_article()
-        result = pipeline._process_article(article, dry_run=True)
+        result = pipeline._process_article(
+            article, dry_run=True, skip_chunking=True, skip_embedding=True
+        )
 
         assert result["error_type"] == "authentication"
         mock_database.update_article_labeling_status.assert_not_called()
