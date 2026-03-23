@@ -8,6 +8,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Push back if the proposed approach seems suboptimal — suggest a better path
 - Flag assumptions being made, especially about intent, scope, or constraints
 
+## Development Workflow
+
+This project uses a branch-based workflow. Do NOT commit directly to main.
+
+1. Work should reference a GitHub issue. Create one if none exists: `gh issue create`
+2. Create a feature branch: `git checkout -b <type>/<issue-number>-<description> main`
+3. Branch prefixes: `feature/`, `fix/`, `docs/`, `refactor/`
+4. Make commits on the branch (imperative mood: "Add...", "Fix...", "Update...")
+5. Push and create a PR: `git push -u origin <branch>` then `gh pr create`
+6. CI must pass before merging (runs full test suite)
+7. Squash merge: `gh pr merge --squash --delete-branch`
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
+
 ## Project Overview
 
 ESG News Classifier for sportswear brands - a multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for 50 sportswear/outdoor brands (see `src/data_collection/config.py` for full list).
