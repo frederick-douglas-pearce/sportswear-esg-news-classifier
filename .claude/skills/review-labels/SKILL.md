@@ -53,7 +53,17 @@ with engine.connect() as conn:
         WHERE a.labeled_at >= :since_date
     '''), {'since_date': since_date})
     row = result.fetchone()
-    print(f'\nArticles reviewed: {row.articles}, Brand labels: {row.brand_labels}')
+    print(f'\nArticles labeled: {row.articles}, Brand labels: {row.brand_labels}')
+
+    # Count FP-classifier-flagged articles in review window
+    result = conn.execute(text('''
+        SELECT COUNT(*) as fp_count
+        FROM articles
+        WHERE labeling_status = 'false_positive'
+          AND created_at >= :since_date
+    '''), {'since_date': since_date})
+    fp_row = result.fetchone()
+    print(f'FP-classifier flagged: {fp_row.fp_count} articles')
 
     # 1. Brand sentiment breakdown
     print('\n' + '-' * 70)
@@ -114,21 +124,23 @@ with engine.connect() as conn:
         print('  No negative sentiment articles in this period')
 
     # 3. Articles marked false_positive (spot check)
+    # Note: FP-classifier-flagged articles have labeled_at=NULL, so use created_at
     print('\n' + '-' * 70)
     print('RECENT FALSE POSITIVES (Spot check for missed ESG content)')
     print('-' * 70)
     result = conn.execute(text('''
-        SELECT title, source_name, url
-        FROM articles
-        WHERE labeling_status = 'false_positive'
-          AND labeled_at >= :since_date
-        ORDER BY labeled_at DESC
-        LIMIT 5
+        SELECT a.title, a.source_name, a.url, a.brands_mentioned
+        FROM articles a
+        WHERE a.labeling_status = 'false_positive'
+          AND a.created_at >= :since_date
+        ORDER BY a.created_at DESC
+        LIMIT 10
     '''), {'since_date': since_date})
     rows = result.fetchall()
     if rows:
         for r in rows:
-            print(f'  [{r.source_name}] {r.title[:65]}...')
+            brands = ', '.join(r.brands_mentioned) if r.brands_mentioned else 'unknown'
+            print(f'  [{r.source_name}] ({brands}) {r.title[:60]}...')
             print(f'    URL: {r.url}')
     else:
         print('  No false positives in this period')
@@ -144,6 +156,7 @@ with engine.connect() as conn:
         SELECT id, title, source_name
         FROM articles
         WHERE labeling_status = 'false_positive'
+          AND created_at >= :since_date
           AND (
             LOWER(title) LIKE '%analyst%'
             OR LOWER(title) LIKE '%rating%'
@@ -180,10 +193,10 @@ with engine.connect() as conn:
           )
         ORDER BY created_at DESC
         LIMIT 10
-    '''))
+    '''), {'since_date': since_date})
     rows = result.fetchall()
     if rows:
-        print(f'  ⚠️  Found {len(rows)} potentially mislabeled articles:')
+        print(f'  Found {len(rows)} potentially mislabeled articles:')
         for r in rows:
             print(f'  [{r.source_name}] {r.title[:60]}...')
             print(f'    ID: {r.id}')
