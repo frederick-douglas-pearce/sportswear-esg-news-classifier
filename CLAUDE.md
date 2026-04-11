@@ -49,6 +49,12 @@ uv run python scripts/label_articles.py --dry-run --batch-size 5 # Test without 
 uv run python scripts/label_articles.py --batch-size 10          # Label batch of articles
 uv run python scripts/label_articles.py --article-id UUID        # Label specific article
 
+# Label Corrections (after /review-labels)
+uv run python scripts/fix_label.py show <article-id>              # View article details + content
+uv run python scripts/fix_label.py update <id> --status skipped   # Correct labeling status
+uv run python scripts/fix_label.py update <id1> <id2> --status skipped  # Batch update
+uv run python scripts/fix_label.py statuses                       # List valid statuses
+
 # Export Training Data
 uv run python scripts/export_training_data.py --dataset fp       # False positive classifier data
 uv run python scripts/export_training_data.py --dataset esg-prefilter  # ESG pre-filter data

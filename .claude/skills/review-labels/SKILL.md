@@ -125,11 +125,13 @@ with engine.connect() as conn:
 
     # 3. Articles marked false_positive (spot check)
     # Note: FP-classifier-flagged articles have labeled_at=NULL, so use created_at
+    # Content preview uses full_content column (see queries/article_queries.sql for reference)
     print('\n' + '-' * 70)
     print('RECENT FALSE POSITIVES (Spot check for missed ESG content)')
     print('-' * 70)
     result = conn.execute(text('''
-        SELECT a.title, a.source_name, a.url, a.brands_mentioned
+        SELECT a.id, a.title, a.source_name, a.url, a.brands_mentioned,
+               LEFT(a.full_content, 500) as content_preview
         FROM articles a
         WHERE a.labeling_status = 'false_positive'
           AND a.created_at >= :since_date
@@ -141,7 +143,10 @@ with engine.connect() as conn:
         for r in rows:
             brands = ', '.join(r.brands_mentioned) if r.brands_mentioned else 'unknown'
             print(f'  [{r.source_name}] ({brands}) {r.title[:60]}...')
+            print(f'    ID: {r.id}')
             print(f'    URL: {r.url}')
+            if r.content_preview:
+                print(f'    Preview: {r.content_preview[:200]}...')
     else:
         print('  No false positives in this period')
 
@@ -153,7 +158,8 @@ with engine.connect() as conn:
     print('SUBSTANTIVE ANALYST ARTICLES (false_positive -> should be skipped)')
     print('-' * 70)
     result = conn.execute(text('''
-        SELECT id, title, source_name
+        SELECT id, title, source_name,
+               LEFT(full_content, 500) as content_preview
         FROM articles
         WHERE labeling_status = 'false_positive'
           AND created_at >= :since_date
@@ -200,8 +206,11 @@ with engine.connect() as conn:
         for r in rows:
             print(f'  [{r.source_name}] {r.title[:60]}...')
             print(f'    ID: {r.id}')
+            if r.content_preview:
+                print(f'    Preview: {r.content_preview[:200]}...')
         print('  → Verify these contain substantive analyst commentary (not just templates)')
-        print('  → If substantive: change from false_positive to skipped')
+        print('  → To view full article: uv run python scripts/fix_label.py show <ID>')
+        print('  → To fix: uv run python scripts/fix_label.py update <ID> --status skipped')
     else:
         print('  ✓ No mislabeled substantive analyst articles found')
 
@@ -258,18 +267,33 @@ After running the queries:
 
 2. **Negative Sentiment Articles**: Click through to verify the negative sentiment is justified by the article content
 
-3. **False Positives**: Spot check a few to ensure they truly aren't ESG-relevant
+3. **False Positives**: Spot check using the content preview. Remember:
+   - `false_positive` = not actually about the sportswear brand (e.g., "Vans" = vehicles)
+   - `skipped` = genuinely about the brand, but no ESG content (e.g., product reviews, analyst articles)
+   - If an article IS about the brand but was marked `false_positive`, it should be `skipped`
 
 4. **Substantive Analyst Articles**: Per [docs/LABELING.md](../../docs/LABELING.md#stock-article-classification) v1.7.0:
    - **Boilerplate template articles** (MarketBeat, DefenseWorld, DailyPolitical, etc.) → correctly `false_positive` — these are auto-generated aggregations with no original analysis
    - **Substantive analyst articles** (named analysts with specific commentary, original analysis from reputable sources like Reuters, Bloomberg, Seeking Alpha) → should be `skipped`, not `false_positive`
    - The query excludes known boilerplate aggregator sources, so flagged articles are likely genuine mislabels
-   - If flagged articles contain real analyst commentary, fix with:
-     ```sql
-     UPDATE articles SET labeling_status = 'skipped', skipped_at = NOW()
-     WHERE id = 'article-uuid-here';
-     ```
 
 5. **Multi-Brand Articles**: Verify brands in the same article got consistent treatment
+
+## Step 5: Apply Corrections
+
+Use `scripts/fix_label.py` to verify and correct any flagged articles:
+
+```bash
+# View full article details and content for verification
+uv run python scripts/fix_label.py show <article-id>
+
+# Correct one or more articles
+uv run python scripts/fix_label.py update <id> [<id>...] --status skipped
+
+# List valid statuses and their meanings
+uv run python scripts/fix_label.py statuses
+```
+
+For ad-hoc queries, see `queries/article_queries.sql` and `queries/labeling_queries.sql` for reference SQL using the correct schema (e.g., `full_content` column for article text).
 
 Summarize findings and flag any articles that may need relabeling or further investigation.
