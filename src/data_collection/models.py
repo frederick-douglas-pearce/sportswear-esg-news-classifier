@@ -29,6 +29,18 @@ class Base(DeclarativeBase):
     pass
 
 
+VALID_LABELING_STATUSES = [
+    "pending",
+    "chunked",
+    "embedded",
+    "labeled",
+    "skipped",
+    "false_positive",
+    "unlabelable",
+    "deduplicated",
+]
+
+
 class Article(Base):
     """News article from NewsData.io API."""
 
@@ -61,7 +73,7 @@ class Article(Base):
     embedding = Column(Vector(1536))
 
     # Labeling status tracking
-    # Valid statuses: pending, chunked, embedded, labeled, skipped, false_positive, unlabelable, deduplicated
+    # Valid statuses defined in VALID_LABELING_STATUSES
     labeling_status = Column(String(20), default="pending")
     labeling_error = Column(Text)
     labeled_at = Column(DateTime(timezone=True))
