@@ -70,3 +70,4 @@ reports/daily_labeling/
 
 # Workflow learning session recordings (ephemeral, contain personal screen/audio data)
 data/workflow_recordings/
+social/
