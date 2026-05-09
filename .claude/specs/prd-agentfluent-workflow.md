@@ -240,8 +240,8 @@ The epic is successful when:
 ## 12. Release Checklist
 
 Phase 0:
-- [ ] AgentFluent v0.6 confirmed shipped
-- [ ] #15: Baseline JSON saved to `social/baselines/phase0-baseline.json`
+- [x] AgentFluent v0.6 confirmed shipped
+- [x] #15: Baseline JSON saved to `social/baselines/phase0-baseline.json`
 - [ ] #16: Case study scaffold created with populated Baseline section
 - [ ] #17: "Where we started" blog post drafted and prettier-clean
 - [ ] #18: Phase 0 session data captured in case study
