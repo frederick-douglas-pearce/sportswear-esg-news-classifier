@@ -54,3 +54,29 @@ Both live in `social/` (gitignored). README excerpt (Track A) deferred -- deriva
 - C only (blog posts): No persistent narrative thread across phases.
 - D (docs/ folder): Rejected by user -- `docs/` is git-tracked, marketing drafts should not be in version control.
 **Rationale:** User specified: "doc file should be in a new folder named 'social' that is gitignored" and "the blog posts also go in the 'social' folder but the posts' ultimate purpose is being published on my personal website." The `social/` directory is already created and gitignored.
+
+---
+
+## D005: Revise `social/` Gitignore Policy -- Commit Case Study, Keep Baselines and Posts Local
+
+**Date:** 2026-05-09
+**Context:** D004 placed the case study, blog drafts, and baseline JSONs all in a fully gitignored `social/` directory. Architect reviews of #15-#18 (specifically the blocking concern raised on #16) flagged that the case study cannot be committed under that policy, which contradicts the dual-purpose theme: the case study is the canonical narrative artifact and should be version-controlled alongside the project. Independent security analysis on #15 confirmed that baseline JSONs should remain gitignored due to local file paths, tool arguments, and error messages in AgentFluent's output.
+**Decision:** Replace the blanket `social/` gitignore with a negation-rule policy:
+- `social/case-study-agentfluent.md` -> committed (canonical case study; tracked artifact)
+- `social/posts/` -> gitignored (drafts published via the `github_pages` repo; no need for two committed copies)
+- `social/baselines/` -> gitignored (security: JSON contains local file paths, tool args, error messages)
+
+`.gitignore` updated to:
+```
+social/*
+!social/case-study-agentfluent.md
+```
+
+**Alternatives considered:**
+- Commit everything in `social/`. Rejected -- baseline JSONs leak local paths and tool args; the marginal credibility gain is not worth the security exposure.
+- Keep blanket `social/` ignore. Rejected -- prevents the case study from being version-controlled, contradicts the dual-purpose theme of the epic, and creates a workflow problem for #16 (no diff to review).
+- Selective explicit ignores (`social/posts/`, `social/baselines/`). Viable alternative; rejected for now in favor of the negation-rule allowlist (tighter by default). Can be revisited if more committable artifacts are added.
+
+**Rationale:** The case study is the source-of-truth narrative artifact for the AgentFluent epic. Committing it makes the engineering and marketing tracks visibly connected in the repo, supporting the "every workflow improvement is also a data point" theme. Blog drafts are transient (their final home is the `github_pages` repo). Baseline JSONs have the highest information density per byte but also the highest local-path exposure -- the case study cites their numbers inline, making the JSONs reference data rather than canonical artifacts.
+
+**Supersedes:** D004's "both live in `social/` (gitignored)" provision specifically. The rest of D004 (case study and blog post structure, voice, format, transfer path for posts) remains in effect.

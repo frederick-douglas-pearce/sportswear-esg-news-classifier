@@ -70,4 +70,9 @@ reports/daily_labeling/
 
 # Workflow learning session recordings (ephemeral, contain personal screen/audio data)
 data/workflow_recordings/
-social/
+
+# Marketing artifacts (AgentFluent epic, see decisions.md D005)
+# Case study is committed; blog drafts are published via the github_pages repo,
+# and baseline JSONs contain local file paths and tool args (security).
+social/*
+!social/case-study-agentfluent.md
