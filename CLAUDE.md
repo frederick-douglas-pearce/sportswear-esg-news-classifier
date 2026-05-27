@@ -385,6 +385,19 @@ GitHub Actions → Google Cloud Run. Secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY`, `G
 
 JSON/Atom feeds for Jekyll/al-folio site. Website repo: `/home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io`
 
+### Worktree Setup (one-time)
+
+The `website_export` cron workflow must run in a dedicated git worktree pinned to `main`, separate from any interactive checkout. This isolates unattended pushes from in-progress feature-branch work.
+
+```bash
+cd /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io
+git worktree add ../frederick-douglas-pearce.github.io-feed main
+# Then point AGENT_WEBSITE_REPO_PATH at the new worktree path:
+# AGENT_WEBSITE_REPO_PATH=/home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io-feed
+```
+
+The workflow asserts the worktree is on `main`, fast-forward-pulls before committing, and pushes with an explicit `origin HEAD:main` refspec. If any guard fails the workflow aborts and sends an error notification rather than pushing to the wrong branch.
+
 ### Export Commands
 ```bash
 # Full export with scorecard (default)

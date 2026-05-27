@@ -170,8 +170,21 @@ def validate_export(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
     return validation_result
 
 
+# The export workflow is expected to run inside a dedicated git worktree
+# pinned to this branch. Pushes go to origin/<EXPECTED_BRANCH> only.
+EXPECTED_BRANCH = "main"
+
+
 def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Commit and push changes to the website repository."""
+    """Commit and push changes to the website repository.
+
+    Assumes `website_repo_path` is a worktree pinned to `EXPECTED_BRANCH`.
+    Three guards prevent the unattended workflow from pushing to the wrong
+    branch when a shared working tree drifts off main:
+      1. Branch assertion (abort if HEAD is not EXPECTED_BRANCH)
+      2. Fast-forward pull (abort if origin moved non-linearly)
+      3. Explicit refspec push (no reliance on upstream tracking)
+    """
     if context.get("export_skipped") or context.get("validation_skipped"):
         return {"git_skipped": True, "reason": "export_skipped"}
 
@@ -187,7 +200,46 @@ def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         logger.info("Dry run - skipping git commit and push")
         return {"git_skipped": True, "reason": "dry_run"}
 
-    # Check if there are changes to commit
+    # Guard 1: assert we are on EXPECTED_BRANCH before touching anything
+    branch_result = run_script(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=website_repo,
+        retries=0,
+    )
+    if not branch_result.success:
+        logger.error(f"Could not determine current branch: {branch_result.stderr}")
+        return {"git_success": False, "error": "git_branch_check_failed"}
+
+    current_branch = branch_result.stdout.strip()
+    if current_branch != EXPECTED_BRANCH:
+        logger.error(
+            f"Refusing to push: website repo is on '{current_branch}', "
+            f"expected '{EXPECTED_BRANCH}'. The export workflow must run in a "
+            f"worktree pinned to '{EXPECTED_BRANCH}' (see CLAUDE.md)."
+        )
+        return {
+            "git_success": False,
+            "error": "wrong_branch",
+            "current_branch": current_branch,
+            "expected_branch": EXPECTED_BRANCH,
+        }
+
+    # Guard 2: fast-forward pull so we don't push on top of a stale base.
+    # Refuse to merge — a cron job should never resolve divergence.
+    pull_result = run_script(
+        ["git", "pull", "--ff-only", "origin", EXPECTED_BRANCH],
+        cwd=website_repo,
+        retries=0,
+        timeout=60,
+    )
+    if not pull_result.success:
+        logger.error(
+            f"Fast-forward pull of origin/{EXPECTED_BRANCH} failed: "
+            f"{pull_result.stderr}"
+        )
+        return {"git_success": False, "error": "git_pull_ff_failed"}
+
+    # Check if there are changes to commit (after pull, in case pull pulled them in)
     status_result = run_script(
         ["git", "status", "--porcelain"],
         cwd=website_repo,
@@ -233,9 +285,11 @@ def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         logger.error(f"Git commit failed: {commit_result.stderr}")
         return {"git_success": False, "error": "git_commit_failed"}
 
-    # Push
+    # Guard 3: push with an explicit refspec instead of bare `git push`.
+    # This is independent of any upstream tracking config and pins the
+    # destination to origin/EXPECTED_BRANCH.
     push_result = run_script(
-        ["git", "push"],
+        ["git", "push", "origin", f"HEAD:{EXPECTED_BRANCH}"],
         cwd=website_repo,
         retries=1,
         timeout=60,
@@ -249,6 +303,7 @@ def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
     return {
         "git_success": True,
         "commit_message": f"Update ESG news feed - {today}",
+        "branch": EXPECTED_BRANCH,
     }
 
 
@@ -271,7 +326,22 @@ def send_error_notification(workflow: Workflow, context: dict[str, Any]) -> dict
 
     # Check git step
     if context.get("git_success") is False:
-        errors.append(f"Git operation failed: {context.get('error', 'Unknown error')}")
+        git_error = context.get("error", "Unknown error")
+        if git_error == "wrong_branch":
+            errors.append(
+                f"Git operation failed: website repo is on "
+                f"'{context.get('current_branch')}', expected "
+                f"'{context.get('expected_branch')}'. Workflow must run in a "
+                f"worktree pinned to the expected branch (see CLAUDE.md)."
+            )
+        elif git_error == "git_pull_ff_failed":
+            errors.append(
+                "Git operation failed: fast-forward pull rejected. The "
+                "website repo's local branch has diverged from origin; "
+                "resolve manually before the next scheduled run."
+            )
+        else:
+            errors.append(f"Git operation failed: {git_error}")
 
     # No errors - silent success
     if not errors:
