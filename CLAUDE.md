@@ -396,7 +396,7 @@ git worktree add ../frederick-douglas-pearce.github.io-feed main
 # AGENT_WEBSITE_REPO_PATH=/home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io-feed
 ```
 
-The workflow asserts the worktree is on `main`, fast-forward-pulls before committing, and pushes with an explicit `origin HEAD:main` refspec. If any guard fails the workflow aborts and sends an error notification rather than pushing to the wrong branch.
+The workflow's first step (`prepare_worktree`) asserts the worktree is on `main` and fast-forward-pulls BEFORE `export_feeds` writes any files (so the FF pull never has to contend with uncommitted feed changes). `commit_and_push` then runs a defense-in-depth branch check, scopes its status check to the two feed paths, and pushes with an explicit `origin HEAD:main` refspec. Any failure causes `send_error_notification` to dispatch an alert and raise, so the workflow ends in `WorkflowStatus.FAILED` rather than masquerading as a clean run. Set `AGENT_WEBSITE_EXPECTED_BRANCH` if your publishing branch is not `main`.
 
 ### Export Commands
 ```bash
