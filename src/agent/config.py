@@ -96,6 +96,9 @@ class AgentSettings:
         if (p := os.getenv("AGENT_WEBSITE_REPO_PATH"))
         else None
     )
+    website_expected_branch: str = field(
+        default_factory=lambda: os.getenv("AGENT_WEBSITE_EXPECTED_BRANCH", "main")
+    )
 
     def __post_init__(self) -> None:
         """Ensure directories exist."""

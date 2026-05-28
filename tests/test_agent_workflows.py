@@ -524,3 +524,486 @@ class TestWebsiteExportWorkflow:
             s for s in WebsiteExportWorkflow.steps if s.name == "commit_and_push"
         )
         assert commit_step.skip_on_dry_run is True
+
+
+def _script_result(
+    command: list[str],
+    *,
+    exit_code: int = 0,
+    stdout: str = "",
+    stderr: str = "",
+) -> Any:
+    """Build a ScriptResult-shaped object for patching run_script."""
+    from src.agent.runner import ScriptResult
+
+    return ScriptResult(
+        command=command,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+        duration_seconds=0.0,
+        started_at=datetime.now(timezone.utc),
+    )
+
+
+@pytest.fixture
+def mock_website_settings(tmp_path):
+    """Patch agent_settings with explicit attributes — no MagicMock auto-attrs."""
+    with patch("src.agent.workflows.website_export.agent_settings") as m:
+        m.website_repo_path = tmp_path
+        m.website_expected_branch = "main"
+        yield m
+
+
+class TestPrepareWorktree:
+    """Tests for the prepare_worktree step (branch assertion + FF pull)."""
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_skips_when_website_repo_not_configured(self, mock_run_script):
+        from src.agent.workflows.website_export import prepare_worktree
+
+        with patch("src.agent.workflows.website_export.agent_settings") as m:
+            m.website_repo_path = None
+            result = prepare_worktree(MagicMock(), {})
+
+        assert result == {"prepare_skipped": True, "reason": "website_repo_not_configured"}
+        assert mock_run_script.call_count == 0
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_skips_on_dry_run(self, mock_run_script, mock_website_settings):
+        from src.agent.workflows.website_export import prepare_worktree
+
+        result = prepare_worktree(MagicMock(), {"dry_run": True})
+
+        assert result == {"prepare_skipped": True, "reason": "dry_run"}
+        assert mock_run_script.call_count == 0
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_fails_on_wrong_branch(self, mock_run_script, mock_website_settings):
+        from src.agent.workflows.website_export import prepare_worktree
+
+        mock_run_script.side_effect = [
+            _script_result(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                stdout="feature/agentfluent-baseline-post\n",
+            ),
+            AssertionError("should not pull after wrong-branch abort"),
+        ]
+
+        result = prepare_worktree(MagicMock(), {})
+
+        assert result["prepare_ready"] is False
+        assert result["error"] == "wrong_branch"
+        assert result["current_branch"] == "feature/agentfluent-baseline-post"
+        assert result["expected_branch"] == "main"
+        assert mock_run_script.call_count == 1
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_fails_when_branch_check_command_fails(
+        self, mock_run_script, mock_website_settings
+    ):
+        from src.agent.workflows.website_export import prepare_worktree
+
+        mock_run_script.return_value = _script_result(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            exit_code=1,
+            stderr="fatal: ref HEAD is not a symbolic ref\n",
+        )
+
+        result = prepare_worktree(MagicMock(), {})
+
+        assert result["prepare_ready"] is False
+        assert result["error"] == "git_branch_check_failed"
+        assert "symbolic ref" in result["git_stderr"]
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_fails_when_ff_pull_fails(self, mock_run_script, mock_website_settings):
+        from src.agent.workflows.website_export import prepare_worktree
+
+        mock_run_script.side_effect = [
+            _script_result(
+                ["git", "symbolic-ref", "--short", "HEAD"], stdout="main\n"
+            ),
+            _script_result(
+                ["git", "pull", "--ff-only", "origin", "main"],
+                exit_code=1,
+                stderr="fatal: Not possible to fast-forward, aborting.\n",
+            ),
+        ]
+
+        result = prepare_worktree(MagicMock(), {})
+
+        assert result["prepare_ready"] is False
+        assert result["error"] == "git_pull_ff_failed"
+        assert "fast-forward" in result["git_stderr"]
+        assert result["current_branch"] == "main"
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_runs_BEFORE_export_writes_anything(
+        self, mock_run_script, mock_website_settings
+    ):
+        """prepare_worktree must be cwd-pure: branch check + pull, no fs writes."""
+        from src.agent.workflows.website_export import prepare_worktree
+
+        mock_run_script.side_effect = [
+            _script_result(
+                ["git", "symbolic-ref", "--short", "HEAD"], stdout="main\n"
+            ),
+            _script_result(["git", "pull", "--ff-only", "origin", "main"]),
+        ]
+
+        result = prepare_worktree(MagicMock(), {})
+
+        assert result["prepare_ready"] is True
+        # All commands run via run_script, no direct file writes
+        commands = [call.args[0] for call in mock_run_script.call_args_list]
+        for cmd in commands:
+            assert cmd[0] == "git"
+        # FF pull was the second call
+        assert commands[1] == ["git", "pull", "--ff-only", "origin", "main"]
+
+
+class TestCommitAndPushGuards:
+    """Tests for commit_and_push() after the prepare_worktree refactor."""
+
+    @pytest.fixture
+    def passing_context(self):
+        return {
+            "export_skipped": False,
+            "validation_skipped": False,
+            "validation_passed": True,
+            "prepare_ready": True,
+            "dry_run": False,
+            "json_output": "/tmp/esg_news.json",
+            "atom_output": "/tmp/esg_news.atom",
+        }
+
+    def test_skips_when_prepare_failed(self, passing_context):
+        from src.agent.workflows.website_export import commit_and_push
+
+        ctx = dict(passing_context, prepare_ready=False)
+        result = commit_and_push(MagicMock(), ctx)
+
+        assert result == {"git_skipped": True, "reason": "prepare_failed"}
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_defense_in_depth_branch_check(
+        self, mock_run_script, mock_website_settings, passing_context
+    ):
+        """If branch flipped between prepare_worktree and commit_and_push, abort."""
+        from src.agent.workflows.website_export import commit_and_push
+
+        mock_run_script.side_effect = [
+            _script_result(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                stdout="feature/sneak-in\n",
+            ),
+            AssertionError("must not stage/commit after wrong-branch abort"),
+        ]
+
+        result = commit_and_push(MagicMock(), passing_context)
+
+        assert result["git_success"] is False
+        assert result["error"] == "wrong_branch"
+        assert result["current_branch"] == "feature/sneak-in"
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_fails_when_status_command_fails(
+        self, mock_run_script, mock_website_settings, passing_context
+    ):
+        """git status failure must not be silently treated as no_changes."""
+        from src.agent.workflows.website_export import commit_and_push
+
+        mock_run_script.side_effect = [
+            _script_result(
+                ["git", "symbolic-ref", "--short", "HEAD"], stdout="main\n"
+            ),
+            _script_result(
+                ["git", "status", "--porcelain", "--", "_data/esg_news.json",
+                 "assets/feeds/esg_news.atom"],
+                exit_code=128,
+                stderr="fatal: Unable to create '.git/index.lock': File exists.\n",
+            ),
+            AssertionError("must not proceed after status failure"),
+        ]
+
+        result = commit_and_push(MagicMock(), passing_context)
+
+        assert result["git_success"] is False
+        assert result["error"] == "git_status_failed"
+        assert "index.lock" in result["git_stderr"]
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_skips_when_no_feed_changes(
+        self, mock_run_script, mock_website_settings, passing_context
+    ):
+        """Empty status output scoped to feed files = no commit needed."""
+        from src.agent.workflows.website_export import commit_and_push
+
+        mock_run_script.side_effect = [
+            _script_result(
+                ["git", "symbolic-ref", "--short", "HEAD"], stdout="main\n"
+            ),
+            _script_result(
+                ["git", "status", "--porcelain", "--", "_data/esg_news.json",
+                 "assets/feeds/esg_news.atom"],
+                stdout="",
+            ),
+        ]
+
+        result = commit_and_push(MagicMock(), passing_context)
+
+        assert result["git_skipped"] is True
+        assert result["reason"] == "no_changes"
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_pushes_with_explicit_refspec_on_happy_path(
+        self, mock_run_script, mock_website_settings, passing_context
+    ):
+        from src.agent.workflows.website_export import commit_and_push
+
+        mock_run_script.side_effect = [
+            _script_result(  # defense-in-depth branch check
+                ["git", "symbolic-ref", "--short", "HEAD"], stdout="main\n"
+            ),
+            _script_result(  # scoped status — changes present
+                ["git", "status", "--porcelain", "--", "_data/esg_news.json",
+                 "assets/feeds/esg_news.atom"],
+                stdout=" M _data/esg_news.json\n",
+            ),
+            _script_result(["npx", "prettier", "--write", "_data/esg_news.json"]),
+            _script_result(["git", "add", "_data/esg_news.json",
+                            "assets/feeds/esg_news.atom"]),
+            _script_result(["git", "commit"]),
+            _script_result(["git", "push"]),
+        ]
+
+        result = commit_and_push(MagicMock(), passing_context)
+
+        assert result["git_success"] is True
+        assert result["branch"] == "main"
+        assert result["current_branch"] == "main"
+        assert result["expected_branch"] == "main"
+
+        push_call = mock_run_script.call_args_list[-1]
+        assert push_call.args[0] == ["git", "push", "origin", "HEAD:main"]
+
+    @patch("src.agent.workflows.website_export.run_script")
+    def test_all_git_calls_pin_dry_run_false(
+        self, mock_run_script, mock_website_settings, passing_context
+    ):
+        """Every run_script call inside commit_and_push must pass dry_run=False
+        to prevent AGENT_DRY_RUN=true env from injecting --dry-run into git."""
+        from src.agent.workflows.website_export import commit_and_push
+
+        mock_run_script.side_effect = [
+            _script_result(
+                ["git", "symbolic-ref", "--short", "HEAD"], stdout="main\n"
+            ),
+            _script_result(
+                ["git", "status", "--porcelain", "--", "_data/esg_news.json",
+                 "assets/feeds/esg_news.atom"],
+                stdout=" M _data/esg_news.json\n",
+            ),
+            _script_result(["npx", "prettier"]),
+            _script_result(["git", "add"]),
+            _script_result(["git", "commit"]),
+            _script_result(["git", "push"]),
+        ]
+
+        commit_and_push(MagicMock(), passing_context)
+
+        for call in mock_run_script.call_args_list:
+            assert call.kwargs.get("dry_run") is False, (
+                f"run_script call {call.args[0]!r} omitted dry_run=False"
+            )
+
+
+class TestSendErrorNotification:
+    """Tests for send_error_notification: aggregation, formatting, and raise."""
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_silent_success_when_no_errors(self, mock_manager_cls):
+        from src.agent.workflows.website_export import send_error_notification
+
+        result = send_error_notification(
+            MagicMock(), {"export_success": True, "validation_passed": True}
+        )
+
+        assert result == {"notification_sent": False, "reason": "no_errors"}
+        mock_manager_cls.assert_not_called()
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_raises_workflow_error_on_failure(self, mock_manager_cls):
+        """Failures must raise so Workflow.run marks status FAILED, not COMPLETED."""
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+
+        context = {
+            "git_success": False,
+            "error": "wrong_branch",
+            "current_branch": "feature/foo",
+            "expected_branch": "main",
+        }
+
+        with pytest.raises(WorkflowError, match="failed with 1 error"):
+            send_error_notification(MagicMock(), context)
+
+        # Notification was still dispatched before the raise.
+        mock_manager_cls.return_value.send.assert_called_once()
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_wrong_branch_message_includes_branch_and_worktree_hint(
+        self, mock_manager_cls
+    ):
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+
+        context = {
+            "git_success": False,
+            "error": "wrong_branch",
+            "current_branch": "feature/foo",
+            "expected_branch": "main",
+        }
+
+        with pytest.raises(WorkflowError):
+            send_error_notification(MagicMock(), context)
+
+        sent = mock_manager_cls.return_value.send.call_args.args[0]
+        assert "feature/foo" in sent.message
+        assert "worktree" in sent.message.lower()
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_wrong_branch_notification_omits_feed_paths(self, mock_manager_cls):
+        """When the only failure is wrong_branch, feed paths shouldn't appear
+        in details — files were written locally but never pushed."""
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+
+        context = {
+            "git_success": False,
+            "error": "wrong_branch",
+            "current_branch": "feature/foo",
+            "expected_branch": "main",
+            "json_output": "/tmp/esg_news.json",
+            "atom_output": "/tmp/esg_news.atom",
+        }
+
+        with pytest.raises(WorkflowError):
+            send_error_notification(MagicMock(), context)
+
+        sent = mock_manager_cls.return_value.send.call_args.args[0]
+        assert "json_output" not in sent.details
+        assert "atom_output" not in sent.details
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_pull_failure_message_does_NOT_assert_divergence(self, mock_manager_cls):
+        """The pull-failed message should enumerate likely causes (network,
+        auth, divergence, dirty tree) rather than asserting divergence."""
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+
+        context = {
+            "prepare_ready": False,
+            "error": "git_pull_ff_failed",
+            "current_branch": "main",
+            "expected_branch": "main",
+            "git_stderr": "fatal: unable to access 'https://github.com/...': "
+            "Could not resolve host\n",
+        }
+
+        with pytest.raises(WorkflowError):
+            send_error_notification(MagicMock(), context)
+
+        sent = mock_manager_cls.return_value.send.call_args.args[0]
+        msg_lower = sent.message.lower()
+        assert "network failure" in msg_lower
+        assert "could not resolve host" in msg_lower
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_branch_check_failed_has_dedicated_message(self, mock_manager_cls):
+        """git_branch_check_failed must not fall through to generic else."""
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+
+        context = {
+            "prepare_ready": False,
+            "error": "git_branch_check_failed",
+            "expected_branch": "main",
+            "git_stderr": "fatal: ref HEAD is not a symbolic ref\n",
+        }
+
+        with pytest.raises(WorkflowError):
+            send_error_notification(MagicMock(), context)
+
+        sent = mock_manager_cls.return_value.send.call_args.args[0]
+        assert "detached HEAD" in sent.message
+        assert "symbolic ref" in sent.message
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_scorecard_failure_triggers_notification(self, mock_manager_cls):
+        """Scorecard save failures must surface even when git push succeeded."""
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+
+        context = {
+            "export_success": True,
+            "validation_passed": True,
+            "scorecard_saved": False,
+            "error": "DB connection refused",
+            "git_success": True,
+        }
+
+        with pytest.raises(WorkflowError):
+            send_error_notification(MagicMock(), context)
+
+        sent = mock_manager_cls.return_value.send.call_args.args[0]
+        assert "Scorecard snapshot save failed" in sent.message
+        assert "DB connection refused" in sent.message
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_status_failed_includes_stderr_hint(self, mock_manager_cls):
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+
+        context = {
+            "git_success": False,
+            "error": "git_status_failed",
+            "current_branch": "main",
+            "expected_branch": "main",
+            "git_stderr": "fatal: Unable to create '.git/index.lock'\n",
+        }
+
+        with pytest.raises(WorkflowError):
+            send_error_notification(MagicMock(), context)
+
+        sent = mock_manager_cls.return_value.send.call_args.args[0]
+        assert "index.lock" in sent.message

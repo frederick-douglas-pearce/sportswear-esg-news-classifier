@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 def export_feeds(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     """Export JSON and Atom feeds for the website."""
+    if context.get("prepare_ready") is False:
+        return {"export_skipped": True, "reason": "prepare_failed"}
+
     website_repo = agent_settings.website_repo_path
 
     if not website_repo:
@@ -170,13 +173,121 @@ def validate_export(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
     return validation_result
 
 
+# Files written by export_feeds and committed by commit_and_push.
+# Kept as a module-level constant so prepare_worktree and commit_and_push
+# can both reason about the same paths.
+_FEED_FILES = ("_data/esg_news.json", "assets/feeds/esg_news.atom")
+
+
+class WorkflowError(RuntimeError):
+    """Raised by the final notification step so the workflow ends in FAILED state."""
+
+
+def _check_branch(
+    website_repo: Path, expected: str
+) -> tuple[bool, str | None, str | None, str]:
+    """Run `git symbolic-ref --short HEAD` and return (ok, branch, error_code, stderr).
+
+    - ok=True, branch=<name>, error_code=None, stderr=""  -> on expected branch
+    - ok=False, branch=<name>, error_code="wrong_branch"   -> on a different branch
+    - ok=False, branch=None,  error_code="git_branch_check_failed" -> command itself failed
+    """
+    result = run_script(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=website_repo,
+        retries=0,
+        dry_run=False,
+    )
+    if not result.success:
+        return False, None, "git_branch_check_failed", result.stderr
+    current = result.stdout.strip()
+    if current != expected:
+        return False, current, "wrong_branch", ""
+    return True, current, None, ""
+
+
+def prepare_worktree(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Verify the worktree is on the expected branch and fast-forward it.
+
+    Runs BEFORE export_feeds so the FF pull never has to contend with the
+    files export_feeds is about to overwrite. Failures set
+    `prepare_ready: False` and an `error` code; downstream steps short-circuit
+    on that flag, and `send_error_notification` raises so the workflow ends
+    in FAILED state.
+    """
+    website_repo = agent_settings.website_repo_path
+    if not website_repo:
+        return {"prepare_skipped": True, "reason": "website_repo_not_configured"}
+
+    dry_run = context.get("dry_run", False)
+    if dry_run:
+        logger.info("Dry run - skipping worktree preparation")
+        return {"prepare_skipped": True, "reason": "dry_run"}
+
+    expected = agent_settings.website_expected_branch
+
+    ok, current_branch, error_code, branch_stderr = _check_branch(website_repo, expected)
+    if not ok:
+        if error_code == "wrong_branch":
+            logger.error(
+                f"Refusing to proceed: website repo is on '{current_branch}', "
+                f"expected '{expected}'. The export workflow must run in a "
+                f"worktree pinned to '{expected}' (see CLAUDE.md)."
+            )
+        else:
+            logger.error(f"Could not determine current branch: {branch_stderr}")
+        return {
+            "prepare_ready": False,
+            "error": error_code,
+            "current_branch": current_branch,
+            "expected_branch": expected,
+            "git_stderr": branch_stderr[:500] if branch_stderr else "",
+        }
+
+    pull_result = run_script(
+        ["git", "pull", "--ff-only", "origin", expected],
+        cwd=website_repo,
+        retries=1,
+        dry_run=False,
+        timeout=60,
+    )
+    if not pull_result.success:
+        logger.error(
+            f"Fast-forward pull of origin/{expected} failed: {pull_result.stderr}"
+        )
+        return {
+            "prepare_ready": False,
+            "error": "git_pull_ff_failed",
+            "current_branch": current_branch,
+            "expected_branch": expected,
+            "git_stderr": pull_result.stderr[:500],
+        }
+
+    return {
+        "prepare_ready": True,
+        "current_branch": current_branch,
+        "expected_branch": expected,
+    }
+
+
 def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Commit and push changes to the website repository."""
+    """Stage, commit, and push the exported feed files.
+
+    Assumes `prepare_worktree` has already verified the branch and pulled.
+    Performs a defense-in-depth branch check in case anything raced between
+    the two steps, then stages only the feed files, commits, and pushes with
+    an explicit `origin HEAD:<branch>` refspec. Every error return includes
+    `current_branch`, `expected_branch`, and a `git_stderr` snippet for the
+    notification step to render.
+    """
     if context.get("export_skipped") or context.get("validation_skipped"):
         return {"git_skipped": True, "reason": "export_skipped"}
 
     if not context.get("validation_passed", False):
         return {"git_skipped": True, "reason": "validation_failed"}
+
+    if context.get("prepare_ready") is False:
+        return {"git_skipped": True, "reason": "prepare_failed"}
 
     website_repo = agent_settings.website_repo_path
     if not website_repo:
@@ -187,109 +298,236 @@ def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         logger.info("Dry run - skipping git commit and push")
         return {"git_skipped": True, "reason": "dry_run"}
 
-    # Check if there are changes to commit
+    expected = agent_settings.website_expected_branch
+
+    # Defense-in-depth branch check in case state changed between
+    # prepare_worktree and this step (e.g., an operator touched the worktree).
+    ok, current_branch, error_code, branch_stderr = _check_branch(website_repo, expected)
+    if not ok:
+        return {
+            "git_success": False,
+            "error": error_code,
+            "current_branch": current_branch,
+            "expected_branch": expected,
+            "git_stderr": branch_stderr[:500] if branch_stderr else "",
+        }
+
+    # Scope status to the feed files we actually care about. Any other dirty
+    # state (operator poking around) is intentionally ignored here.
     status_result = run_script(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "--", *_FEED_FILES],
         cwd=website_repo,
         retries=0,
+        dry_run=False,
     )
+    if not status_result.success:
+        logger.error(f"git status failed: {status_result.stderr}")
+        return {
+            "git_success": False,
+            "error": "git_status_failed",
+            "current_branch": current_branch,
+            "expected_branch": expected,
+            "git_stderr": status_result.stderr[:500],
+        }
 
     if not status_result.stdout.strip():
         logger.info("No changes to commit")
-        return {"git_skipped": True, "reason": "no_changes"}
+        return {
+            "git_skipped": True,
+            "reason": "no_changes",
+            "current_branch": current_branch,
+            "expected_branch": expected,
+        }
 
-    # Run prettier to format JSON file before committing
+    # Format the JSON feed; warning only — prettier absence shouldn't block.
     prettier_result = run_script(
         ["npx", "prettier", "--write", "_data/esg_news.json"],
         cwd=website_repo,
         retries=0,
+        dry_run=False,
         timeout=60,
     )
-
     if not prettier_result.success:
         logger.warning(f"Prettier formatting failed: {prettier_result.stderr}")
-        # Continue anyway - prettier failure shouldn't block the export
 
-    # Add files
     add_result = run_script(
-        ["git", "add", "_data/esg_news.json", "assets/feeds/esg_news.atom"],
+        ["git", "add", *_FEED_FILES],
         cwd=website_repo,
         retries=0,
+        dry_run=False,
     )
-
     if not add_result.success:
         logger.error(f"Git add failed: {add_result.stderr}")
-        return {"git_success": False, "error": "git_add_failed"}
+        return {
+            "git_success": False,
+            "error": "git_add_failed",
+            "current_branch": current_branch,
+            "expected_branch": expected,
+            "git_stderr": add_result.stderr[:500],
+        }
 
-    # Commit
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     commit_result = run_script(
         ["git", "commit", "-m", f"Update ESG news feed - {today}"],
         cwd=website_repo,
         retries=0,
+        dry_run=False,
     )
-
     if not commit_result.success:
         logger.error(f"Git commit failed: {commit_result.stderr}")
-        return {"git_success": False, "error": "git_commit_failed"}
+        return {
+            "git_success": False,
+            "error": "git_commit_failed",
+            "current_branch": current_branch,
+            "expected_branch": expected,
+            "git_stderr": commit_result.stderr[:500],
+        }
 
-    # Push
+    # Push with an explicit refspec, no upstream tracking dependency.
+    # No retry: the commit stays local, the next scheduled run handles
+    # any transient or non-FF condition cleanly via prepare_worktree.
     push_result = run_script(
-        ["git", "push"],
+        ["git", "push", "origin", f"HEAD:{expected}"],
         cwd=website_repo,
-        retries=1,
+        retries=0,
+        dry_run=False,
         timeout=60,
     )
-
     if not push_result.success:
         logger.error(f"Git push failed: {push_result.stderr}")
-        return {"git_success": False, "error": "git_push_failed"}
+        return {
+            "git_success": False,
+            "error": "git_push_failed",
+            "current_branch": current_branch,
+            "expected_branch": expected,
+            "git_stderr": push_result.stderr[:500],
+        }
 
     logger.info("Successfully committed and pushed to website repo")
     return {
         "git_success": True,
         "commit_message": f"Update ESG news feed - {today}",
+        "branch": expected,
+        "current_branch": current_branch,
+        "expected_branch": expected,
     }
 
 
-def send_error_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Send email notification only if there was an error during export.
+def _describe_git_error(context: dict[str, Any], git_error: str) -> str:
+    """Build a human-readable description of a git failure code.
 
-    This step checks for failures in previous steps and sends an alert email
-    if any issues were detected. Successful exports are silent.
+    Includes a stderr snippet when present so transient/auth/dirty-tree
+    failures don't all look like 'branch diverged'.
+    """
+    current = context.get("current_branch")
+    expected = context.get("expected_branch")
+    stderr = (context.get("git_stderr") or "").strip()
+    stderr_suffix = f" git stderr: {stderr}" if stderr else ""
+
+    if git_error == "wrong_branch":
+        return (
+            f"website repo is on '{current}', expected '{expected}'. "
+            f"Workflow must run in a worktree pinned to the expected "
+            f"branch (see CLAUDE.md)."
+        )
+    if git_error == "git_branch_check_failed":
+        return (
+            f"could not determine current branch of website repo "
+            f"(expected '{expected}'). This usually means the worktree is "
+            f"in detached HEAD, mid-rebase, or `.git` is corrupted.{stderr_suffix}"
+        )
+    if git_error == "git_pull_ff_failed":
+        return (
+            f"fast-forward pull of origin/{expected} failed. Causes include "
+            f"divergence from origin, uncommitted local changes blocking the "
+            f"merge, network failure, or authentication failure. The next "
+            f"scheduled run will retry if the cause was transient.{stderr_suffix}"
+        )
+    if git_error == "git_status_failed":
+        return (
+            f"`git status` failed in the website repo. A stale `.git/index.lock` "
+            f"from an interrupted git process is the most common cause; "
+            f"inspect and remove it if no git process is running.{stderr_suffix}"
+        )
+    if git_error == "git_add_failed":
+        return f"`git add` of the feed files failed.{stderr_suffix}"
+    if git_error == "git_commit_failed":
+        return (
+            f"`git commit` failed — usually because the staged set was empty "
+            f"or commit signing/hooks rejected the change.{stderr_suffix}"
+        )
+    if git_error == "git_push_failed":
+        return (
+            f"`git push origin HEAD:{expected}` failed. If the remote moved "
+            f"between the FF pull and the push (TOCTOU), the next scheduled "
+            f"run will rebase and push.{stderr_suffix}"
+        )
+    return f"unknown git error code '{git_error}'.{stderr_suffix}"
+
+
+def send_error_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Aggregate failures across prior steps, notify, and raise on failure.
+
+    Raises WorkflowError when any prior step recorded a failure so the
+    workflow base class marks the run as FAILED — without this, returning a
+    notification dict makes the step COMPLETED and the whole workflow status
+    incorrectly reports clean success.
     """
     errors = []
+    wrong_branch_only = True  # toggled off when any other failure is also present
 
-    # Check export step
+    # prepare_worktree
+    if context.get("prepare_ready") is False:
+        prep_error = context.get("error", "Unknown prepare error")
+        errors.append(f"Worktree preparation failed: {_describe_git_error(context, prep_error)}")
+        if prep_error != "wrong_branch":
+            wrong_branch_only = False
+
+    # export
     if not context.get("export_success", True) and not context.get("export_skipped"):
         errors.append(f"Export failed: {context.get('export_error', 'Unknown error')}")
+        wrong_branch_only = False
 
-    # Check validation step
+    # validation
     if not context.get("validation_passed", True) and not context.get("validation_skipped"):
         validation_errors = context.get("errors", [])
         errors.append(f"Validation failed: {', '.join(validation_errors)}")
+        wrong_branch_only = False
 
-    # Check git step
+    # scorecard snapshot
+    if context.get("scorecard_saved") is False:
+        scorecard_error = context.get("error", "Unknown error")
+        errors.append(f"Scorecard snapshot save failed: {scorecard_error}")
+        wrong_branch_only = False
+
+    # commit/push
     if context.get("git_success") is False:
-        errors.append(f"Git operation failed: {context.get('error', 'Unknown error')}")
+        git_error = context.get("error", "Unknown error")
+        errors.append(f"Git operation failed: {_describe_git_error(context, git_error)}")
+        if git_error != "wrong_branch":
+            wrong_branch_only = False
 
-    # No errors - silent success
     if not errors:
         logger.info("Website export completed successfully - no notification needed")
         return {"notification_sent": False, "reason": "no_errors"}
 
-    # Build error notification
     error_message = "\n".join(f"• {e}" for e in errors)
-    details = {
+    details: dict[str, Any] = {
+        "prepare_ready": context.get("prepare_ready", "N/A"),
         "export_success": context.get("export_success", "N/A"),
         "validation_passed": context.get("validation_passed", "N/A"),
+        "scorecard_saved": context.get("scorecard_saved", "N/A"),
         "git_success": context.get("git_success", "N/A"),
     }
 
-    if context.get("json_output"):
-        details["json_output"] = context.get("json_output")
-    if context.get("atom_output"):
-        details["atom_output"] = context.get("atom_output")
+    # Only surface feed paths in details when push actually attempted/succeeded.
+    # When the only failure is wrong_branch, the feed files were written locally
+    # but never pushed — including the paths reads as misleadingly successful.
+    if not wrong_branch_only:
+        if context.get("json_output"):
+            details["json_output"] = context.get("json_output")
+        if context.get("atom_output"):
+            details["atom_output"] = context.get("atom_output")
 
     notification = Notification(
         notification_type=NotificationType.WORKFLOW_FAILED,
@@ -299,18 +537,17 @@ def send_error_notification(workflow: Workflow, context: dict[str, Any]) -> dict
         severity="error",
     )
 
-    # Send notification
     manager = NotificationManager()
     result = manager.send(notification)
-
     channels_used = [k for k, v in result.items() if v]
     logger.warning(f"Sent error notification via: {channels_used}")
 
-    return {
-        "notification_sent": True,
-        "errors": errors,
-        "channels": channels_used,
-    }
+    # Raise so Workflow.run records the run as FAILED. The notification has
+    # already been sent; the exception only changes workflow-level status.
+    raise WorkflowError(
+        f"Website export workflow failed with {len(errors)} error(s); "
+        f"notification dispatched via {channels_used or 'no channels'}."
+    )
 
 
 @WorkflowRegistry.register
@@ -318,17 +555,24 @@ class WebsiteExportWorkflow(Workflow):
     """Website feed export workflow.
 
     Steps:
-    1. Export JSON and Atom feeds
-    2. Save scorecard snapshot to database
-    3. Validate exported files
-    4. Commit and push to website repository
-    5. Send error notification (only if there was a failure)
+    1. Prepare worktree (assert branch, fast-forward pull) - BEFORE any writes
+    2. Export JSON and Atom feeds
+    3. Save scorecard snapshot to database
+    4. Validate exported files
+    5. Commit and push to website repository
+    6. Send error notification (raises so workflow status reflects failure)
     """
 
     name = "website_export"
     description = "Export ESG news feeds to website repository"
 
     steps = [
+        StepDefinition(
+            name="prepare_worktree",
+            description="Assert worktree branch and fast-forward pull before any writes",
+            handler=prepare_worktree,
+            skip_on_dry_run=True,
+        ),
         StepDefinition(
             name="export_feeds",
             description="Export JSON and Atom feeds to website repository",
@@ -353,7 +597,7 @@ class WebsiteExportWorkflow(Workflow):
         ),
         StepDefinition(
             name="send_error_notification",
-            description="Send email notification if export failed",
+            description="Aggregate errors, notify, and raise so workflow status reflects failure",
             handler=send_error_notification,
             skip_on_dry_run=True,
         ),

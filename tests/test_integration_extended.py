@@ -266,8 +266,12 @@ class TestAgentWorkflows:
         assert result["reason"] == "no_errors"
 
     def test_send_error_notification_with_errors(self, mock_workflow):
-        """Test send_error_notification when errors occurred."""
-        from src.agent.workflows.website_export import send_error_notification
+        """send_error_notification dispatches a notification and then raises
+        so the workflow base class records the run as FAILED."""
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
 
         with patch(
             "src.agent.workflows.website_export.NotificationManager"
@@ -276,16 +280,17 @@ class TestAgentWorkflows:
             mock_manager.send.return_value = {"email": True}
             MockManager.return_value = mock_manager
 
-            result = send_error_notification(
-                mock_workflow,
-                {
-                    "export_success": False,
-                    "export_error": "Test error",
-                },
-            )
+            with pytest.raises(WorkflowError):
+                send_error_notification(
+                    mock_workflow,
+                    {
+                        "export_success": False,
+                        "export_error": "Test error",
+                    },
+                )
 
-            assert result["notification_sent"] is True
-            assert len(result["errors"]) > 0
+            # Notification was still dispatched before the raise.
+            mock_manager.send.assert_called_once()
 
     def test_save_scorecard_snapshot_skipped_on_dry_run(self, mock_workflow):
         """Test save_scorecard_snapshot skips in dry run mode."""
@@ -746,8 +751,10 @@ class TestEndToEndWorkflows:
 
         step_names = [step.name for step in workflow.steps]
 
-        # Verify step order
+        # Verify step order (prepare_worktree runs first so the FF pull
+        # happens BEFORE export_feeds writes anything to the worktree).
         assert step_names == [
+            "prepare_worktree",
             "export_feeds",
             "save_scorecard_snapshot",
             "validate_export",

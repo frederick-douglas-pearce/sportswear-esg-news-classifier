@@ -385,6 +385,19 @@ GitHub Actions → Google Cloud Run. Secrets: `GCP_PROJECT_ID`, `GCP_SA_KEY`, `G
 
 JSON/Atom feeds for Jekyll/al-folio site. Website repo: `/home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io`
 
+### Worktree Setup (one-time)
+
+The `website_export` cron workflow must run in a dedicated git worktree pinned to `main`, separate from any interactive checkout. This isolates unattended pushes from in-progress feature-branch work.
+
+```bash
+cd /home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io
+git worktree add ../frederick-douglas-pearce.github.io-feed main
+# Then point AGENT_WEBSITE_REPO_PATH at the new worktree path:
+# AGENT_WEBSITE_REPO_PATH=/home/fdpearce/Documents/Projects/git/github_pages/frederick-douglas-pearce.github.io-feed
+```
+
+The workflow's first step (`prepare_worktree`) asserts the worktree is on `main` and fast-forward-pulls BEFORE `export_feeds` writes any files (so the FF pull never has to contend with uncommitted feed changes). `commit_and_push` then runs a defense-in-depth branch check, scopes its status check to the two feed paths, and pushes with an explicit `origin HEAD:main` refspec. Any failure causes `send_error_notification` to dispatch an alert and raise, so the workflow ends in `WorkflowStatus.FAILED` rather than masquerading as a clean run. Set `AGENT_WEBSITE_EXPECTED_BRANCH` if your publishing branch is not `main`.
+
 ### Export Commands
 ```bash
 # Full export with scorecard (default)
