@@ -4,6 +4,28 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-06-01: Prettier-compatible JSON feed export
+
+The website feed JSON is now emitted in Prettier's formatting directly by the
+generator, fixing a `prettier --check` CI failure on the GitHub Pages repo that
+began 2026-05-28.
+
+**Root cause:** `export_website_feed.write_json` always used
+`json.dump(indent=2)`, which expands every array (including single-item arrays)
+onto multiple lines. Previously the `website_export` cron masked this by running
+`npx prettier --write` before committing. The 2026-05-27 worktree hardening
+(commit `b14994f`) moved the cron into a dedicated `-feed` git worktree that
+lacks `node_modules`, so Prettier could no longer resolve the
+`@shopify/prettier-plugin-liquid` plugin declared in `.prettierrc` and silently
+failed (warning-only), committing the raw multi-line JSON.
+
+**Fix:** `write_json` now serializes via `dumps_prettier`, a small encoder that
+reproduces Prettier's JSON output (printWidth 150, flat containers when they
+fit / break otherwise, `{ }` brace spacing, raw UTF-8, exponent normalization).
+Validated byte-for-byte against Prettier 3.1.1 and 3.8.3 over the full
+production feed. The now-redundant `npx prettier --write` step was removed from
+the `website_export` workflow.
+
 ### 2026-02-11: Scorecard History Storage
 
 Added database storage for daily scorecard snapshots, enabling historical trend analysis and brand performance tracking over time.

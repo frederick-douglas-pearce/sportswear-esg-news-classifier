@@ -11,9 +11,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from export_website_feed import (
+    PRETTIER_PRINT_WIDTH,
     SCORECARD_BOTTOM_N,
     SCORECARD_TOP_N,
     calculate_brand_scores,
+    dumps_prettier,
     extract_snippet,
     extract_snippet_char_based,
     extract_snippet_with_sentences,
@@ -675,3 +677,80 @@ class TestScorecardTieHandling:
         assert result["top_brands"] == []
         assert result["bottom_brands"] == []
         assert result["all_brand_scores"] == []
+
+
+class TestPrettierJsonFormatting:
+    """dumps_prettier must match Prettier's JSON output (printWidth 150).
+
+    The feed is committed to the website repo, whose CI runs `prettier . --check`.
+    These goldens encode the rules verified byte-for-byte against real Prettier
+    3.1.1/3.8.3 over the full production feed. If Prettier's JSON formatting ever
+    changes, update these — but that should be rare and deliberate.
+    """
+
+    def test_trailing_newline(self):
+        assert dumps_prettier({"a": 1}).endswith("\n")
+        assert not dumps_prettier({"a": 1}).endswith("\n\n")
+
+    def test_small_object_stays_flat(self):
+        assert dumps_prettier({"one": ["Nike"]}) == '{ "one": ["Nike"] }\n'
+
+    def test_object_brace_spacing_arrays_no_spacing(self):
+        # Objects get inner spaces `{ ... }`; arrays do not `[...]`.
+        assert dumps_prettier({"tags": ["a", "b"]}) == '{ "tags": ["a", "b"] }\n'
+
+    def test_single_item_array_inline(self):
+        # The exact regression: json.dump expanded these onto 3 lines.
+        assert dumps_prettier({"categories": ["governance"]}) == (
+            '{ "categories": ["governance"] }\n'
+        )
+
+    def test_empty_containers_inline(self):
+        assert dumps_prettier({"a": [], "b": {}}) == '{ "a": [], "b": {} }\n'
+
+    def test_unicode_emitted_as_raw_utf8(self):
+        # Prettier writes UTF-8, never \\uXXXX escapes.
+        assert dumps_prettier({"x": "café"}) == '{ "x": "café" }\n'
+
+    def test_exponent_normalization(self):
+        # Prettier drops the '+' and leading zeros from the exponent.
+        assert dumps_prettier({"a": 1e-05}) == '{ "a": 1e-5 }\n'
+        assert dumps_prettier({"a": 6.489733102038299e-05}) == (
+            '{ "a": 6.489733102038299e-5 }\n'
+        )
+        assert dumps_prettier({"a": 1e21}) == '{ "a": 1e21 }\n'
+        assert dumps_prettier({"a": -3.14e-08}) == '{ "a": -3.14e-8 }\n'
+
+    def test_plain_floats_and_ints_unchanged(self):
+        assert dumps_prettier({"a": 0.56, "b": 2.5, "c": 123}) == (
+            '{ "a": 0.56, "b": 2.5, "c": 123 }\n'
+        )
+
+    def test_array_breaks_when_exceeding_print_width(self):
+        items = ["aaaaaaaaaa"] * 20  # flat form far exceeds 150 chars
+        expected = "[\n" + ",\n".join('  "aaaaaaaaaa"' for _ in items) + "\n]\n"
+        assert dumps_prettier(items) == expected
+
+    def test_nested_breaks_outer_keeps_inner_inline(self):
+        # Outer object breaks (long string), but the short array stays inline.
+        long = "x" * 200
+        result = dumps_prettier({"description": long, "tags": ["a", "b"]})
+        assert result == (
+            "{\n"
+            f'  "description": "{long}",\n'
+            '  "tags": ["a", "b"]\n'
+            "}\n"
+        )
+
+    def test_print_width_is_150(self):
+        # Guards the cross-repo coupling with the website .prettierrc.
+        assert PRETTIER_PRINT_WIDTH == 150
+
+    def test_boundary_exactly_at_width_stays_flat(self):
+        # A line whose flat width is exactly 150 must stay flat (Prettier uses <=).
+        # Build value so the flat object line length is exactly 150.
+        prefix = len('{ "k": "" }')  # 11 chars of structure around the string
+        val = "z" * (PRETTIER_PRINT_WIDTH - prefix)
+        out = dumps_prettier({"k": val})
+        assert "\n" not in out.rstrip("\n")  # single line
+        assert len(out.rstrip("\n")) == PRETTIER_PRINT_WIDTH

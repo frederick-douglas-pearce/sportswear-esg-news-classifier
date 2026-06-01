@@ -339,17 +339,9 @@ def commit_and_push(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
             "expected_branch": expected,
         }
 
-    # Format the JSON feed; warning only — prettier absence shouldn't block.
-    prettier_result = run_script(
-        ["npx", "prettier", "--write", "_data/esg_news.json"],
-        cwd=website_repo,
-        retries=0,
-        dry_run=False,
-        timeout=60,
-    )
-    if not prettier_result.success:
-        logger.warning(f"Prettier formatting failed: {prettier_result.stderr}")
-
+    # The feed JSON is emitted in Prettier-compatible formatting by
+    # export_website_feed.write_json, so no `prettier --write` pass is needed
+    # here (it silently no-op'd in the worktree anyway, lacking node_modules).
     add_result = run_script(
         ["git", "add", *_FEED_FILES],
         cwd=website_repo,
