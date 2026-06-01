@@ -26,6 +26,7 @@ Usage:
 import argparse
 import json
 import logging
+import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -825,11 +826,98 @@ def export_to_atom(articles: list[Article], base_url: str) -> str:
     return fg.atom_str(pretty=True).decode("utf-8")
 
 
+# Width at which Prettier wraps a container onto multiple lines. Must match
+# `printWidth` in the website repo's .prettierrc (currently 150). The feed is
+# committed to that repo, whose CI runs `prettier . --check`; emitting
+# Prettier-style JSON here lets the check pass without a downstream `prettier
+# --write` pass (which silently broke once the cron moved to a worktree without
+# node_modules). See docs/CHANGELOG.md (2026-06-01).
+PRETTIER_PRINT_WIDTH = 150
+
+
+# Prettier normalizes a number's exponent by dropping the '+' sign and any
+# leading zeros (e.g. Python's `1e-05` -> `1e-5`, `1e+21` -> `1e21`). It never
+# converts between exponential and decimal notation, so normalizing what
+# json.dumps emits is sufficient. Applied to floats only.
+_EXPONENT_RE = re.compile(r"[eE]([+-]?)0*(\d+)")
+
+
+def _normalize_number(text: str) -> str:
+    return _EXPONENT_RE.sub(
+        lambda m: "e" + ("-" if m.group(1) == "-" else "") + m.group(2), text
+    )
+
+
+def _prettier_scalar(value: Any) -> str:
+    """Render a JSON scalar the way Prettier does: UTF-8 (no \\uXXXX), JS numbers."""
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, float):
+        text = _normalize_number(text)
+    return text
+
+
+def _prettier_flat(value: Any) -> str:
+    """Single-line rendering of ``value`` (objects get inner brace spaces)."""
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        parts = [
+            f"{_prettier_scalar(str(k))}: {_prettier_flat(v)}" for k, v in value.items()
+        ]
+        return "{ " + ", ".join(parts) + " }"
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return "[]"
+        return "[" + ", ".join(_prettier_flat(v) for v in value) + "]"
+    return _prettier_scalar(value)
+
+
+def _prettier_render(value: Any, indent: int, column: int, trailing: int) -> str:
+    """Render ``value`` flat if it fits within ``PRETTIER_PRINT_WIDTH``, else break.
+
+    Mirrors Prettier's group algorithm: a container prints on one line when its
+    flat form fits in the remaining width (``column`` where it starts, plus
+    ``trailing`` characters that follow it before the next newline, e.g. a
+    comma); otherwise every element goes on its own line and each child decides
+    independently. Scalars never break.
+    """
+    flat = _prettier_flat(value)
+    if not isinstance(value, (dict, list, tuple)):
+        return flat
+    if column + len(flat) + trailing <= PRETTIER_PRINT_WIDTH:
+        return flat
+
+    pad = " " * (indent + 2)
+    closing = " " * indent
+    if isinstance(value, dict):
+        items = list(value.items())
+        lines = []
+        for i, (key, val) in enumerate(items):
+            prefix = f"{pad}{_prettier_scalar(str(key))}: "
+            last = i == len(items) - 1
+            rendered = _prettier_render(val, indent + 2, len(prefix), 0 if last else 1)
+            lines.append(prefix + rendered + ("" if last else ","))
+        return "{\n" + "\n".join(lines) + "\n" + closing + "}"
+
+    items = list(value)
+    lines = []
+    for i, val in enumerate(items):
+        last = i == len(items) - 1
+        rendered = _prettier_render(val, indent + 2, indent + 2, 0 if last else 1)
+        lines.append(pad + rendered + ("" if last else ","))
+    return "[\n" + "\n".join(lines) + "\n" + closing + "]"
+
+
+def dumps_prettier(data: Any) -> str:
+    """Serialize ``data`` to JSON matching Prettier's output (trailing newline)."""
+    return _prettier_render(data, 0, 0, 0) + "\n"
+
+
 def write_json(data: dict, filepath: Path) -> None:
-    """Write JSON data to file."""
+    """Write JSON data to file in Prettier-compatible formatting."""
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    with open(filepath, "w") as f:
-        json.dump(data, f, indent=2, default=str)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(dumps_prettier(data))
 
 
 def write_atom(content: str, filepath: Path) -> None:
