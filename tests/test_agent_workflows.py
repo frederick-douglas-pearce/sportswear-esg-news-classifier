@@ -1,5 +1,6 @@
 """Tests for agent workflows."""
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -846,6 +847,9 @@ class TestSendErrorNotification:
             "error": "wrong_branch",
             "current_branch": "feature/foo",
             "expected_branch": "main",
+            # Wrong-branch aborts before validation runs, so the real flow marks
+            # validation as skipped (not failed).
+            "validation_skipped": True,
         }
 
         with pytest.raises(WorkflowError, match="failed with 1 error"):
@@ -897,6 +901,8 @@ class TestSendErrorNotification:
             "expected_branch": "main",
             "json_output": "/tmp/esg_news.json",
             "atom_output": "/tmp/esg_news.atom",
+            # Wrong-branch aborts before validation runs (validation is skipped).
+            "validation_skipped": True,
         }
 
         with pytest.raises(WorkflowError):
@@ -1005,3 +1011,71 @@ class TestSendErrorNotification:
 
         sent = mock_manager_cls.return_value.send.call_args.args[0]
         assert "index.lock" in sent.message
+
+
+class TestValidateExport:
+    """Tests for the validate_export step (JSON syntax + Jekyll YAML check)."""
+
+    def _write(self, tmp_path, raw: str) -> dict:
+        path = tmp_path / "esg_news.json"
+        path.write_text(raw, encoding="utf-8")
+        return {"json_output": str(path), "atom_output": None}
+
+    def test_counts_articles_in_dict_feed(self, tmp_path):
+        """Feed top level is a dict; count its articles list (not len(dict))."""
+        from src.agent.workflows.website_export import validate_export
+
+        ctx = self._write(tmp_path, json.dumps({"articles": [{"id": "1"}, {"id": "2"}]}))
+        result = validate_export(MagicMock(), ctx)
+
+        assert result["validation_passed"] is True
+        assert result["json_article_count"] == 2
+        assert result["yaml_valid"] is True
+
+    def test_fails_on_c1_control_chars(self, tmp_path):
+        """Valid JSON containing C1 mojibake must fail (Jekyll/Psych rejects it)."""
+        from src.agent.workflows.website_export import validate_export
+
+        ctx = self._write(tmp_path, '{"articles": [{"t": "McDonald\x92s"}]}')
+        result = validate_export(MagicMock(), ctx)
+
+        assert result["validation_passed"] is False
+        assert result["yaml_valid"] is False
+        assert any("U+0092" in e for e in result["errors"])
+
+    def test_fails_on_malformed_json_without_duplicate_yaml_error(self, tmp_path):
+        from src.agent.workflows.website_export import validate_export
+
+        ctx = self._write(tmp_path, "{not valid json")
+        result = validate_export(MagicMock(), ctx)
+
+        assert result["validation_passed"] is False
+        assert any(e.startswith("JSON error") for e in result["errors"])
+        assert not any(e.startswith("YAML error") for e in result["errors"])
+
+    def test_skips_when_export_skipped(self):
+        from src.agent.workflows.website_export import validate_export
+
+        result = validate_export(MagicMock(), {"export_skipped": True})
+        assert result == {"validation_skipped": True}
+
+
+class TestSendErrorNotificationValidationDefault:
+    """A missing validation_passed flag must be treated as failure, not success."""
+
+    @patch("src.agent.workflows.website_export.NotificationManager")
+    def test_missing_validation_flag_triggers_alert(self, mock_manager_cls):
+        from src.agent.workflows.website_export import (
+            WorkflowError,
+            send_error_notification,
+        )
+
+        mock_manager_cls.return_value.send.return_value = {"email": True}
+        # No validation_passed key, and not skipped -> should be flagged as failure.
+        context = {"prepare_ready": True, "export_success": True}
+
+        with pytest.raises(WorkflowError):
+            send_error_notification(MagicMock(), context)
+
+        sent = mock_manager_cls.return_value.send.call_args.args[0]
+        assert "Validation failed" in sent.message

@@ -17,6 +17,7 @@ warnings.filterwarnings("ignore", category=UnknownTimezoneWarning)
 from newspaper import ArticleException
 
 from .config import settings
+from .text_normalize import normalize_text
 
 logger = logging.getLogger(__name__)
 
@@ -207,7 +208,10 @@ class ArticleScraper:
             article.download()
             article.parse()
 
-            content = article.text
+            # Repair mojibake / strip parser-breaking control chars at the point
+            # of ingestion so the database never stores them (newspaper can emit
+            # raw Windows-1252 C1 bytes when a page's charset is misdetected).
+            content = normalize_text(article.text)
 
             if not content or len(content.strip()) < 100:
                 self.articles_failed += 1
