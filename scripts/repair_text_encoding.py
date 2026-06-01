@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data_collection.database import db
 from src.data_collection.models import Article, ArticleChunk, BrandLabel, LabelEvidence
-from src.data_collection.text_normalize import find_illegal_chars, normalize_text
+from src.data_collection.text_normalize import has_illegal_chars, normalize_text
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -76,7 +76,7 @@ def repair_target(session, model, column, embedding_column, dry_run, batch_size=
     for row in query.yield_per(batch_size):
         scanned += 1
         text = row[1]
-        if not find_illegal_chars(text):
+        if not has_illegal_chars(text):
             continue
         repaired += 1
         if embedding_column and row.has_embedding:
@@ -108,21 +108,13 @@ def main():
 
     total_repaired = 0
     total_with_embedding = 0
-    session = db.SessionLocal()
-    try:
+    # get_session commits on success; in dry-run repair_target issues no writes,
+    # so there is nothing to commit.
+    with db.get_session() as session:
         for model, column, embedding_column in TARGETS:
             _, repaired, with_emb = repair_target(session, model, column, embedding_column, args.dry_run)
             total_repaired += repaired
             total_with_embedding += with_emb
-        if args.dry_run:
-            session.rollback()
-        else:
-            session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
     logger.info("-" * 60)
     verb = "would be repaired" if args.dry_run else "repaired"

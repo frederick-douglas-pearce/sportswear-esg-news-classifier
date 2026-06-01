@@ -761,10 +761,13 @@ class TestPrettierJsonFormatting:
 
 
 class TestSanitizeText:
-    """sanitize_text delegates to the shared normalizer (mojibake + emoji)."""
+    """sanitize_text = value-preserving normalization + feed emoji-strip policy."""
 
     def test_repairs_mojibake(self):
         assert sanitize_text("McDonald\x92s") == "McDonald’s"
+
+    def test_strips_emoji(self):
+        assert sanitize_text("Nike \U0001f680 wins").strip() == "Nike  wins".strip()
 
     def test_none_passthrough(self):
         assert sanitize_text(None) is None

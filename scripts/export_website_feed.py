@@ -42,10 +42,39 @@ from sqlalchemy.orm import joinedload
 from src.data_collection.config import settings
 from src.data_collection.database import db
 from src.data_collection.models import Article, ArticleChunk, BrandLabel, LabelEvidence
-from src.data_collection.text_normalize import find_illegal_chars, normalize_text
+from src.data_collection.text_normalize import (
+    find_illegal_chars,
+    format_codepoints,
+    normalize_text,
+)
 from src.labeling.evidence_matcher import _get_confidence_label
 
 logger = logging.getLogger(__name__)
+
+# Emoji and pictographic symbols stripped from feed text. This is a feed-display
+# policy (these render poorly on the site), applied at export only -- ingest-time
+# normalization stays value-preserving and leaves stored content untouched.
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f680-\U0001f6ff"  # transport & map symbols
+    "\U0001f1e0-\U0001f1ff"  # flags (iOS)
+    "\U00002702-\U000027b0"  # dingbats
+    "\U000024c2-\U0001f251"
+    "\U0001f926-\U0001f937"
+    "\U00010000-\U0010ffff"
+    "♀-♂"
+    "☀-⭕"
+    "‍"
+    "⏏"
+    "⏩"
+    "⌚"
+    "️"  # variation selectors
+    "〰"
+    "]+",
+    flags=re.UNICODE,
+)
 
 
 # Default context size for evidence snippets
@@ -248,15 +277,16 @@ def get_sentiment_label(sentiment: int | None) -> str | None:
 
 
 def sanitize_text(text: str | None) -> str | None:
-    """Normalize text for safe JSON/YAML feed output.
+    """Normalize text for feed output and apply feed-display policy.
 
-    Thin wrapper over the shared :func:`normalize_text`, which repairs mojibake
-    (e.g. Windows-1252 smart punctuation stored as raw C1 control bytes), strips
-    emoji, and removes any control character that Jekyll's YAML parser rejects.
-    Kept as a named function because it is the established call site in this
-    module's article formatters.
+    Repairs mojibake and strips control characters via the shared
+    :func:`normalize_text` (value-preserving), then strips emoji -- a
+    feed-specific display choice that does not belong on stored data.
     """
-    return normalize_text(text)
+    normalized = normalize_text(text)
+    if normalized is None:
+        return None
+    return _EMOJI_RE.sub("", normalized)
 
 
 # Scorecard configuration
@@ -935,11 +965,11 @@ def guard_feed_data(data: dict) -> int:
 
     articles = data.get("articles", []) if isinstance(data, dict) else []
     for path, bad in found:
-        codes = ", ".join(f"U+{ord(c):04X}" for c in sorted(bad))
+        codes = format_codepoints(bad)
         match = re.search(r"articles\[(\d+)\]", path)
         article_id = None
-        if match and int(match.group(1)) < len(articles):
-            article_id = articles[int(match.group(1))].get("id")
+        if match and (idx := int(match.group(1))) < len(articles):
+            article_id = articles[idx].get("id")
         logger.warning(
             "Feed guard repaired illegal control char(s) [%s] at %s (article id=%s); "
             "ingest-time normalization should have caught this.",

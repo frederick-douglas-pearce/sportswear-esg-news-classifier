@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from src.data_collection.text_normalize import find_illegal_chars
+from src.data_collection.text_normalize import find_illegal_chars, format_codepoints
 
 from ..config import agent_settings
 from ..notifications import Notification, NotificationManager, NotificationType
@@ -184,7 +184,7 @@ def validate_export(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
                 yaml_error = str(e).replace("\n", " ")
             if illegal or yaml_error:
                 if illegal:
-                    codes = ", ".join(f"U+{ord(c):04X}" for c in illegal)
+                    codes = format_codepoints(illegal)
                     msg = f"feed contains control characters Jekyll's YAML parser rejects: {codes}"
                 else:
                     msg = f"feed is valid JSON but not YAML-parseable (Jekyll will fail): {yaml_error}"

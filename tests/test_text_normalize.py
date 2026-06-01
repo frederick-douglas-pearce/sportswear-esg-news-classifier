@@ -2,6 +2,8 @@
 
 from src.data_collection.text_normalize import (
     find_illegal_chars,
+    format_codepoints,
+    has_illegal_chars,
     normalize_text,
     repair_mojibake,
 )
@@ -44,6 +46,26 @@ class TestFindIllegalChars:
         assert find_illegal_chars("Plain ASCII and ’ curly quote") == set()
 
 
+class TestHasIllegalChars:
+    """Fast presence check used by gate scans."""
+
+    def test_true_when_present(self):
+        assert has_illegal_chars("McDonald\x92s") is True
+
+    def test_false_when_clean(self):
+        assert has_illegal_chars("a\tb\nc — ’ ok") is False
+
+
+class TestFormatCodepoints:
+    """U+XXXX rendering for log/error messages."""
+
+    def test_sorted_and_formatted(self):
+        assert format_codepoints({"\x94", "\x92"}) == "U+0092, U+0094"
+
+    def test_empty(self):
+        assert format_codepoints(set()) == ""
+
+
 class TestNormalizeText:
     """End-to-end normalization used at ingest and export."""
 
@@ -53,8 +75,9 @@ class TestNormalizeText:
     def test_repairs_mojibake(self):
         assert normalize_text("McDonald\x92s") == "McDonald’s"
 
-    def test_strips_emoji(self):
-        assert normalize_text("Nike \U0001f680 wins").strip() == "Nike  wins".strip()
+    def test_preserves_emoji(self):
+        # Value-preserving: emoji stripping is a feed-display policy, not ingest.
+        assert normalize_text("Nike \U0001f680 wins") == "Nike \U0001f680 wins"
 
     def test_removes_residual_control_chars_but_keeps_whitespace(self):
         assert normalize_text("a\x00b\tc\nd") == "ab\tc\nd"

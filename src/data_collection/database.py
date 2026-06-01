@@ -126,7 +126,9 @@ class Database:
         """
         article = session.query(Article).filter_by(article_id=article_id).first()
         if article:
-            article.full_content = content
+            # Normalize at the DB boundary so stored content is clean regardless
+            # of the write path (matches title/description in upsert_article).
+            article.full_content = normalize_text(content)
             article.scrape_status = status
             article.scrape_error = error
             article.scraped_at = datetime.now(timezone.utc)

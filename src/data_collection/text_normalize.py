@@ -8,11 +8,15 @@ Windows-1252 *mojibake* -- smart quotes and dashes (' " " --) mis-decoded as raw
 C1 bytes by the scraper. ``ftfy`` repairs that mojibake (e.g. U+0092 -> U+2019);
 a final pass strips any control character that is genuinely illegal in YAML.
 
-The functions here are idempotent: applying them to already-clean text returns
-it unchanged, so they are safe to run at every layer (scrape, DB repair, export).
+Normalization here is **value-preserving**: it repairs encoding damage and drops
+illegal control characters, but does not discard otherwise-valid content. Lossy
+display policies (e.g. stripping emoji) belong at the feed boundary, not on the
+stored data. The functions are idempotent, so they are safe to run at every
+layer (scrape, DB write, DB repair, export).
 """
 
 import re
+from collections.abc import Iterable
 
 import ftfy
 
@@ -21,30 +25,6 @@ import ftfy
 # DEL character, and the entire C1 range. ftfy normally repairs/removes these,
 # but we strip explicitly as a deterministic backstop for pathological input.
 _ILLEGAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
-
-# Emoji and pictographic symbols. Preserved from the original export-side
-# ``sanitize_text``: these render poorly in the feed and have caused YAML issues.
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001f600-\U0001f64f"  # emoticons
-    "\U0001f300-\U0001f5ff"  # symbols & pictographs
-    "\U0001f680-\U0001f6ff"  # transport & map symbols
-    "\U0001f1e0-\U0001f1ff"  # flags (iOS)
-    "\U00002702-\U000027b0"  # dingbats
-    "\U000024c2-\U0001f251"
-    "\U0001f926-\U0001f937"
-    "\U00010000-\U0010ffff"
-    "♀-♂"
-    "☀-⭕"
-    "‍"
-    "⏏"
-    "⏩"
-    "⌚"
-    "️"  # variation selectors
-    "〰"
-    "]+",
-    flags=re.UNICODE,
-)
 
 
 def repair_mojibake(text: str) -> str:
@@ -57,6 +37,15 @@ def repair_mojibake(text: str) -> str:
     return ftfy.fix_text(text, uncurl_quotes=False, fix_character_width=False)
 
 
+def has_illegal_chars(text: str) -> bool:
+    """Fast presence check for YAML-illegal control characters (early-exit).
+
+    Cheaper than :func:`find_illegal_chars` for gate checks that only need a
+    yes/no answer, since it stops at the first match instead of collecting all.
+    """
+    return _ILLEGAL_CONTROL_RE.search(text) is not None
+
+
 def find_illegal_chars(text: str) -> set[str]:
     """Return the set of YAML-illegal control characters present in ``text``.
 
@@ -66,16 +55,21 @@ def find_illegal_chars(text: str) -> set[str]:
     return set(_ILLEGAL_CONTROL_RE.findall(text))
 
 
-def normalize_text(text: str | None) -> str | None:
-    """Normalize ``text`` for safe storage and feed export.
+def format_codepoints(chars: Iterable[str]) -> str:
+    """Render characters as a sorted, comma-separated ``U+XXXX`` list for logs."""
+    return ", ".join(f"U+{ord(c):04X}" for c in sorted(chars))
 
-    Repairs mojibake, strips emoji/pictographs, and removes any remaining
-    YAML-illegal control characters. Returns ``None`` unchanged so callers can
-    pass through nullable database columns. Idempotent.
+
+def normalize_text(text: str | None) -> str | None:
+    """Normalize ``text`` for safe storage and parsing (value-preserving).
+
+    Repairs mojibake and removes YAML-illegal control characters. Does NOT strip
+    emoji or other valid content -- that is a feed-display policy applied at
+    export time. Returns ``None`` unchanged so callers can pass through nullable
+    database columns. Idempotent.
     """
     if text is None:
         return None
     text = repair_mojibake(text)
-    text = _EMOJI_RE.sub("", text)
     text = _ILLEGAL_CONTROL_RE.sub("", text)
     return text
