@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .api_client import ArticleData
 from .config import settings
+from .text_normalize import normalize_text
 from .models import (
     Article,
     ArticleChunk,
@@ -79,8 +80,10 @@ class Database:
 
         article = Article(
             article_id=article_data.article_id,
-            title=article_data.title,
-            description=article_data.description,
+            # Normalize API-sourced text so mojibake / control characters never
+            # reach the database (defense alongside scrape-time normalization).
+            title=normalize_text(article_data.title),
+            description=normalize_text(article_data.description),
             url=article_data.url,
             image_url=article_data.image_url,
             published_at=article_data.published_at,

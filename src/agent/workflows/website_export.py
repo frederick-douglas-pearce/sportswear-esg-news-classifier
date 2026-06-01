@@ -7,6 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from src.data_collection.text_normalize import find_illegal_chars
+
 from ..config import agent_settings
 from ..notifications import Notification, NotificationManager, NotificationType
 from ..runner import run_export_website_feed, run_script
@@ -146,17 +150,50 @@ def validate_export(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
 
     # Validate JSON
     if json_path:
+        raw = None
         try:
-            with open(json_path) as f:
-                data = json.load(f)
+            with open(json_path, encoding="utf-8") as f:
+                raw = f.read()
+            data = json.loads(raw)
             validation_result["json_valid"] = True
-            validation_result["json_article_count"] = len(data) if isinstance(data, list) else 0
+            # The feed's top level is a dict ({"articles": [...], ...}); count the
+            # articles list. (Previously this counted len(data) only for lists, so
+            # the dict feed always reported 0 articles.)
+            articles = data.get("articles", []) if isinstance(data, dict) else data
+            validation_result["json_article_count"] = len(articles) if isinstance(articles, list) else 0
             logger.info(f"JSON valid: {validation_result['json_article_count']} articles")
         except (json.JSONDecodeError, FileNotFoundError) as e:
             validation_result["json_valid"] = False
             validation_result["validation_passed"] = False
             validation_result["errors"].append(f"JSON error: {e}")
             logger.error(f"JSON validation failed: {e}")
+            raw = None  # skip the YAML check below; the JSON error is the root cause
+
+        # Jekyll parses _data/*.json with its YAML parser (Ruby Psych), which
+        # rejects control characters that JSON itself permits (notably the C1
+        # range U+0080-U+009F from Windows-1252 mojibake). A feed that is valid
+        # JSON but invalid YAML breaks the site build, so mirror Jekyll's parser
+        # here and fail validation before the push. PyYAML reproduces Psych's
+        # rejection of these characters; the explicit scan adds a precise message.
+        if raw is not None:
+            illegal = sorted(find_illegal_chars(raw))
+            yaml_error = None
+            try:
+                yaml.safe_load(raw)
+            except yaml.YAMLError as e:
+                yaml_error = str(e).replace("\n", " ")
+            if illegal or yaml_error:
+                if illegal:
+                    codes = ", ".join(f"U+{ord(c):04X}" for c in illegal)
+                    msg = f"feed contains control characters Jekyll's YAML parser rejects: {codes}"
+                else:
+                    msg = f"feed is valid JSON but not YAML-parseable (Jekyll will fail): {yaml_error}"
+                validation_result["yaml_valid"] = False
+                validation_result["validation_passed"] = False
+                validation_result["errors"].append(f"YAML error: {msg}")
+                logger.error(f"YAML validation failed: {msg}")
+            else:
+                validation_result["yaml_valid"] = True
 
     # Validate Atom XML
     if atom_path:
@@ -480,8 +517,8 @@ def send_error_notification(workflow: Workflow, context: dict[str, Any]) -> dict
         errors.append(f"Export failed: {context.get('export_error', 'Unknown error')}")
         wrong_branch_only = False
 
-    # validation
-    if not context.get("validation_passed", True) and not context.get("validation_skipped"):
+    # validation (default False: a missing flag is treated as failure, not success)
+    if not context.get("validation_passed", False) and not context.get("validation_skipped"):
         validation_errors = context.get("errors", [])
         errors.append(f"Validation failed: {', '.join(validation_errors)}")
         wrong_branch_only = False

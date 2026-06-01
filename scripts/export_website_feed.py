@@ -42,7 +42,10 @@ from sqlalchemy.orm import joinedload
 from src.data_collection.config import settings
 from src.data_collection.database import db
 from src.data_collection.models import Article, ArticleChunk, BrandLabel, LabelEvidence
+from src.data_collection.text_normalize import find_illegal_chars, normalize_text
 from src.labeling.evidence_matcher import _get_confidence_label
+
+logger = logging.getLogger(__name__)
 
 
 # Default context size for evidence snippets
@@ -245,41 +248,15 @@ def get_sentiment_label(sentiment: int | None) -> str | None:
 
 
 def sanitize_text(text: str | None) -> str | None:
-    """Remove or replace characters that cause JSON/YAML parsing issues.
+    """Normalize text for safe JSON/YAML feed output.
 
-    Removes emoji and other problematic Unicode characters that can cause
-    issues with Jekyll's YAML parser.
+    Thin wrapper over the shared :func:`normalize_text`, which repairs mojibake
+    (e.g. Windows-1252 smart punctuation stored as raw C1 control bytes), strips
+    emoji, and removes any control character that Jekyll's YAML parser rejects.
+    Kept as a named function because it is the established call site in this
+    module's article formatters.
     """
-    if text is None:
-        return None
-
-    import re
-
-    # Remove emoji and other symbol characters
-    # This regex pattern matches most emoji and pictographic characters
-    emoji_pattern = re.compile(
-        "["
-        "\U0001F600-\U0001F64F"  # emoticons
-        "\U0001F300-\U0001F5FF"  # symbols & pictographs
-        "\U0001F680-\U0001F6FF"  # transport & map symbols
-        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
-        "\U00002702-\U000027B0"  # dingbats
-        "\U000024C2-\U0001F251"
-        "\U0001f926-\U0001f937"
-        "\U00010000-\U0010ffff"
-        "\u2640-\u2642"
-        "\u2600-\u2B55"
-        "\u200d"
-        "\u23cf"
-        "\u23e9"
-        "\u231a"
-        "\ufe0f"  # variation selectors
-        "\u3030"
-        "]+",
-        flags=re.UNICODE,
-    )
-
-    return emoji_pattern.sub("", text)
+    return normalize_text(text)
 
 
 # Scorecard configuration
@@ -782,7 +759,9 @@ def export_to_atom(articles: list[Article], base_url: str) -> str:
     for article in articles:
         fe = fg.add_entry()
         fe.id(str(article.id))
-        fe.title(article.title)
+        # Normalize so mojibake / control chars never reach the Atom XML (C1
+        # control characters are invalid in XML 1.0, mirroring the JSON guard).
+        fe.title(normalize_text(article.title))
         fe.link(href=article.url)
 
         # Build summary from brands and categories
@@ -805,7 +784,7 @@ def export_to_atom(articles: list[Article], base_url: str) -> str:
         if categories:
             summary_parts.append(f"Categories: {', '.join(sorted(categories))}")
         if article.source_name:
-            summary_parts.append(f"Source: {article.source_name}")
+            summary_parts.append(f"Source: {normalize_text(article.source_name)}")
 
         fe.summary(" | ".join(summary_parts))
 
@@ -913,8 +892,69 @@ def dumps_prettier(data: Any) -> str:
     return _prettier_render(data, 0, 0, 0) + "\n"
 
 
+def _repair_strings_in_place(obj: Any, path: str, found: list[tuple[str, set[str]]]) -> None:
+    """Recursively repair illegal control chars in the str leaves of ``obj``.
+
+    Strings are immutable, so we reassign within the parent dict/list. Each
+    repaired leaf is recorded as ``(path, illegal_chars)`` in ``found``.
+    """
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            child = f"{path}.{key}"
+            if isinstance(value, str):
+                bad = find_illegal_chars(value)
+                if bad:
+                    obj[key] = normalize_text(value)
+                    found.append((child, bad))
+            else:
+                _repair_strings_in_place(value, child, found)
+    elif isinstance(obj, list):
+        for i, value in enumerate(obj):
+            child = f"{path}[{i}]"
+            if isinstance(value, str):
+                bad = find_illegal_chars(value)
+                if bad:
+                    obj[i] = normalize_text(value)
+                    found.append((child, bad))
+            else:
+                _repair_strings_in_place(value, child, found)
+
+
+def guard_feed_data(data: dict) -> int:
+    """Defense-in-depth: repair any parser-breaking chars left in the feed dict.
+
+    Ingest-time normalization should keep these out of the database, but this
+    guard runs over the fully-assembled feed just before serialization so a
+    Jekyll-breaking character can never reach the committed file. It is
+    non-blocking: it repairs in place and logs a WARNING per affected field
+    (with the originating article id when resolvable) so that a miss upstream is
+    visible and actionable. Returns the number of fields repaired.
+    """
+    found: list[tuple[str, set[str]]] = []
+    _repair_strings_in_place(data, "feed", found)
+
+    articles = data.get("articles", []) if isinstance(data, dict) else []
+    for path, bad in found:
+        codes = ", ".join(f"U+{ord(c):04X}" for c in sorted(bad))
+        match = re.search(r"articles\[(\d+)\]", path)
+        article_id = None
+        if match and int(match.group(1)) < len(articles):
+            article_id = articles[int(match.group(1))].get("id")
+        logger.warning(
+            "Feed guard repaired illegal control char(s) [%s] at %s (article id=%s); "
+            "ingest-time normalization should have caught this.",
+            codes,
+            path,
+            article_id,
+        )
+    if found:
+        logger.warning("Feed guard repaired %d field(s) carrying illegal characters.", len(found))
+    return len(found)
+
+
 def write_json(data: dict, filepath: Path) -> None:
     """Write JSON data to file in Prettier-compatible formatting."""
+    guard_feed_data(data)
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(dumps_prettier(data))

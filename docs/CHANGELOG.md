@@ -4,6 +4,38 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-06-01: Fix Jekyll build failure from mojibake control characters in feed
+
+The website's GitHub Pages "Deploy site" build began failing with
+`_data/esg_news.json: control characters are not allowed at line 1 column 1
+(Psych::SyntaxError)`. Jekyll parses `_data/*.json` with its YAML parser (Ruby
+Psych), which rejects C1 control characters (U+0080–U+009F).
+
+**Root cause:** Scraped article text contained Windows-1252 smart punctuation
+(’ “ ” —) stored as raw C1 control bytes — *mojibake* introduced when
+`newspaper` misdetected a page's charset. This pre-existing data problem was
+*unmasked* by the same-day prettier-JSON change (below): the old `json.dump`
+default escaped non-ASCII as `\uXXXX` (harmless to YAML), whereas
+`dumps_prettier` emits raw UTF-8, so the C1 bytes reached the committed file.
+
+**Fix (defense-in-depth):**
+- New shared `src/data_collection/text_normalize.py` (`normalize_text`,
+  `repair_mojibake`, `find_illegal_chars`) repairs mojibake via `ftfy` and
+  strips YAML-illegal control characters. Idempotent; used at every layer.
+- **Ingest:** the scraper and `Database.upsert_article` normalize content,
+  title, and description before storage.
+- **One-time repair:** `scripts/repair_text_encoding.py` (`--dry-run`) repairs
+  existing rows in `articles`, `article_chunks`, `brand_labels`, and
+  `label_evidence`.
+- **Export guard:** `export_website_feed.guard_feed_data` repairs any residual
+  control characters in the assembled feed (and Atom fields) just before
+  serialization, logging a non-blocking warning (with article id + field path)
+  whenever it has to — a signal that ingest-time normalization missed a case.
+- **Validator:** `website_export.validate_export` now counts articles correctly
+  for the dict-shaped feed (previously always reported 0) and YAML-parses the
+  feed (PyYAML mirrors Jekyll's Psych) so a build-breaking feed fails validation
+  and blocks the push instead of shipping silently.
+
 ### 2026-06-01: Prettier-compatible JSON feed export
 
 The website feed JSON is now emitted in Prettier's formatting directly by the

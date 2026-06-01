@@ -10,6 +10,8 @@ import pytest
 # Add scripts directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
+import yaml
+
 from export_website_feed import (
     PRETTIER_PRINT_WIDTH,
     SCORECARD_BOTTOM_N,
@@ -19,6 +21,8 @@ from export_website_feed import (
     extract_snippet,
     extract_snippet_char_based,
     extract_snippet_with_sentences,
+    guard_feed_data,
+    sanitize_text,
 )
 
 
@@ -754,3 +758,58 @@ class TestPrettierJsonFormatting:
         out = dumps_prettier({"k": val})
         assert "\n" not in out.rstrip("\n")  # single line
         assert len(out.rstrip("\n")) == PRETTIER_PRINT_WIDTH
+
+
+class TestSanitizeText:
+    """sanitize_text delegates to the shared normalizer (mojibake + emoji)."""
+
+    def test_repairs_mojibake(self):
+        assert sanitize_text("McDonald\x92s") == "McDonald’s"
+
+    def test_none_passthrough(self):
+        assert sanitize_text(None) is None
+
+
+class TestGuardFeedData:
+    """Export-time defense-in-depth guard over the assembled feed dict."""
+
+    def _feed(self, snippet):
+        return {
+            "generated_at": "2026-06-01T00:00:00+00:00",
+            "articles": [
+                {
+                    "id": "abc-123",
+                    "title": "Clean title",
+                    "brand_details": [
+                        {"brand": "Nike", "evidence": [{"context_snippet": snippet}]}
+                    ],
+                }
+            ],
+        }
+
+    def test_repairs_c1_chars_in_nested_field(self):
+        data = self._feed("McDonald\x92s deal")
+        repaired = guard_feed_data(data)
+        assert repaired == 1
+        assert data["articles"][0]["brand_details"][0]["evidence"][0]["context_snippet"] == (
+            "McDonald’s deal"
+        )
+
+    def test_clean_feed_repairs_nothing(self):
+        data = self._feed("A perfectly clean snippet")
+        assert guard_feed_data(data) == 0
+
+    def test_guarded_feed_is_yaml_parseable(self):
+        # The whole point: output must parse under Jekyll's YAML parser.
+        data = self._feed("smart \x93quotes\x94 and dash \x97 here")
+        guard_feed_data(data)
+        yaml.safe_load(dumps_prettier(data))  # raises if still invalid
+
+    def test_warns_with_article_id(self, caplog):
+        import logging
+
+        data = self._feed("McDonald\x92s")
+        with caplog.at_level(logging.WARNING):
+            guard_feed_data(data)
+        assert "abc-123" in caplog.text
+        assert "U+0092" in caplog.text
