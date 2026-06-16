@@ -498,6 +498,39 @@ Errors (5):
         assert stats["error_types"]["connection"] == 3
         assert stats["error_types"]["timeout"] == 2
 
+    def test_report_surfaces_truncated_analysis(self):
+        """A truncated analysis should be visible in the report, not look like 'not run' (#42)."""
+        from src.agent.workflows.daily_labeling import generate_report
+
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        context = {
+            "llm_analysis_completed": False,
+            "llm_analysis_error": "Analysis response truncated at max_tokens (8000); JSON incomplete",
+            "llm_analysis_truncated": True,
+        }
+
+        result = generate_report(workflow, context)
+        llm = result["report"]["llm_analysis"]
+
+        assert llm["completed"] is False
+        assert llm["truncated"] is True
+        assert "truncated" in llm["error"].lower()
+
+    def test_report_omits_error_when_analysis_not_run(self):
+        """No error key when analysis was skipped rather than failed (#42)."""
+        from src.agent.workflows.daily_labeling import generate_report
+
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        context = {"llm_analysis_skipped": True}
+
+        result = generate_report(workflow, context)
+        llm = result["report"]["llm_analysis"]
+
+        assert llm["completed"] is False
+        assert "error" not in llm
+
 
 class TestWebsiteExportWorkflow:
     """Tests for WebsiteExportWorkflow."""

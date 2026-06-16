@@ -232,12 +232,16 @@ class LabelingAnalyzer:
                 # A max_tokens stop means the JSON was cut off mid-structure and
                 # the structured fields would silently parse to empty. Surface it
                 # as a failure rather than letting it masquerade as a clean run.
-                if getattr(response, "stop_reason", None) == "max_tokens":
+                if response.stop_reason == "max_tokens":
                     logger.error(
                         "LLM analysis truncated: hit max_tokens cap of "
                         f"{ANALYSIS_MAX_TOKENS} ({response.usage.output_tokens} "
                         "output tokens). JSON is incomplete; raise ANALYSIS_MAX_TOKENS "
                         "or tighten the prompt."
+                    )
+                    logger.debug(
+                        "Truncated analysis (first 500 chars): %s",
+                        response.content[0].text[:500],
                     )
                     return AnalysisResult(
                         success=False,
