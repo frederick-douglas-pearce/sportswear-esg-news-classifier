@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 # Analysis model - use Sonnet for cost efficiency
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
+# Max output tokens for the analysis call. Sonnet 4.6 produces a richer analysis
+# than the retired Sonnet 4, so the old 2000 cap truncated the JSON mid-structure
+# (see issue #42). Give generous headroom; the prompt also bounds list lengths so
+# responses stay well under this in practice. Non-streaming, so kept under the
+# ~16K SDK HTTP-timeout guideline.
+ANALYSIS_MAX_TOKENS = 8000
+
 
 @dataclass
 class AnalysisResult:
@@ -30,6 +37,7 @@ class AnalysisResult:
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
+    truncated: bool = False
 
 
 LABELING_ANALYSIS_SYSTEM_PROMPT = """You are an expert data quality analyst reviewing article labeling results for an ESG (Environmental, Social, Governance) news classification system focused on sportswear brands.
@@ -70,7 +78,10 @@ LABELING_ANALYSIS_USER_PROMPT = """Analyze the following labeling results from t
 ## Recent Skipped Articles (sample)
 {skipped_articles_sample}
 
-Please analyze these results and respond with a JSON object in this format:
+Please analyze these results and respond with a JSON object in this format.
+Limit `potential_errors`, `patterns_detected`, and `improvement_suggestions` to
+at most 5 items each, prioritizing the most significant findings. Keep each
+string field concise so the JSON response stays complete:
 {{
     "overall_assessment": "brief assessment of labeling quality",
     "potential_errors": [
@@ -212,11 +223,33 @@ class LabelingAnalyzer:
 
                 response = self.client.messages.create(
                     model=self.model,
-                    max_tokens=2000,
+                    max_tokens=ANALYSIS_MAX_TOKENS,
                     temperature=0.0,
                     system=LABELING_ANALYSIS_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_prompt}],
                 )
+
+                # A max_tokens stop means the JSON was cut off mid-structure and
+                # the structured fields would silently parse to empty. Surface it
+                # as a failure rather than letting it masquerade as a clean run.
+                if getattr(response, "stop_reason", None) == "max_tokens":
+                    logger.error(
+                        "LLM analysis truncated: hit max_tokens cap of "
+                        f"{ANALYSIS_MAX_TOKENS} ({response.usage.output_tokens} "
+                        "output tokens). JSON is incomplete; raise ANALYSIS_MAX_TOKENS "
+                        "or tighten the prompt."
+                    )
+                    return AnalysisResult(
+                        success=False,
+                        error=(
+                            "Analysis response truncated at max_tokens "
+                            f"({ANALYSIS_MAX_TOKENS}); JSON incomplete"
+                        ),
+                        input_tokens=response.usage.input_tokens,
+                        output_tokens=response.usage.output_tokens,
+                        model=self.model,
+                        truncated=True,
+                    )
 
                 # Extract response text
                 response_text = response.content[0].text
