@@ -269,7 +269,7 @@ The restore command includes safety features:
 |----------|-------------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic API key for Claude labeling | Required |
 | `OPENAI_API_KEY` | OpenAI API key for embeddings | Required |
-| `LABELING_MODEL` | Claude model for labeling | `claude-sonnet-4-20250514` |
+| `LABELING_MODEL` | Claude model for labeling | `claude-sonnet-4-6` |
 | `EMBEDDING_MODEL` | OpenAI model for embeddings | `text-embedding-3-small` |
 | `LABELING_BATCH_SIZE` | Default articles per labeling batch | `10` |
 | `TARGET_CHUNK_TOKENS` | Target tokens per chunk | `500` |

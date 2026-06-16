@@ -33,7 +33,7 @@ class TestWorkflowLearningSettings:
             from src.workflow_learning.config import WorkflowLearningSettings
 
             settings = WorkflowLearningSettings()
-            assert settings.analysis_model == "claude-sonnet-4-20250514"
+            assert settings.analysis_model == "claude-sonnet-4-6"
 
     def test_sessions_dir_property(self, tmp_path):
         """Test sessions_dir property."""
