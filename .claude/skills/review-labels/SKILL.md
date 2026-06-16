@@ -65,6 +65,34 @@ with engine.connect() as conn:
     fp_row = result.fetchone()
     print(f'FP-classifier flagged: {fp_row.fp_count} articles')
 
+    # 0. Model / prompt version breakdown (makes model migrations visible)
+    # After a model switch the window may straddle two models; this attributes
+    # any issues found below to the right model/prompt regime.
+    print('\n' + '-' * 70)
+    print('MODEL / PROMPT VERSION BREAKDOWN')
+    print('-' * 70)
+    result = conn.execute(text('''
+        SELECT COALESCE(bl.model_version, '(none)') as model_version,
+               COALESCE(bl.prompt_version, '(none)') as prompt_version,
+               COUNT(*) as labels,
+               MIN(a.labeled_at) as first_seen,
+               MAX(a.labeled_at) as last_seen
+        FROM articles a
+        JOIN brand_labels bl ON a.id = bl.article_id
+        WHERE a.labeled_at >= :since_date
+        GROUP BY bl.model_version, bl.prompt_version
+        ORDER BY last_seen DESC
+    '''), {'since_date': since_date})
+    rows = result.fetchall()
+    if rows:
+        for r in rows:
+            print(f'  {r.model_version} / {r.prompt_version}: {r.labels} labels '
+                  f'({r.first_seen:%Y-%m-%d} -> {r.last_seen:%Y-%m-%d})')
+        if len(rows) > 1:
+            print('  WARNING: window spans multiple model/prompt versions - attribute findings accordingly.')
+    else:
+        print('  No labels in this period')
+
     # 1. Brand sentiment breakdown
     print('\n' + '-' * 70)
     print('BRAND SENTIMENT BREAKDOWN')
@@ -99,6 +127,7 @@ with engine.connect() as conn:
                bl.social_sentiment as soc,
                bl.governance_sentiment as gov,
                bl.digital_sentiment as dig,
+               bl.model_version as model,
                a.url
         FROM articles a
         JOIN brand_labels bl ON a.id = bl.article_id
@@ -119,6 +148,7 @@ with engine.connect() as conn:
             if r.gov == -1: cats.append('G-')
             if r.dig == -1: cats.append('D-')
             print(f'  [{r.brand}] {\" \".join(cats)}: {r.title[:60]}...')
+            print(f'    Model: {r.model}')
             print(f'    URL: {r.url}')
     else:
         print('  No negative sentiment articles in this period')
