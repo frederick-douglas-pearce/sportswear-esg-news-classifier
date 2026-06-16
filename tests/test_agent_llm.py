@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.agent.llm import (
+    ANALYSIS_MAX_TOKENS,
     AnalysisResult,
     LABELING_ANALYSIS_SYSTEM_PROMPT,
     LABELING_ANALYSIS_USER_PROMPT,
@@ -53,6 +54,7 @@ class TestAnalysisResult:
         assert result.input_tokens == 0
         assert result.output_tokens == 0
         assert result.model == ""
+        assert result.truncated is False
 
 
 class TestLabelingAnalyzerInit:
@@ -357,6 +359,43 @@ class TestAnalyzeLabelingResults:
         assert result.analysis == {"summary": "Analysis complete", "score": 85}
         assert result.input_tokens == 1000
         assert result.output_tokens == 200
+        assert result.truncated is False
+
+    def test_uses_generous_max_tokens(self, analyzer):
+        """Should request enough output tokens to avoid truncation (issue #42)."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"summary": "OK"}')]
+        mock_response.usage.input_tokens = 100
+        mock_response.usage.output_tokens = 50
+        mock_response.stop_reason = "end_turn"
+        analyzer.client.messages.create.return_value = mock_response
+
+        analyzer.analyze_labeling_results(
+            stats={}, labeled_sample=[], fp_sample=[], skipped_sample=[]
+        )
+
+        _, kwargs = analyzer.client.messages.create.call_args
+        assert kwargs["max_tokens"] == ANALYSIS_MAX_TOKENS
+        assert ANALYSIS_MAX_TOKENS > 2000
+
+    def test_truncated_response_is_failure(self, analyzer):
+        """A max_tokens stop should surface as a failure, not a clean empty result."""
+        mock_response = MagicMock()
+        # Incomplete JSON, exactly as it arrives when cut off mid-structure.
+        mock_response.content = [MagicMock(text='{"overall_assessment": "good", "poten')]
+        mock_response.usage.input_tokens = 2309
+        mock_response.usage.output_tokens = ANALYSIS_MAX_TOKENS
+        mock_response.stop_reason = "max_tokens"
+        analyzer.client.messages.create.return_value = mock_response
+
+        result = analyzer.analyze_labeling_results(
+            stats={}, labeled_sample=[], fp_sample=[], skipped_sample=[]
+        )
+
+        assert result.success is False
+        assert result.truncated is True
+        assert "truncated" in result.error.lower()
+        assert result.output_tokens == ANALYSIS_MAX_TOKENS
 
     def test_handles_api_error(self, analyzer):
         """Should handle API errors gracefully."""

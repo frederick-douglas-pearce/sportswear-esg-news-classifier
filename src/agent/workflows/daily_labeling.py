@@ -327,6 +327,7 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
             return {
                 "llm_analysis_completed": False,
                 "llm_analysis_error": result.error,
+                "llm_analysis_truncated": result.truncated,
             }
 
     except Exception as e:
@@ -383,6 +384,12 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         "completed": context.get("llm_analysis_completed", False),
         "skipped": context.get("llm_analysis_skipped", False),
     }
+
+    # Surface failure detail so a truncated/errored analysis is visible in the
+    # report rather than rendering identically to "not run" (see issue #42).
+    if not context.get("llm_analysis_completed") and context.get("llm_analysis_error"):
+        report["llm_analysis"]["error"] = context.get("llm_analysis_error")
+        report["llm_analysis"]["truncated"] = context.get("llm_analysis_truncated", False)
 
     # Include LLM analysis details if available
     if context.get("llm_analysis_completed"):
