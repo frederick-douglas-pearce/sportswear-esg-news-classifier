@@ -42,7 +42,7 @@ The `registry.json` file tracks all prompt versions and designates the productio
       "commit_message": "Initial prompt version",
       "description": "Original prompts with brand verification and ESG guidance",
       "model_recommendations": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 2000,
         "temperature": 0.0
       },
@@ -69,7 +69,7 @@ Each version directory contains a `config.json` that specifies:
     "user": ["title", "published_at", "source_name", "brands", "content"]
   },
   "model_config": {
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-6",
     "max_tokens": 2000,
     "temperature": 0.0
   }
@@ -186,7 +186,7 @@ Add entry to `prompts/labeling/registry.json`:
   "commit_message": "Description of changes",
   "description": "Detailed description of this version",
   "model_recommendations": {
-    "model": "claude-sonnet-4-20250514",
+    "model": "claude-sonnet-4-6",
     "max_tokens": 2000,
     "temperature": 0.0
   },

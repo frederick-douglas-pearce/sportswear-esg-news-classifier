@@ -308,7 +308,7 @@ NEWSDATA_API_KEY, DATABASE_URL, MAX_API_CALLS_PER_DAY=200, SCRAPE_DELAY_SECONDS=
 GDELT_TIMESPAN=3m, GDELT_MAX_RECORDS=250
 
 # Labeling
-ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-sonnet-4-6
 EMBEDDING_MODEL=text-embedding-3-small, LABELING_BATCH_SIZE=10
 
 # FP Classifier Pre-filter
@@ -330,13 +330,13 @@ AGENT_EMAIL_ENABLED=false, AGENT_EMAIL_RECIPIENT=, AGENT_EMAIL_SENDER=
 RESEND_API_KEY=  # Recommended for email (resend.com, 3000/month free)
 AGENT_LLM_ANALYSIS=true  # Enable Claude analysis of labeling results
 AGENT_LLM_ERROR_THRESHOLD=0.0  # 0.0 = always run, >0 = only if error_rate exceeds
-AGENT_LLM_MODEL=claude-sonnet-4-20250514  # Model for LLM analysis
+AGENT_LLM_MODEL=claude-sonnet-4-6  # Model for LLM analysis
 
 # Workflow Learning
 SCREENPIPE_API_URL=http://localhost:3030  # Screenpipe REST API
 WORKFLOW_RECORDING_DIR=data/workflow_recordings  # Session storage
 WORKFLOW_SKILLS_DIR=.claude/skills/learned  # Generated skills output
-WORKFLOW_ANALYSIS_MODEL=claude-sonnet-4-20250514  # Model for analysis
+WORKFLOW_ANALYSIS_MODEL=claude-sonnet-4-6  # Model for analysis
 ```
 
 ## ESG Category Structure

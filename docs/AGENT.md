@@ -320,7 +320,7 @@ All agent settings are configured via environment variables:
 |----------|-------------|---------|
 | `AGENT_LLM_ANALYSIS` | Enable Claude analysis of labeling | `true` |
 | `AGENT_LLM_ERROR_THRESHOLD` | Error rate threshold to trigger analysis | `0.0` (always run) |
-| `AGENT_LLM_MODEL` | Model for LLM analysis | `claude-sonnet-4-20250514` |
+| `AGENT_LLM_MODEL` | Model for LLM analysis | `claude-sonnet-4-6` |
 | `ANTHROPIC_API_KEY` | API key for Claude | Required |
 
 ### Notification Settings

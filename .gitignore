@@ -76,3 +76,6 @@ data/workflow_recordings/
 # and baseline JSONs contain local file paths and tool args (security).
 social/*
 !social/case-study-agentfluent.md
+
+# Model-migration eval run artifacts (harness is tracked; reports are not)
+data/evaluation/migration/

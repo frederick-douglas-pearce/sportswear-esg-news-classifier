@@ -43,7 +43,7 @@ class WorkflowLearningSettings:
     # Analysis settings
     analysis_model: str = field(
         default_factory=lambda: os.getenv(
-            "WORKFLOW_ANALYSIS_MODEL", "claude-sonnet-4-20250514"
+            "WORKFLOW_ANALYSIS_MODEL", "claude-sonnet-4-6"
         )
     )
     anthropic_api_key: str | None = field(

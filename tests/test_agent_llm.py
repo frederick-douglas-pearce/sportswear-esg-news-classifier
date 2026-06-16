@@ -23,7 +23,7 @@ class TestAnalysisResult:
             analysis={"summary": "Good quality labeling"},
             input_tokens=100,
             output_tokens=50,
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
         )
 
         assert result.success is True
@@ -37,7 +37,7 @@ class TestAnalysisResult:
         result = AnalysisResult(
             success=False,
             error="API error occurred",
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
         )
 
         assert result.success is False

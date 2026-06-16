@@ -71,7 +71,7 @@ def sample_analysis():
         skill_description="Train the false positive classifier model",
         input_tokens=2000,
         output_tokens=800,
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
     )
 
 

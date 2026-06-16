@@ -1,7 +1,7 @@
 {
   "prompt_type": "esg_labeling",
   "description": "ESG classification prompts for sportswear brand news articles",
-  "production": "v1.8.0",
+  "production": "v1.9.0",
   "versions": {
     "v1.0.0": {
       "created_at": "2025-01-09T00:00:00Z",
@@ -121,6 +121,20 @@
       "description": "Strengthens user prompt instruction to omit sportswear brands that have no applicable ESG categories (all categories would be applies: false). Previously the prompt said to omit brands with 'no substantive ESG content' but Claude sometimes still included them with all-false labels. Now uses explicit CRITICAL instruction with example scenario (brand mentioned only as competitor/reference). Also adds defensive filter in save_brand_labels() to skip brands with empty label sets.",
       "model_recommendations": {
         "model": "claude-sonnet-4-20250514",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "system",
+        "status": "superseded"
+      }
+    },
+    "v1.9.0": {
+      "created_at": "2026-06-15T00:00:00Z",
+      "commit_message": "Migrate labeling model to Claude Sonnet 4.6",
+      "description": "Identical prompt text to v1.8.0; updates the recommended model to claude-sonnet-4-6 following the retirement of claude-sonnet-4-20250514. Validated by a retrospective contrastive eval (issue #38): re-labeling 299 already-labeled articles with Sonnet 4.6 on the v1.8.0 prompt showed 0% newly-labeled rate (no scorecard-inflation risk), 0 parse failures, 92.4% exact sentiment agreement, and outcome disagreements dominated by 4.6 correctly rejecting brand-name-collision false positives (e.g. 'forensic vans', 'pumas in Patagonia') that Sonnet 4 mislabeled.",
+      "model_recommendations": {
+        "model": "claude-sonnet-4-6",
         "max_tokens": 2000,
         "temperature": 0.0
       },

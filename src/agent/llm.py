@@ -17,7 +17,7 @@ from .config import agent_settings
 logger = logging.getLogger(__name__)
 
 # Analysis model - use Sonnet for cost efficiency
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 
 @dataclass
@@ -119,7 +119,7 @@ class LabelingAnalyzer:
 
         Args:
             api_key: Anthropic API key (default: from environment)
-            model: Model to use (default: claude-sonnet-4-20250514)
+            model: Model to use (default: claude-sonnet-4-6)
             max_retries: Maximum retry attempts for rate limits
             retry_delay: Initial delay between retries in seconds
         """
