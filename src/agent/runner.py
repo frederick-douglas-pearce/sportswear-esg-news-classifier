@@ -255,12 +255,14 @@ def run_uv_script(
         ScriptResult with execution details
     """
     uv_path = _get_uv_path()
-    # --frozen: run from the already-provisioned venv with zero network
-    # resolution, and fail loudly if the lockfile is stale. Cron runs in an
-    # early-morning window where DNS is intermittently unavailable; without
-    # this, uv tries to re-fetch the direct-URL spaCy model dep from GitHub
-    # and aborts before any Python runs. See issue #45.
-    command = [uv_path, "run", "--frozen", "python", script_path]
+    # --frozen --no-sync: run from the already-provisioned venv with zero
+    # network access. Cron fires in an early-morning window where DNS is down
+    # for hours (host suspends overnight). --frozen alone is insufficient:
+    # uv still re-fetches metadata for the en-core-web-sm direct-URL wheel
+    # from GitHub and aborts before any Python runs (observed in issue #51).
+    # --no-sync skips the environment sync entirely so uv never resolves the
+    # network. See issues #45 and #51.
+    command = [uv_path, "run", "--frozen", "--no-sync", "python", script_path]
     if args:
         command.extend(args)
     return run_script(command, **kwargs)

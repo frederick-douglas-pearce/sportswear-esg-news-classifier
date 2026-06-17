@@ -32,9 +32,10 @@ echo "========================================" >> "$LOG_FILE"
 # Use uv to run the script in the project's virtual environment
 # Default mode is brand-only queries (no keyword filtering)
 # Add --with-keywords to use the old brand + keyword combination queries
-# --frozen: no network resolution at run time so the early-morning cron run
-# does not fail re-fetching the direct-URL spaCy model dep. See issue #45.
-~/.local/bin/uv run --frozen python scripts/collect_news.py \
+# --frozen --no-sync: zero network access at run time. --frozen alone still
+# lets uv re-fetch the direct-URL spaCy model metadata; --no-sync skips the env
+# sync so the early-morning cron run never touches DNS. See issues #45 and #51.
+~/.local/bin/uv run --frozen --no-sync python scripts/collect_news.py \
     --max-calls 50 \
     --scrape-limit 100 \
     >> "$LOG_FILE" 2>&1

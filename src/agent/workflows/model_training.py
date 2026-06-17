@@ -585,8 +585,8 @@ def promote_model(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]
         # The notebooks have already trained the model, we just need to register it
         result = run_script(
             [
-                # --frozen: no network resolution at run time (see issue #45)
-                "uv", "run", "--frozen", "python", "scripts/register_model.py",
+                # --frozen --no-sync: zero network access (see issues #45, #51)
+                "uv", "run", "--frozen", "--no-sync", "python", "scripts/register_model.py",
                 "--classifier", classifier,
                 "--bump", "minor",  # Default to minor version bump
                 "--update-registry",
