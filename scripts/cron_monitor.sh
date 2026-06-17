@@ -54,8 +54,10 @@ run_monitoring() {
         ARGS="$ARGS --alert"
     fi
 
-    # Run monitoring script
-    if uv run python scripts/monitor_drift.py $ARGS >> "$LOG_FILE" 2>&1; then
+    # Run monitoring script.
+    # --frozen: no network resolution at run time so the early-morning cron run
+    # does not fail re-fetching the direct-URL spaCy model dep. See issue #45.
+    if uv run --frozen python scripts/monitor_drift.py $ARGS >> "$LOG_FILE" 2>&1; then
         log "Drift monitoring completed successfully for $classifier"
         return 0
     else
