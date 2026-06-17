@@ -255,7 +255,12 @@ def run_uv_script(
         ScriptResult with execution details
     """
     uv_path = _get_uv_path()
-    command = [uv_path, "run", "python", script_path]
+    # --frozen: run from the already-provisioned venv with zero network
+    # resolution, and fail loudly if the lockfile is stale. Cron runs in an
+    # early-morning window where DNS is intermittently unavailable; without
+    # this, uv tries to re-fetch the direct-URL spaCy model dep from GitHub
+    # and aborts before any Python runs. See issue #45.
+    command = [uv_path, "run", "--frozen", "python", script_path]
     if args:
         command.extend(args)
     return run_script(command, **kwargs)

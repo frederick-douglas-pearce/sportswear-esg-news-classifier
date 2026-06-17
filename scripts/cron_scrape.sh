@@ -26,7 +26,9 @@ echo "GDELT collection started: $(date)" >> "$LOG_FILE"
 echo "========================================" >> "$LOG_FILE"
 
 # Use uv to run GDELT collection with 6-hour timespan
-~/.local/bin/uv run python scripts/collect_news.py \
+# --frozen: no network resolution at run time so the early-morning cron run
+# does not fail re-fetching the direct-URL spaCy model dep. See issue #45.
+~/.local/bin/uv run --frozen python scripts/collect_news.py \
     --source gdelt \
     --timespan 6h \
     --max-calls 50 \

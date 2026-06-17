@@ -26,8 +26,12 @@ echo "========================================" >> "$LOG_FILE"
 
 cd "$PROJECT_DIR"
 
-# Run agent workflow
-~/.local/bin/uv run python -m src.agent run "$WORKFLOW" >> "$LOG_FILE" 2>&1
+# Run agent workflow.
+# --frozen: run from the provisioned venv with no network resolution. Cron
+# fires in an early-morning window where DNS is intermittently down; without
+# this, uv re-fetches the direct-URL spaCy model dep from GitHub and aborts
+# before any Python runs. Fails loudly if the lockfile is stale. See issue #45.
+~/.local/bin/uv run --frozen python -m src.agent run "$WORKFLOW" >> "$LOG_FILE" 2>&1
 EXIT_CODE=$?
 
 echo "" >> "$LOG_FILE"

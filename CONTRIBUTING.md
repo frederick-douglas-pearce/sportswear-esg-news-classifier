@@ -53,6 +53,27 @@ uv run pytest -v
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 ```
 
+## Dependencies & Scheduled Jobs
+
+Cron jobs (collection, scraping, agent workflows, drift monitoring) and the
+agent's in-process script calls run `uv run --frozen`. `--frozen` uses the
+already-provisioned virtual environment with **no network resolution**, so the
+early-morning cron window does not fail trying to re-fetch the direct-URL
+spaCy model dependency (`en-core-web-sm`) from GitHub when DNS is flaky
+(see issue #45). The trade-off: cron will **not** auto-resolve dependency
+changes — it fails loudly on a stale lockfile instead.
+
+**After changing dependencies** (editing `pyproject.toml`), reconcile the env
+manually so the next scheduled run picks up the change:
+
+```bash
+uv lock      # update uv.lock to match pyproject.toml
+uv sync      # install the resolved dependencies into .venv
+```
+
+If a scheduled job logs a `uv run --frozen` lockfile error, the venv is out of
+sync — run the two commands above.
+
 ## Quick Reference
 
 ```bash

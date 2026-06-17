@@ -263,8 +263,11 @@ class TestRunUvScript:
             called_command = mock_run.call_args[0][0]
             # First element should be uv path (may be full path or just 'uv')
             assert called_command[0].endswith("uv")
+            # --frozen ensures cron runs use the provisioned venv with no
+            # network resolution (issue #45).
             assert called_command[1:] == [
                 "run",
+                "--frozen",
                 "python",
                 "scripts/test.py",
                 "--flag",
