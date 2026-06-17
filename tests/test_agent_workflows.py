@@ -532,6 +532,56 @@ Errors (5):
         assert "error" not in llm
 
 
+class TestDailyLabelingSendNotification:
+    """Tests for the daily_labeling send_notification step (#51)."""
+
+    def _context(self):
+        return {
+            "report": {
+                "labeling": {"articles_processed": 3, "articles_labeled": 2},
+                "collection": {},
+                "quality": {},
+            }
+        }
+
+    def test_raises_when_all_configured_channels_fail(self):
+        """DNS down: email/webhook attempted and all fail -> raise so the run is FAILED."""
+        from src.agent.workflows.daily_labeling import send_notification
+
+        with patch(
+            "src.agent.notifications.send_labeling_summary",
+            return_value={"email": False, "webhook": False},
+        ):
+            with pytest.raises(RuntimeError, match="Notification delivery failed"):
+                send_notification(MagicMock(), self._context())
+
+    def test_does_not_raise_when_no_channels_configured(self):
+        """Console fallback (nothing configured) is not a delivery failure."""
+        from src.agent.workflows.daily_labeling import send_notification
+
+        with patch(
+            "src.agent.notifications.send_labeling_summary",
+            return_value={"console": True},
+        ):
+            result = send_notification(MagicMock(), self._context())
+
+        # Console fallback counts as delivered; the key point is it must not raise.
+        assert result["channels"] == ["console"]
+
+    def test_succeeds_when_one_channel_delivers(self):
+        """At least one real channel delivering is success."""
+        from src.agent.workflows.daily_labeling import send_notification
+
+        with patch(
+            "src.agent.notifications.send_labeling_summary",
+            return_value={"email": True, "webhook": False},
+        ):
+            result = send_notification(MagicMock(), self._context())
+
+        assert result["notification_sent"] is True
+        assert result["channels"] == ["email"]
+
+
 class TestWebsiteExportWorkflow:
     """Tests for WebsiteExportWorkflow."""
 

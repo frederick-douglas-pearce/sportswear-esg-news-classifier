@@ -55,9 +55,10 @@ run_monitoring() {
     fi
 
     # Run monitoring script.
-    # --frozen: no network resolution at run time so the early-morning cron run
-    # does not fail re-fetching the direct-URL spaCy model dep. See issue #45.
-    if uv run --frozen python scripts/monitor_drift.py $ARGS >> "$LOG_FILE" 2>&1; then
+    # --frozen --no-sync: zero network access at run time. --frozen alone still
+    # lets uv re-fetch the direct-URL spaCy model metadata; --no-sync skips the
+    # env sync so the early-morning cron run never touches DNS. See #45 and #51.
+    if uv run --frozen --no-sync python scripts/monitor_drift.py $ARGS >> "$LOG_FILE" 2>&1; then
         log "Drift monitoring completed successfully for $classifier"
         return 0
     else

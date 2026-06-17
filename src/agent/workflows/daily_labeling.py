@@ -482,6 +482,22 @@ def send_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
     # Determine what channels were used
     channels_used = [k for k, v in result.items() if v]
 
+    # The whole purpose of this run is to deliver the morning report, so a run
+    # that could not deliver it must not report success. "console" is the
+    # no-channel-configured fallback (always succeeds) and is not a delivery
+    # failure. If real channels (email/webhook) were attempted and every one
+    # failed -- typically DNS/network down at cron time -- raise so the
+    # workflow is marked FAILED and surfaces in `agent status` and the cron
+    # exit code, instead of silently archiving as "completed". See issue #51.
+    attempted_channels = [k for k in result if k != "console"]
+    if attempted_channels and not channels_used:
+        raise RuntimeError(
+            "Notification delivery failed on all configured channels "
+            f"({', '.join(sorted(attempted_channels))}); the report was generated "
+            "and saved but not delivered. This is usually DNS/network being "
+            "unavailable at cron time."
+        )
+
     return {
         "notification_sent": len(channels_used) > 0,
         "channels": channels_used,
