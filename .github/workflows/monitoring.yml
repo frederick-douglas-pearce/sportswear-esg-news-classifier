@@ -35,15 +35,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
         with:
           version: 'latest'
 
@@ -91,7 +91,7 @@ jobs:
             --verbose || echo "DRIFT_DETECTED=true" >> $GITHUB_OUTPUT
 
       - name: Upload monitoring reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: monitoring-reports-${{ matrix.classifier }}
@@ -118,7 +118,7 @@ jobs:
 
     steps:
       - name: Download all reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: all-reports
 
