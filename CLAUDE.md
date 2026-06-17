@@ -67,10 +67,11 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (p
 CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
 
 # Testing
-uv run pytest                              # Run all tests (1186 tests)
+uv run pytest                              # Run all tests
 uv run pytest -v                           # Run with verbose output
 uv run pytest --cov=src                    # Run with coverage report
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py  # Run database tests (requires PostgreSQL)
+RUN_MODEL_TESTS=1 uv run pytest tests/test_deduplication.py  # Run opt-in tests that download the real sentence-transformer model (network)
 
 # Scheduled Collection (cron)
 ./scripts/setup_cron.sh install            # Set up both cron jobs
@@ -287,7 +288,7 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 - `src/fp3_nb/` - Deployment: threshold_optimization, deployment
 - `src/ep1_nb/`, `src/ep2_nb/`, `src/ep3_nb/` - Same structure for EP classifier
 
-### Test Suite (`tests/`) - 1186 tests
+### Test Suite (`tests/`)
 Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, test_database, test_chunker, test_labeler, test_embedder, test_evidence_matcher, test_labeling_pipeline, test_deployment, test_explainability, test_mlops_*, test_retrain, test_agent_*, test_scorecard_database, test_experiment_log/*, test_workflow_learning/*, test_integration
 
 ### Database Schema
