@@ -1,6 +1,7 @@
 """Tests for article deduplication logic."""
 
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,37 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from export_website_feed import deduplicate_articles
+
+
+def _run_model_tests() -> bool:
+    """Whether to run tests that download the real sentence-transformer model."""
+    return os.environ.get("RUN_MODEL_TESTS") == "1"
+
+
+# Tests decorated with this download `all-MiniLM-L6-v2` from HuggingFace Hub at
+# runtime, which makes CI non-deterministic when the Hub rate-limits the runner
+# (issue #47). They are opt-in, mirroring the RUN_DB_TESTS gate for DB tests.
+requires_real_model = pytest.mark.skipif(
+    not _run_model_tests(),
+    reason="Loads the real sentence-transformer model. Set RUN_MODEL_TESTS=1 to run.",
+)
+
+
+@pytest.fixture
+def patch_novelty_embedder(fake_embed_texts):
+    """Patch NoveltyScorer.embed_texts with a deterministic offline stub.
+
+    deduplicate_articles() constructs a NoveltyScorer and calls embed_texts(),
+    which would otherwise download the real model. Patching the class attribute
+    works regardless of the function-local import in export_website_feed.
+    """
+    from src.deployment.novelty import NoveltyScorer
+
+    def _bound(self, texts, show_progress=False):
+        return fake_embed_texts(texts)
+
+    with patch.object(NoveltyScorer, "embed_texts", _bound):
+        yield
 
 
 class TestGreedyCosineClustering:
@@ -312,8 +344,9 @@ class TestLabeledPairEvaluation:
 class TestSentenceTransformerEmbedder:
     """Tests for the sentence transformer embedder."""
 
+    @requires_real_model
     def test_embedding_dimension(self):
-        """Should produce correct embedding dimension."""
+        """Should produce correct embedding dimension (real model)."""
         from src.dedup1_nb.embedders import SentenceTransformerEmbedder
 
         embedder = SentenceTransformerEmbedder(model_name="all-MiniLM-L6-v2")
@@ -324,8 +357,9 @@ class TestSentenceTransformerEmbedder:
         assert embeddings.shape == (2, 384)
         assert embedder.embedding_dim == 384
 
+    @requires_real_model
     def test_normalized_embeddings(self):
-        """Normalized embeddings should have unit norm."""
+        """Normalized embeddings should have unit norm (real model)."""
         from src.dedup1_nb.embedders import SentenceTransformerEmbedder
 
         embedder = SentenceTransformerEmbedder(model_name="all-MiniLM-L6-v2", normalize=True)
@@ -335,6 +369,29 @@ class TestSentenceTransformerEmbedder:
 
         norms = np.linalg.norm(embeddings, axis=1)
         np.testing.assert_array_almost_equal(norms, [1.0, 1.0], decimal=5)
+
+    def test_normalization_logic_with_mocked_model(self):
+        """L2-normalization (incl. zero-vector guard) should run without the real model.
+
+        Keeps deterministic CI coverage of the numpy normalization path in
+        SentenceTransformerEmbedder.transform(); the real-model tests above are
+        opt-in (RUN_MODEL_TESTS=1), so this is the only default coverage of that block.
+        """
+        from src.dedup1_nb.embedders import SentenceTransformerEmbedder
+
+        embedder = SentenceTransformerEmbedder(model_name="all-MiniLM-L6-v2", normalize=True)
+        fake_model = MagicMock()
+        # Non-normalized rows, including a zero vector to exercise the divide-by-zero guard.
+        fake_model.encode.return_value = np.array([[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]])
+        embedder._model = fake_model  # bypass lazy load -> no HuggingFace download
+        embedder._embedding_dim = 3
+
+        embeddings = embedder.transform(["text one", "text two"])
+
+        norms = np.linalg.norm(embeddings, axis=1)
+        # First row scaled to unit norm; zero row stays zero (guard prevents NaN).
+        np.testing.assert_array_almost_equal(norms, [1.0, 0.0], decimal=5)
+        np.testing.assert_array_almost_equal(embeddings[0], [0.6, 0.8, 0.0], decimal=5)
 
 
 class TestTfidfLsaEmbedder:
@@ -379,7 +436,7 @@ class TestTfidfLsaEmbedder:
 class TestDeduplicateArticles:
     """Tests for the production deduplicate_articles function."""
 
-    def test_returns_tuple(self):
+    def test_returns_tuple(self, patch_novelty_embedder):
         """Should return (articles, count) tuple."""
         # Create mock articles
         articles = []
@@ -390,7 +447,9 @@ class TestDeduplicateArticles:
             article.description = None
             articles.append(article)
 
-        result = deduplicate_articles(articles, similarity_threshold=0.99)
+        result = deduplicate_articles(
+            articles, similarity_threshold=0.99, require_label_match=False
+        )
 
         assert isinstance(result, tuple)
         assert len(result) == 2
@@ -415,7 +474,7 @@ class TestDeduplicateArticles:
 
         assert result == ([article], 0)
 
-    def test_removes_duplicates(self):
+    def test_removes_duplicates(self, patch_novelty_embedder):
         """Should remove duplicate articles."""
         # Create two articles with identical content
         article1 = MagicMock()
@@ -429,13 +488,13 @@ class TestDeduplicateArticles:
         article2.description = None
 
         deduplicated, removed = deduplicate_articles(
-            [article1, article2], similarity_threshold=0.75
+            [article1, article2], similarity_threshold=0.75, require_label_match=False
         )
 
         assert len(deduplicated) == 1
         assert removed == 1
 
-    def test_keeps_distinct_articles(self):
+    def test_keeps_distinct_articles(self, patch_novelty_embedder):
         """Should keep distinct articles."""
         article1 = MagicMock()
         article1.title = "Nike launches new running shoe"
@@ -448,10 +507,40 @@ class TestDeduplicateArticles:
         article2.description = None
 
         deduplicated, removed = deduplicate_articles(
-            [article1, article2], similarity_threshold=0.75
+            [article1, article2], similarity_threshold=0.75, require_label_match=False
         )
 
         # Different topics should be kept
+        assert len(deduplicated) == 2
+        assert removed == 0
+
+    def test_preserves_similar_articles_with_different_labels(self, patch_novelty_embedder):
+        """With require_label_match=True, similar articles with differing ESG labels are kept."""
+
+        def _make_article(title, content, label_pairs):
+            """Build a mock Article whose brand_labels yield the given (brand, category) pairs."""
+            article = MagicMock()
+            article.title = title
+            article.full_content = content
+            article.description = None
+            brand_label = MagicMock()
+            brand_label.brand = "Nike"
+            brand_label.evidence = [
+                MagicMock(category=category) for _, category in label_pairs
+            ]
+            article.brand_labels = [brand_label]
+            return article
+
+        # Identical text (cosine 1.0 >= threshold) but different ESG categories.
+        text = "Nike today announced a major sustainability initiative."
+        article1 = _make_article(text, text, [("Nike", "carbon_emissions")])
+        article2 = _make_article(text, text, [("Nike", "worker_rights")])
+
+        deduplicated, removed = deduplicate_articles(
+            [article1, article2], similarity_threshold=0.75, require_label_match=True
+        )
+
+        # Different labels mean the second article carries new ESG coverage -> preserved.
         assert len(deduplicated) == 2
         assert removed == 0
 
