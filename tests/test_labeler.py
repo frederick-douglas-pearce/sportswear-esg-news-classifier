@@ -681,8 +681,8 @@ class TestArticleLabelerStats:
 
             stats = labeler.get_stats()
 
-            # Input: $3.00 per 1M, Output: $15.00 per 1M
-            expected_cost = 3.00 + 15.00
+            # Claude Haiku 4.5 — Input: $1.00 per 1M, Output: $5.00 per 1M
+            expected_cost = 1.00 + 5.00
             assert abs(stats["estimated_cost_usd"] - expected_cost) < 0.01
 
 

@@ -305,9 +305,9 @@ class LabelingDatabase:
         run.error_message = error_message
 
         # Calculate estimated cost
-        # Claude Sonnet: $3/1M input, $15/1M output
+        # Claude Haiku 4.5: $1/1M input, $5/1M output (model-aware pricing tracked in #54)
         # OpenAI embeddings: $0.00002/1K tokens
-        llm_cost = (input_tokens / 1_000_000) * 3 + (output_tokens / 1_000_000) * 15
+        llm_cost = (input_tokens / 1_000_000) * 1 + (output_tokens / 1_000_000) * 5
         # Rough estimate for embedding tokens (assume similar to chunk count)
         embedding_cost = (embeddings_generated * 500 / 1000) * 0.00002
         run.estimated_cost_usd = llm_cost + embedding_cost

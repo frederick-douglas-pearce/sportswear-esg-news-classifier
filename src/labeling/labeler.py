@@ -585,10 +585,11 @@ class ArticleLabeler:
         Returns:
             Dictionary with usage statistics
         """
-        # Cost estimates for Claude Sonnet
-        # Input: $3.00 per 1M tokens, Output: $15.00 per 1M tokens
-        input_cost = (self.total_input_tokens / 1_000_000) * 3.00
-        output_cost = (self.total_output_tokens / 1_000_000) * 15.00
+        # Cost estimate for the production labeling model (Claude Haiku 4.5):
+        # Input: $1.00 per 1M tokens, Output: $5.00 per 1M tokens.
+        # Hardcoded to the current model; model-aware pricing is tracked in #54.
+        input_cost = (self.total_input_tokens / 1_000_000) * 1.00
+        output_cost = (self.total_output_tokens / 1_000_000) * 5.00
 
         return {
             "total_input_tokens": self.total_input_tokens,

@@ -16,7 +16,7 @@ from .models import ExperimentEntry, ExperimentReflection
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 REFLECTION_SYSTEM_PROMPT = """You are an ML experiment analyst reviewing a completed model training experiment.
 

@@ -163,7 +163,7 @@ SQL query examples in `queries/` folder: `collection_queries.sql`, `labeling_que
 - `models.py` - Pydantic models for LLM response parsing
 - `chunker.py` - Paragraph-based article chunking with tiktoken token counting
 - `embedder.py` - OpenAI embedding wrapper with batch processing
-- `labeler.py` - Claude Sonnet wrapper for ESG classification
+- `labeler.py` - Claude wrapper for ESG classification
 - `classifier_client.py` - HTTP client for FP/EP classifier APIs
 - `evidence_matcher.py` - Links evidence excerpts to chunks via similarity matching
 - `reranker.py` - Cross-encoder reranking for improved evidence quality
@@ -203,7 +203,7 @@ prompts/labeling/
 - `state.py` - YAML-based state management with checkpointing
 - `runner.py` - Script execution wrapper with retry logic
 - `notifications.py` - Unified notifications (Resend email + webhooks)
-- `llm.py` - Claude Sonnet integration for labeling analysis
+- `llm.py` - Claude integration for labeling analysis
 - `workflows/` - Workflow definitions:
   - `base.py` - Workflow base class and registry
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
@@ -242,7 +242,7 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 - `models.py` - Pydantic models (RecordingSession, ScreenContent, AudioTranscript, WorkflowStep, ExtractedDecision)
 - `screenpipe_client.py` - Screenpipe REST API wrapper for screen OCR and audio transcription
 - `session_manager.py` - YAML-based session state persistence
-- `analyzer.py` - Claude Sonnet integration for extracting workflow steps and decisions from recordings
+- `analyzer.py` - Claude integration for extracting workflow steps and decisions from recordings
 - `skill_generator.py` - Generates SKILL.md files with KB lookup directives at checkpoint steps
 - `experiment_bridge.py` - Bridges extracted decisions to experiment log (Decision entries + Pattern/Heuristic seeds)
 - `__main__.py` - CLI entry point (start, stop, list, show, analyze, delete)
@@ -309,7 +309,7 @@ NEWSDATA_API_KEY, DATABASE_URL, MAX_API_CALLS_PER_DAY=200, SCRAPE_DELAY_SECONDS=
 GDELT_TIMESPAN=3m, GDELT_MAX_RECORDS=250
 
 # Labeling
-ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-sonnet-4-6
+ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-haiku-4-5-20251001
 EMBEDDING_MODEL=text-embedding-3-small, LABELING_BATCH_SIZE=10
 
 # FP Classifier Pre-filter
@@ -331,13 +331,13 @@ AGENT_EMAIL_ENABLED=false, AGENT_EMAIL_RECIPIENT=, AGENT_EMAIL_SENDER=
 RESEND_API_KEY=  # Recommended for email (resend.com, 3000/month free)
 AGENT_LLM_ANALYSIS=true  # Enable Claude analysis of labeling results
 AGENT_LLM_ERROR_THRESHOLD=0.0  # 0.0 = always run, >0 = only if error_rate exceeds
-AGENT_LLM_MODEL=claude-sonnet-4-6  # Model for LLM analysis
+AGENT_LLM_MODEL=claude-haiku-4-5-20251001  # Model for LLM analysis
 
 # Workflow Learning
 SCREENPIPE_API_URL=http://localhost:3030  # Screenpipe REST API
 WORKFLOW_RECORDING_DIR=data/workflow_recordings  # Session storage
 WORKFLOW_SKILLS_DIR=.claude/skills/learned  # Generated skills output
-WORKFLOW_ANALYSIS_MODEL=claude-sonnet-4-6  # Model for analysis
+WORKFLOW_ANALYSIS_MODEL=claude-haiku-4-5-20251001  # Model for analysis
 ```
 
 ## ESG Category Structure

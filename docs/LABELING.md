@@ -6,7 +6,7 @@ This document provides detailed information about the LLM-based labeling pipelin
 
 ## Overview
 
-The project uses Claude Sonnet to label articles with ESG categories, sentiment, and supporting evidence. This labeled data is then used to train ML classifiers that can perform routine classification at scale.
+The project uses Claude to label articles with ESG categories, sentiment, and supporting evidence. This labeled data is then used to train ML classifiers that can perform routine classification at scale.
 
 ## LLM Labeling Workflow
 
@@ -14,7 +14,7 @@ The LLM labeling pipeline processes articles through these steps:
 
 1. **Chunking**: Articles are split into paragraph-based chunks (~500 tokens each) with character position tracking
 2. **Embedding**: Chunks are embedded using OpenAI's `text-embedding-3-small` model for semantic search
-3. **LLM Labeling**: Claude Sonnet analyzes each article and returns structured JSON with:
+3. **LLM Labeling**: Claude analyzes each article and returns structured JSON with:
    - Per-brand ESG category labels (Environmental, Social, Governance, Digital Transformation)
    - Ternary sentiment for each category (+1 positive, 0 neutral, -1 negative)
    - Supporting evidence quotes from the article
@@ -77,8 +77,8 @@ uv run python scripts/label_articles.py --batch-size 5 -v
 | Component | Approximate Cost |
 |-----------|------------------|
 | OpenAI embeddings (text-embedding-3-small) | ~$0.02 per 1000 articles |
-| Claude Sonnet labeling | ~$10-15 per 1000 articles |
-| **Total** | **~$15 per 1000 articles** |
+| Claude labeling | ~$3-5 per 1000 articles (Haiku 4.5) |
+| **Total** | **~$3-5 per 1000 articles** |
 
 ## Exporting Training Data
 

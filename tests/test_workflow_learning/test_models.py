@@ -332,7 +332,7 @@ class TestAnalysisResult:
             skill_description="A test workflow",
             input_tokens=1000,
             output_tokens=500,
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
         )
 
         assert result.success is True
@@ -346,7 +346,7 @@ class TestAnalysisResult:
         result = AnalysisResult(
             success=False,
             error="API rate limited",
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",
         )
 
         assert result.success is False

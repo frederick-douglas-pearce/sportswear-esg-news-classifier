@@ -95,7 +95,7 @@ class LabelingSettings(BaseModel):
 
     # Model settings
     labeling_model: str = Field(
-        default_factory=lambda: os.getenv("LABELING_MODEL", "claude-sonnet-4-6")
+        default_factory=lambda: os.getenv("LABELING_MODEL", "claude-haiku-4-5-20251001")
     )
 
     # Prompt version (None = use production version from registry)
