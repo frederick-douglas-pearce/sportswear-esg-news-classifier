@@ -229,7 +229,7 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     - If AGENT_LLM_ANALYSIS=true and AGENT_LLM_ERROR_THRESHOLD=0.0: always run
     - If AGENT_LLM_ERROR_THRESHOLD > 0: only run if error_rate exceeds threshold
 
-    Uses Claude Sonnet to analyze recent labeling results and identify:
+    Uses Claude to analyze recent labeling results and identify:
     - Potential labeling errors
     - Patterns in false positives
     - Improvement suggestions

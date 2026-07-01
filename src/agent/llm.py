@@ -1,6 +1,6 @@
 """LLM-based analysis for agent workflows.
 
-Uses Claude Sonnet via the Anthropic API to analyze labeling results,
+Uses Claude via the Anthropic API to analyze labeling results,
 detect patterns in errors, and suggest improvements.
 """
 
@@ -16,14 +16,14 @@ from .config import agent_settings
 
 logger = logging.getLogger(__name__)
 
-# Analysis model - use Sonnet for cost efficiency
+# Analysis model default (override via AGENT_LLM_MODEL); a cost-efficient tier suffices for advisory QA
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
-# Max output tokens for the analysis call. Sonnet 4.6 produces a richer analysis
-# than the retired Sonnet 4, so the old 2000 cap truncated the JSON mid-structure
-# (see issue #42). Give generous headroom; the prompt also bounds list lengths so
-# responses stay well under this in practice. Non-streaming, so kept under the
-# ~16K SDK HTTP-timeout guideline.
+# Max output tokens for the analysis call. The old 2000 cap truncated the JSON
+# mid-structure under Sonnet 4.6's verbosity (issue #42), so it was raised to 8000.
+# Haiku 4.5 is less verbose, but the headroom is kept; the prompt also bounds list
+# lengths so responses stay well under this in practice. Non-streaming, so kept
+# under the ~16K SDK HTTP-timeout guideline.
 ANALYSIS_MAX_TOKENS = 8000
 
 
