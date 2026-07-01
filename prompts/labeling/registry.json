@@ -1,7 +1,7 @@
 {
   "prompt_type": "esg_labeling",
   "description": "ESG classification prompts for sportswear brand news articles",
-  "production": "v1.9.0",
+  "production": "v1.10.0",
   "versions": {
     "v1.0.0": {
       "created_at": "2025-01-09T00:00:00Z",
@@ -135,6 +135,20 @@
       "description": "Identical prompt text to v1.8.0; updates the recommended model to claude-sonnet-4-6 following the retirement of claude-sonnet-4-20250514. Validated by a retrospective contrastive eval (issue #38): re-labeling 299 already-labeled articles with Sonnet 4.6 on the v1.8.0 prompt showed 0% newly-labeled rate (no scorecard-inflation risk), 0 parse failures, 92.4% exact sentiment agreement, and outcome disagreements dominated by 4.6 correctly rejecting brand-name-collision false positives (e.g. 'forensic vans', 'pumas in Patagonia') that Sonnet 4 mislabeled.",
       "model_recommendations": {
         "model": "claude-sonnet-4-6",
+        "max_tokens": 2000,
+        "temperature": 0.0
+      },
+      "tags": {
+        "author": "system",
+        "status": "superseded"
+      }
+    },
+    "v1.10.0": {
+      "created_at": "2026-07-01T00:00:00Z",
+      "commit_message": "Migrate labeling model to Claude Haiku 4.5",
+      "description": "Identical prompt text to v1.9.0; migrates the labeling model to claude-haiku-4-5-20251001 (dated snapshot pinned for reproducibility) as a cost-downgrade from claude-sonnet-4-6 (~67% cheaper input/output, same tokenizer family, temperature=0 retained). Validated by a retrospective contrastive eval (issue #53): re-labeling 162 articles vs the Sonnet 4.6 / v1.9.0 baseline showed 0.0% newly-labeled rate (no scorecard-inflation risk; the labeler is the only junk gate in production), 0 parse failures, 93.9% exact sentiment agreement (>= 4.6's 92.4%), and outcome disagreements dominated by Haiku correctly rejecting brand-collision / financial / marketing false positives that 4.6 mislabeled. Low statistical power on positives (30 labeled, 1 human anchor) is compensated by a post-flip drift-monitoring window. Allbirds corporate-pivot decision-boundary question deferred to #55.",
+      "model_recommendations": {
+        "model": "claude-haiku-4-5-20251001",
         "max_tokens": 2000,
         "temperature": 0.0
       },

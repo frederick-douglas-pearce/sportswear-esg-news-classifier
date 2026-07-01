@@ -36,7 +36,7 @@ The custom agent provides:
 
 - **Lightweight**: Single Python module (~1,500 LOC), no external services
 - **YAML state management**: Human-readable workflow state and history
-- **LLM intelligence**: Claude Sonnet analyzes labeling results for quality assurance
+- **LLM intelligence**: Claude analyzes labeling results for quality assurance
 - **Unified notifications**: Email (Resend) + webhooks (Slack/Discord)
 - **Checkpointing**: Workflows can pause for human review and resume
 
@@ -78,7 +78,7 @@ The custom agent provides:
 │  └──────────────┘ └──────────────┘ └──────────────┘             │
 │         │                │                                       │
 │         ▼                ▼                                       │
-│     Email/Slack    Claude Sonnet                                │
+│     Email/Slack    Claude                                │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -93,7 +93,7 @@ src/agent/
 ├── state.py             # YAML-based state management
 ├── runner.py            # Script execution with retries
 ├── notifications.py     # Email (Resend) + webhook notifications
-├── llm.py               # Claude Sonnet integration
+├── llm.py               # Claude integration
 └── workflows/
     ├── __init__.py
     ├── base.py              # Workflow base class + registry
@@ -132,7 +132,7 @@ src/workflow_learning/
 | 1. `check_collection_status` | Query database for collection runs and pending articles from last 24h |
 | 2. `run_labeling` | Run labeling pipeline on all pending articles |
 | 3. `check_labeling_quality` | Calculate error rates, detect anomalies |
-| 4. `run_llm_analysis` | Claude Sonnet analyzes results for potential errors |
+| 4. `run_llm_analysis` | Claude analyzes results for potential errors |
 | 5. `generate_report` | Generate JSON summary report |
 | 6. `save_report` | Save report to `reports/daily_labeling/` |
 | 7. `send_notification` | Email summary via Resend |
@@ -320,7 +320,7 @@ All agent settings are configured via environment variables:
 |----------|-------------|---------|
 | `AGENT_LLM_ANALYSIS` | Enable Claude analysis of labeling | `true` |
 | `AGENT_LLM_ERROR_THRESHOLD` | Error rate threshold to trigger analysis | `0.0` (always run) |
-| `AGENT_LLM_MODEL` | Model for LLM analysis | `claude-sonnet-4-6` |
+| `AGENT_LLM_MODEL` | Model for LLM analysis | `claude-haiku-4-5-20251001` |
 | `ANTHROPIC_API_KEY` | API key for Claude | Required |
 
 ### Notification Settings
@@ -459,7 +459,7 @@ uv run python -m src.agent continue model_training
 
 ## LLM Intelligence
 
-The agent integrates Claude Sonnet for two purposes:
+The agent integrates Claude for two purposes:
 
 1. **Labeling analysis** (daily_labeling workflow): Detects potential errors in article labeling
 2. **Experiment reflection** (model_training workflow): Analyzes completed training experiments to assess hypothesis outcomes, identify surprises, and suggest next steps

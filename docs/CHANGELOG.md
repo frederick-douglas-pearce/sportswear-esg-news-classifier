@@ -4,6 +4,36 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-07-01: Migrate labeling model to Claude Haiku 4.5 (cost downgrade)
+
+Migrated the labeling model from Claude Sonnet 4.6 (`claude-sonnet-4-6`) to Claude
+Haiku 4.5, pinned to the dated snapshot `claude-haiku-4-5-20251001` for
+reproducibility (labels persist `model_version`). Motivation: cost — Haiku 4.5 is
+~67% cheaper ($1/$5 vs $3/$15 per MTok), shares the Sonnet 4.6 tokenizer family
+(no token-inflation penalty), and still supports `temperature=0` (the determinism
+lever the scorecard relies on).
+
+**Why not Sonnet 5:** its ~30% tokenizer inflation erased the introductory
+discount (net *more* expensive than 4.6 after the intro window ends 2026-08-31)
+and it rejects non-default `temperature` with a 400 — removing determinism.
+Evaluated and rejected in favor of the Haiku cost-downgrade.
+
+**Validation (issue #53):** a retrospective contrastive eval
+(`scripts/eval_model_migration.py`) re-labeled 162 articles against the Sonnet 4.6
+/ v1.9.0 baseline. Results: **0.0% newly-labeled rate** (no scorecard-inflation
+risk — critical, since the FP/EP pre-filters are disabled so the labeler is the
+only junk gate), **0 parse/truncation failures**, **93.9% exact sentiment
+agreement** (≥ 4.6's 92.4%), and outcome disagreements dominated by Haiku
+*correctly* rejecting brand-collision / financial / marketing false positives that
+4.6 mislabeled. Statistical power on positives is low (30 labeled, 1 human
+anchor), compensated by a **post-flip drift-monitoring window**.
+
+**Changes:** new prompt version **v1.10.0** (byte-identical text to v1.9.0, model
+only), promoted to production; all five Sonnet 4.6 call sites swapped to Haiku
+(labeling — eval-gated; agent analysis, workflow-learning, experiment reflection —
+ungated, low-stakes). Reusable model-migration skill tracked in #54; Allbirds
+corporate-pivot labeling decision-boundary deferred to #55.
+
 ### 2026-06-01: Fix Jekyll build failure from mojibake control characters in feed
 
 The website's GitHub Pages "Deploy site" build began failing with

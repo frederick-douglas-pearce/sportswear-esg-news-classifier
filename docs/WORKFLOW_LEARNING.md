@@ -328,7 +328,7 @@ Environment variables (set in `.env`):
 | `SCREENPIPE_API_URL` | `http://localhost:3030` | Screenpipe REST API URL |
 | `WORKFLOW_RECORDING_DIR` | `data/workflow_recordings` | Session state storage |
 | `WORKFLOW_SKILLS_DIR` | `.claude/skills/learned` | Generated skills output |
-| `WORKFLOW_ANALYSIS_MODEL` | `claude-sonnet-4-6` | Model for Claude analysis |
+| `WORKFLOW_ANALYSIS_MODEL` | `claude-haiku-4-5-20251001` | Model for Claude analysis |
 | `WORKFLOW_MAX_SCREEN_FRAMES` | `1000` | Max screen frames to retrieve per session |
 | `WORKFLOW_MAX_AUDIO_CHUNKS` | `500` | Max audio chunks to retrieve per session |
 

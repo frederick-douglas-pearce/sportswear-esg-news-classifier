@@ -17,7 +17,7 @@ from .config import agent_settings
 logger = logging.getLogger(__name__)
 
 # Analysis model - use Sonnet for cost efficiency
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 # Max output tokens for the analysis call. Sonnet 4.6 produces a richer analysis
 # than the retired Sonnet 4, so the old 2000 cap truncated the JSON mid-structure
@@ -130,7 +130,7 @@ class LabelingAnalyzer:
 
         Args:
             api_key: Anthropic API key (default: from environment)
-            model: Model to use (default: claude-sonnet-4-6)
+            model: Model to use (default: claude-haiku-4-5-20251001)
             max_retries: Maximum retry attempts for rate limits
             retry_delay: Initial delay between retries in seconds
         """

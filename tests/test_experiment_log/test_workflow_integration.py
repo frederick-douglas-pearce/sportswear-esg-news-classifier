@@ -171,7 +171,7 @@ class TestFinalizeExperiments:
 
         mock_settings.llm_analysis_enabled = True
         mock_settings.anthropic_api_key = "test-key"
-        mock_settings.llm_analysis_model = "claude-sonnet-4-6"
+        mock_settings.llm_analysis_model = "claude-haiku-4-5-20251001"
 
         context = {
             "experiment_ids": {"fp": "fp_20260226_143000"},
