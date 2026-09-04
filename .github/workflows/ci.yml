@@ -15,7 +15,7 @@ jobs:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@v7
         with:
-          version: 'latest'
+          version: '0.12.9'
           # setup-uv owns the uv cache (it sets UV_CACHE_DIR to its own path).
           # cache-suffix is defensive: monitoring.yml syncs this same lockfile
           # without --extra dev, and today only its wider default dependency glob
