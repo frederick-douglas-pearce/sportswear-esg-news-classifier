@@ -5,8 +5,14 @@ on:
   push:
     branches: [main]
 
+# PRs share a group per PR ref, so a superseding push cancels the last run.
+# Pushes to main get a group per SHA: cancel-in-progress: false alone would not
+# keep every merge tested, because a newly queued run cancels an already-pending
+# one (max one running + one pending per group), so a merge burst could drop the
+# middle commit's run. A group per SHA means main runs never queue behind each
+# other in the first place.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
