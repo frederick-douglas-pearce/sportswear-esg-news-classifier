@@ -2,7 +2,6 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
@@ -18,9 +17,10 @@ jobs:
         with:
           version: 'latest'
           # setup-uv owns the uv cache (it sets UV_CACHE_DIR to its own path).
-          # cache-suffix keeps this key distinct from monitoring.yml, which syncs
-          # without --extra dev; otherwise whichever workflow uploads first wins
-          # the key and the other restores an incomplete cache.
+          # cache-suffix is defensive: monitoring.yml syncs this same lockfile
+          # without --extra dev, and today only its wider default dependency glob
+          # keeps the two keys apart. The suffix states the separation outright,
+          # so aligning the globs later can't silently share a dev-less cache.
           enable-cache: true
           cache-dependency-glob: '**/uv.lock'
           cache-suffix: ci
