@@ -34,7 +34,7 @@ Examples: `feature/12-add-linting`, `fix/15-scraper-timeout`, `docs/9-update-rea
 ## PR Process
 
 1. Link the issue with `Closes #N` in the PR description
-2. CI runs automatically on push — all tests must pass
+2. CI runs automatically when the PR is opened or updated — all tests must pass. It runs again on `main` after the squash merge
 3. Use squash merge to keep `main` history clean:
    ```bash
    gh pr merge --squash --delete-branch

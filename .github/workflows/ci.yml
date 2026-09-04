@@ -2,9 +2,8 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
   push:
-    branches-ignore: [main]
+    branches: [main]
 
 jobs:
   test:
@@ -17,12 +16,14 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           version: 'latest'
-      - name: Cache uv dependencies
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
-          restore-keys: uv-${{ runner.os }}-
+          # setup-uv owns the uv cache (it sets UV_CACHE_DIR to its own path).
+          # cache-suffix is defensive: monitoring.yml syncs this same lockfile
+          # without --extra dev, and today only its wider default dependency glob
+          # keeps the two keys apart. The suffix states the separation outright,
+          # so aligning the globs later can't silently share a dev-less cache.
+          enable-cache: true
+          cache-dependency-glob: '**/uv.lock'
+          cache-suffix: ci
       - run: uv sync --frozen --extra dev
       - run: uv run pytest --tb=short --junitxml=junit.xml
       - uses: actions/upload-artifact@v7
