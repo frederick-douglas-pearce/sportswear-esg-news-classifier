@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/block_secret_reads.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block_secret_reads.py\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/detect_secrets_in_output.py"
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/detect_secrets_in_output.py\""
           }
         ]
       }
