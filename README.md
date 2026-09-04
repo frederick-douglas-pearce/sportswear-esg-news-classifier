@@ -2,7 +2,9 @@
 
 > **ML Zoomcamp Capstone Project** - A production-ready multi-label text classification system that monitors sustainability news in the sportswear and outdoor apparel industry.
 >
-> **🔗 Live Demo:** [View ESG News Feed](https://frederick-douglas-pearce.github.io/projects/esg_classifier/) - Browse curated ESG articles with interactive filtering by brand and category
+> **🔗 Live Demo:** [View ESG News Feed](https://frederick-douglas-pearce.github.io/esg-news/) - Browse curated ESG articles with interactive filtering by brand and category
+>
+> **📄 Project Overview:** [Read the project page](https://frederick-douglas-pearce.github.io/projects/esg_classifier/)
 
 ---
 
@@ -10,7 +12,7 @@
 
 The live ESG News Feed now features a **Sustainability Scorecard** that ranks sportswear brands based on their recent ESG news coverage.
 
-**📊 [View Live Scorecard](https://frederick-douglas-pearce.github.io/projects/esg_classifier/)**
+**📊 [View Live Scorecard](https://frederick-douglas-pearce.github.io/esg-news/)**
 
 ### How It Works
 
@@ -33,14 +35,9 @@ The scorecard analyzes ESG news from the last 14 days and assigns points based o
 
 ### Example Scorecard
 
-```
-🏆 Top Performers                    ⚠️ Back of the Pack
-├─ 🥇 Patagonia    +12 (E:+6 S:+4 G:+2)    ├─ Brand X    -3 (S:-3)
-├─ 🥈 Nike         +8  (E:+4 S:+2 D:+2)    ├─ Brand Y    -2 (G:-2)
-└─ 🥉 Adidas       +5  (E:+3 S:+2)         └─ Brand Z    -1 (E:-1)
-```
+![Sustainability Scorecard and filtered ESG news feed](images/sportswear_scorecard_snapshot_090326.png)
 
-The scorecard provides an at-a-glance view of which brands are leading—or lagging—in sustainability coverage.
+The scorecard provides an at-a-glance view of which brands are leading—or lagging—in sustainability coverage. Below it, the feed pairs a filter panel (brand, category, sentiment, date range) with the labeled articles that produced those scores — each one expandable to the evidence excerpts behind its label.
 
 ---
 
