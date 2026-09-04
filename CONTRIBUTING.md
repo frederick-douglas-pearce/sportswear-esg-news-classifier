@@ -39,6 +39,10 @@ Examples: `feature/12-add-linting`, `fix/15-scraper-timeout`, `docs/9-update-rea
    ```bash
    gh pr merge --squash --delete-branch
    ```
+4. If the fix required **changing your mind about the cause**, add a postmortem entry to
+   `social/postmortems/` the same day — see
+   [social/postmortems/README.md](social/postmortems/README.md) for conventions. Routine fixes
+   do not qualify; those belong in `docs/CHANGELOG.md`.
 
 ## Testing
 

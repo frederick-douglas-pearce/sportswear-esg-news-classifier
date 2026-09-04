@@ -22,6 +22,37 @@ This project uses a branch-based workflow. Do NOT commit directly to main.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
 
+## Failure Postmortems
+
+Incidents are logged to `social/postmortems/` (gitignored via the existing `social/*` rule).
+The ledger feeds blog posts and interview prep, so entries are written to be candid — that is
+why they stay out of the public repo.
+
+**Trigger — the only rule that keeps this cheap:** write an entry when the fix required
+**changing your mind about the cause**. Not every bug. A fix that went the way you expected
+teaches nothing; that is a `docs/CHANGELOG.md` entry, not a postmortem.
+
+**Write it the same day**, from the issue and PR text, which already contain most of it. The one
+field that cannot be reconstructed later is *what I believed that was wrong* — memory discards it
+first, and it is the point of the exercise.
+
+**A candidate is not a post; a claim is.** One incident is a bug report. Entries bind
+`instance-of:` to a claim in `social/postmortems/claims.md`, and a claim becomes write-ready at
+`MIN_INSTANCES` = 2. A claim with one instance is recorded and waits.
+
+Three independent axes, do not collapse them: `subsystem:` is where it broke
+(`ingestion · labeling · classifiers · mlops · agent · publication · database · ci · tooling`),
+`instance-of:` is what it proves, `signal:` is why it is interesting.
+
+`status:` is the human's field. Nothing else edits it.
+
+Full conventions, field vocabulary, the two-voice split, and the data-provider guardrail:
+[social/postmortems/README.md](social/postmortems/README.md).
+
+**Build no machinery for this.** Markdown files in a folder. `src/experiment_log/` is 19 Pydantic
+models with a store, tracker, LLM reflection module and CLI, and `data/experiments/` has never
+held a single entry — that is the precedent to avoid repeating.
+
 ## Project Overview
 
 ESG News Classifier for sportswear brands - a multi-label text classification system that categorizes news articles into ESG (Environmental, Social, Governance) categories for 50 sportswear/outdoor brands (see `src/data_collection/config.py` for full list).
