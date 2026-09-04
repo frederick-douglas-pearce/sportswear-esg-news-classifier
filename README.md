@@ -27,7 +27,7 @@ The scorecard analyzes ESG news from the last 14 days and assigns points based o
 - **🥇🥈🥉 Top Performers**: Brands with the highest positive scores earn gold, silver, and bronze medals
 - **Back of the Pack**: Brands with negative scores are highlighted for transparency
 - **Category Breakdown**: See scores by Environmental (E), Social (S), Governance (G), and Digital Transformation (D)
-- **Deduplication**: Similar articles are automatically detected and deduplicated using sentence embeddings (cosine similarity ≥ 0.85)
+- **Deduplication**: Similar articles are automatically detected and deduplicated using sentence embeddings (`all-MiniLM-L6-v2`, cosine similarity ≥ 0.56)
 - **Rolling Window**: Scores update automatically based on the most recent 14-day period
 - **Historical Tracking**: Daily snapshots stored in database for trend analysis (see `queries/scorecard_queries.sql`)
 
@@ -312,7 +312,7 @@ flowchart TB
 - [x] Evidence excerpts with sentiment indicators
 - [x] RSS/Atom feed for news aggregators
 - [x] **Sustainability Scorecard** with brand rankings and medal awards
-- [x] Article deduplication using sentence embeddings (cosine similarity ≥ 0.85)
+- [x] Article deduplication using sentence embeddings (`all-MiniLM-L6-v2`, cosine similarity ≥ 0.56)
 
 ### Phase 8: Agent Orchestrator ✅
 - [x] Hybrid orchestrator for automated maintenance workflows
