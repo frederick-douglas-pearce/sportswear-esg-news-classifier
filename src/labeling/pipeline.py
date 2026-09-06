@@ -41,6 +41,11 @@ class LabelingStats:
     articles_false_positive: int = 0
     articles_failed: int = 0
     articles_deduplicated: int = 0  # Articles skipped as title duplicates
+    # Articles whose processing raised before any status update. They are still
+    # `pending`, so a retry can pick them up — unlike articles_failed, which
+    # have been marked failed and are spent. Keeping them apart is what lets
+    # the exit code say whether retrying this batch can accomplish anything.
+    articles_left_pending: int = 0
     brands_labeled: int = 0
     false_positive_brands: int = 0
     chunks_created: int = 0
@@ -680,6 +685,11 @@ class LabelingPipeline:
                             f"[{error_type}] Failed to process article {article['id']}: {error_msg}"
                         )
                     stats.articles_failed += 1
+                    # This path never reached a status update, so the article is
+                    # still pending. articles_processed was not incremented
+                    # either — track it separately so the exit code can tell
+                    # "retry has something to do" from "the batch is spent".
+                    stats.articles_left_pending += 1
                     stats.errors.append(f"Article {article['id']} [{error_type}]: {error_msg}")
                     stats.errors_by_type[error_type] = (
                         stats.errors_by_type.get(error_type, 0) + 1
@@ -701,6 +711,12 @@ class LabelingPipeline:
                             stats.input_tokens,
                             stats.output_tokens,
                             status="success" if not stats.errors else "partial",
+                            articles_labeled=stats.articles_labeled,
+                            articles_skipped=stats.articles_skipped,
+                            articles_false_positive=stats.articles_false_positive,
+                            articles_failed=stats.articles_failed,
+                            articles_deduplicated=stats.articles_deduplicated,
+                            articles_left_pending=stats.articles_left_pending,
                         )
 
             logger.info(
@@ -727,6 +743,12 @@ class LabelingPipeline:
                             stats.output_tokens,
                             status="failed",
                             error_message=str(e),
+                            articles_labeled=stats.articles_labeled,
+                            articles_skipped=stats.articles_skipped,
+                            articles_false_positive=stats.articles_false_positive,
+                            articles_failed=stats.articles_failed,
+                            articles_deduplicated=stats.articles_deduplicated,
+                            articles_left_pending=stats.articles_left_pending,
                         )
             raise
 

@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import text
 
 from src.data_collection.database import db
+from src.labeling.exit_codes import EXIT_PARTIAL_FAILURE
 
 from ..config import agent_settings
 from ..runner import run_label_articles
@@ -79,6 +80,10 @@ def run_labeling(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
 
     logger.info(f"Running labeling on {pending_count} pending articles")
 
+    # Bound the window used to find this execution's labeling_runs rows. Taken
+    # before the subprocess starts; run rows are stamped from the same clock.
+    started_at = datetime.now(timezone.utc)
+
     # Run labeling with explicit batch size to process all pending
     # Note: batch_size=None would use the script's default (10), so we
     # explicitly pass the pending count to ensure all articles are processed
@@ -90,18 +95,119 @@ def run_labeling(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     labeling_result = {
         "labeling_success": result.success,
         "labeling_exit_code": result.exit_code,
+        "labeling_partial_failure": result.exit_code == EXIT_PARTIAL_FAILURE,
         "labeling_duration_seconds": result.duration_seconds,
+        "labeling_started_at": started_at.isoformat(),
+        # Bounds the run-row window so a concurrent labeling run started by the
+        # standalone cron is not attributed to this workflow.
+        "labeling_ended_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # Parse labeling output for stats
+    # Parse labeling output for stats. Only the FP-classifier counters are read
+    # from here now — article outcomes come from the database, which survives a
+    # retry that finds nothing left to do (issue #81).
     if result.stdout:
         labeling_result["labeling_output"] = _parse_labeling_output(result.stdout)
 
     if not result.success:
-        labeling_result["labeling_error"] = result.stderr[:1000]
-        logger.error(f"Labeling failed: {result.stderr[:500]}")
+        # Keep the tail: tracebacks and error summaries are at the end.
+        labeling_result["labeling_error"] = result.stderr[-2000:]
+        logger.error(f"Labeling exited {result.exit_code}:\n{result.stderr[-2000:]}")
 
     return labeling_result
+
+
+def _read_run_outcomes(started_at: datetime, ended_at: datetime) -> dict[str, Any] | None:
+    """Sum the labeling_runs rows recorded during this execution.
+
+    The run row is the source of truth for what a labeling execution did. Stdout
+    is not: when a retry runs and finds nothing pending, its zeros replace the
+    real numbers and the quality gate goes blind (issue #81). Aggregating every
+    row in the window keeps a no-op retry from subtracting anything.
+
+    Only rows with `completed_at` set are summed. A row still marked `running`
+    was written by a process that was killed mid-flight — most likely the 1800s
+    subprocess timeout — and its all-zero counters are not a result, they are
+    the absence of one. Counting them would report a confident zero for a run
+    that timed out. They are surfaced through `incomplete_runs` instead.
+
+    The window is bounded at both ends so a concurrently started labeling run
+    (the standalone labeling cron) is not attributed to this workflow.
+
+    Returns None when no completed run row exists — a dry run writes none, so
+    the caller falls back to parsed stdout.
+    """
+    with db.get_session() as session:
+        row = session.execute(
+            text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE completed_at IS NOT NULL) AS runs,
+                    COUNT(*) FILTER (WHERE completed_at IS NULL) AS unfinished,
+                    COALESCE(SUM(articles_processed)
+                        FILTER (WHERE completed_at IS NOT NULL), 0) AS processed,
+                    COALESCE(SUM(articles_labeled)
+                        FILTER (WHERE completed_at IS NOT NULL), 0) AS labeled,
+                    COALESCE(SUM(articles_skipped)
+                        FILTER (WHERE completed_at IS NOT NULL), 0) AS skipped,
+                    COALESCE(SUM(articles_false_positive)
+                        FILTER (WHERE completed_at IS NOT NULL), 0) AS false_positive,
+                    COALESCE(SUM(articles_failed)
+                        FILTER (WHERE completed_at IS NOT NULL), 0) AS failed,
+                    COALESCE(SUM(articles_deduplicated)
+                        FILTER (WHERE completed_at IS NOT NULL), 0) AS deduplicated,
+                    COALESCE(SUM(estimated_cost_usd)
+                        FILTER (WHERE completed_at IS NOT NULL), 0) AS cost,
+                    COUNT(*) FILTER (
+                        WHERE completed_at IS NULL OR status IN ('partial', 'failed')
+                    ) AS incomplete
+                FROM labeling_runs
+                WHERE started_at >= :started_at AND started_at <= :ended_at
+            """),
+            {"started_at": started_at, "ended_at": ended_at},
+        ).fetchone()
+
+    if not row or (row.runs == 0 and row.unfinished == 0):
+        return None
+
+    if row.runs == 0:
+        # Rows exist but none finished — report the anomaly rather than zeros.
+        logger.error(
+            f"{row.unfinished} labeling run(s) started but never completed; "
+            "counts are unavailable, not zero"
+        )
+        return {
+            "articles_processed": 0,
+            "articles_labeled": 0,
+            "articles_skipped": 0,
+            "articles_false_positive": 0,
+            "articles_failed": 0,
+            "articles_deduplicated": 0,
+            "estimated_cost_usd": 0.0,
+            "run_count": 0,
+            "incomplete_runs": int(row.unfinished),
+            "any_run_incomplete": True,
+            "counts_unavailable": True,
+        }
+
+    if row.unfinished:
+        logger.warning(
+            f"{row.unfinished} labeling run(s) in this window never completed; "
+            "their articles are not counted"
+        )
+
+    return {
+        "articles_processed": int(row.processed),
+        "articles_labeled": int(row.labeled),
+        "articles_skipped": int(row.skipped),
+        "articles_false_positive": int(row.false_positive),
+        "articles_failed": int(row.failed),
+        "articles_deduplicated": int(row.deduplicated),
+        "estimated_cost_usd": float(row.cost),
+        "run_count": int(row.runs),
+        "incomplete_runs": int(row.incomplete),
+        "any_run_incomplete": bool(row.incomplete),
+        "counts_unavailable": False,
+    }
 
 
 def _parse_labeling_output(output: str) -> dict[str, Any]:
@@ -182,23 +288,87 @@ def _extract_number(line: str) -> int:
 
 
 def check_labeling_quality(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Check labeling quality metrics and detect anomalies."""
+    """Check labeling quality metrics and detect anomalies.
+
+    Reads outcomes from `labeling_runs` rather than the script's stdout. Stdout
+    reflects only the last attempt, so a retry that found nothing pending used
+    to report zeros — which also drove error_rate to 0 and made high_error_rate
+    unreachable on exactly the runs that had failures (issue #81).
+    """
     labeling_output = context.get("labeling_output", {})
 
     if context.get("labeling_skipped"):
         return {"quality_check_skipped": True}
 
-    articles_processed = labeling_output.get("articles_processed", 0)
-    articles_failed = labeling_output.get("articles_failed", 0)
-    articles_labeled = labeling_output.get("articles_labeled", 0)
-    false_positives = labeling_output.get("false_positives", 0)
+    outcomes = None
+    started_at = context.get("labeling_started_at")
+    ended_at = context.get("labeling_ended_at")
+    dry_run = context.get("dry_run", False)
+
+    if started_at and not dry_run:
+        try:
+            outcomes = _read_run_outcomes(
+                datetime.fromisoformat(started_at),
+                datetime.fromisoformat(ended_at) if ended_at else datetime.now(timezone.utc),
+            )
+        except Exception as e:
+            # Never let the metrics query take down the workflow; fall back to
+            # stdout and say so, rather than reporting a silent zero.
+            logger.error(f"Could not read labeling run outcomes from database: {e}")
+
+    if outcomes is not None:
+        articles_processed = outcomes["articles_processed"]
+        articles_failed = outcomes["articles_failed"]
+        articles_labeled = outcomes["articles_labeled"]
+        false_positives = outcomes["articles_false_positive"]
+        metrics_source = "database"
+    else:
+        articles_processed = labeling_output.get("articles_processed", 0)
+        articles_failed = labeling_output.get("articles_failed", 0)
+        articles_labeled = labeling_output.get("articles_labeled", 0)
+        false_positives = labeling_output.get("false_positives", 0)
+        metrics_source = "stdout"
 
     quality_metrics = {
         "articles_processed": articles_processed,
         "articles_failed": articles_failed,
         "articles_labeled": articles_labeled,
         "false_positives": false_positives,
+        "metrics_source": metrics_source,
     }
+
+    if outcomes is not None:
+        quality_metrics["articles_skipped"] = outcomes["articles_skipped"]
+        quality_metrics["articles_deduplicated"] = outcomes["articles_deduplicated"]
+        quality_metrics["estimated_cost_usd"] = outcomes["estimated_cost_usd"]
+
+    # A real run always writes a run row. Falling back to stdout outside a dry
+    # run means the row is missing or unreadable — which is how a pre-migration
+    # deploy would quietly reproduce #81 — so say so rather than presenting
+    # scraped numbers as if they were authoritative.
+    metrics_degraded = (not dry_run and metrics_source == "stdout") or bool(
+        outcomes and outcomes.get("counts_unavailable")
+    )
+    quality_metrics["metrics_degraded"] = metrics_degraded
+    if metrics_degraded:
+        logger.error(
+            "Labeling metrics are degraded: no usable labeling_runs row for this "
+            "execution. Reported counts may be from a retry that did no work."
+        )
+
+    # A partial failure is a real incident even when the error rate looks fine:
+    # the run did work AND hit errors, and the batch cannot be re-run.
+    partial = (
+        context.get("labeling_partial_failure", False)
+        or (outcomes is not None and outcomes["any_run_incomplete"])
+        or metrics_degraded
+    )
+    quality_metrics["partial_failure"] = partial
+    if partial:
+        logger.warning(
+            f"Labeling run incomplete: {articles_labeled} labeled, "
+            f"{articles_failed} failed out of {articles_processed} processed"
+        )
 
     # Calculate rates
     if articles_processed > 0:
@@ -264,16 +434,22 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     # Import LLM analysis module
     from ..llm import LabelingAnalyzer, get_recent_labeling_samples
 
-    # Get labeling output stats
+    # Counts come from check_labeling_quality (database-sourced) for the same
+    # reason the report does: stdout is the last attempt's, so on a retried run
+    # the model would be handed zeros while the rates beside them are real, and
+    # its narrative would contradict the counts printed above it (issue #81).
     labeling_output = context.get("labeling_output", {})
     stats = {
-        "articles_processed": labeling_output.get("articles_processed", 0),
-        "articles_labeled": labeling_output.get("articles_labeled", 0),
-        "articles_skipped": labeling_output.get("articles_skipped", 0),
-        "false_positives": labeling_output.get("false_positives", 0),
-        "articles_failed": labeling_output.get("articles_failed", 0),
+        "articles_processed": context.get("articles_processed", 0),
+        "articles_labeled": context.get("articles_labeled", 0),
+        "articles_skipped": context.get(
+            "articles_skipped", labeling_output.get("articles_skipped", 0)
+        ),
+        "false_positives": context.get("false_positives", 0),
+        "articles_failed": context.get("articles_failed", 0),
         "error_rate": context.get("error_rate", 0),
         "fp_rate": context.get("fp_rate", 0),
+        "metrics_source": context.get("metrics_source", "stdout"),
     }
 
     # Get recent labeling samples from database
@@ -358,17 +534,29 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         report["labeling"] = {"skipped": True, "reason": context.get("reason")}
     else:
         labeling_output = context.get("labeling_output", {})
+        # Article counts come from check_labeling_quality, which reads the
+        # database. Only the FP-classifier counters still come from stdout —
+        # they are not persisted anywhere (issue #81).
         report["labeling"] = {
-            "articles_processed": labeling_output.get("articles_processed", 0),
-            "articles_labeled": labeling_output.get("articles_labeled", 0),
-            "articles_skipped": labeling_output.get("articles_skipped", 0),
-            "false_positives": labeling_output.get("false_positives", 0),
-            "articles_failed": labeling_output.get("articles_failed", 0),
-            "estimated_cost_usd": labeling_output.get("estimated_cost_usd", 0),
+            "articles_processed": context.get("articles_processed", 0),
+            "articles_labeled": context.get("articles_labeled", 0),
+            "articles_skipped": context.get(
+                "articles_skipped", labeling_output.get("articles_skipped", 0)
+            ),
+            "false_positives": context.get("false_positives", 0),
+            "articles_failed": context.get("articles_failed", 0),
+            "articles_deduplicated": context.get("articles_deduplicated", 0),
+            "estimated_cost_usd": context.get(
+                "estimated_cost_usd", labeling_output.get("estimated_cost_usd", 0)
+            ),
+            "metrics_source": context.get("metrics_source", "stdout"),
+            "metrics_degraded": context.get("metrics_degraded", False),
             "fp_classifier_calls": labeling_output.get("fp_classifier_calls", 0),
             "fp_skipped_llm": labeling_output.get("fp_skipped_llm", 0),
             "fp_cost_saved_usd": labeling_output.get("fp_cost_saved_usd", 0),
         }
+        if context.get("labeling_error"):
+            report["labeling"]["error"] = context["labeling_error"]
 
     # Quality metrics
     report["quality"] = {
@@ -376,6 +564,7 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         "fp_rate": context.get("fp_rate", 0),
         "high_error_rate": context.get("high_error_rate", False),
         "high_fp_rate": context.get("high_fp_rate", False),
+        "partial_failure": context.get("partial_failure", False),
     }
 
     # LLM analysis
@@ -463,6 +652,17 @@ def send_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
             "fp_rate": report.get("quality", {}).get("fp_rate", 0),
         }
 
+        # Anomaly flags belong in the delivered notification, not just the
+        # console summary — the email is what actually gets read. On 2026-09-05
+        # the error rate (8.3%) was under threshold and partial_failure was the
+        # only signal there was (issue #81).
+        quality = report.get("quality", {})
+        for flag in ("partial_failure", "high_error_rate", "high_fp_rate"):
+            if quality.get(flag):
+                additional_details[flag] = True
+        if report.get("labeling", {}).get("metrics_degraded"):
+            additional_details["metrics_degraded"] = True
+
         # Add FP classifier stats if available
         if labeling.get("fp_classifier_calls", 0) > 0:
             additional_details["fp_classifier_calls"] = labeling.get("fp_classifier_calls", 0)
@@ -529,7 +729,10 @@ def _log_summary(report: dict[str, Any]) -> None:
         print(f"  Skipped: {labeling.get('articles_skipped', 0)}")
         print(f"  False Positives: {labeling.get('false_positives', 0)}")
         print(f"  Failed: {labeling.get('articles_failed', 0)}")
+        if labeling.get("articles_deduplicated"):
+            print(f"  Deduplicated: {labeling.get('articles_deduplicated', 0)}")
         print(f"  Cost: ${labeling.get('estimated_cost_usd', 0):.4f}")
+        print(f"  Metrics from: {labeling.get('metrics_source', 'stdout')}")
         if labeling.get("fp_classifier_calls"):
             print(f"  FP Classifier Calls: {labeling.get('fp_classifier_calls', 0)}")
             print(f"  FP Skipped LLM: {labeling.get('fp_skipped_llm', 0)}")
@@ -544,6 +747,8 @@ def _log_summary(report: dict[str, Any]) -> None:
         print("  ⚠️  HIGH ERROR RATE DETECTED")
     if quality.get("high_fp_rate"):
         print("  ⚠️  HIGH FALSE POSITIVE RATE DETECTED")
+    if quality.get("partial_failure"):
+        print("  ⚠️  PARTIAL FAILURE - some articles errored; batch cannot be re-run")
 
     # LLM Analysis summary
     llm = report.get("llm_analysis", {})

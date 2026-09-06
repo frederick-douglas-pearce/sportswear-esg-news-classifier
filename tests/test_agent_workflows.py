@@ -532,6 +532,351 @@ Errors (5):
         assert "error" not in llm
 
 
+class TestCheckLabelingQuality:
+    """Tests for DB-sourced quality metrics (issue #81).
+
+    The 2026-09-05 incident: labeling processed 12 articles and one failed, the
+    script exited non-zero, the runner retried, the retry found nothing pending
+    and printed zeros, and those zeros became the report — driving error_rate to
+    0 so high_error_rate could never fire.
+    """
+
+    OUTCOMES_20260905 = {
+        "articles_processed": 12,
+        "articles_labeled": 5,
+        "articles_skipped": 6,
+        "articles_false_positive": 0,
+        "articles_failed": 1,
+        "articles_deduplicated": 1,
+        "estimated_cost_usd": 0.0348,
+        "run_count": 2,
+        "incomplete_runs": 1,
+        "any_run_incomplete": True,
+        "counts_unavailable": False,
+    }
+
+    def test_uses_database_over_stdout_zeros(self):
+        """The no-op retry's zeros must not win over the real run's counts."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {
+            "labeling_started_at": "2026-09-05T13:30:00+00:00",
+            # What the retry printed.
+            "labeling_output": {
+                "articles_processed": 0,
+                "articles_labeled": 0,
+                "articles_failed": 0,
+            },
+        }
+
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes",
+            return_value=self.OUTCOMES_20260905,
+        ):
+            result = check_labeling_quality(MagicMock(), context)
+
+        assert result["metrics_source"] == "database"
+        assert result["articles_processed"] == 12
+        assert result["articles_labeled"] == 5
+        assert result["articles_failed"] == 1
+        assert result["error_rate"] == pytest.approx(1 / 12)
+
+    def test_flags_partial_failure(self):
+        """A run that did work and also errored is flagged even at a low error rate."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {"labeling_started_at": "2026-09-05T13:30:00+00:00"}
+
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes",
+            return_value=self.OUTCOMES_20260905,
+        ):
+            result = check_labeling_quality(MagicMock(), context)
+
+        assert result["partial_failure"] is True
+        # 1/12 is under the 10% threshold, so this is the only signal available.
+        assert result["high_error_rate"] is False
+
+    def test_partial_failure_from_exit_code_alone(self):
+        """Exit code 2 flags a partial failure even without run rows (dry run)."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {
+            "dry_run": True,
+            "labeling_partial_failure": True,
+            "labeling_output": {"articles_processed": 3, "articles_failed": 1},
+        }
+
+        result = check_labeling_quality(MagicMock(), context)
+
+        assert result["partial_failure"] is True
+        assert result["metrics_source"] == "stdout"
+
+    def test_falls_back_to_stdout_when_no_run_rows(self):
+        """A dry run writes no run row, so stdout remains the only source."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {
+            "dry_run": True,
+            "labeling_started_at": "2026-09-05T13:30:00+00:00",
+            "labeling_output": {
+                "articles_processed": 10,
+                "articles_labeled": 4,
+                "articles_failed": 2,
+            },
+        }
+
+        result = check_labeling_quality(MagicMock(), context)
+
+        assert result["metrics_source"] == "stdout"
+        assert result["articles_processed"] == 10
+        assert result["error_rate"] == pytest.approx(0.2)
+
+    def test_database_error_falls_back_instead_of_raising(self):
+        """A metrics query failure must not take the workflow down."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {
+            "labeling_started_at": "2026-09-05T13:30:00+00:00",
+            "labeling_output": {"articles_processed": 8, "articles_failed": 1},
+        }
+
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes",
+            side_effect=RuntimeError("connection refused"),
+        ):
+            result = check_labeling_quality(MagicMock(), context)
+
+        assert result["metrics_source"] == "stdout"
+        assert result["articles_processed"] == 8
+
+    def test_high_error_rate_still_fires(self):
+        """The existing threshold behaviour is preserved on DB-sourced counts."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        outcomes = dict(self.OUTCOMES_20260905, articles_processed=10, articles_failed=5)
+        context = {"labeling_started_at": "2026-09-05T13:30:00+00:00"}
+
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes", return_value=outcomes
+        ):
+            result = check_labeling_quality(MagicMock(), context)
+
+        assert result["high_error_rate"] is True
+
+    def test_skipped_labeling_short_circuits(self):
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        result = check_labeling_quality(MagicMock(), {"labeling_skipped": True})
+
+        assert result == {"quality_check_skipped": True}
+
+    def test_fp_rate_uses_database_numerator(self):
+        """FP rate must not divide a stdout numerator by a database denominator.
+
+        Mixing them reproduces the #81 blind spot for high_fp_rate: on a retried
+        run the numerator is the no-op's 0 while the denominator is the real 12.
+        """
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        outcomes = dict(
+            self.OUTCOMES_20260905, articles_processed=10, articles_false_positive=8
+        )
+        context = {
+            "labeling_started_at": "2026-09-05T13:30:00+00:00",
+            "labeling_output": {"false_positives": 0},  # the retry's stdout
+        }
+
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes", return_value=outcomes
+        ):
+            result = check_labeling_quality(MagicMock(), context)
+
+        assert result["false_positives"] == 8
+        assert result["fp_rate"] == pytest.approx(0.8)
+        assert result["high_fp_rate"] is True
+
+    def test_degraded_metrics_flagged_when_no_run_row(self):
+        """A real run always writes a run row; falling back to stdout is a defect.
+
+        This is how a deploy that precedes migration 007 would otherwise
+        reproduce #81 — the run raises after doing the work, the retry finds
+        nothing, and stdout zeros get published as if authoritative.
+        """
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {
+            "dry_run": False,
+            "labeling_started_at": "2026-09-05T13:30:00+00:00",
+            "labeling_output": {"articles_processed": 0, "articles_failed": 0},
+        }
+
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes", return_value=None
+        ):
+            result = check_labeling_quality(MagicMock(), context)
+
+        assert result["metrics_degraded"] is True
+        assert result["partial_failure"] is True
+
+    def test_dry_run_stdout_is_not_degraded(self):
+        """A dry run legitimately writes no run row."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {
+            "dry_run": True,
+            "labeling_output": {"articles_processed": 5, "articles_failed": 0},
+        }
+
+        result = check_labeling_quality(MagicMock(), context)
+
+        assert result["metrics_degraded"] is False
+        assert result["metrics_source"] == "stdout"
+
+    def test_unfinished_run_is_not_read_as_zero(self):
+        """A killed run's zeros are the absence of a result, not a result."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        timed_out = {
+            "articles_processed": 0,
+            "articles_labeled": 0,
+            "articles_skipped": 0,
+            "articles_false_positive": 0,
+            "articles_failed": 0,
+            "articles_deduplicated": 0,
+            "estimated_cost_usd": 0.0,
+            "run_count": 0,
+            "incomplete_runs": 1,
+            "any_run_incomplete": True,
+            "counts_unavailable": True,
+        }
+        context = {"labeling_started_at": "2026-09-05T13:30:00+00:00"}
+
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes", return_value=timed_out
+        ):
+            result = check_labeling_quality(MagicMock(), context)
+
+        assert result["partial_failure"] is True
+        assert result["metrics_degraded"] is True
+
+
+class TestReportUsesAuthoritativeCounts:
+    """generate_report must publish the DB counts, not stdout's (issue #81)."""
+
+    def test_report_reads_counts_from_context(self):
+        from src.agent.workflows.daily_labeling import generate_report
+
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        context = {
+            # Written by check_labeling_quality from the database.
+            "articles_processed": 12,
+            "articles_labeled": 5,
+            "articles_skipped": 6,
+            "articles_failed": 1,
+            "articles_deduplicated": 1,
+            "estimated_cost_usd": 0.0348,
+            "metrics_source": "database",
+            "partial_failure": True,
+            # The retry's stdout, which must not be used for article counts.
+            "labeling_output": {
+                "articles_processed": 0,
+                "articles_labeled": 0,
+                "fp_classifier_calls": 13,
+            },
+        }
+
+        report = generate_report(workflow, context)["report"]
+
+        assert report["labeling"]["articles_processed"] == 12
+        assert report["labeling"]["articles_labeled"] == 5
+        assert report["labeling"]["articles_failed"] == 1
+        assert report["labeling"]["metrics_source"] == "database"
+        assert report["quality"]["partial_failure"] is True
+        # FP classifier counters are not persisted, so stdout is still correct.
+        assert report["labeling"]["fp_classifier_calls"] == 13
+
+    def test_skipped_and_false_positives_do_not_double_count(self):
+        """skipped + FP + labeled + failed must reconcile against processed.
+
+        `articles_skipped` used to be persisted as skipped + false positives
+        while the report also showed FPs separately, so a 12-article run printed
+        counts summing to 16.
+        """
+        from src.agent.workflows.daily_labeling import generate_report
+
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        context = {
+            "articles_processed": 12,
+            "articles_labeled": 5,
+            "articles_skipped": 2,
+            "false_positives": 4,
+            "articles_failed": 1,
+            "articles_deduplicated": 0,
+            "metrics_source": "database",
+        }
+
+        labeling = generate_report(workflow, context)["report"]["labeling"]
+
+        assert (
+            labeling["articles_labeled"]
+            + labeling["articles_skipped"]
+            + labeling["false_positives"]
+            + labeling["articles_failed"]
+        ) == labeling["articles_processed"]
+
+
+class TestLlmAnalysisStatsSource:
+    """The LLM narrative must not contradict the counts printed above it (#81)."""
+
+    def test_analysis_receives_database_counts(self):
+        from src.agent.workflows import daily_labeling
+
+        context = {
+            "articles_processed": 12,
+            "articles_labeled": 5,
+            "articles_skipped": 6,
+            "false_positives": 0,
+            "articles_failed": 1,
+            "error_rate": 1 / 12,
+            "fp_rate": 0.0,
+            "metrics_source": "database",
+            # The retry's stdout, which must not reach the model.
+            "labeling_output": {
+                "articles_processed": 0,
+                "articles_labeled": 0,
+                "articles_failed": 0,
+            },
+        }
+
+        captured = {}
+
+        class _Analyzer:
+            def __init__(self, *a, **k):
+                pass
+
+            def analyze_labeling_results(self, stats=None, **kwargs):
+                captured["stats"] = stats
+                return MagicMock(success=False, error="stopped after capture")
+
+        with patch.object(daily_labeling.agent_settings, "llm_analysis_enabled", True):
+            with patch.object(daily_labeling.agent_settings, "anthropic_api_key", "k"):
+                with patch.object(daily_labeling.agent_settings, "llm_error_threshold", 0.0):
+                    with patch(
+                        "src.agent.llm.LabelingAnalyzer", _Analyzer
+                    ), patch(
+                        "src.agent.llm.get_recent_labeling_samples",
+                        return_value=([{"id": "a"}], [], []),
+                    ):
+                        daily_labeling.run_llm_analysis(MagicMock(), context)
+
+        assert captured["stats"]["articles_processed"] == 12
+        assert captured["stats"]["articles_labeled"] == 5
+        assert captured["stats"]["articles_failed"] == 1
+
+
 class TestDailyLabelingSendNotification:
     """Tests for the daily_labeling send_notification step (#51)."""
 

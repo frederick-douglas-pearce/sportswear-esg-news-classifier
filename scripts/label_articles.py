@@ -33,10 +33,18 @@ from uuid import UUID
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.labeling.config import labeling_settings
+from src.labeling.config import (
+    EMBEDDING_COST_PER_1K_TOKENS,
+    LLM_INPUT_COST_PER_MTOK,
+    LLM_OUTPUT_COST_PER_MTOK,
+    labeling_settings,
+)
 from src.labeling.database import labeling_db
+from src.labeling.exit_codes import EXIT_FAILURE, EXIT_PARTIAL_FAILURE, EXIT_SUCCESS
 from src.labeling.pipeline import LabelingPipeline
 from src.labeling.prompt_manager import prompt_manager
+
+logger = logging.getLogger(__name__)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -155,12 +163,60 @@ def list_prompts() -> None:
         print()
 
 
+def exit_code_for(stats) -> int:
+    """Choose an exit code that says whether retrying this run is safe.
+
+    Labeling consumes the rows it selects, so the question is not "did anything
+    succeed" but "is there anything left for a retry to do" (issue #81).
+
+    Two counters answer it, and they must not be mixed:
+
+    - `articles_processed` counts articles that came back from
+      `_process_article` and got a terminal status — labeled, skipped, false
+      positive, or marked failed. All of them have left `pending`; a retry will
+      not see them again. Note this includes failures, so subtracting
+      `articles_failed` here would be wrong: an all-unparseable batch (issue
+      #82) is fully spent, not fully retryable.
+    - `articles_left_pending` counts articles whose processing *raised*. Those
+      never reached a status update and are still `pending`, so a retry can
+      still pick them up.
+
+    Args:
+        stats: LabelingStats from the pipeline
+
+    Returns:
+        EXIT_SUCCESS when nothing errored, EXIT_FAILURE when a retry still has
+        articles to work through, EXIT_PARTIAL_FAILURE when the batch is spent.
+    """
+    if not stats.errors:
+        return EXIT_SUCCESS
+
+    consumed = stats.articles_processed + stats.articles_deduplicated
+
+    if stats.articles_left_pending > 0:
+        # A retry has real work to do, and it can no longer erase this run's
+        # numbers — the workflow sums outcomes across every run row.
+        logger.warning(
+            f"{stats.articles_left_pending} article(s) still pending after errors; "
+            f"retry can still process them."
+        )
+        return EXIT_FAILURE
+
+    if consumed > 0:
+        logger.warning(
+            f"Partial failure: {consumed} article(s) consumed, "
+            f"{stats.articles_failed} failed, none left pending. "
+            f"Not retryable — the batch is spent."
+        )
+        return EXIT_PARTIAL_FAILURE
+
+    return EXIT_FAILURE
+
+
 def main() -> int:
     """Main entry point."""
     args = parse_args()
     setup_logging(args.verbose)
-
-    logger = logging.getLogger(__name__)
 
     # List prompts and exit
     if args.list_prompts:
@@ -177,7 +233,7 @@ def main() -> int:
         logger.error(
             "ANTHROPIC_API_KEY not set. Please set it in .env or environment."
         )
-        return 1
+        return EXIT_FAILURE
 
     if not args.skip_embedding and not labeling_settings.openai_api_key:
         logger.warning(
@@ -193,7 +249,7 @@ def main() -> int:
             article_ids = [UUID(args.article_id)]
         except ValueError:
             logger.error(f"Invalid article ID format: {args.article_id}")
-            return 1
+            return EXIT_FAILURE
 
     logger.info("Starting ESG Article Labeling")
     if args.dry_run:
@@ -250,16 +306,16 @@ def main() -> int:
                 # Estimate ~1500 input tokens and ~500 output tokens per skipped article
                 saved_input = stats.fp_classifier_skipped * 1500
                 saved_output = stats.fp_classifier_skipped * 500
-                saved_input_cost = (saved_input / 1_000_000) * 3.00
-                saved_output_cost = (saved_output / 1_000_000) * 15.00
+                saved_input_cost = (saved_input / 1_000_000) * LLM_INPUT_COST_PER_MTOK
+                saved_output_cost = (saved_output / 1_000_000) * LLM_OUTPUT_COST_PER_MTOK
                 saved_cost = saved_input_cost + saved_output_cost
                 print(f"Est. LLM cost saved:    ${saved_cost:.4f}")
 
         # Cost estimate
         if stats.input_tokens > 0 or stats.output_tokens > 0:
-            input_cost = (stats.input_tokens / 1_000_000) * 3.00
-            output_cost = (stats.output_tokens / 1_000_000) * 15.00
-            embedding_cost = (stats.embeddings_generated * 500 / 1000) * 0.00002
+            input_cost = (stats.input_tokens / 1_000_000) * LLM_INPUT_COST_PER_MTOK
+            output_cost = (stats.output_tokens / 1_000_000) * LLM_OUTPUT_COST_PER_MTOK
+            embedding_cost = (stats.embeddings_generated * 500 / 1000) * EMBEDDING_COST_PER_1K_TOKENS
             total_cost = input_cost + output_cost + embedding_cost
             print(f"Estimated cost:         ${total_cost:.4f}")
 
@@ -282,14 +338,14 @@ def main() -> int:
             if len(stats.errors) > 5:
                 print(f"    ... and {len(stats.errors) - 5} more")
 
-        return 0 if not stats.errors else 1
+        return exit_code_for(stats)
 
     except Exception as e:
         logger.error(f"Labeling failed: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
-        return 1
+        return EXIT_FAILURE
 
 
 if __name__ == "__main__":
