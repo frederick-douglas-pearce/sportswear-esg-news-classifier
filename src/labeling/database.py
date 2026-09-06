@@ -294,20 +294,27 @@ class LabelingDatabase:
         *,
         articles_labeled: int = 0,
         articles_skipped: int = 0,
+        articles_false_positive: int = 0,
         articles_failed: int = 0,
         articles_deduplicated: int = 0,
+        articles_left_pending: int = 0,
     ) -> None:
         """Update a labeling run with final statistics.
 
         The per-outcome counts are keyword-only: they were added after the
         positional signature was in use (issue #81).
+
+        `articles_skipped` excludes false positives — they get their own field
+        so a report can show both without double-counting.
         """
         run.completed_at = datetime.now(timezone.utc)
         run.articles_processed = articles_processed
         run.articles_labeled = articles_labeled
         run.articles_skipped = articles_skipped
+        run.articles_false_positive = articles_false_positive
         run.articles_failed = articles_failed
         run.articles_deduplicated = articles_deduplicated
+        run.articles_left_pending = articles_left_pending
         run.brands_labeled = brands_labeled
         run.chunks_created = chunks_created
         run.embeddings_generated = embeddings_generated

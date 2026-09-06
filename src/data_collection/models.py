@@ -232,8 +232,12 @@ class LabelingRun(Base):
     # script's stdout (issue #81)
     articles_labeled = Column(Integer, default=0)
     articles_skipped = Column(Integer, default=0)
+    articles_false_positive = Column(Integer, default=0)
     articles_failed = Column(Integer, default=0)
     articles_deduplicated = Column(Integer, default=0)
+    # Raised before any status update, so still pending and retryable —
+    # unlike articles_failed, which are spent
+    articles_left_pending = Column(Integer, default=0)
     brands_labeled = Column(Integer, default=0)
     chunks_created = Column(Integer, default=0)
     embeddings_generated = Column(Integer, default=0)

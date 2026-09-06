@@ -9,17 +9,27 @@
 ALTER TABLE labeling_runs
     ADD COLUMN IF NOT EXISTS articles_labeled INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS articles_skipped INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS articles_false_positive INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS articles_failed INTEGER DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS articles_deduplicated INTEGER DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS articles_deduplicated INTEGER DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS articles_left_pending INTEGER DEFAULT 0;
 
 COMMENT ON COLUMN labeling_runs.articles_labeled IS
     'Articles that received at least one brand label';
 COMMENT ON COLUMN labeling_runs.articles_skipped IS
-    'Articles processed but skipped (no ESG content, false positive, etc.)';
+    'Articles processed but skipped for lack of ESG content. Excludes false '
+    'positives, which have their own column so the report can show both '
+    'without double-counting.';
+COMMENT ON COLUMN labeling_runs.articles_false_positive IS
+    'Articles rejected as non-sportswear brand matches';
 COMMENT ON COLUMN labeling_runs.articles_failed IS
     'Articles that errored during processing';
 COMMENT ON COLUMN labeling_runs.articles_deduplicated IS
     'Articles dropped as title duplicates before processing';
+COMMENT ON COLUMN labeling_runs.articles_left_pending IS
+    'Articles whose processing raised before any status update, so they are '
+    'still pending and a retry can still pick them up. Distinct from '
+    'articles_failed, which have been marked failed and are spent.';
 
 -- Existing rows keep 0 for these columns. Historical runs cannot be
 -- reconstructed: the breakdown was never persisted anywhere.

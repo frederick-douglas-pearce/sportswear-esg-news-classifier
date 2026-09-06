@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 # Root directory for prompts (relative to project root)
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts" / "labeling"
 
+# LLM pricing per million tokens, used for cost estimates.
+#
+# One table, because the report now mixes sources: spend comes from
+# `labeling_runs.estimated_cost_usd` (written by `complete_labeling_run`) while
+# the FP pre-filter savings still come from the script's stdout. When those two
+# priced differently the same report could claim it saved more than it spent
+# (issue #81). Model-aware pricing is tracked in #54; these are Haiku 4.5 rates.
+LLM_INPUT_COST_PER_MTOK = 1.00
+LLM_OUTPUT_COST_PER_MTOK = 5.00
+EMBEDDING_COST_PER_1K_TOKENS = 0.00002
+
 
 def _get_prompt_version() -> str:
     """Get the prompt version to use.

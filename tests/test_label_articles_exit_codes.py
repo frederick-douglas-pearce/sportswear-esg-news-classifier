@@ -23,12 +23,40 @@ class TestExitCodeFor:
         stats = LabelingStats(articles_processed=13, articles_labeled=5, articles_skipped=8)
         assert exit_code_for(stats) == EXIT_SUCCESS
 
-    def test_no_work_at_all_is_retryable(self):
-        """Every article failed — the cause may be transient, so allow a retry."""
+    def test_every_article_raised_is_retryable(self):
+        """Raised articles never got a status, so they are still pending."""
+        stats = LabelingStats(
+            articles_processed=0,
+            articles_failed=3,
+            articles_left_pending=3,
+            errors=["connection refused"] * 3,
+        )
+        assert exit_code_for(stats) == EXIT_FAILURE
+
+    def test_every_article_failed_terminally_is_not_retryable(self):
+        """All responses unparseable (issue #82): spent, not retryable.
+
+        `articles_processed` counts these — they were marked `failed` and will
+        never be re-queued — so subtracting `articles_failed` from it would
+        wrongly conclude the batch is untouched and burn three retries on an
+        empty queue, whose clean exit then reports success.
+        """
         stats = LabelingStats(
             articles_processed=3,
             articles_failed=3,
-            errors=["connection refused"] * 3,
+            articles_left_pending=0,
+            errors=["Failed to parse LLM response"] * 3,
+        )
+        assert exit_code_for(stats) == EXIT_PARTIAL_FAILURE
+
+    def test_mixed_success_and_raised_stays_retryable(self):
+        """Half consumed, half still pending — the retry has real work to do."""
+        stats = LabelingStats(
+            articles_processed=6,
+            articles_labeled=6,
+            articles_failed=6,
+            articles_left_pending=6,
+            errors=["connection refused"] * 6,
         )
         assert exit_code_for(stats) == EXIT_FAILURE
 
