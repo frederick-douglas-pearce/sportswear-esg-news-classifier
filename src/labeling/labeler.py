@@ -28,6 +28,20 @@ from .prompt_manager import PromptManager, PromptVersion
 
 logger = logging.getLogger(__name__)
 
+# Characters that may legitimately follow the closing quote of a JSON string.
+STRUCTURAL_AFTER_STRING = frozenset(",}]:")
+
+
+def _json_error_context(json_str: str, pos: int, window: int = 80) -> str:
+    """Return the text surrounding a JSON parse error position.
+
+    Without this the only record of a malformed response is the error message,
+    which is not enough to tell whether the model went wrong or the parser did.
+    """
+    start = max(0, pos - window)
+    end = min(len(json_str), pos + window)
+    return repr(json_str[start:end])
+
 
 @dataclass
 class LabelingResult:
@@ -499,8 +513,11 @@ class ArticleLabeler:
             json_str = self._fix_json(json_str)
             try:
                 data = json.loads(json_str)
-            except json.JSONDecodeError:
-                logger.error("Failed to parse JSON even after fixing")
+            except json.JSONDecodeError as e2:
+                logger.error(
+                    f"Failed to parse JSON even after fixing: {e2}\n"
+                    f"Context: {_json_error_context(json_str, e2.pos)}"
+                )
                 return None
 
         # Validate and convert to Pydantic model
@@ -537,6 +554,14 @@ class ArticleLabeler:
 
     def _fix_json(self, json_str: str) -> str:
         """Attempt to fix common JSON issues."""
+        # Escape quotes the model left bare inside string values. Evidence
+        # excerpts are verbatim article text, so a quoted passage in the source
+        # is the most common way a response stops being valid JSON.
+        escaped = self._escape_interior_quotes(json_str)
+        if escaped != json_str:
+            logger.info("Escaped interior quotes in response before re-parsing")
+            json_str = escaped
+
         # Remove trailing commas
         json_str = re.sub(r",\s*}", "}", json_str)
         json_str = re.sub(r",\s*]", "]", json_str)
@@ -545,6 +570,61 @@ class ArticleLabeler:
         json_str = re.sub(r"(\{|\,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'\1"\2":', json_str)
 
         return json_str
+
+    def _escape_interior_quotes(self, json_str: str) -> str:
+        """Escape unescaped double quotes that appear inside JSON string values.
+
+        Evidence excerpts are copied verbatim out of article text, so a quoted
+        passage in the source arrives with a bare `"` mid-string and JSON ends
+        the string early. Example from a real response:
+
+            "I think the store expansion will slow down," Morningstar analyst ...
+
+        Walks the document tracking string state. Inside a string, a quote that
+        is not followed (past whitespace) by a structural character is interior
+        text and gets escaped; otherwise it closes the string.
+
+        Known limit: a quote that is both interior *and* followed by a comma
+        (`"He said "yes", loudly."`) reads as a close and the result stays
+        unparseable — the caller then returns None exactly as it does today.
+        """
+        out: list[str] = []
+        in_string = False
+        i = 0
+        length = len(json_str)
+
+        while i < length:
+            char = json_str[i]
+
+            if not in_string:
+                if char == '"':
+                    in_string = True
+                out.append(char)
+                i += 1
+                continue
+
+            if char == "\\":
+                # Preserve the escape sequence rather than re-interpreting it.
+                out.append(json_str[i : i + 2])
+                i += 2
+                continue
+
+            if char == '"':
+                nxt = i + 1
+                while nxt < length and json_str[nxt].isspace():
+                    nxt += 1
+                if nxt >= length or json_str[nxt] in STRUCTURAL_AFTER_STRING:
+                    in_string = False
+                    out.append(char)
+                else:
+                    out.append('\\"')
+                i += 1
+                continue
+
+            out.append(char)
+            i += 1
+
+        return "".join(out)
 
     def _fix_response_structure(self, data: dict) -> dict | None:
         """Attempt to fix the response data structure."""

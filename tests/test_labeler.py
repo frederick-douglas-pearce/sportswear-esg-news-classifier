@@ -640,6 +640,124 @@ class TestArticleLabelerFixJson:
             assert result == '{"arr": [1, 2, 3]}'
 
 
+class TestArticleLabelerEscapeInteriorQuotes:
+    """Tests for repairing unescaped quotes inside string values (issue #82)."""
+
+    @pytest.fixture
+    def labeler(self):
+        with patch("src.labeling.labeler.Anthropic"):
+            return ArticleLabeler(api_key="test-key")
+
+    def test_escapes_quote_followed_by_text(self, labeler):
+        """A quote mid-string should be escaped, not treated as a terminator."""
+        broken = '{"evidence": ["I think it will slow," Morningstar said."]}'
+        data = json.loads(labeler._escape_interior_quotes(broken))
+        assert data["evidence"] == ['I think it will slow," Morningstar said.']
+
+    def test_real_response_from_20260905(self, labeler):
+        """Regression: the exact excerpt that failed article e6ae677f."""
+        broken = (
+            '{"evidence": ['
+            '"Lululemon shares tumbled 18% to an eight-year low.",'
+            '"I think the store expansion will slow down," Morningstar analyst '
+            "David Swartz said, adding that cost cuts, management changes and a "
+            "possible operational 'realignment' can be expected.\"]}"
+        )
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(broken)
+
+        data = json.loads(labeler._escape_interior_quotes(broken))
+        assert len(data["evidence"]) == 2
+        assert data["evidence"][1].startswith('I think the store expansion will slow down,"')
+
+    def test_valid_json_is_unchanged(self, labeler):
+        """Well-formed JSON must survive the scanner byte-for-byte."""
+        valid = '{"a": "x", "b": ["y", "z"], "c": {"d": 1}, "e": null}'
+        assert labeler._escape_interior_quotes(valid) == valid
+
+    def test_already_escaped_quotes_are_preserved(self, labeler):
+        """An existing \\" must not be double-escaped."""
+        valid = '{"quote": "He said \\"hello\\" once."}'
+        result = labeler._escape_interior_quotes(valid)
+        assert json.loads(result)["quote"] == 'He said "hello" once.'
+
+    def test_backslash_escapes_preserved(self, labeler):
+        """Newline and backslash escapes pass through intact."""
+        valid = '{"path": "C:\\\\tmp", "text": "line1\\nline2"}'
+        data = json.loads(labeler._escape_interior_quotes(valid))
+        assert data["path"] == "C:\\tmp"
+        assert data["text"] == "line1\nline2"
+
+    def test_closing_quote_before_each_structural_char(self, labeler):
+        """Quotes followed by , } ] : all read as terminators."""
+        valid = '{"k": "v", "arr": ["a"], "obj": {"n": "m"}}'
+        assert labeler._escape_interior_quotes(valid) == valid
+
+    def test_quote_at_end_of_input(self, labeler):
+        """A trailing quote with nothing after it closes the string."""
+        assert labeler._escape_interior_quotes('"tail"') == '"tail"'
+
+    def test_known_limit_interior_quote_before_comma(self, labeler):
+        """Documents the heuristic's blind spot: still unparseable, never wrong.
+
+        `"yes",` reads as a terminator, so this stays broken and the caller
+        returns None — the same outcome as before the repair existed.
+        """
+        broken = '{"evidence": ["He said "yes", loudly."]}'
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(labeler._escape_interior_quotes(broken))
+
+    def test_fix_json_applies_the_repair(self, labeler):
+        """_fix_json wires the scanner in ahead of its regex passes."""
+        broken = '{"evidence": ["a," b."],}'
+        assert json.loads(labeler._fix_json(broken))["evidence"] == ['a," b.']
+
+    def test_parse_response_recovers_fenced_payload(self, labeler):
+        """End to end: fenced JSON with a bare quote parses into the model."""
+        response = (
+            "```json\n"
+            "{\n"
+            '  "brand_analyses": [{\n'
+            '    "brand": "Lululemon",\n'
+            '    "is_sportswear_brand": true,\n'
+            '    "categories": {\n'
+            '      "environmental": {"applies": false, "sentiment": null, "evidence": []},\n'
+            '      "social": {"applies": false, "sentiment": null, "evidence": []},\n'
+            '      "governance": {"applies": true, "sentiment": -1, "evidence": [\n'
+            '        "I think it will slow," an analyst said."\n'
+            "      ]},\n"
+            '      "digital_transformation": '
+            '{"applies": false, "sentiment": null, "evidence": []}\n'
+            "    },\n"
+            '    "confidence": 0.9,\n'
+            '    "reasoning": "Leadership transition."\n'
+            "  }],\n"
+            '  "article_summary": "Stock fell."\n'
+            "}\n"
+            "```\n\n"
+            "**Note on Nike:** mentioned only as a comparison."
+        )
+        parsed = labeler._parse_response(response)
+        assert parsed is not None
+        governance = parsed.brand_analyses[0].categories["governance"]
+        assert governance.evidence == ['I think it will slow," an analyst said.']
+
+
+class TestJsonErrorContext:
+    """Tests for the parse-failure diagnostic helper."""
+
+    def test_returns_window_around_position(self):
+        from src.labeling.labeler import _json_error_context
+
+        result = _json_error_context("abcdefghij", pos=5, window=2)
+        assert result == repr("defg")
+
+    def test_clamps_at_boundaries(self):
+        from src.labeling.labeler import _json_error_context
+
+        assert _json_error_context("abc", pos=0, window=50) == repr("abc")
+
+
 class TestArticleLabelerStats:
     """Tests for statistics tracking."""
 
