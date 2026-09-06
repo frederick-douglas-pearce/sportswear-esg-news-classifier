@@ -1,0 +1,6 @@
+[
+  {
+    "suffix": ".claude/specs/decisions.md",
+    "id_pattern": "^##\\s+(D\\d+(?:-[A-Za-z0-9]+)?)"
+  }
+]
