@@ -701,6 +701,11 @@ class LabelingPipeline:
                             stats.input_tokens,
                             stats.output_tokens,
                             status="success" if not stats.errors else "partial",
+                            articles_labeled=stats.articles_labeled,
+                            articles_skipped=stats.articles_skipped
+                            + stats.articles_false_positive,
+                            articles_failed=stats.articles_failed,
+                            articles_deduplicated=stats.articles_deduplicated,
                         )
 
             logger.info(
@@ -727,6 +732,11 @@ class LabelingPipeline:
                             stats.output_tokens,
                             status="failed",
                             error_message=str(e),
+                            articles_labeled=stats.articles_labeled,
+                            articles_skipped=stats.articles_skipped
+                            + stats.articles_false_positive,
+                            articles_failed=stats.articles_failed,
+                            articles_deduplicated=stats.articles_deduplicated,
                         )
             raise
 

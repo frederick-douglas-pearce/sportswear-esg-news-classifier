@@ -4,6 +4,51 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-05: Stop the labeling retry from erasing a run's results
+
+The `daily_labeling` report for 2026-09-05 read `0 processed / 0 labeled / 0 failed`
+for a run that had labeled 5 articles, skipped 6, deduplicated 1 and failed 1.
+
+**Mechanism.** One article (`e6ae677f`) failed with `Failed to parse LLM response`.
+`label_articles.py` returned `0 if not stats.errors else 1`, so a single bad article
+failed the whole script. The agent runner read exit 1 as a total failure and retried
+the identical command — but labeling consumes the rows it selects, so the retry found
+nothing pending, exited 0 in 2.25s, and its empty stdout replaced the real numbers.
+`check_labeling_quality` then derived `error_rate` from those zeros, which made
+`high_error_rate` unreachable on exactly the runs that had failures. The `labeling_runs`
+row held `status='partial'`, `articles_processed=12` the whole time; nothing read it.
+
+Present in **13 of the last 230 daily runs (~6%)**: 20260118, 20260123, 20260210,
+20260211, 20260212, 20260225, 20260307, 20260417, 20260419, 20260420, 20260423,
+20260617, 20260905.
+
+**Changes (issue #81):**
+- `scripts/label_articles.py` returns a distinct exit code (`2`) when some articles
+  completed and others errored. `src/labeling/exit_codes.py` holds the contract;
+  the runner accepts code 2 as final via `non_retryable_exit_codes`. Exit `1` still
+  means "nothing completed, a retry may help" and keeps its retries (issue #51).
+- `labeling_runs` gained `articles_labeled`, `articles_skipped`, `articles_failed`
+  and `articles_deduplicated` (migration `007_labeling_run_outcomes.sql`), so a run
+  row describes itself. `check_labeling_quality` and `generate_report` read those
+  columns instead of scraping stdout, and report which source they used. A dry run
+  writes no run row, so stdout remains the fallback.
+- Quality metrics now carry `partial_failure`, which fires on a run that did work
+  *and* errored even when the error rate is under the 10% threshold (1/12 was).
+- The runner logs the **tail** of stderr on failure, not the first 500 characters.
+  Tracebacks are at the end; the head captured only the startup banner, so the
+  original diagnosis had to be reproduced by hand.
+
+**Related (issue #82):** the parse failure itself — the model copied a quoted passage
+verbatim into an evidence excerpt, leaving an unescaped `"` mid-string. `_fix_json`
+handled trailing commas and unquoted keys only. It now escapes interior quotes ahead
+of those passes, and logs the text around the error position when parsing still fails.
+
+Replacing prose-JSON parsing with structured output is tracked in #83. Historical
+`labeling_runs` rows keep `0` in the new columns — the breakdown was never persisted
+and cannot be reconstructed.
+
+**Migration:** `psql $DATABASE_URL -f migrations/007_labeling_run_outcomes.sql`
+
 ### 2026-09-05: Recover LLM responses that quote the article verbatim
 
 Article `e6ae677f` failed labeling with `Failed to parse LLM response`. The model had

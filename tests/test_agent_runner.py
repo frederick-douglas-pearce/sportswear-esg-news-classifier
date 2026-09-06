@@ -12,6 +12,7 @@ import pytest
 from src.agent.runner import (
     ScriptResult,
     _parse_json_from_output,
+    _tail,
     run_export_training_data,
     run_export_website_feed,
     run_label_articles,
@@ -19,6 +20,7 @@ from src.agent.runner import (
     run_script,
     run_uv_script,
 )
+from src.labeling.exit_codes import EXIT_FAILURE, EXIT_PARTIAL_FAILURE
 
 
 @pytest.fixture
@@ -313,6 +315,90 @@ class TestRunLabelArticles:
 
             call_args = mock_run.call_args
             assert call_args[1]["timeout"] == 1800  # 30 minutes
+
+    def test_partial_failure_is_non_retryable(self, mock_agent_settings):
+        """Labeling must declare exit code 2 as non-retryable (issue #81)."""
+        with patch("src.agent.runner.run_uv_script") as mock_run:
+            mock_run.return_value = MagicMock(success=True)
+
+            run_label_articles()
+
+            codes = mock_run.call_args[1]["non_retryable_exit_codes"]
+            assert EXIT_PARTIAL_FAILURE in codes
+            assert EXIT_FAILURE not in codes
+
+
+class TestNonRetryableExitCodes:
+    """Tests for the non-retry contract (issue #81)."""
+
+    def test_non_retryable_code_returns_immediately(self, mock_agent_settings):
+        """A declared non-retryable code must not trigger a second attempt."""
+        call_count = 0
+
+        def mock_subprocess(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(returncode=EXIT_PARTIAL_FAILURE, stdout="", stderr="partial")
+
+        with patch("subprocess.run", side_effect=mock_subprocess):
+            with patch("time.sleep"):
+                result = run_script(
+                    ["partial_command"],
+                    non_retryable_exit_codes={EXIT_PARTIAL_FAILURE},
+                )
+
+        assert call_count == 1
+        assert result.success is False
+        assert result.exit_code == EXIT_PARTIAL_FAILURE
+
+    def test_other_codes_still_retry(self, mock_agent_settings):
+        """Transient failures keep their retries."""
+        call_count = 0
+
+        def mock_subprocess(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(returncode=EXIT_FAILURE, stdout="", stderr="boom")
+
+        with patch("subprocess.run", side_effect=mock_subprocess):
+            with patch("time.sleep"):
+                result = run_script(
+                    ["failing_command"],
+                    non_retryable_exit_codes={EXIT_PARTIAL_FAILURE},
+                )
+
+        assert call_count == 3  # 1 initial + 2 retries
+        assert result.exit_code == EXIT_FAILURE
+
+    def test_default_retries_everything(self, mock_agent_settings):
+        """Omitting the parameter preserves the previous behaviour."""
+        call_count = 0
+
+        def mock_subprocess(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return MagicMock(returncode=EXIT_PARTIAL_FAILURE, stdout="", stderr="partial")
+
+        with patch("subprocess.run", side_effect=mock_subprocess):
+            with patch("time.sleep"):
+                run_script(["partial_command"])
+
+        assert call_count == 3
+
+
+class TestTail:
+    """Tests for the stderr tail helper (issue #81)."""
+
+    def test_short_text_unchanged(self):
+        assert _tail("boom", limit=100) == "boom"
+
+    def test_keeps_the_end_not_the_start(self):
+        """The traceback is at the end of stderr, which is what must survive."""
+        text = "banner\n" + ("x" * 500) + "\nTraceback: the actual error"
+        result = _tail(text, limit=40)
+        assert result.endswith("Traceback: the actual error")
+        assert "banner" not in result
+        assert "truncated" in result
 
 
 class TestRunExportTrainingData:

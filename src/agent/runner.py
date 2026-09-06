@@ -11,9 +11,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.labeling.exit_codes import NON_RETRYABLE_EXIT_CODES
+
 from .config import agent_settings
 
 logger = logging.getLogger(__name__)
+
+# How much stderr to keep in the log when a command fails. Tracebacks and error
+# summaries land at the *end* of the stream, so logging the head (as this did
+# before issue #81) captured only the startup banner and threw the diagnosis away.
+STDERR_LOG_CHARS = 4000
+
+
+def _tail(text: str, limit: int = STDERR_LOG_CHARS) -> str:
+    """Return the last `limit` characters, marking the text as truncated."""
+    if len(text) <= limit:
+        return text
+    return f"...[{len(text) - limit} chars truncated]...\n{text[-limit:]}"
 
 
 def _find_uv_path() -> str:
@@ -99,6 +113,7 @@ def run_script(
     dry_run: bool | None = None,
     cwd: Path | None = None,
     parse_json_output: bool = False,
+    non_retryable_exit_codes: frozenset[int] | set[int] | None = None,
 ) -> ScriptResult:
     """Execute a script with retry logic and output capture.
 
@@ -110,6 +125,11 @@ def run_script(
         dry_run: If True, add --dry-run flag (default: agent_settings.dry_run)
         cwd: Working directory (default: agent_settings.project_root)
         parse_json_output: If True, attempt to parse last JSON object from stdout
+        non_retryable_exit_codes: Exit codes to accept as final instead of
+            retrying. A script that consumes the work it selects (labeling) must
+            be able to report "some of it succeeded, do not run me again" —
+            otherwise the retry finds an empty batch and its zeros overwrite the
+            real results (issue #81).
 
     Returns:
         ScriptResult with execution details
@@ -119,6 +139,7 @@ def run_script(
     retry_delay = retry_delay or agent_settings.retry_delay_seconds
     dry_run = dry_run if dry_run is not None else agent_settings.dry_run
     cwd = cwd or agent_settings.project_root
+    non_retryable_exit_codes = non_retryable_exit_codes or frozenset()
 
     # Add --dry-run flag if enabled and not already present
     if dry_run and "--dry-run" not in command:
@@ -166,9 +187,17 @@ def run_script(
 
             # Command failed
             logger.warning(
-                f"Command failed (exit code: {result.returncode}): {result.stderr[:500]}"
+                f"Command failed (exit code: {result.returncode}):\n"
+                f"{_tail(result.stderr)}"
             )
             last_result = script_result
+
+            if result.returncode in non_retryable_exit_codes:
+                logger.warning(
+                    f"Exit code {result.returncode} is non-retryable — "
+                    f"returning after attempt {attempt + 1}"
+                )
+                return script_result
 
         except subprocess.TimeoutExpired:
             duration = time.time() - start_time
@@ -296,6 +325,9 @@ def run_label_articles(
         args=args,
         dry_run=dry_run if not stats_only else False,
         timeout=1800,  # 30 minutes for labeling
+        # A partial failure means the batch has already been consumed; retrying
+        # it reports zeros over the real results (issue #81).
+        non_retryable_exit_codes=NON_RETRYABLE_EXIT_CODES,
     )
 
 

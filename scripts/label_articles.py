@@ -35,8 +35,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.labeling.config import labeling_settings
 from src.labeling.database import labeling_db
+from src.labeling.exit_codes import EXIT_FAILURE, EXIT_PARTIAL_FAILURE, EXIT_SUCCESS
 from src.labeling.pipeline import LabelingPipeline
 from src.labeling.prompt_manager import prompt_manager
+
+logger = logging.getLogger(__name__)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -155,12 +158,41 @@ def list_prompts() -> None:
         print()
 
 
+def exit_code_for(stats) -> int:
+    """Choose an exit code that says whether retrying this run is safe.
+
+    Labeling consumes the rows it selects: a processed article is no longer
+    pending. So a batch that did *any* work cannot be retried — the second run
+    finds nothing and its empty stats replace the real ones (issue #81).
+
+    Args:
+        stats: LabelingStats from the pipeline
+
+    Returns:
+        EXIT_SUCCESS when nothing errored, EXIT_PARTIAL_FAILURE when some
+        articles completed and others did not, EXIT_FAILURE when nothing
+        completed and a retry may still help.
+    """
+    if not stats.errors:
+        return EXIT_SUCCESS
+
+    completed = (
+        stats.articles_processed - stats.articles_failed + stats.articles_deduplicated
+    )
+    if completed > 0:
+        logger.warning(
+            f"Partial failure: {completed} article(s) completed, "
+            f"{stats.articles_failed} failed. Not retryable — the batch is spent."
+        )
+        return EXIT_PARTIAL_FAILURE
+
+    return EXIT_FAILURE
+
+
 def main() -> int:
     """Main entry point."""
     args = parse_args()
     setup_logging(args.verbose)
-
-    logger = logging.getLogger(__name__)
 
     # List prompts and exit
     if args.list_prompts:
@@ -177,7 +209,7 @@ def main() -> int:
         logger.error(
             "ANTHROPIC_API_KEY not set. Please set it in .env or environment."
         )
-        return 1
+        return EXIT_FAILURE
 
     if not args.skip_embedding and not labeling_settings.openai_api_key:
         logger.warning(
@@ -193,7 +225,7 @@ def main() -> int:
             article_ids = [UUID(args.article_id)]
         except ValueError:
             logger.error(f"Invalid article ID format: {args.article_id}")
-            return 1
+            return EXIT_FAILURE
 
     logger.info("Starting ESG Article Labeling")
     if args.dry_run:
@@ -282,14 +314,14 @@ def main() -> int:
             if len(stats.errors) > 5:
                 print(f"    ... and {len(stats.errors) - 5} more")
 
-        return 0 if not stats.errors else 1
+        return exit_code_for(stats)
 
     except Exception as e:
         logger.error(f"Labeling failed: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
-        return 1
+        return EXIT_FAILURE
 
 
 if __name__ == "__main__":

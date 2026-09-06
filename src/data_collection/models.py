@@ -228,6 +228,12 @@ class LabelingRun(Base):
     started_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     completed_at = Column(DateTime(timezone=True))
     articles_processed = Column(Integer, default=0)
+    # Per-outcome breakdown, so a run row describes itself without needing the
+    # script's stdout (issue #81)
+    articles_labeled = Column(Integer, default=0)
+    articles_skipped = Column(Integer, default=0)
+    articles_failed = Column(Integer, default=0)
+    articles_deduplicated = Column(Integer, default=0)
     brands_labeled = Column(Integer, default=0)
     chunks_created = Column(Integer, default=0)
     embeddings_generated = Column(Integer, default=0)
