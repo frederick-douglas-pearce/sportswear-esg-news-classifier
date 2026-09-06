@@ -22,5 +22,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "dev-loop@claude-code-loop": true
   }
 }
