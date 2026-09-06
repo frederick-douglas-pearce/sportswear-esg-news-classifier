@@ -4,6 +4,43 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-05: Recover LLM responses that quote the article verbatim
+
+Article `e6ae677f` failed labeling with `Failed to parse LLM response`. The model had
+copied a quoted passage straight out of the article into an evidence excerpt:
+
+```
+"I think the store expansion will slow down," Morningstar analyst David Swartz said, ...
+```
+
+The article's opening quote mark merged with the JSON string opener, leaving a bare
+`"` after `slow down,`. JSON ends the string there and chokes on ` Morningstar`.
+`_fix_json` only repaired trailing commas and unquoted keys, so the whole response
+was discarded. Evidence excerpts are verbatim article text, which makes this the
+malformation most likely to recur.
+
+**Changes (issue #82):**
+- `_escape_interior_quotes` walks the document tracking string state. A quote not
+  followed (past whitespace) by `,` `}` `]` `:` or `"` is interior text and gets
+  escaped; otherwise it closes the string.
+- `_recover_json` tries that repair alone before the full `_fix_json`. The regex
+  passes are not string-aware — the unquoted-key pattern rewrites `, revenue:` inside
+  a string value — so they are a fallback, which recovers documents the combined pass
+  destroyed.
+- Parse failures log the text around the error position. The first failure is logged
+  against the model's original output, since repairs shift every offset after the
+  edit and a window from repaired text can point at parser-introduced damage.
+
+**Why `"` is a terminator.** Valid JSON never places two strings side by side, so
+including it costs nothing on well-formed input. Excluding it made `["a" "b"]` — a
+dropped comma — escape both inner quotes, merge the two excerpts into one corrupted
+string, and *validate*, sending a garbled excerpt to the published feed. Failing to
+parse is recoverable; silently rewriting an excerpt is not.
+
+A quote that is both interior and followed by one of those characters (`"He said
+"yes", loudly."`) still defeats the heuristic. It stays unparseable rather than
+parsing wrongly. Structured output, which removes the class, is tracked in #83.
+
 ### 2026-07-01: Migrate labeling model to Claude Haiku 4.5 (cost downgrade)
 
 Migrated the labeling model from Claude Sonnet 4.6 (`claude-sonnet-4-6`) to Claude

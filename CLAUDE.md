@@ -487,6 +487,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-05**: JSON parser recovers LLM responses that quote the article verbatim - interior-quote escaping, staged repair, error-position logging (#82)
 - **2026-02-26**: Workflow learning ↔ experiment log bridge - decision extraction from narration, KB seeding, heuristic CLI, replay-time knowledge consultation
 - **2026-02-26**: Experiment log workflow integration - automatic experiment tracking in model training workflow with LLM reflection
 - **2026-02-26**: Experiment log schema - YAML-based experiment store with RL-parallel structure (state/action/observation/reward/reflection)

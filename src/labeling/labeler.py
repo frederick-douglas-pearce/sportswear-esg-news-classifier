@@ -28,6 +28,26 @@ from .prompt_manager import PromptManager, PromptVersion
 
 logger = logging.getLogger(__name__)
 
+# Characters that may legitimately follow the closing quote of a JSON string.
+#
+# `"` is in this set even though valid JSON never puts two strings side by side.
+# That is the point: `["a" "b"]` (a dropped comma, one of the most common ways a
+# model breaks JSON) would otherwise be read as one string with two interior
+# quotes and silently merged into a single corrupted excerpt that validates.
+# Treating `"` as a terminator makes that case stay unparseable instead.
+STRUCTURAL_AFTER_STRING = frozenset(",}]:\"")
+
+
+def _json_error_context(json_str: str, pos: int, window: int = 80) -> str:
+    """Return the text surrounding a JSON parse error position.
+
+    Without this the only record of a malformed response is the error message,
+    which is not enough to tell whether the model went wrong or the parser did.
+    """
+    start = max(0, pos - window)
+    end = min(len(json_str), pos + window)
+    return repr(json_str[start:end])
+
 
 @dataclass
 class LabelingResult:
@@ -494,13 +514,15 @@ class ArticleLabeler:
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError as e:
-            logger.warning(f"JSON parse error: {e}")
-            # Try to fix common issues
-            json_str = self._fix_json(json_str)
-            try:
-                data = json.loads(json_str)
-            except json.JSONDecodeError:
-                logger.error("Failed to parse JSON even after fixing")
+            # Log against the model's own output. Repairs rewrite the document
+            # and shift every offset after the edit, so a window taken from the
+            # repaired text can point at damage the parser introduced.
+            logger.warning(
+                f"JSON parse error: {e}\n"
+                f"Context: {_json_error_context(json_str, e.pos)}"
+            )
+            data = self._recover_json(json_str)
+            if data is None:
                 return None
 
         # Validate and convert to Pydantic model
@@ -516,6 +538,46 @@ class ArticleLabeler:
                 except Exception as e2:
                     logger.error(f"Failed to validate fixed data: {e2}")
             return None
+
+    def _recover_json(self, json_str: str) -> dict | None:
+        """Try increasingly invasive repairs, returning the first that parses.
+
+        Ordered least-destructive first. `_escape_interior_quotes` only inserts
+        backslashes inside strings; the regex passes in `_fix_json` are not
+        string-aware and can rewrite text inside a value (the unquoted-key
+        pattern turns `"Nike said, revenue: up"` into `"Nike said,"revenue": up"`),
+        so they are a fallback rather than the first move.
+
+        Returns the parsed object, or None if nothing recovered it.
+        """
+        attempts = (
+            ("escaped interior quotes", self._escape_interior_quotes(json_str)),
+            ("full repair", self._fix_json(json_str)),
+        )
+
+        last_error: json.JSONDecodeError | None = None
+        last_candidate = json_str
+
+        for label, candidate in attempts:
+            if candidate == json_str:
+                continue  # This repair changed nothing; the plain parse already failed.
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError as e:
+                last_error, last_candidate = e, candidate
+                continue
+            logger.info(f"Recovered malformed JSON via {label}")
+            return data
+
+        if last_error is not None:
+            logger.error(
+                f"Failed to parse JSON even after fixing: {last_error}\n"
+                f"Context (after repair): "
+                f"{_json_error_context(last_candidate, last_error.pos)}"
+            )
+        else:
+            logger.error("Failed to parse JSON; no repair altered the response")
+        return None
 
     def _extract_json(self, text: str) -> str | None:
         """Extract JSON from text, handling markdown code blocks."""
@@ -537,6 +599,14 @@ class ArticleLabeler:
 
     def _fix_json(self, json_str: str) -> str:
         """Attempt to fix common JSON issues."""
+        # Escape quotes the model left bare inside string values. Evidence
+        # excerpts are verbatim article text, so a quoted passage in the source
+        # is the most common way a response stops being valid JSON.
+        escaped = self._escape_interior_quotes(json_str)
+        if escaped != json_str:
+            logger.info("Escaped interior quotes in response before re-parsing")
+            json_str = escaped
+
         # Remove trailing commas
         json_str = re.sub(r",\s*}", "}", json_str)
         json_str = re.sub(r",\s*]", "]", json_str)
@@ -545,6 +615,71 @@ class ArticleLabeler:
         json_str = re.sub(r"(\{|\,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'\1"\2":', json_str)
 
         return json_str
+
+    def _escape_interior_quotes(self, json_str: str) -> str:
+        """Escape unescaped double quotes that appear inside JSON string values.
+
+        Evidence excerpts are copied verbatim out of article text, so a quoted
+        passage in the source arrives with a bare `"` mid-string and JSON ends
+        the string early. Example from a real response:
+
+            "I think the store expansion will slow down," Morningstar analyst ...
+
+        Walks the document tracking string state. Inside a string, a quote that
+        is not followed (past whitespace) by a character in
+        `STRUCTURAL_AFTER_STRING` is interior text and gets escaped; otherwise
+        it closes the string.
+
+        Known limit: an interior quote followed by any of `, } ] : "` reads as a
+        terminator, so these stay unparseable and the caller returns None
+        exactly as it did before this repair existed:
+
+            "He said "yes", loudly."          # interior quote, then a comma
+            "the report titled "Impact 2030": a review"   # then a colon
+
+        That is the intended direction. The heuristic cannot distinguish those
+        from a genuine close, and guessing "interior" would merge two array
+        elements across a dropped comma into one corrupted excerpt that
+        validates and reaches the published feed. Failing to parse is
+        recoverable; silently rewriting an excerpt is not.
+        """
+        out: list[str] = []
+        in_string = False
+        i = 0
+        length = len(json_str)
+
+        while i < length:
+            char = json_str[i]
+
+            if not in_string:
+                if char == '"':
+                    in_string = True
+                out.append(char)
+                i += 1
+                continue
+
+            if char == "\\":
+                # Preserve the escape sequence rather than re-interpreting it.
+                out.append(json_str[i : i + 2])
+                i += 2
+                continue
+
+            if char == '"':
+                nxt = i + 1
+                while nxt < length and json_str[nxt].isspace():
+                    nxt += 1
+                if nxt >= length or json_str[nxt] in STRUCTURAL_AFTER_STRING:
+                    in_string = False
+                    out.append(char)
+                else:
+                    out.append('\\"')
+                i += 1
+                continue
+
+            out.append(char)
+            i += 1
+
+        return "".join(out)
 
     def _fix_response_structure(self, data: dict) -> dict | None:
         """Attempt to fix the response data structure."""
