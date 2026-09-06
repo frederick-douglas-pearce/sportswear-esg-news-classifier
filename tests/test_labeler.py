@@ -707,6 +707,99 @@ class TestArticleLabelerEscapeInteriorQuotes:
         with pytest.raises(json.JSONDecodeError):
             json.loads(labeler._escape_interior_quotes(broken))
 
+    def test_known_limit_interior_quote_before_colon(self, labeler):
+        """The colon blind spot fails closed the same way a comma does."""
+        broken = '{"evidence": ["the report titled "Impact 2030": a review"]}'
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(labeler._escape_interior_quotes(broken))
+
+    def test_dropped_comma_between_elements_fails_closed(self, labeler):
+        """A missing comma must not merge two excerpts into one corrupted string.
+
+        Regression for the fail-open case: with `"` absent from
+        STRUCTURAL_AFTER_STRING both inner quotes read as interior text, the two
+        array elements collapse into a single string, and the result *validates*
+        — sending a garbled excerpt to the public feed. It must stay unparseable.
+        """
+        broken = (
+            '{"evidence": ["Nike cut emissions by 30%." '
+            '"The company sourced 96% recycled polyester."]}'
+        )
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(labeler._escape_interior_quotes(broken))
+        assert labeler._recover_json(broken) is None
+
+    def test_dropped_comma_across_a_newline_fails_closed(self, labeler):
+        """Same case with the elements on separate lines, as a model would emit."""
+        broken = '{"evidence": [\n  "first excerpt."\n  "second excerpt."\n]}'
+        assert labeler._recover_json(broken) is None
+
+    def test_quote_terminator_does_not_break_the_motivating_case(self, labeler):
+        """Adding `"` as a terminator must not cost us the bug we set out to fix."""
+        broken = (
+            '{"evidence": ["Lululemon shares tumbled 18%.",'
+            '"I think the store expansion will slow down," Morningstar analyst '
+            'David Swartz said."]}'
+        )
+        data = labeler._recover_json(broken)
+        assert data is not None
+        assert len(data["evidence"]) == 2
+        assert data["evidence"][1].startswith('I think the store expansion will slow down,"')
+
+
+class TestRecoverJson:
+    """Tests for the staged repair ladder."""
+
+    @pytest.fixture
+    def labeler(self):
+        with patch("src.labeling.labeler.Anthropic"):
+            return ArticleLabeler(api_key="test-key")
+
+    def test_prefers_the_least_invasive_repair(self, labeler):
+        """Quote escaping alone should win before the non-string-aware regexes run.
+
+        `_fix_json`'s unquoted-key pattern matches `, <identifier>:` anywhere,
+        including inside a string value, and rewrites it to `,"<identifier>":`.
+        On this input that mangling makes the document unparseable, so the
+        ladder has to stop at the escape-only candidate to recover it at all.
+        """
+        broken = '{"evidence": ["Q1," he said, revenue: up 5 percent."]}'
+
+        # Escaping alone succeeds; the full repair destroys the same document.
+        assert json.loads(labeler._escape_interior_quotes(broken)) is not None
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(labeler._fix_json(broken))
+
+        assert labeler._recover_json(broken) == {
+            "evidence": ['Q1," he said, revenue: up 5 percent.']
+        }
+
+    def test_falls_through_to_full_repair(self, labeler):
+        """A trailing comma needs the regex pass, which escaping alone won't fix."""
+        broken = '{"evidence": ["a", "b",]}'
+        assert labeler._recover_json(broken) == {"evidence": ["a", "b"]}
+
+    def test_returns_none_when_nothing_helps(self, labeler):
+        assert labeler._recover_json('{"evidence": [') is None
+
+    def test_logs_original_context_on_first_failure(self, labeler, caplog):
+        """The first diagnostic must describe the model's output, not the repair.
+
+        Repairs shift every offset after the edit, so a window taken from the
+        repaired text can point at parser-introduced damage (issue #82).
+        """
+        broken = '{"evidence": ["I think it will slow," an analyst said."]}'
+
+        with caplog.at_level("WARNING", logger="src.labeling.labeler"):
+            labeler._parse_response(broken)
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("JSON parse error" in r.message for r in warnings)
+        assert any("Context:" in r.message for r in warnings)
+        # The window is cut from the unrepaired text, so it has no backslashes.
+        context_line = next(r.message for r in warnings if "Context:" in r.message)
+        assert "\\\\\"" not in context_line
+
     def test_fix_json_applies_the_repair(self, labeler):
         """_fix_json wires the scanner in ahead of its regex passes."""
         broken = '{"evidence": ["a," b."],}'
