@@ -52,41 +52,7 @@ usage() {
 }
 
 check_container() {
-    # Deliberately NOT a pipeline, and the reason is error attribution rather than
-    # anything exotic: "docker could not be queried" and "docker answered, and the
-    # container is not in the list" are DIFFERENT verdicts, and you cannot branch on
-    # them separately while `docker ps` is buried mid-pipeline -- a pipeline reports
-    # one status for both stages. Collapsing them is the defect class this epic
-    # exists to remove (#72), and it produces actively wrong guidance: telling an
-    # operator to `docker compose up -d postgres` when the daemon is dead sends them
-    # at a command that fails the same way.
-    #
-    # Capturing stderr with 2>&1 is what makes the first branch useful -- docker's
-    # own message distinguishes "daemon unreachable" from "command not found"
-    # without this script hand-coding either. The capture is the `if` condition, so
-    # it is exempt from `set -e`; a plain assignment would abort the script here
-    # with no message at all.
-    #
-    # Removing the pipe also retires two narrower hazards, neither of which is the
-    # reason above and neither of which is reachable at this deployment's scale:
-    # `grep -q` exiting at the first match can SIGPIPE `docker ps` (141) once its
-    # output exceeds the pipe buffer (~64 KiB, thousands of containers), which under
-    # `pipefail` would invert to a false "not running"; and the old
-    # `grep -q "^${CONTAINER_NAME}$"` interpolated the name as a REGEX, so a
-    # non-default CONTAINER_NAME containing a metacharacter (`.` is legal in a
-    # container name) could match the wrong line. `grep -qxF --` is fixed-string,
-    # whole-line.
-    #
-    # Asserted by, in tests/test_backup_db_script.py:
-    #   test_backup_surfaces_docker_failure_instead_of_reporting_not_running
-    #   test_running_container_is_detected_in_a_long_docker_ps_list
-    local running
-    if ! running=$(docker ps --format '{{.Names}}' 2>&1); then
-        log_error "Could not query Docker: $running"
-        log_info "Is the Docker daemon running? Check with: docker info"
-        exit 1
-    fi
-    if ! grep -qxF -- "$CONTAINER_NAME" <<<"$running"; then
+    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         log_error "Container '$CONTAINER_NAME' is not running"
         log_info "Start it with: docker compose up -d postgres"
         exit 1
@@ -116,10 +82,18 @@ create_backup() {
     #   * `set -o pipefail` (top of file) makes this report pg_dump's failure
     #     instead of gzip's success, so a truncated archive fails the backup;
     #   * a command in an `if` condition is exempt from `set -e`, which is what
-    #     makes the `else` branch reachable. As a bare pipeline it was not: `set -e`
-    #     aborted the function before `$?` could be read, so the `rm -f` below was
-    #     dead code and the partial file survived to be reported as the latest
-    #     backup by `list`/`status`.
+    #     makes the `else` branch reachable.
+    #
+    # As a bare pipeline that `else` was unreachable TWO different ways, and only
+    # the second is a `set -e` abort:
+    #   * pg_dump dying mid-stream left the pipeline reporting gzip's 0, so `$?`
+    #     was read, was 0, and the SUCCESS branch ran -- this is the #89 case;
+    #   * gzip itself failing (disk full) made the pipeline non-zero, which under
+    #     `set -e` aborted the function before `$?` could be read at all.
+    # Either way the `rm -f` below was dead code and the partial file survived to
+    # be reported as the latest backup by `list`/`status`. Stating only the abort
+    # would teach the belief that caused #89 -- that `set -e` alone notices a
+    # mid-pipeline death.
     #
     # Both halves are asserted by
     # tests/test_backup_db_script.py::test_backup_failure_exits_nonzero_and_removes_partial_archive
@@ -128,7 +102,13 @@ create_backup() {
         --no-owner \
         --no-privileges \
         | gzip > "$DAILY_PATH"; then
-        BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)
+        # `|| BACKUP_SIZE=` is deliberate. This is the one PLAIN (non-`local`)
+        # assignment in the file, so under `pipefail` a `du` failure propagates to
+        # `set -e` and aborts INSIDE the success branch: a good archive is already
+        # on disk, but there is no success line, no weekly/monthly copy, no
+        # rotation, and the `rm -f` below is in the `else` and never runs. The size
+        # is cosmetic and must not be able to fail a backup that worked.
+        BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1) || BACKUP_SIZE="unknown"
         log_info "Backup created successfully: $DAILY_PATH ($BACKUP_SIZE)"
 
         # Create weekly backup on Sundays

@@ -13,33 +13,29 @@ rotation ran, and `list`/`status` reported the partial file as the latest good b
 shape on the restore path printed "Restore completed successfully!" over partially-loaded data.
 
 **The second half, which `pipefail` alone does not fix.** The `if [ $? -eq 0 ]` handlers were
-unreachable: under `set -e` a non-zero pipeline aborts the function before `$?` is read, so the
-`else` branch -- including the `rm -f "$DAILY_PATH"` cleanup -- was dead code. Adding `pipefail`
-makes the script abort, which skips that `else` just the same; the failure gets louder and the
-truncated file stays on disk. Each of the three pipelines is now the `if` **condition**, which is
-exempt from `set -e`, so the cleanup branch actually runs.
+unreachable -- by two different routes, and only one of them is a `set -e` abort. When `pg_dump`
+died the pipeline reported `gzip`'s 0, so `$?` was read, was 0, and the *success* branch ran; when
+`gzip` itself failed the pipeline was non-zero and `set -e` aborted before `$?` could be read. The
+first is the case this fix is about. Either way the `else` -- including the `rm -f "$DAILY_PATH"`
+cleanup -- was dead code, so adding `pipefail` on its own would only make the failure louder while
+leaving the truncated file on disk. Each of the three pipelines is now the `if` **condition**,
+which is exempt from `set -e`, so the cleanup branch actually runs.
 
 Also: the pre-restore safety copy aborts the restore and removes its partial file rather than
-proceeding; and the `ls *.sql.gz | awk` listing is guarded with `|| true`, the one read-only
-pipeline `pipefail` would newly *abort* (its enclosing guard tests directory non-emptiness, not the
-glob). The `local var=$(cmd | cmd)` sites in `rotate`/`status` are unaffected -- `local` returns
-its own exit status, so the pipeline's never reaches `set -e`.
+proceeding; the `ls *.sql.gz | awk` listing is guarded with `|| true`, the one read-only pipeline
+`pipefail` would newly abort; and `BACKUP_SIZE=$(du -h ... | cut -f1)` is guarded with
+`|| BACKUP_SIZE="unknown"`. That last one is the subtle site: it is the only *plain* assignment in
+the script, so under `pipefail` a `du` failure would abort inside the success branch and invert the
+invariant this change exists to establish -- a good archive on disk, a non-zero exit, no rotation,
+and the cleanup unreachable in the `else`. The `local var=$(cmd | cmd)` sites in `rotate` and
+`status` are unaffected: `local` returns its own exit status, so the pipeline's never reaches
+`set -e`.
 
-`check_container` also stopped being a pipeline, and the reason is error attribution rather than
-`pipefail`. "Docker could not be queried" and "docker answered, and the container is absent" are
-different verdicts, and a pipeline reports one status for both stages -- so the script told an
-operator to `docker compose up -d postgres` when the daemon was dead, which fails the same way.
-It now branches on the query's own status and surfaces docker's message.
-
-Removing the pipe retires two narrower hazards as well, both stated at their real size. The old
-`grep -q "^${CONTAINER_NAME}$"` interpolated the container name as a *regex*; unreachable with the
-default name, but `.` is legal in a container name, so a non-default one could match the wrong line
-(a false positive, not data loss). And `grep -q` exiting at the first match can SIGPIPE `docker ps`,
-which `pipefail` would turn into a false "not running" -- real in principle, but it needs `docker ps`
-output above the ~64 KiB pipe buffer (thousands of containers), so it would not have fired here. An
-earlier draft of this entry called that an averted cron failure; it was not, and in an epic about
-work that reports success it did not achieve, the claim had to be corrected rather than quietly
-dropped.
+`check_container`'s `docker ps | grep -q` also changes behaviour under `pipefail` -- it is a change
+of *value* rather than an abort, since there the pipeline's status is the branch condition. It is
+checked, measured and filed as #93 rather than fixed here: the inversion needs `docker ps` output
+above the ~64 KiB pipe buffer (measured, this host emits about 48 bytes for three containers), and
+rewriting it is a behaviour change none of this issue's acceptance criteria ask for.
 
 Instance 7 of the `silent-success` class (#72), and the only one whose outcome is data loss rather
 than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` on `PATH`

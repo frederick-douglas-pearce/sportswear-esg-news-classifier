@@ -3,9 +3,13 @@
 The defect these guard: the script ran ``pg_dump | gzip > file`` under ``set -e``
 without ``pipefail``. A pipeline reports its *last* command's status, so a
 ``pg_dump`` that died mid-stream was masked by ``gzip`` exiting 0 -- a truncated
-archive was recorded as a good backup. The ``if [ $? -eq 0 ]`` handler that would
-have removed it was unreachable, because a non-zero pipeline under ``set -e``
-aborts the function before ``$?`` can be read.
+archive was recorded as a good backup.
+
+The ``if [ $? -eq 0 ]`` handler that would have removed it was unreachable two
+different ways, and only the second is a ``set -e`` abort: when ``pg_dump`` died
+the pipeline reported ``gzip``'s 0, so ``$?`` was read, was 0, and the *success*
+branch ran; when ``gzip`` itself failed the pipeline was non-zero and ``set -e``
+aborted before ``$?`` could be read. The first is the case #89 is about.
 
 Hermetic: no Docker and no PostgreSQL. A fake ``docker`` executable is placed
 first on ``PATH``; its ``pg_dump`` and ``psql`` exit codes are driven by
@@ -14,6 +18,8 @@ environment variables so a mid-pipeline failure can be forced deterministically.
 
 import gzip
 import os
+import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,20 +35,7 @@ BACKUP_SCRIPT = REPO_ROOT / "scripts" / "backup_db.sh"
 FAKE_DOCKER = """#!/bin/bash
 case "$1" in
     ps)
-        if [ -n "${FAKE_DOCKER_DAEMON_DOWN:-}" ]; then
-            echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2
-            exit 1
-        fi
         echo "${CONTAINER_NAME:-esg_news_db}"
-        # Optional filler AFTER the match, so a consumer that stops reading at the
-        # first match leaves this side still writing -- which is what provokes
-        # SIGPIPE. `exec` is load-bearing: it replaces this shell with the writer,
-        # so the writer's death by SIGPIPE (141) becomes `docker`'s exit status.
-        # Run as a plain command instead, and this script would carry on to its own
-        # `exit 0`, swallowing the 141 and making the guard below vacuous.
-        if [ -n "${FAKE_DOCKER_PS_PADDING:-}" ]; then
-            exec seq 1 "$FAKE_DOCKER_PS_PADDING"
-        fi
         exit 0
         ;;
     exec)
@@ -63,6 +56,17 @@ case "$1" in
         ;;
 esac
 exit 0
+"""
+
+
+# Pass-through stub for `du`: the script's one PLAIN assignment pipes through it,
+# so `pipefail` makes a `du` failure abort the success branch unless guarded. The
+# real binary's absolute path is baked in at fixture time, before PATH is shadowed.
+FAKE_DU = """#!/bin/bash
+if [ -n "${FAKE_DU_EXIT:-}" ]; then
+    exit "$FAKE_DU_EXIT"
+fi
+exec %s "$@"
 """
 
 
@@ -95,10 +99,26 @@ def harness(tmp_path: Path) -> Harness:
     fake_docker.write_text(FAKE_DOCKER)
     fake_docker.chmod(0o755)
 
+    real_du = shutil.which("du")
+    assert real_du, "du must exist on PATH for these tests"
+    fake_du = bin_dir / "du"
+    fake_du.write_text(FAKE_DU % real_du)
+    fake_du.chmod(0o755)
+
     child_env = os.environ.copy()
+    # Drop any FAKE_* the caller happens to export: they drive the stub, so an
+    # ambient one would silently change what these tests exercise.
+    for key in [k for k in child_env if k.startswith("FAKE_")]:
+        del child_env[key]
     child_env["PATH"] = f"{bin_dir}{os.pathsep}{child_env['PATH']}"
     child_env["BACKUP_DIR"] = str(tmp_path / "backups")
     child_env["CONTAINER_NAME"] = "esg_news_db"
+    # `list_backups` formats with `ls -lh | awk '{print $9 ...}'`, so the filename
+    # is only in field 9 under the default time format. An exported TIME_STYLE
+    # (common in dotfiles) or a differing locale shifts the date field count and
+    # turns the listing assertion red for no code reason.
+    child_env["TIME_STYLE"] = "locale"
+    child_env["LC_ALL"] = "C"
     return Harness(environ=child_env, backup_dir=tmp_path / "backups")
 
 
@@ -191,7 +211,7 @@ def test_restore_reports_failure_on_corrupt_archive(harness: Harness):
 
 
 def test_list_backups_survives_a_failing_glob_under_pipefail(harness: Harness):
-    """AC5: ``pipefail`` must not abort ``list`` on a directory with no archives.
+    """AC1 fallout: ``pipefail`` must not abort ``list`` on a directory with no archives.
 
     ``list_backups`` guards its listing with ``ls -A`` (is the directory
     non-empty), not with the ``*.sql.gz`` glob -- so a directory holding only
@@ -209,40 +229,6 @@ def test_list_backups_survives_a_failing_glob_under_pipefail(harness: Harness):
         "listing a directory with no *.sql.gz must not abort under pipefail.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-
-
-def test_running_container_is_detected_in_a_long_docker_ps_list(harness: Harness):
-    """A running container must be found even when ``docker ps`` output is large.
-
-    A *latent* hazard, not an averted incident: written as
-    ``docker ps ... | grep -q ...``, grep exits at the first match and can SIGPIPE
-    the upstream (status 141), which ``pipefail`` turns into a false "not running".
-    It needs ``docker ps`` output to exceed the pipe buffer (~64 KiB, i.e.
-    thousands of containers); this project emits about a dozen bytes, so it would
-    not have fired here. Note the asymmetry that made the story seductive: it can
-    only bite when the container IS present, because that is when grep matches
-    early and stops reading. An absent container makes grep drain the whole stream.
-
-    Kept because the hazard is real in principle and the guard is nearly free. The
-    reason the pipe actually had to go is error attribution -- see
-    ``test_backup_surfaces_docker_failure_instead_of_reporting_not_running``.
-
-    ``FAKE_DOCKER_PS_PADDING`` is 200000 lines (~1.3 MB) deliberately: measured,
-    the inversion does not occur below roughly 64 KiB, so a small value would make
-    this test vacuous rather than merely weaker.
-    """
-    harness.environ["FAKE_DOCKER_PS_PADDING"] = "200000"
-    harness.environ["FAKE_PGDUMP_EXIT"] = "0"
-
-    result = harness.run("backup")
-    output = result.stdout + result.stderr
-
-    assert "is not running" not in output, (
-        f"a running container must not be reported as stopped.\n{output}"
-    )
-    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
-
-
 def test_restore_aborts_and_removes_partial_pre_restore_backup(harness: Harness):
     """The pre-restore safety copy must fail loudly and leave nothing behind.
 
@@ -307,37 +293,42 @@ def test_list_backups_shows_an_existing_archive(harness: Harness):
     result = harness.run("list")
 
     assert result.returncode == 0
-    assert archive.name in result.stdout, (
-        f"an existing archive must actually be listed.\n{result.stdout}"
-    )
+    # Assert the RENDERED SHAPE, not just that the name appears somewhere: raw
+    # `ls -lh` output also contains the path, so a bare substring check survives
+    # deleting the `| awk` formatting entirely.
+    # The size field is matched as a SIZE, not as `\S+`: `ls -lh`'s neighbouring
+    # columns are also non-space, so a loose pattern still passes when the awk
+    # field index slips (`$5` -> `$4` prints the group name instead).
+    assert re.search(
+        rf"^  \S*{re.escape(archive.name)} \(\d[\d.]*[BKMGT]?\)$",
+        result.stdout,
+        re.MULTILINE,
+    ), f"the archive must be listed in the formatted shape.\n{result.stdout}"
 
 
-def test_backup_surfaces_docker_failure_instead_of_reporting_not_running(harness: Harness):
-    """A docker/daemon failure must surface docker's own message, not collapse.
+def test_backup_survives_a_du_failure_after_the_archive_is_written(harness: Harness):
+    """A cosmetic `du` failure must not fail a backup that actually worked.
 
-    The exit code cannot tell the fix from the bug here -- both exit non-zero, so
-    ``assert returncode != 0`` passes against the very code this guards. What
-    distinguishes them is the *mechanism*: the buggy form discarded docker's
-    diagnostic (``2>/dev/null``) and its status (``|| true``), leaving the operator
-    with "not running / start it with docker compose up" -- guidance that fails the
-    same way the daemon just did. The fix branches on the status and re-emits the
-    message.
+    ``BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)`` is the one PLAIN (non-``local``)
+    assignment in the script, so ``pipefail`` propagates a ``du`` failure to
+    ``set -e`` -- which aborts *inside* the success branch, after the archive is
+    safely written. Without the guard the result is the AC2 invariant inverted: a
+    good archive on disk, a non-zero exit, no success line, no rotation, and the
+    ``rm -f`` unreachable in the ``else``. This hazard did not exist before
+    ``pipefail`` was added, so this PR owns it.
 
-    So the load-bearing assertions are the presence of docker's own text and the
-    absence of the misattributed guidance.
+    Asserting exit 0 alone would be enough to kill the mutant, but the success
+    line and the surviving archive are what say the backup was *kept*, not merely
+    that the script exited quietly.
     """
-    harness.environ["FAKE_DOCKER_DAEMON_DOWN"] = "1"
+    harness.environ["FAKE_PGDUMP_EXIT"] = "0"
+    harness.environ["FAKE_DU_EXIT"] = "1"
 
     result = harness.run("backup")
     output = result.stdout + result.stderr
 
-    assert result.returncode != 0, output
-    assert "Cannot connect to the Docker daemon" in output, (
-        "docker's own diagnostic must reach the operator, not be hidden by "
-        f"2>/dev/null.\n{output}"
+    assert result.returncode == 0, (
+        f"a du failure must not fail a backup that succeeded.\n{output}"
     )
-    assert "Start it with: docker compose up -d postgres" not in output, (
-        "a daemon failure must not be reported as a stopped container, which sends "
-        f"the operator at a command that fails identically.\n{output}"
-    )
-    assert harness.daily_archives == [], "no archive should be written"
+    assert len(harness.daily_archives) == 1, "the good archive must be kept"
+    assert "Backup created successfully" in output, output

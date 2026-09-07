@@ -90,15 +90,24 @@ social/*
 
 **Context:** PR 0 of the `silent-success` epic (#72). `scripts/backup_db.sh` opened with `set -e` and
 no `pipefail`, so a `pg_dump` failure inside the `pg_dump ... | gzip > "$DAILY_PATH"` pipeline in
-`create_backup()` was invisible -- `gzip` exits 0 on the partial stream and a truncated archive was
-recorded as a good backup. The same shape in `restore_backup()` (the pre-restore
-`pg_dump | gzip > "$PRE_RESTORE"` copy, and `gunzip -c "$backup_file" | ... psql`) loaded a partial
-dump and reported "Restore completed successfully!".
+`create_backup()` was invisible -- a pipeline reports its last command's status, and `gzip` exits 0
+on the partial stream, so a truncated archive was recorded as a good backup. The same shape in
+`restore_backup()` (the pre-restore `pg_dump | gzip > "$PRE_RESTORE"` copy, and
+`gunzip -c "$backup_file" | ... psql`) loaded a partial dump and reported
+"Restore completed successfully!".
 
-Compounding it, the `if [ $? -eq 0 ]` handlers in both functions were unreachable: under `set -e` a
-non-zero pipeline aborts the function before `$?` is read, so the `else` branch -- including the
-`rm -f "$DAILY_PATH"` cleanup -- was dead code. Architect review requested at the dev-loop's step-4
-gate.
+**The second half, and the mechanism stated correctly.** The `if [ $? -eq 0 ]` handlers in both
+functions were unreachable -- but *not*, as three drafts of this entry claimed, because `set -e`
+aborted first. That is only one of two routes, and it is not the one #89 is about:
+- **`pg_dump` dies mid-stream** (the #89 case): the pipeline reports `gzip`'s 0, nothing aborts,
+  `$?` **is** read, it **is** 0, and the *success* branch runs. Rotation runs. The truncated archive
+  is reported by `list`/`status` as the latest backup.
+- **`gzip` itself fails** (disk full): the pipeline is non-zero, and `set -e` aborts the function
+  before `$?` can be read.
+
+Either way the `else` -- including the `rm -f "$DAILY_PATH"` cleanup -- was dead code. Recording
+both routes because stating only the abort teaches that `set -e` alone notices a mid-pipeline
+death, which is the belief that produced #89 in the first place.
 
 **Decision:**
 1. `set -e` -> `set -eo pipefail` (AC1, all three pipelines).
@@ -112,67 +121,66 @@ gate.
 4. Guard the `ls -lh ...*.sql.gz | awk` listing in `list_backups()` with `|| true` -- the only
    top-level pipeline `pipefail` would newly *abort*. Its enclosing guard tests `ls -A` (directory
    non-empty), not the `*.sql.gz` glob, so a directory of non-archive files would abort the listing.
-5. The AC3 restore test must assert the failure-guidance branch **ran**, not merely that the success
+5. Guard `BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)` with `|| BACKUP_SIZE="unknown"`. See the
+   audit below: this is the second site `pipefail` changes, and it is the dangerous one.
+6. The AC3 restore test must assert the failure-guidance branch **ran**, not merely that the success
    line is absent -- otherwise it is satisfied by `pipefail` alone and the restructure is unguarded.
 
-**Audit result (AC5):** `local var=$(cmd | cmd)` returns `local`'s own status, so the pipeline
-status never reaches `set -e`. Every command-substitution site in `rotate_backups()`,
-`list_backups()` and `show_status()` -- `ls | wc -l`, `du | cut`, `ls -t | head -1`, `stat | cut`,
-`psql | tr` -- is `local`-assigned and therefore unaffected by `pipefail`. The `BACKUP_SIZE=$(du -h
-"$DAILY_PATH" | cut -f1)` assignment in `create_backup()` is the one *plain* assignment where the
-status does propagate (correct behaviour on a just-written file).
+**Audit result (AC5) -- two sites change under `pipefail`, not one.**
 
-**Correction 1 (found in code review) -- `check_container()` was audited wrong, and the wrong
-reason hid a real change.** The first pass recorded its
-`docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"` as "exempt (`if !` condition)".
-`if !` exempts a command from a `set -e` *abort*; it does **not** stop `pipefail` from changing the
-pipeline's *status*, and there that status **is** the branch condition. So this was the one site
-whose semantics the change altered, and calling it exempt is what kept it untested.
+`local var=$(cmd | cmd)` returns `local`'s own status, so the pipeline status never reaches
+`set -e`. Every `local`-assigned command substitution -- the `ls | wc -l` sites in
+`rotate_backups()`, and `ls | wc -l`, `du -sh | cut`, `ls -t | head -1`, `stat | cut`,
+`psql | tr` in `show_status()` -- is unaffected. `list_backups()` holds no `local` assignment at
+all: its `$(ls -A ...)` sits inside a `[ ... ]` test in an `if` condition, so it is safe by
+`if`-exemption rather than by `local`, and its one pipeline is the `|| true` site above. (An
+earlier draft of this entry listed `list_backups()` among the `local`-assigned functions. It is
+not one.)
 
-**Correction 2 (found in the second review round) -- the first correction then overstated its own
-case.** It claimed the SIGPIPE inversion "would have failed the nightly cron backup on a healthy
-system". Measured: the inversion needs `docker ps` output to exceed the pipe buffer (~64 KiB) --
-RUNNING at 48,894 bytes, NOT_RUNNING at 108,894. This deployment emits about a dozen bytes, so it
-would not have fired. Recording the correction of a correction deliberately: an epic about work
-that reports success it did not achieve cannot itself ship an averted-incident story it did not
-avert.
+The two sites that **do** change:
+1. **`BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)` in `create_backup()`** -- the one *plain*
+   (non-`local`) assignment, so its status now propagates to `set -e`. An earlier draft called this
+   "correct behaviour on a just-written file". It is not merely correct-and-boring: it aborts
+   *inside* the success branch, after a good archive is on disk, so the result is the AC2 invariant
+   inverted -- archive kept, non-zero exit, no success line, no rotation, and the `rm -f` in the
+   `else` never reached, with no error message at all. Guarded per decision 5 and covered by
+   `tests/test_backup_db_script.py::test_backup_survives_a_du_failure_after_the_archive_is_written`.
+2. **`check_container()`'s `docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"`** --
+   `pipefail` changes this pipeline's *status*, and there the status **is** the branch condition, so
+   this is a change of *value*, not of abort behaviour. **Stated, not fixed here** -- see below.
 
-**Why the pipe was removed anyway, in order of actual weight:**
-1. **Error attribution -- the live reason.** You cannot branch separately on "docker could not be
-   queried" and "docker answered, and the container is absent" while `docker ps` is buried
-   mid-pipeline; a pipeline reports one status for both stages. Collapsing them is this epic's
-   defect class, and it produced actively wrong guidance -- telling an operator to
-   `docker compose up -d postgres` when the daemon is dead sends them at a command that fails
-   identically. `check_container()` now branches on the capture's own status and surfaces docker's
-   message.
-2. **Regex-versus-fixed-string -- real, off-default.** The old `grep -q "^${CONTAINER_NAME}$"`
-   interpolated the name as a *regex*. Not reachable with the default `esg_news_db` (no
-   metacharacters), but `.` is legal in a Docker container name, so a non-default `CONTAINER_NAME`
-   could match the wrong line. Impact is a false *positive* -- the check passes and the later
-   `docker exec` fails with a worse message -- not data loss. `grep -qxF --` is fixed-string,
-   whole-line.
-3. **SIGPIPE -- latent, unreachable here.** Per Correction 2. Kept in the guard set because the
-   mechanism is real and the test is nearly free. Note the asymmetry that made the original story
-   seductive: it can only bite when the container **is** present, since that is when `grep -q`
-   matches early and stops reading.
+**`check_container()` -- checked and stated, deferred to #93.** The first draft of this audit
+recorded it as "exempt (`if !` condition)". `if !` exempts a command from a `set -e` *abort*; it
+does not stop `pipefail` from changing the pipeline's status. Correct conclusion, wrong mechanism,
+and the wrong mechanism is what kept it untested.
+
+What the correction then found, and what it got wrong in turn, is recorded in #93 with the
+measurements. In summary: the SIGPIPE inversion is **real but unreachable here** -- it needs
+`docker ps` output above the ~64 KiB pipe buffer (measured: running at 48,894 bytes, inverted at
+108,894), and this host runs three containers. A second draft claimed it "would have failed the
+nightly cron backup on a healthy system"; it would not have. A third claimed that removing the pipe
+was a *prerequisite* for reporting a Docker failure separately from an absent container; that is
+false too -- `PIPESTATUS` exposes per-stage status and the `if !` condition keeps the function alive
+to read it.
+
+AC5 asks that the other pipelines be **checked and stated**. This one is checked, stated, measured
+and filed. Rewriting it is a behaviour change no acceptance criterion here asks for, and the
+attempt produced three successive wrong justifications and a new signal-collapse of its own -- so it
+belongs in its own issue with its own tests, which is #93.
 
 **Alternatives considered:**
 - **`ERR` trap** for the failure branches -- rejected: needs `set -E` for function inheritance, and
   cannot scope the `rm -f` to the one file being written.
-- **`PIPESTATUS` inspection** after a bare pipeline -- rejected: unreachable. Under `set -e` the
-  bare pipeline aborts the function before `PIPESTATUS` can be read, which is the defect being fixed.
+- **`PIPESTATUS` inspection** -- rejected *for `create_backup()`*, where the pipeline is bare and
+  `set -e` aborts before it can be read. Note the scope of that rejection: it does **not** hold for
+  a pipeline in an `if` condition, and applying it there was one of the errors above.
 - **`|| { ...; }`** instead of `if ... then ... else ... fi` -- equivalent in effect, rejected on
   readability for a multi-statement success branch.
 - **`pipefail` alone, leaving the `if [ $? -eq 0 ]` handlers in place** -- rejected, and this is the
   substantive alternative: it makes the failure *louder* without making the cleanup reachable, so a
   truncated archive still survives on disk and is still reported as the latest backup. It satisfies
   AC1 and leaves AC2 unmet.
-- **Keeping `check_container()` as a pipeline** -- rejected per the three reasons above, the first
-  of which is decisive on its own.
-- **A three-way split in `check_container()`** (CLI missing / daemon unreachable / container absent)
-  -- rejected as gold-plating: capturing stderr with `2>&1` carries that distinction in docker's own
-  words without this script re-encoding it. Both failure branches keep `exit 1`; a distinct exit
-  code for infrastructure-unavailable versus resource-absent is left open for #75/#76.
+- **Rewriting `check_container()` in this PR** -- rejected per the above; filed as #93.
 
 **Rationale:** the two halves of the defect have different causes and need different fixes, and
 fixing only the visible one is worse than it looks. `pipefail` addresses *detection* -- the script
@@ -181,15 +189,13 @@ can now see that `pg_dump` failed. Putting the pipeline in the `if` condition ad
 converts "silently wrong" into "loudly wrong with the bad artifact still on disk", which still loses
 data on the next restore.
 
-**Conscious exclusion:** the `DROP DATABASE` / `CREATE DATABASE` / `CREATE EXTENSION` sequence in
-`restore_backup()` can leave the database dropped-but-not-recreated if a middle statement fails. Not
-pipelines, and `set -e` aborts loudly rather than silently, so outside this defect class and outside
-#80's scope. Filed as #91.
+**Conscious exclusions:** the `DROP DATABASE` / `CREATE DATABASE` / `CREATE EXTENSION` sequence in
+`restore_backup()` can leave the database dropped-but-not-recreated (#91). `check_container()`'s
+signal collapse (#93). Neither is a pipeline, and both are outside AC1-AC5.
 
 **Forward compatibility:** the `if <pipeline>; then ...` restructure gives #80 ("assert the output
 is *good*") a home -- `gzip -t`, size and row-count checks compose into the `then` branch without
-touching the failure path. `check_container()`'s split reinforces it: #80 can distinguish "could not
-run the check" from "check ran and failed".
+touching the failure path.
 
 ---
 
