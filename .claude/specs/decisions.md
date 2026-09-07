@@ -80,3 +80,49 @@ social/*
 **Rationale:** The case study is the source-of-truth narrative artifact for the AgentFluent epic. Committing it makes the engineering and marketing tracks visibly connected in the repo, supporting the "every workflow improvement is also a data point" theme. Blog drafts are transient (their final home is the `github_pages` repo). Baseline JSONs have the highest information density per byte but also the highest local-path exposure -- the case study cites their numbers inline, making the JSONs reference data rather than canonical artifacts.
 
 **Supersedes:** D004's "both live in `social/` (gitignored)" provision specifically. The rest of D004 (case study and blog post structure, voice, format, transfer path for posts) remains in effect.
+
+---
+
+## D006: `backup_db.sh` Failure Semantics -- `pipefail` Plus Reachable Failure Branches (#89)
+
+**Date:** 2026-09-06
+**Context:** PR 0 of the `silent-success` epic (#72). `scripts/backup_db.sh:5` sets `set -e` without
+`pipefail`, so a `pg_dump` failure inside `pg_dump | gzip > "$PATH"` is invisible -- `gzip` exits 0
+on the partial stream and a truncated archive is recorded as a good backup (`:80`, `:138`), or a
+partial dump is loaded and reported as "Restore completed successfully!" (`:149`). Compounding it,
+the `if [ $? -eq 0 ]` handlers at `:82` and `:151` are unreachable: under `set -e` a non-zero
+pipeline aborts the function before `$?` is read, so the `else` at `:102-105` -- including the
+`rm -f "$DAILY_PATH"` cleanup -- is dead code. Architect review requested at the dev-loop's
+step-4 gate.
+
+**Decision:**
+1. `set -e` -> `set -eo pipefail` (AC1, all three pipelines).
+2. Make the failure branches reachable by putting each pipeline in the `if` condition
+   (`if <pipeline>; then ... else ... fi`), which exempts it from `set -e` while `pipefail` still
+   reports the true status. Chosen over an `ERR` trap (needs `set -E`, cannot scope the `rm` to one
+   file), `PIPESTATUS` inspection (unreachable -- `set -e` aborts first), and `|| { ... }` (less
+   readable for a multi-statement success branch).
+3. Wrap the pre-restore copy at `:138` as well. **Rationale narrowed by the architect:** `pipefail`
+   alone already aborts before the `DROP DATABASE` at `:144`, so this does *not* protect against
+   the destructive drop; its actual value is removing the partial `pre_restore_*.sql.gz` and
+   emitting an operator-facing message.
+4. Guard `:175` (`ls -lh ...*.sql.gz | awk`) with `|| true` -- the only top-level pipeline that
+   `pipefail` would newly abort.
+5. The AC3 restore test must assert the failure-guidance branch **ran** (`Restore failed!` plus the
+   pre-restore path), not merely that the success line is absent. Without it the test is satisfied
+   by `pipefail` alone and the restore restructure is unguarded.
+
+**Audit result (AC5):** `local var=$(cmd | cmd)` returns `local`'s own status, so the pipeline
+status never reaches `set -e`. Every `ls | wc -l` / `du | cut` / `ls -t | head -1` site
+(`:189, :196, :203, :220-222, :231, :236, :238, :247`) is `local`-assigned and therefore unaffected
+by `pipefail`. `:83` is the one *plain* assignment where the status does propagate (correct
+behaviour on a just-written file). `:52` is exempt (`if !` condition). Confirmed twice: by architect
+review and by an empirical bash harness.
+
+**Conscious exclusion:** `:144-146` (`DROP` / `CREATE` / `CREATE EXTENSION`) can leave the database
+dropped-but-not-recreated if a middle statement fails. Not pipelines, and `set -e` aborts loudly
+rather than silently, so outside this defect class and outside #80's scope. Recorded, not fixed.
+
+**Forward compatibility:** the `if <pipeline>; then ...` restructure gives #80 ("assert the output
+is *good*") a home -- `gzip -t`, size and row-count checks drop into the `then` branch by
+composition, without touching the failure path this change establishes.

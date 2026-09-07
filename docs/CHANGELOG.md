@@ -4,6 +4,33 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-06: A failed pg_dump no longer records a good backup
+
+`scripts/backup_db.sh` ran `pg_dump | gzip > "$PATH"` under `set -e` with no `pipefail`. A
+pipeline reports its *last* command's status, so a `pg_dump` that died mid-stream was masked by
+`gzip` exiting 0: a truncated archive was written, "Backup created successfully" was printed,
+rotation ran, and `list`/`status` reported the partial file as the latest good backup. The same
+shape on the restore path printed "Restore completed successfully!" over partially-loaded data.
+
+**The second half, which `pipefail` alone does not fix.** The `if [ $? -eq 0 ]` handlers were
+unreachable: under `set -e` a non-zero pipeline aborts the function before `$?` is read, so the
+`else` branch -- including the `rm -f "$DAILY_PATH"` cleanup -- was dead code. Adding `pipefail`
+makes the script abort, which skips that `else` just the same; the failure gets louder and the
+truncated file stays on disk. Each of the three pipelines is now the `if` **condition**, which is
+exempt from `set -e`, so the cleanup branch actually runs.
+
+Also: the pre-restore safety copy aborts the restore and removes its partial file rather than
+proceeding; and the `ls *.sql.gz | awk` listing is guarded with `|| true`, the one read-only
+pipeline `pipefail` would newly abort (its enclosing guard tests directory non-emptiness, not the
+glob). The `local var=$(cmd | cmd)` sites in `rotate`/`status` are unaffected -- `local` returns
+its own exit status, so the pipeline's never reaches `set -e`.
+
+Instance 7 of the `silent-success` class (#72), and the only one whose outcome is data loss rather
+than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` on `PATH`
+to force a mid-pipeline failure, asserting both non-zero exit **and** no leftover archive -- a test
+asserting only the exit code passes against a fix that leaves the partial file. (#89)
+
+
 ### 2026-09-05: Stop the labeling retry from erasing a run's results
 
 The `daily_labeling` report for 2026-09-05 read `0 processed / 0 labeled / 0 failed`

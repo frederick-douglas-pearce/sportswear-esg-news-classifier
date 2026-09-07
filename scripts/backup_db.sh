@@ -2,7 +2,10 @@
 # Database backup script for ESG News Classifier
 # Creates compressed PostgreSQL dumps with rotation
 
-set -e
+# `pipefail` is load-bearing, not stylistic: without it a pipeline reports only its
+# LAST command's status, so `pg_dump | gzip > file` reports gzip's success even when
+# pg_dump died mid-stream and the archive is truncated. See issue #89.
+set -eo pipefail
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,14 +75,25 @@ create_backup() {
 
     log_info "Creating backup: $BACKUP_FILE"
 
-    # Create the backup using pg_dump through docker
-    docker exec "$CONTAINER_NAME" pg_dump -U "$DB_USER" -d "$DB_NAME" \
+    # Create the backup using pg_dump through docker.
+    #
+    # The pipeline is the `if` CONDITION rather than a bare statement followed by
+    # `if [ $? -eq 0 ]`. Both halves matter:
+    #   * `set -o pipefail` (top of file) makes this report pg_dump's failure
+    #     instead of gzip's success, so a truncated archive fails the backup;
+    #   * a command in an `if` condition is exempt from `set -e`, which is what
+    #     makes the `else` branch reachable. As a bare pipeline it was not: `set -e`
+    #     aborted the function before `$?` could be read, so the `rm -f` below was
+    #     dead code and the partial file survived to be reported as the latest
+    #     backup by `list`/`status`.
+    #
+    # Both halves are asserted by
+    # tests/test_backup_db_script.py::test_backup_failure_exits_nonzero_and_removes_partial_archive
+    if docker exec "$CONTAINER_NAME" pg_dump -U "$DB_USER" -d "$DB_NAME" \
         --format=plain \
         --no-owner \
         --no-privileges \
-        | gzip > "$DAILY_PATH"
-
-    if [ $? -eq 0 ]; then
+        | gzip > "$DAILY_PATH"; then
         BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)
         log_info "Backup created successfully: $DAILY_PATH ($BACKUP_SIZE)"
 
@@ -135,7 +149,11 @@ restore_backup() {
     log_info "Creating pre-restore backup..."
     TIMESTAMP=$(date +%Y%m%d_%H%M%S)
     PRE_RESTORE="$BACKUP_DIR/pre_restore_${TIMESTAMP}.sql.gz"
-    docker exec "$CONTAINER_NAME" pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > "$PRE_RESTORE"
+    if ! docker exec "$CONTAINER_NAME" pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > "$PRE_RESTORE"; then
+        log_error "Pre-restore backup failed - aborting before any destructive change"
+        rm -f "$PRE_RESTORE"
+        exit 1
+    fi
     log_info "Pre-restore backup saved to: $PRE_RESTORE"
 
     log_info "Restoring from: $backup_file"
@@ -145,10 +163,14 @@ restore_backup() {
     docker exec "$CONTAINER_NAME" psql -U "$DB_USER" -d postgres -c "CREATE DATABASE ${DB_NAME};"
     docker exec "$CONTAINER_NAME" psql -U "$DB_USER" -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
-    # Restore from backup
-    gunzip -c "$backup_file" | docker exec -i "$CONTAINER_NAME" psql -U "$DB_USER" -d "$DB_NAME"
-
-    if [ $? -eq 0 ]; then
+    # Restore from backup - same `if <pipeline>` form as create_backup, and for the
+    # same two reasons. Without it a truncated or corrupt archive made gunzip fail
+    # while psql exited 0, and the success branch below reported
+    # "Restore completed successfully!" over partially-loaded data.
+    #
+    # Asserted by
+    # tests/test_backup_db_script.py::test_restore_reports_failure_on_corrupt_archive
+    if gunzip -c "$backup_file" | docker exec -i "$CONTAINER_NAME" psql -U "$DB_USER" -d "$DB_NAME"; then
         log_info "Restore completed successfully!"
 
         # Show record counts
@@ -172,7 +194,13 @@ list_backups() {
     for period in daily weekly monthly; do
         echo "=== ${period^^} ==="
         if [ -d "$BACKUP_DIR/$period" ] && [ "$(ls -A "$BACKUP_DIR/$period" 2>/dev/null)" ]; then
-            ls -lh "$BACKUP_DIR/$period"/*.sql.gz 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}'
+            # `|| true`: the enclosing guard tests `ls -A` (is the directory
+            # non-empty), not the *.sql.gz glob, so a directory holding only
+            # non-archive files makes this `ls` fail. Under `pipefail` that would
+            # abort the whole listing.
+            # Asserted by
+            # tests/test_backup_db_script.py::test_list_backups_survives_a_failing_glob_under_pipefail
+            ls -lh "$BACKUP_DIR/$period"/*.sql.gz 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}' || true
         else
             echo "  (no backups)"
         fi
