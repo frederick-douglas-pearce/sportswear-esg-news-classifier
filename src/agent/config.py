@@ -77,6 +77,27 @@ class AgentSettings:
         default_factory=lambda: os.getenv("AGENT_SMTP_PASSWORD") or None
     )
 
+    # Drift monitoring
+    #
+    # The EP classifier is on hold (see CLAUDE.md) and `classifier_predictions`
+    # has never held an `ep` row, so its drift check compared two empty frames
+    # and reported "Healthy" on every run. Gating it on config rather than on a
+    # row count is deliberate: EP-on-hold is a governance decision, and zero
+    # predictions is only its symptom. A row-count gate would re-enable
+    # monitoring the moment one stray `ep` row landed, then compare it against
+    # a nonexistent reference (issues #71, #96).
+    ep_drift_enabled: bool = field(
+        default_factory=lambda: os.getenv("AGENT_EP_DRIFT_ENABLED", "false").lower()
+        == "true"
+    )
+    ep_drift_skip_reason: str = field(
+        default_factory=lambda: os.getenv(
+            "AGENT_EP_DRIFT_SKIP_REASON",
+            "EP classifier is on hold (CLAUDE.md); no EP predictions have ever "
+            "been recorded. Set AGENT_EP_DRIFT_ENABLED=true when it resumes.",
+        )
+    )
+
     # Project paths
     project_root: Path = field(
         default_factory=lambda: Path(

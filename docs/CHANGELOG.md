@@ -4,6 +4,65 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-07: A failed drift check no longer reports "all classifiers healthy"
+
+FP drift monitoring failed on 221 of 230 scheduled runs since 2026-01-17, and on 217 of those the
+workflow simultaneously logged `No action needed - all classifiers healthy` and exited 0. The
+safety net had never produced a valid result, so nothing would have reported FP degradation at any
+point in the project's life.
+
+**Why a failure looked like health.** Four defects compounded, each of which turned a missing
+signal into a benign one:
+
+- `data/reference/fp_reference.parquet` was written 2026-01-17, before `novelty_score` existed.
+  `_evidently_drift_check` guarded the novelty *stats* block on `current_data` alone and then read
+  `reference_data["novelty_score"]`, so every run raised `KeyError: 'novelty_score'`. The
+  column-list block four lines up already guarded both frames; this one did not.
+- The script printed `Error running drift analysis: {e}` to **stdout** and returned 1, while the
+  workflow logged the command's **stderr** -- producing 221 log lines reading
+  `FP drift check failed: ` with the diagnosis nowhere.
+- Exit 1 meant *both* "drift detected" and "the analysis raised", and `ScriptResult.success` is
+  `exit_code == 0`, so the workflow could not tell them apart and fell back to scraping the
+  human-readable report. `evaluate_drift_results` then read
+  `context.get("fp_drift_detected", False)` and the report step read
+  `context.get("fp_healthy", not context.get("fp_drift_detected", False))` -- with both keys
+  absent, `not False` is **True**.
+- The EP check ran against a classifier with **zero predictions, ever**. Two empty frames compared
+  to each other returned `drift_detected=False` and passed vacuously.
+
+**The rule the fix is built on:** a missing value never resolves to healthy. Concretely:
+
+- `DriftReport` gains a typed `indeterminate` field, set wherever nothing was measured. A verdict
+  that was never produced is now distinguishable from one that was produced and was clean.
+- A three-value exit-code contract (`src/mlops/exit_codes.py`): `0` no drift, `1` drift detected,
+  `2` indeterminate. Drift detected is non-retryable -- it is a result, and before this it was
+  retried with exponential backoff before being reported.
+- Errors go to stderr with a traceback; the workflow logs the **tail** of that stream, since a
+  traceback's diagnosis is at its end (the lesson of #81, same runner).
+- `HealthVerdict` (`healthy | degraded | unknown | skipped`) in `src/agent/health.py`. It is
+  deliberately **not** a `WorkflowStatus` member: a health verdict is not a lifecycle state, and
+  archives carrying `status: unknown` would need migrating.
+- The workflow derives its verdict from the exit code, not from scraping stdout; `_parse_drift_output`
+  is deleted. A run whose exit code claims a verdict but whose summary is missing or inconsistent
+  is treated as `unknown` -- a health claim with no evidence behind it is not a health claim.
+- EP is skipped explicitly behind `AGENT_EP_DRIFT_ENABLED` (default off) with a stated reason.
+  A config gate rather than a row count: EP-on-hold is a governance decision and zero predictions
+  is only its symptom.
+- A terminal `fail_on_unknown_verdict` step marks the workflow FAILED when any verdict is not
+  explicitly healthy/degraded/skipped -- including absent. It runs *last* so the summary is printed
+  and the alert sent first. It is a bridge, to be removed once #74 gives verdicts a first-class
+  escalation path (D008).
+- The FP reference is regenerated over 90 days (934 rows, complete `novelty_score`, plus the brand
+  columns the old file lacked).
+
+Also: a column present in the current data but missing from the reference is now logged as *not
+assessed* and recorded in the report details, so fixing the crash does not leave a partial
+comparison silently reported as a whole one.
+
+Follow-ups filed rather than folded in: #94 (minimum sample size), #95 (vacuously-healthy when
+every check is skipped), #96 (a forgotten EP flag leaves EP dark), #97 (the reference window
+overlaps the window it is compared against).
+
 ### 2026-09-06: A failed pg_dump no longer records a good backup
 
 `scripts/backup_db.sh` ran `pg_dump | gzip > "$PATH"` under `set -e` with no `pipefail`. A

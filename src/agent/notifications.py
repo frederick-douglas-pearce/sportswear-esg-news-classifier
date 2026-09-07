@@ -26,6 +26,7 @@ class NotificationType(Enum):
     WORKFLOW_FAILED = "workflow_failed"
     LABELING_SUMMARY = "labeling_summary"
     DRIFT_DETECTED = "drift_detected"
+    CHECK_FAILED = "check_failed"
     HIGH_ERROR_RATE = "high_error_rate"
     DAILY_REPORT = "daily_report"
 
@@ -686,6 +687,45 @@ def send_drift_notification(
             **(details or {}),
         },
         severity="warning",
+    )
+
+    manager = NotificationManager()
+    return manager.send(notification)
+
+
+def send_check_failure_notification(
+    check_name: str,
+    reason: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, bool]:
+    """Send notification that a scheduled check produced no verdict.
+
+    Distinct from `send_drift_notification`, which reports a *result*. This one
+    reports that there is no result -- the case that produced no notification at
+    all for 231 days, because a failed check looked identical to a clean one
+    (issue #71).
+
+    Args:
+        check_name: Which check could not complete (e.g. "FP drift")
+        reason: Why no verdict was produced
+        details: Additional details
+
+    Returns:
+        Dict of channel results
+    """
+    notification = Notification(
+        notification_type=NotificationType.CHECK_FAILED,
+        subject=f"Check Failed: {check_name}",
+        message=(
+            f"The {check_name} check did not produce a verdict: {reason}. "
+            f"This is NOT a healthy result - its subject is currently unmonitored."
+        ),
+        details={
+            "check": check_name,
+            "reason": reason,
+            **(details or {}),
+        },
+        severity="error",
     )
 
     manager = NotificationManager()

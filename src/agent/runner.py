@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from src.labeling.exit_codes import NON_RETRYABLE_EXIT_CODES
+from src.mlops.exit_codes import (
+    NON_RETRYABLE_EXIT_CODES as DRIFT_NON_RETRYABLE_EXIT_CODES,
+)
 
 from .config import agent_settings
 
@@ -23,11 +26,19 @@ logger = logging.getLogger(__name__)
 STDERR_LOG_CHARS = 4000
 
 
-def _tail(text: str, limit: int = STDERR_LOG_CHARS) -> str:
-    """Return the last `limit` characters, marking the text as truncated."""
+def tail(text: str, limit: int = STDERR_LOG_CHARS) -> str:
+    """Return the last `limit` characters, marking the text as truncated.
+
+    Public because workflow modules log failing-command output too, and taking
+    the head there reproduces issue #81 one layer up.
+    """
     if len(text) <= limit:
         return text
     return f"...[{len(text) - limit} chars truncated]...\n{text[-limit:]}"
+
+
+# Retained so existing call sites and tests keep working.
+_tail = tail
 
 
 def _find_uv_path() -> str:
@@ -386,6 +397,14 @@ def run_monitor_drift(
         "scripts/monitor_drift.py",
         args=args,
         dry_run=False,
+        # The script emits a machine-readable summary line; the workflow reads
+        # it instead of scraping the human report, where a check that never ran
+        # left nothing to scrape and absence read as healthy (issue #71).
+        parse_json_output=True,
+        # Drift detected is a determinate result, not a transient fault --
+        # before #71 no set was passed here, so every genuine detection was
+        # retried with exponential backoff before being reported.
+        non_retryable_exit_codes=DRIFT_NON_RETRYABLE_EXIT_CODES,
     )
 
 

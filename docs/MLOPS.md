@@ -89,6 +89,23 @@ uv run python scripts/monitor_drift.py --classifier fp --logs-dir logs/predictio
 - `--from-db`: Load predictions from `classifier_predictions` database table (recommended for production)
 - `--logs-dir`: Load from local JSONL log files (for local API development)
 
+### Exit-code contract
+
+`monitor_drift.py` distinguishes three outcomes (`src/mlops/exit_codes.py`). The agent workflow
+reads the exit code, never the report text.
+
+| Code | Meaning | Retried? |
+|------|---------|----------|
+| `0` | The check ran; no drift | n/a |
+| `1` | The check ran; **drift detected** -- a result, not an error | No: re-running returns the same answer |
+| `2` | **Indeterminate** -- no verdict was produced (the analysis raised, or there was nothing to compare) | Yes: the cause may be transient |
+
+Exit 2 never reads as healthy. Before this contract (issue #71) exit 1 meant both "drift detected"
+and "the analysis raised", so a failed check was indistinguishable from a clean one and the drift
+safety net reported "all classifiers healthy" through 221 of 230 failed runs.
+
+Errors go to **stderr**, with a traceback; the agent runner logs the tail of that stream.
+
 ### Monitor Output
 
 ```
@@ -104,7 +121,34 @@ HTML Report: reports/monitoring/fp/drift_report_20251229_103045.html
 
 ============================================================
 ✅ Status: Healthy - no significant drift detected
+--- drift summary (machine-readable) ---
+{"classifier": "fp", "exit_code": 0, "indeterminate": false, "drift_detected": false, "drift_score": 0.0523, "threshold": 0.1, "error": null}
 ```
+
+The last line is a single-line JSON summary the `drift_monitoring` workflow consumes via
+`ScriptResult.parsed_output`. A run whose exit code claims a verdict but whose summary is absent,
+incomplete, or inconsistent with the exit code is treated as `unknown` rather than trusted.
+
+### Keeping the reference dataset current
+
+A reference written against an older schema is the failure that started #71: `novelty_score` was
+added to `classifier_predictions` after `fp_reference.parquet` was written, and the mismatch raised
+`KeyError` on every run for eight months. Two guards now exist, and neither removes the need to
+regenerate:
+
+- a column present in the current data but missing from the reference is **logged as not assessed**
+  and recorded in `details["columns_missing_from_reference"]`, so a partial comparison is not
+  reported as a whole one;
+- a reference sharing *no* comparable column returns `indeterminate`, i.e. exit 2.
+
+Regenerate after any change to what is written to `classifier_predictions`:
+
+```bash
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90
+```
+
+Note the window is *trailing* and therefore overlaps the window it will later be compared
+against (issue #97).
 
 ### What Gets Monitored
 
@@ -207,6 +251,8 @@ send_drift_alert(
 | `DRIFT_THRESHOLD` | Drift score threshold for alerts | `0.1` |
 | `REFERENCE_DATA_DIR` | Directory for reference datasets | `data/reference` |
 | `REFERENCE_WINDOW_DAYS` | Days of data for reference | `30` |
+| `AGENT_EP_DRIFT_ENABLED` | Run the EP classifier drift check. Off while EP is on hold; the check reports `skipped` with a stated reason rather than passing on an empty dataset | `false` |
+| `AGENT_EP_DRIFT_SKIP_REASON` | Reason recorded when the EP check is skipped | (see `src/agent/config.py`) |
 | `ALERT_WEBHOOK_URL` | Slack/Discord webhook URL | - |
 | `ALERT_ON_DRIFT` | Send alert on drift detection | `true` |
 | `ALERT_ON_TRAINING` | Send alert after training | `false` |

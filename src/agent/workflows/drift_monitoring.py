@@ -1,131 +1,261 @@
-"""Drift monitoring workflow."""
+"""Drift monitoring workflow.
+
+Every read in this module obeys one rule, because breaking it is what made
+issue #71 possible: **a missing value never resolves to healthy.** Before the
+fix, `evaluate_drift_results` read `context.get("fp_drift_detected", False)`
+and `generate_drift_report` read
+`context.get("fp_healthy", not context.get("fp_drift_detected", False))`. A
+check that never ran set neither key, so the second expression evaluated
+`not False` -> True -> "all classifiers healthy". That ran 217 times.
+
+So the check steps produce an explicit `HealthVerdict`, the reporting steps
+read it rather than inferring one, and `fail_on_unknown_verdict` refuses to let
+the workflow finish green when any verdict is missing or `unknown`.
+"""
 
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from ..config import agent_settings
-from ..notifications import send_drift_notification
-from ..runner import run_monitor_drift
+from ..health import HealthVerdict
+from ..notifications import send_check_failure_notification, send_drift_notification
+from ..runner import ScriptResult, run_monitor_drift, tail
 from .base import StepDefinition, Workflow, WorkflowRegistry
 
 logger = logging.getLogger(__name__)
 
+# Fields the machine-readable summary from scripts/monitor_drift.py must carry.
+# A summary missing any of them is not trusted, because the alternative is
+# reading a health verdict off a partial object -- which is how absence became
+# health in the first place.
+REQUIRED_SUMMARY_FIELDS = (
+    "classifier",
+    "exit_code",
+    "indeterminate",
+    "drift_detected",
+    "drift_score",
+    "threshold",
+)
 
-def check_fp_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Run drift detection for FP classifier."""
-    logger.info("Running FP classifier drift detection")
+# Exit codes from scripts/monitor_drift.py, per src/mlops/exit_codes.py.
+# Imported lazily inside the mapping function so this module does not pull the
+# mlops package (and pandas) in at import time.
+_VERDICT_BY_EXIT_CODE = {
+    0: HealthVerdict.HEALTHY,
+    1: HealthVerdict.DEGRADED,
+    2: HealthVerdict.UNKNOWN,
+}
+
+
+def _validate_summary(result: ScriptResult, classifier: str) -> dict[str, Any] | None:
+    """Return the script's summary if it is present and self-consistent.
+
+    Returns None when the summary is absent, malformed, incomplete, or
+    describes a different run than the one we just made. The caller treats
+    None as `unknown` rather than falling back to the exit code alone: an exit
+    code with no accompanying evidence is a verdict nobody can check.
+    """
+    summary = result.parsed_output
+    if not isinstance(summary, dict):
+        logger.error(
+            f"{classifier} drift check produced no parseable summary "
+            f"(exit code {result.exit_code})"
+        )
+        return None
+
+    missing = [f for f in REQUIRED_SUMMARY_FIELDS if f not in summary]
+    if missing:
+        logger.error(
+            f"{classifier} drift summary is missing required fields: "
+            f"{', '.join(missing)}"
+        )
+        return None
+
+    if summary["classifier"] != classifier:
+        logger.error(
+            f"drift summary is for '{summary['classifier']}' but this check ran "
+            f"'{classifier}' -- refusing to read it"
+        )
+        return None
+
+    if summary["exit_code"] != result.exit_code:
+        logger.error(
+            f"{classifier} drift summary reports exit code "
+            f"{summary['exit_code']} but the process exited {result.exit_code} "
+            f"-- refusing to read it"
+        )
+        return None
+
+    return summary
+
+
+def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]:
+    """Run one classifier's drift check and turn the outcome into a verdict.
+
+    The verdict comes from the script's exit code (src/mlops/exit_codes.py),
+    never from scraping its human-readable report. `_parse_drift_output`, which
+    did the scraping, keyed "healthy" off the presence of that word in stdout
+    and so reported healthy for output it had never seen.
+    """
+    logger.info(f"Running {classifier.upper()} classifier drift detection")
 
     result = run_monitor_drift(
-        classifier="fp",
+        classifier=classifier,
         days=context.get("drift_days", 7),
         from_db=True,
         html_report=context.get("generate_html", False),
         alert=False,  # We handle alerts in the notification step
     )
 
-    drift_result = {
-        "fp_drift_check_success": result.success,
-        "fp_drift_exit_code": result.exit_code,
-        "fp_drift_duration": result.duration_seconds,
+    out: dict[str, Any] = {
+        f"{classifier}_drift_exit_code": result.exit_code,
+        f"{classifier}_drift_duration": result.duration_seconds,
     }
 
-    # Parse drift detection output
-    if result.stdout:
-        drift_result.update(_parse_drift_output(result.stdout, "fp"))
+    verdict = _VERDICT_BY_EXIT_CODE.get(result.exit_code)
+    if verdict is None:
+        # An exit code outside the contract -- a crash, a signal, a timeout
+        # (the runner reports -1 for those). Unknown, never healthy.
+        logger.error(
+            f"{classifier.upper()} drift check exited {result.exit_code}, which "
+            f"is outside the exit-code contract"
+        )
+        out[f"{classifier}_verdict"] = HealthVerdict.UNKNOWN.value
+        out[f"{classifier}_error"] = (
+            f"unrecognised exit code {result.exit_code}: {tail(result.stderr)}"
+        )
+        return out
 
-    if not result.success:
-        drift_result["fp_drift_error"] = result.stderr[:500]
-        logger.error(f"FP drift check failed: {result.stderr[:200]}")
+    summary = _validate_summary(result, classifier)
+    if summary is None and verdict is not HealthVerdict.UNKNOWN:
+        # The process claimed a verdict but produced no evidence for it. Do not
+        # take its word: a healthy claim with no score behind it is exactly the
+        # shape this workflow exists to stop reporting.
+        out[f"{classifier}_verdict"] = HealthVerdict.UNKNOWN.value
+        out[f"{classifier}_error"] = (
+            f"exited {result.exit_code} but produced no valid summary; "
+            f"stderr: {tail(result.stderr)}"
+        )
+        return out
 
-    return drift_result
+    out[f"{classifier}_verdict"] = verdict.value
+
+    if verdict is HealthVerdict.UNKNOWN:
+        reason = (summary or {}).get("error") or "no verdict produced"
+        out[f"{classifier}_error"] = reason
+        # tail, not head: a traceback's diagnosis is at the END of the stream
+        # (issue #81, same runner).
+        logger.error(
+            f"{classifier.upper()} drift check produced no verdict ({reason}): "
+            f"{tail(result.stderr)}"
+        )
+        return out
+
+    # Healthy or degraded: the metrics are required, not optional. Reading them
+    # with .get(default) is how a failed check's absent score became 0.0 and
+    # then "no drift".
+    out[f"{classifier}_drift_detected"] = summary["drift_detected"]
+    out[f"{classifier}_drift_score"] = summary["drift_score"]
+    out[f"{classifier}_threshold"] = summary["threshold"]
+
+    if verdict is HealthVerdict.DEGRADED:
+        logger.warning(
+            f"{classifier.upper()} classifier drift detected: "
+            f"score {summary['drift_score']} exceeds {summary['threshold']}"
+        )
+    else:
+        logger.info(
+            f"{classifier.upper()} classifier healthy: "
+            f"drift score {summary['drift_score']}"
+        )
+
+    return out
+
+
+def check_fp_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Run drift detection for FP classifier."""
+    return _run_drift_check("fp", context)
 
 
 def check_ep_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Run drift detection for EP classifier."""
-    logger.info("Running EP classifier drift detection")
+    """Run drift detection for EP classifier, unless it is gated off.
 
-    result = run_monitor_drift(
-        classifier="ep",
-        days=context.get("drift_days", 7),
-        from_db=True,
-        html_report=context.get("generate_html", False),
-        alert=False,
-    )
+    EP is on hold and `classifier_predictions` has never held an `ep` row, so
+    the check compared two empty frames and reported Healthy on every run. It is
+    now skipped explicitly, with the reason recorded -- `skipped` is a verdict,
+    not a silent absence, and it never counts toward "all classifiers healthy".
+    """
+    if not agent_settings.ep_drift_enabled:
+        reason = agent_settings.ep_drift_skip_reason
+        logger.info(f"EP drift check skipped: {reason}")
+        return {
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+            "ep_skip_reason": reason,
+        }
 
-    drift_result = {
-        "ep_drift_check_success": result.success,
-        "ep_drift_exit_code": result.exit_code,
-        "ep_drift_duration": result.duration_seconds,
-    }
-
-    if result.stdout:
-        drift_result.update(_parse_drift_output(result.stdout, "ep"))
-
-    if not result.success:
-        drift_result["ep_drift_error"] = result.stderr[:500]
-        logger.error(f"EP drift check failed: {result.stderr[:200]}")
-
-    return drift_result
+    return _run_drift_check("ep", context)
 
 
-def _parse_drift_output(output: str, prefix: str) -> dict[str, Any]:
-    """Parse drift monitoring output for key metrics."""
-    result = {}
-    lines = output.strip().split("\n")
+def _verdict_of(context: dict[str, Any], classifier: str) -> HealthVerdict:
+    """Read a classifier's verdict, treating anything unrecognised as unknown.
 
-    for line in lines:
-        line_lower = line.lower()
-
-        if "drift detected:" in line_lower:
-            result[f"{prefix}_drift_detected"] = "yes" in line_lower
-        elif "drift score:" in line_lower:
-            try:
-                # Parse "Drift Score: 0.1234 (threshold: 0.1)"
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    score_part = parts[1].strip().split()[0]
-                    result[f"{prefix}_drift_score"] = float(score_part)
-            except (ValueError, IndexError):
-                pass
-        elif "threshold:" in line_lower:
-            try:
-                # Parse threshold from "0.1234 (threshold: 0.1)"
-                if "(" in line:
-                    threshold_str = line.split("threshold:")[1].strip().rstrip(")")
-                    result[f"{prefix}_threshold"] = float(threshold_str)
-            except (ValueError, IndexError):
-                pass
-        elif "action required" in line_lower:
-            result[f"{prefix}_action_required"] = True
-        elif "healthy" in line_lower:
-            result[f"{prefix}_healthy"] = True
-
-    return result
+    A step that returned no verdict key leaves this None. Mapping that to
+    UNKNOWN rather than to HEALTHY is the whole point of the module.
+    """
+    raw = context.get(f"{classifier}_verdict")
+    try:
+        return HealthVerdict(raw)
+    except ValueError:
+        logger.error(
+            f"{classifier} verdict is missing or unrecognised ({raw!r}); "
+            f"treating as unknown"
+        )
+        return HealthVerdict.UNKNOWN
 
 
 def evaluate_drift_results(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     """Evaluate drift detection results and determine actions needed."""
-    fp_drift = context.get("fp_drift_detected", False)
-    ep_drift = context.get("ep_drift_detected", False)
+    verdicts = {c: _verdict_of(context, c) for c in ("fp", "ep")}
 
-    evaluation = {
-        "any_drift_detected": fp_drift or ep_drift,
-        "classifiers_with_drift": [],
+    drifted = [c for c, v in verdicts.items() if v is HealthVerdict.DEGRADED]
+    unknown = [c for c, v in verdicts.items() if v is HealthVerdict.UNKNOWN]
+    skipped = [c for c, v in verdicts.items() if v is HealthVerdict.SKIPPED]
+    checked = [c for c, v in verdicts.items() if v is not HealthVerdict.SKIPPED]
+
+    evaluation: dict[str, Any] = {
+        "any_drift_detected": bool(drifted),
+        "classifiers_with_drift": drifted,
+        "classifiers_unknown": unknown,
+        "classifiers_skipped": skipped,
+        # "At least one check ran and every check that ran passed" -- not
+        # "no failures found", which is vacuously true when nothing ran.
+        "all_checked_healthy": bool(checked) and not drifted and not unknown,
     }
 
-    if fp_drift:
-        evaluation["classifiers_with_drift"].append("fp")
-        logger.warning("FP classifier drift detected")
+    for classifier in drifted:
+        logger.warning(f"{classifier.upper()} classifier drift detected")
+    for classifier in unknown:
+        logger.error(
+            f"{classifier.upper()} drift check produced no verdict - "
+            f"that classifier is currently unmonitored"
+        )
 
-    if ep_drift:
-        evaluation["classifiers_with_drift"].append("ep")
-        logger.warning("EP classifier drift detected")
-
-    if evaluation["any_drift_detected"]:
+    if unknown:
+        evaluation["recommendation"] = (
+            f"Drift status UNKNOWN for {', '.join(c.upper() for c in unknown)} - "
+            f"the check did not complete, so these classifiers are unmonitored"
+        )
+    elif drifted:
         evaluation["recommendation"] = "Consider retraining affected classifiers"
+    elif checked:
+        evaluation["recommendation"] = (
+            f"No action needed - {', '.join(c.upper() for c in checked)} healthy"
+        )
     else:
-        evaluation["recommendation"] = "No action needed - all classifiers healthy"
+        evaluation["recommendation"] = (
+            "No classifiers were checked - nothing is being monitored"
+        )
 
     logger.info(f"Drift evaluation: {evaluation['recommendation']}")
 
@@ -133,47 +263,66 @@ def evaluate_drift_results(workflow: Workflow, context: dict[str, Any]) -> dict[
 
 
 def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Send notifications for any detected drift."""
+    """Send notifications for detected drift and for checks that produced none."""
     if context.get("dry_run"):
         logger.info("Dry run - skipping drift alerts")
         return {"alerts_skipped": True, "reason": "dry_run"}
 
-    if not context.get("any_drift_detected"):
-        logger.info("No drift detected - no alerts needed")
-        return {"alerts_sent": False, "reason": "no_drift"}
-
     alerts_sent = []
 
-    # Send FP drift alert
-    if context.get("fp_drift_detected"):
-        result = send_drift_notification(
-            classifier_type="fp",
-            drift_score=context.get("fp_drift_score", 0),
-            threshold=context.get("fp_threshold", 0.1),
-            details={
-                "action_required": context.get("fp_action_required", False),
-                "recommendation": "Retrain FP classifier with recent data",
-            },
-        )
-        alerts_sent.append({"classifier": "fp", "result": result})
+    for classifier in ("fp", "ep"):
+        verdict = _verdict_of(context, classifier)
 
-    # Send EP drift alert
-    if context.get("ep_drift_detected"):
-        result = send_drift_notification(
-            classifier_type="ep",
-            drift_score=context.get("ep_drift_score", 0),
-            threshold=context.get("ep_threshold", 0.1),
-            details={
-                "action_required": context.get("ep_action_required", False),
-                "recommendation": "Retrain EP classifier with recent data",
-            },
-        )
-        alerts_sent.append({"classifier": "ep", "result": result})
+        if verdict is HealthVerdict.DEGRADED:
+            result = send_drift_notification(
+                classifier_type=classifier,
+                drift_score=context[f"{classifier}_drift_score"],
+                threshold=context[f"{classifier}_threshold"],
+                details={
+                    "recommendation": (
+                        f"Retrain {classifier.upper()} classifier with recent data"
+                    ),
+                },
+            )
+            alerts_sent.append(
+                {"classifier": classifier, "kind": "drift", "result": result}
+            )
+
+        elif verdict is HealthVerdict.UNKNOWN:
+            # The alert that never fired for 231 days.
+            result = send_check_failure_notification(
+                check_name=f"{classifier.upper()} drift",
+                reason=context.get(f"{classifier}_error") or "no verdict produced",
+                details={
+                    "exit_code": context.get(f"{classifier}_drift_exit_code"),
+                    "days": context.get("drift_days", 7),
+                },
+            )
+            alerts_sent.append(
+                {"classifier": classifier, "kind": "check_failed", "result": result}
+            )
+
+    if not alerts_sent:
+        logger.info("No drift and no failed checks - no alerts needed")
+        return {"alerts_sent": False, "reason": "nothing_to_report"}
 
     return {
         "alerts_sent": True,
         "alert_count": len(alerts_sent),
         "alert_details": alerts_sent,
+    }
+
+
+def _classifier_report(context: dict[str, Any], classifier: str) -> dict[str, Any]:
+    """Build one classifier's section of the report."""
+    verdict = _verdict_of(context, classifier)
+    return {
+        "verdict": verdict.value,
+        "drift_detected": context.get(f"{classifier}_drift_detected"),
+        "drift_score": context.get(f"{classifier}_drift_score"),
+        "threshold": context.get(f"{classifier}_threshold"),
+        "error": context.get(f"{classifier}_error"),
+        "skip_reason": context.get(f"{classifier}_skip_reason"),
     }
 
 
@@ -183,37 +332,45 @@ def generate_drift_report(workflow: Workflow, context: dict[str, Any]) -> dict[s
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "workflow_name": workflow.name,
         "drift_days": context.get("drift_days", 7),
+        "fp_classifier": _classifier_report(context, "fp"),
+        "ep_classifier": _classifier_report(context, "ep"),
+        "overall": {
+            "all_checked_healthy": context.get("all_checked_healthy", False),
+            "any_drift_detected": context.get("any_drift_detected", False),
+            "classifiers_with_drift": context.get("classifiers_with_drift", []),
+            "classifiers_unknown": context.get("classifiers_unknown", []),
+            "classifiers_skipped": context.get("classifiers_skipped", []),
+            "recommendation": context.get("recommendation", ""),
+        },
     }
 
-    # FP classifier status
-    report["fp_classifier"] = {
-        "check_success": context.get("fp_drift_check_success", False),
-        "drift_detected": context.get("fp_drift_detected", False),
-        "drift_score": context.get("fp_drift_score"),
-        "threshold": context.get("fp_threshold"),
-        "healthy": context.get("fp_healthy", not context.get("fp_drift_detected", False)),
-    }
-
-    # EP classifier status
-    report["ep_classifier"] = {
-        "check_success": context.get("ep_drift_check_success", False),
-        "drift_detected": context.get("ep_drift_detected", False),
-        "drift_score": context.get("ep_drift_score"),
-        "threshold": context.get("ep_threshold"),
-        "healthy": context.get("ep_healthy", not context.get("ep_drift_detected", False)),
-    }
-
-    # Overall status
-    report["overall"] = {
-        "any_drift_detected": context.get("any_drift_detected", False),
-        "classifiers_with_drift": context.get("classifiers_with_drift", []),
-        "recommendation": context.get("recommendation", ""),
-    }
-
-    # Log summary
     _log_drift_summary(report)
 
     return {"report": report}
+
+
+def _log_classifier_line(label: str, section: dict[str, Any]) -> None:
+    """Print one classifier's status block."""
+    verdict = section["verdict"]
+    print(f"\n{label}:")
+
+    if verdict == HealthVerdict.SKIPPED.value:
+        print(f"  Status: SKIPPED - {section['skip_reason'] or 'no reason recorded'}")
+        return
+
+    if verdict == HealthVerdict.UNKNOWN.value:
+        print(
+            f"  Status: UNKNOWN - check did not complete "
+            f"({section['error'] or 'no reason recorded'})"
+        )
+        print("  This classifier is NOT being monitored.")
+        return
+
+    print(f"  Status: {'DRIFT DETECTED' if section['drift_detected'] else 'Healthy'}")
+    if section["drift_score"] is not None:
+        print(f"  Drift Score: {section['drift_score']:.4f}")
+    if section["threshold"] is not None:
+        print(f"  Threshold: {section['threshold']:.4f}")
 
 
 def _log_drift_summary(report: dict[str, Any]) -> None:
@@ -224,39 +381,59 @@ def _log_drift_summary(report: dict[str, Any]) -> None:
     print(f"Generated: {report['generated_at']}")
     print(f"Analysis Period: Last {report['drift_days']} days")
 
-    print(f"\nFP Classifier:")
-    fp = report["fp_classifier"]
-    if fp["check_success"]:
-        status = "DRIFT DETECTED" if fp["drift_detected"] else "Healthy"
-        print(f"  Status: {status}")
-        if fp["drift_score"] is not None:
-            print(f"  Drift Score: {fp['drift_score']:.4f}")
-        if fp["threshold"] is not None:
-            print(f"  Threshold: {fp['threshold']:.4f}")
-    else:
-        print("  Status: Check failed")
+    _log_classifier_line("FP Classifier", report["fp_classifier"])
+    _log_classifier_line("EP Classifier", report["ep_classifier"])
 
-    print(f"\nEP Classifier:")
-    ep = report["ep_classifier"]
-    if ep["check_success"]:
-        status = "DRIFT DETECTED" if ep["drift_detected"] else "Healthy"
-        print(f"  Status: {status}")
-        if ep["drift_score"] is not None:
-            print(f"  Drift Score: {ep['drift_score']:.4f}")
-        if ep["threshold"] is not None:
-            print(f"  Threshold: {ep['threshold']:.4f}")
-    else:
-        print("  Status: Check failed")
-
-    print(f"\nOverall:")
     overall = report["overall"]
+    print("\nOverall:")
+    if overall["classifiers_unknown"]:
+        names = ", ".join(c.upper() for c in overall["classifiers_unknown"])
+        print(f"  UNKNOWN: {names} could not be checked - not monitored")
     if overall["any_drift_detected"]:
-        print(f"  WARNING: Drift detected in {', '.join(overall['classifiers_with_drift'])}")
-    else:
-        print("  All classifiers healthy")
+        names = ", ".join(c.upper() for c in overall["classifiers_with_drift"])
+        print(f"  WARNING: Drift detected in {names}")
+    if overall["all_checked_healthy"]:
+        print("  All checked classifiers healthy")
+    if overall["classifiers_skipped"]:
+        names = ", ".join(c.upper() for c in overall["classifiers_skipped"])
+        print(f"  Skipped (not checked): {names}")
     print(f"  Recommendation: {overall['recommendation']}")
 
     print("=" * 60 + "\n")
+
+
+def fail_on_unknown_verdict(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+    """Fail the workflow when any check produced no verdict.
+
+    This runs LAST on purpose. `Workflow._execute_step` calls `complete_step`
+    only on the non-raising path, so raising from `generate_drift_report` would
+    discard the report from the run archive, and raising from a check step would
+    skip the alert entirely. Running here means the summary is printed, the
+    alert is sent, and only then does the workflow go red -- which is all three
+    halves of "a failed check must not report success".
+
+    It passes only on an EXPLICIT healthy/degraded/skipped. A verdict that is
+    absent, None, or unrecognised fails too: `_verdict_of` maps those to
+    UNKNOWN, so a handler that returned a dict without its verdict key cannot
+    slip past the one gate placed to catch it.
+
+    This is a bridge. Once #74 gives verdicts a first-class escalation path in
+    the base runner, it should be deleted rather than left as dead code (D008).
+    """
+    unknown = [c for c in ("fp", "ep") if _verdict_of(context, c) is HealthVerdict.UNKNOWN]
+
+    if unknown:
+        names = ", ".join(c.upper() for c in unknown)
+        reasons = "; ".join(
+            f"{c}: {context.get(f'{c}_error') or 'no reason recorded'}" for c in unknown
+        )
+        raise RuntimeError(
+            f"Drift check produced no verdict for {names} - these classifiers are "
+            f"unmonitored and this run must not be recorded as successful "
+            f"({reasons})"
+        )
+
+    return {"verdicts_confirmed": True}
 
 
 @WorkflowRegistry.register
@@ -267,8 +444,9 @@ class DriftMonitoringWorkflow(Workflow):
     1. Check FP classifier drift
     2. Check EP classifier drift
     3. Evaluate drift results
-    4. Send alerts if drift detected
+    4. Send alerts for drift and for failed checks
     5. Generate summary report
+    6. Fail the workflow if any check produced no verdict
     """
 
     name = "drift_monitoring"
@@ -292,7 +470,7 @@ class DriftMonitoringWorkflow(Workflow):
         ),
         StepDefinition(
             name="send_drift_alerts",
-            description="Send notifications for detected drift",
+            description="Send notifications for drift and failed checks",
             handler=send_drift_alerts,
             skip_on_dry_run=True,
         ),
@@ -300,5 +478,12 @@ class DriftMonitoringWorkflow(Workflow):
             name="generate_drift_report",
             description="Generate drift monitoring summary report",
             handler=generate_drift_report,
+        ),
+        StepDefinition(
+            name="fail_on_unknown_verdict",
+            description="Fail the workflow if any check produced no verdict",
+            handler=fail_on_unknown_verdict,
+            # Deliberately NOT skip_on_dry_run: a dry run should still surface
+            # that a check could not tell us anything.
         ),
     ]

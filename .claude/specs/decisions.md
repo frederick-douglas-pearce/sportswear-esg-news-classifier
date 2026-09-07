@@ -256,3 +256,102 @@ mode is the wrong one to keep.
 same principle the code in D006 adopts -- a truncated backup should fail rather than be recorded as
 good -- applied to the project's own documentation.
 
+---
+
+## D008: Drift Monitoring Reports an Indeterminate Verdict Instead of Health (#71)
+
+**Date:** 2026-09-07
+**Code references:** by symbol and quoted construct, per [D007](#d007-decision-records-cite-symbols-and-quoted-constructs-not-line-numbers). Where "before" is meant, it is the state at base commit `a9603ad`.
+
+**Context:** Issue #71, order 1 of the `silent-success` epic (#72). The `drift_monitoring`
+workflow failed on 221 of 230 scheduled runs since 2026-01-17 and on 217 of those simultaneously
+logged `No action needed - all classifiers healthy` and exited 0. Four defects compound, all
+re-verified live at `a9603ad` rather than taken from the issue:
+
+- `data/reference/fp_reference.parquet` (written 2026-01-17) carries 8 columns and no
+  `novelty_score`, while `_evidently_drift_check` guards the novelty **stats** block on
+  `current_data` alone and then reads `reference_data["novelty_score"]`. That asymmetry, not the
+  staleness by itself, is the live raise site.
+- `monitor_drift.py` `main()` prints `Error running drift analysis: {e}` to **stdout** and returns
+  1; `check_fp_drift` logs `result.stderr`, which is empty. Hence 221 log lines reading
+  `FP drift check failed: ` with nothing after them.
+- `evaluate_drift_results` reads `context.get("fp_drift_detected", False)` and
+  `generate_drift_report` reads `context.get("fp_healthy", not context.get("fp_drift_detected", False))`.
+  With both keys absent -- a check that never ran -- the second is `not False`, i.e. **healthy**.
+- `classifier_predictions` has never held an `ep` row, so the EP check compares two empty frames,
+  gets `drift_detected=False`, and passes vacuously.
+
+**The governing rule the architect named, adopted for the whole change:** *a fix for a
+silent-success bug must not itself infer health from absence anywhere in its new code path.*
+Every decision below is an application of it.
+
+**Decision:**
+
+1. **`DriftReport` gains a typed `indeterminate: bool` field**, set at `check_drift`'s empty-frame
+   branch and `_evidently_drift_check`'s "No columns available" branch. **This overrides the plan's
+   first draft**, which inferred indeterminacy from `"error" in report.details`. `details` is a
+   free-form grab-bag also carrying `columns_checked`, `reference_size` and per-column p-values;
+   deriving control flow from a key's presence in it is the same meaning-hidden-in-a-dict shape the
+   epic removes, and #74/#76 consume this signal programmatically across ~1,040 archived run YAMLs.
+   `drift_detected` is already a first-class field; "could the analysis produce a verdict" is
+   equally load-bearing.
+2. **A three-value exit-code contract** in a new `src/mlops/exit_codes.py`: `0` no drift, `1` drift
+   detected, `2` indeterminate. Before, exit 1 meant *both* "drift detected" and "the analysis
+   raised", and `ScriptResult.success` is `exit_code == 0`, so the workflow could not tell them
+   apart and fell back to scraping stdout. The module exports its **own**
+   `NON_RETRYABLE_EXIT_CODES`, rather than reusing `src/labeling/exit_codes.py`'s, so each contract
+   stays self-describing. The two modules are not a DRY violation: they encode different domain
+   contracts that merely share the integers 0/1/2.
+3. **`HealthVerdict` (`healthy | degraded | unknown | skipped`) in a new `src/agent/health.py`, enum
+   only.** Not a `WorkflowStatus` member -- #72 constraint 1 -- because a health verdict is not a
+   lifecycle state and archives written with `status: unknown` would need migration. The
+   exit-code-to-verdict mapping stays next to the drift workflow: #77/#78/#79 will have different
+   exit-code semantics and must not be made to depend on drift's.
+4. **A terminal step `fail_on_unknown_verdict`** raises when any verdict is not *explicitly*
+   `healthy`/`degraded`/`skipped`, so `Workflow.run`'s existing `try/except` marks the workflow
+   FAILED. Positioned last so `send_drift_alerts` and `generate_drift_report` run and
+   `complete_step` first -- `_execute_step` calls `complete_step` only on the non-raising path, so a
+   raise inside the report step would discard the report from the run archive that #75/#76 read.
+   Testing `== "unknown"` alone was rejected: a handler returning a dict without its verdict key
+   leaves the value `None` and would sail past, re-creating the bug at the last gate. Not
+   `skip_on_dry_run`.
+5. **EP is gated by config (`AGENT_EP_DRIFT_ENABLED`, default false), not by a data count.**
+   EP-on-hold is a governance decision, not a data artifact: zero predictions is the symptom,
+   "on hold per CLAUDE.md" is the cause, and the flag encodes the cause. A data check would
+   re-enable monitoring the instant one stray `ep` row landed, then compare it against a
+   nonexistent reference and emit low-value `unknown` alerts.
+6. **A verdict with no evidence is not a verdict.** Exit 0 or 1 with no parseable, schema-valid
+   JSON summary resolves to `unknown`, not `healthy`; required summary fields are read fail-loud
+   rather than with `.get(default)`.
+
+**Alternatives considered:**
+
+- **Infer indeterminacy from `details["error"]`** -- rejected per (1); brittle, untyped, and
+  invisible to the archive consumers in #74/#76. Matching on the error *string* was rejected as
+  worse still.
+- **Spell the health vocabulary locally in `drift_monitoring.py` and let #74 promote it** --
+  rejected: "a term introduced in one workflow and not the others" is precisely the hazard this
+  project's `ARCHITECT_TRIGGERS` names, and #71 exercises all four members, so the enum is not
+  speculative.
+- **Raise inside the check step, or inside `generate_drift_report`** -- rejected: the first
+  starves AC2 of its alert and summary, the second discards the report from the archive.
+- **Wait for #73 to supply the non-zero workflow status** -- rejected: #73 is ordered after #71,
+  and a 231-day live incident should not wait on a foundation issue. The device is independent of
+  `base.py`, survives #73, and is **a bridge for #74 to delete** once verdicts have a first-class
+  escalation path. Recorded here so it does not linger as orphaned dead code.
+- **Data-driven EP skip** -- rejected per (5). Note the rejection is not that "0 rows to skipped"
+  is itself the epic's bug (the bug is 0 rows to *healthy*), but that it encodes the symptom
+  instead of the cause and re-enables itself on noise.
+- **Keep `_parse_drift_output` alongside the structured path** -- rejected: two sources for one
+  metric, and its `elif "healthy" in line_lower` is a second home for the absence-is-benign
+  defect.
+
+**Rationale:** the epic's thesis is that a missing signal must never collapse into "healthy". Every
+decision above moves a signal from *inferred by absence* to *stated explicitly and typed*: the
+indeterminate flag, the exit code, the verdict enum, the fail-loud field reads, and a terminal step
+that treats an absent verdict exactly as it treats a failed one.
+
+**Deferred to #74/#76, with rationale, rather than dropped:** a minimum-sample-size floor (exit 2
+covers empty frames and absent columns, not "enough rows to compute, too few to mean anything");
+the vacuously-healthy case when every check is skipped (cannot arise while FP is never skipped);
+and the inverse gap where a forgotten `AGENT_EP_DRIFT_ENABLED` leaves EP dark after it resumes.

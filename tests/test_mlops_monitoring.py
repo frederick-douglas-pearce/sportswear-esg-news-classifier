@@ -592,3 +592,272 @@ class TestMonitoringEdgeCases:
         after = datetime.now()
 
         assert before <= report.timestamp <= after
+
+
+# ============================================================================
+# Indeterminate verdict + the asymmetric novelty_score guard (issue #71)
+# ============================================================================
+
+class TestIndeterminateVerdict:
+    """A report with nothing measured must say so, not report no-drift.
+
+    Before #71 both branches below returned drift_detected=False with no way to
+    tell them from a real clean result, so `monitor_drift.py` exited 0 and the
+    workflow reported "all classifiers healthy".
+    """
+
+    def test_default_report_is_not_indeterminate(self):
+        """Control: the flag defaults off, so a real result is unaffected."""
+        report = DriftReport(
+            classifier_type="fp",
+            timestamp=datetime.now(),
+            drift_detected=False,
+            drift_score=0.05,
+            threshold=0.1,
+            details={},
+        )
+
+        assert report.indeterminate is False
+
+    def test_empty_data_is_indeterminate(self, disabled_monitor):
+        """The EP path: no predictions ever recorded, so nothing to compare."""
+        empty = pd.DataFrame()
+
+        report = disabled_monitor.check_drift(
+            current_data=empty, reference_data=empty, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.drift_detected is False  # because nothing was measured
+        assert report.details["reference_size"] == 0
+        assert report.details["current_size"] == 0
+
+    def test_empty_current_only_is_indeterminate(
+        self, disabled_monitor, reference_data
+    ):
+        report = disabled_monitor.check_drift(
+            current_data=pd.DataFrame(),
+            reference_data=reference_data,
+            save_report=False,
+        )
+
+        assert report.indeterminate is True
+
+    def test_real_comparison_is_not_indeterminate(
+        self, disabled_monitor, reference_data, current_data_no_drift
+    ):
+        """Control: a genuine comparison stays determinate."""
+        report = disabled_monitor.check_drift(
+            current_data=current_data_no_drift,
+            reference_data=reference_data,
+            save_report=False,
+        )
+
+        assert report.indeterminate is False
+
+    def test_no_common_columns_is_indeterminate(self, mock_mlops_settings_enabled):
+        """A reference written against an older schema measures nothing."""
+        current = pd.DataFrame({"other": ["a", "b", "c"]})
+        reference = pd.DataFrame({"different": ["x", "y", "z"]})
+
+        monitor = DriftMonitor.__new__(DriftMonitor)
+        monitor.classifier_type = "fp"
+        monitor.enabled = True
+        monitor.threshold = 0.1
+        monitor._evidently = {"Report": MagicMock(), "ValueDrift": MagicMock()}
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert report.indeterminate is True
+        assert "No columns available" in report.details["error"]
+
+
+class TestNoveltyScoreGuardSymmetry:
+    """The live raise site of issue #71.
+
+    `novelty_score` was added to the database after the reference parquet was
+    written, so current had the column and reference did not. The stats block
+    guarded only `current_data` and then read `reference_data["novelty_score"]`,
+    raising KeyError on every run from 2026-01-17 to 2026-09-06.
+    """
+
+    def _monitor(self):
+        monitor = DriftMonitor.__new__(DriftMonitor)
+        monitor.classifier_type = "fp"
+        monitor.enabled = True
+        monitor.threshold = 0.1
+        mock_snapshot = MagicMock()
+        mock_snapshot.dict.return_value = {
+            "metrics": [
+                {
+                    "metric_name": "ValueDrift",
+                    "config": {"column": "probability", "threshold": 0.05},
+                    "value": 0.5,
+                }
+            ]
+        }
+        mock_report = MagicMock()
+        mock_report.run.return_value = mock_snapshot
+        monitor._evidently = {
+            "Report": MagicMock(return_value=mock_report),
+            "ValueDrift": MagicMock(),
+        }
+        return monitor
+
+    def test_reference_without_novelty_does_not_raise(
+        self, mock_mlops_settings_enabled
+    ):
+        """The exact production shape: current has the column, reference does not."""
+        current = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6, 0.7],
+                "prediction": [0, 1, 1],
+                "novelty_score": [0.2, 0.4, 0.9],
+            }
+        )
+        reference = pd.DataFrame(
+            {"probability": [0.4, 0.5, 0.6], "prediction": [0, 0, 1]}
+        )
+
+        report = self._monitor()._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        # Current-side stats are still reported; reference-side are simply absent.
+        assert "current_novelty_mean" in report.details
+        assert "reference_novelty_mean" not in report.details
+        assert report.indeterminate is False
+
+    def test_current_without_novelty_does_not_raise(self, mock_mlops_settings_enabled):
+        """The inverse, which the original guard happened to survive."""
+        current = pd.DataFrame(
+            {"probability": [0.5, 0.6, 0.7], "prediction": [0, 1, 1]}
+        )
+        reference = pd.DataFrame(
+            {
+                "probability": [0.4, 0.5, 0.6],
+                "prediction": [0, 0, 1],
+                "novelty_score": [0.1, 0.3, 0.5],
+            }
+        )
+
+        report = self._monitor()._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert "reference_novelty_mean" in report.details
+        assert "current_novelty_mean" not in report.details
+
+    def test_both_sides_present_still_reports_both(self, mock_mlops_settings_enabled):
+        """Control: the guard split did not drop the stats it should still emit."""
+        current = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6, 0.7],
+                "prediction": [0, 1, 1],
+                "novelty_score": [0.2, 0.4, 0.9],
+            }
+        )
+        reference = pd.DataFrame(
+            {
+                "probability": [0.4, 0.5, 0.6],
+                "prediction": [0, 0, 1],
+                "novelty_score": [0.1, 0.3, 0.5],
+            }
+        )
+
+        report = self._monitor()._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert "current_novelty_mean" in report.details
+        assert "reference_novelty_mean" in report.details
+
+
+class TestPartialComparisonIsVisible:
+    """A reference missing columns must not yield a verdict that looks complete.
+
+    Fixing the novelty_score KeyError removed a crash that had been
+    accidentally surfacing this. Without the record below, a stale reference
+    now compares whatever it shares and reports a whole-looking result -- the
+    epic's defect class re-entering through the fix for it.
+    """
+
+    def _monitor_with_metrics(self, columns):
+        monitor = DriftMonitor.__new__(DriftMonitor)
+        monitor.classifier_type = "fp"
+        monitor.enabled = True
+        monitor.threshold = 0.1
+        mock_snapshot = MagicMock()
+        mock_snapshot.dict.return_value = {
+            "metrics": [
+                {
+                    "metric_name": "ValueDrift",
+                    "config": {"column": c, "threshold": 0.05},
+                    "value": 0.5,
+                }
+                for c in columns
+            ]
+        }
+        mock_report = MagicMock()
+        mock_report.run.return_value = mock_snapshot
+        monitor._evidently = {
+            "Report": MagicMock(return_value=mock_report),
+            "ValueDrift": MagicMock(),
+        }
+        return monitor
+
+    def test_missing_reference_column_is_recorded(self, mock_mlops_settings_enabled):
+        """The production shape: reference predates novelty_score."""
+        current = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6, 0.7],
+                "prediction": [0, 1, 1],
+                "novelty_score": [0.2, 0.4, 0.9],
+            }
+        )
+        reference = pd.DataFrame(
+            {"probability": [0.4, 0.5, 0.6], "prediction": [0, 0, 1]}
+        )
+
+        report = self._monitor_with_metrics(["probability", "prediction"])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.details["columns_missing_from_reference"] == ["novelty_score"]
+        assert "novelty_score" not in report.details["columns_checked"]
+
+    def test_missing_reference_column_is_logged(self, mock_mlops_settings_enabled, caplog):
+        current = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6, 0.7],
+                "prediction": [0, 1, 1],
+                "novelty_score": [0.2, 0.4, 0.9],
+            }
+        )
+        reference = pd.DataFrame(
+            {"probability": [0.4, 0.5, 0.6], "prediction": [0, 0, 1]}
+        )
+
+        with caplog.at_level("WARNING"):
+            self._monitor_with_metrics(["probability", "prediction"])._evidently_drift_check(
+                current, reference, save_report=False
+            )
+
+        assert "novelty_score" in caplog.text
+        assert "NOT assessed" in caplog.text
+
+    def test_complete_reference_records_nothing_missing(self, mock_mlops_settings_enabled):
+        """Control: a matching schema reports an empty missing-list, not a false alarm."""
+        frame = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6, 0.7],
+                "prediction": [0, 1, 1],
+                "novelty_score": [0.2, 0.4, 0.9],
+            }
+        )
+
+        report = self._monitor_with_metrics(
+            ["probability", "prediction", "novelty_score"]
+        )._evidently_drift_check(frame, frame, save_report=False)
+
+        assert report.details["columns_missing_from_reference"] == []

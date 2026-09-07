@@ -1,6 +1,12 @@
 """MLOps module for experiment tracking and production monitoring."""
 
 from .config import mlops_settings
+from .exit_codes import (
+    EXIT_DRIFT_DETECTED,
+    EXIT_INDETERMINATE,
+    EXIT_NO_DRIFT,
+    NON_RETRYABLE_EXIT_CODES,
+)
 from .tracking import (
     ExperimentTracker,
     STAGE_NONE,
@@ -25,6 +31,11 @@ from .importance_tracking import (
 __all__ = [
     # Config
     "mlops_settings",
+    # Exit-code contract (scripts/monitor_drift.py <-> agent runner)
+    "EXIT_NO_DRIFT",
+    "EXIT_DRIFT_DETECTED",
+    "EXIT_INDETERMINATE",
+    "NON_RETRYABLE_EXIT_CODES",
     # Tracking
     "ExperimentTracker",
     # Model Registry Stages

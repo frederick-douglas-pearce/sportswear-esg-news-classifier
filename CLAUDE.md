@@ -122,7 +122,7 @@ uv run python scripts/backfill_rerank_scores.py --batch-size 100  # Custom batch
 # MLOps - Drift Monitoring
 uv run python scripts/monitor_drift.py --classifier fp --from-db              # Production drift check (7 days)
 uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report  # Generate Evidently HTML report
-uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30  # Create reference dataset
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90  # Regenerate reference (do this after any change to what classifier_predictions stores)
 
 # MLOps - MLflow (when MLFLOW_ENABLED=true)
 uv run mlflow ui --backend-store-uri sqlite:///mlruns.db  # Start MLflow UI (http://localhost:5000)
@@ -356,6 +356,7 @@ MLFLOW_ENABLED=false, MLFLOW_TRACKING_URI=sqlite:///mlruns.db
 EVIDENTLY_ENABLED=false, DRIFT_THRESHOLD=0.1
 REFERENCE_DATA_DIR=data/reference, REFERENCE_WINDOW_DAYS=30
 ALERT_WEBHOOK_URL, ALERT_ON_DRIFT=true
+AGENT_EP_DRIFT_ENABLED=false  # EP is on hold; its check reports "skipped" with a reason, not "healthy"
 
 # Agent Orchestrator
 AGENT_EMAIL_ENABLED=false, AGENT_EMAIL_RECIPIENT=, AGENT_EMAIL_SENDER=
@@ -487,6 +488,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-07**: A failed drift check no longer reports "all classifiers healthy" - typed `DriftReport.indeterminate`, a 0/1/2 exit-code contract, `HealthVerdict` vocabulary, explicit EP skip, and a workflow that fails when a check produced no verdict (#71)
 - **2026-09-06**: A failed `pg_dump` no longer records a good backup - `set -eo pipefail` plus reachable failure branches in `scripts/backup_db.sh`, so a truncated archive is removed instead of rotated (#89)
 - **2026-09-05**: Labeling retry no longer erases a run's results - partial-failure exit code, `labeling_runs` outcome columns as the metrics source, stderr tail on failure (#81)
 - **2026-09-05**: JSON parser recovers LLM responses that quote the article verbatim - interior-quote escaping, staged repair, error-position logging (#82)

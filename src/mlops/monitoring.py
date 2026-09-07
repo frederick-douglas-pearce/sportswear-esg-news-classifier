@@ -28,7 +28,20 @@ DRIFT_CONFIG = {
 
 @dataclass
 class DriftReport:
-    """Results of a drift analysis."""
+    """Results of a drift analysis.
+
+    `indeterminate` is a first-class field rather than a key in `details`
+    because it drives control flow: `scripts/monitor_drift.py` maps it to
+    `EXIT_INDETERMINATE`, and the run archives it produces are read
+    programmatically downstream. `details` is a free-form grab-bag -- it also
+    carries `columns_checked`, `reference_size` and per-column p-values -- so
+    inferring "was this a verdict at all?" from the presence of an `error` key
+    in it puts a load-bearing signal somewhere a reader has to know to look.
+
+    When `indeterminate` is True, `drift_detected` and `drift_score` carry
+    their zero values because nothing was measured; they are NOT evidence of
+    health and must not be read as such (issue #71).
+    """
 
     classifier_type: str
     timestamp: datetime
@@ -37,6 +50,7 @@ class DriftReport:
     threshold: float
     details: dict[str, Any]
     report_path: Path | None = None
+    indeterminate: bool = False
 
 
 class DriftMonitor:
@@ -112,13 +126,26 @@ class DriftMonitor:
                 current_data = current_data.iloc[midpoint:]
 
         if current_data.empty or reference_data.empty:
+            # No comparison was performed. Before #71 this returned
+            # drift_detected=False, which the script reported as exit 0 and the
+            # workflow read as healthy -- the EP classifier, which has never
+            # made a prediction, passed this way on every run for 231 days.
+            logger.warning(
+                f"{self.classifier_type}: insufficient data for drift analysis "
+                f"(reference={len(reference_data)} rows, current={len(current_data)} rows)"
+            )
             return DriftReport(
                 classifier_type=self.classifier_type,
                 timestamp=datetime.now(),
                 drift_detected=False,
                 drift_score=0.0,
                 threshold=self.threshold,
-                details={"error": "Insufficient data for drift analysis"},
+                details={
+                    "error": "Insufficient data for drift analysis",
+                    "reference_size": len(reference_data),
+                    "current_size": len(current_data),
+                },
+                indeterminate=True,
             )
 
         # Run drift analysis
@@ -178,13 +205,43 @@ class DriftMonitor:
                 columns_to_check.append(col)
 
         if not columns_to_check:
+            # Reference and current share no comparable column -- typically a
+            # reference written against an older schema. Nothing was measured,
+            # so this is indeterminate, not healthy (issue #71).
+            logger.warning(
+                f"{self.classifier_type}: no columns in common between reference "
+                f"and current data; drift cannot be assessed"
+            )
             return DriftReport(
                 classifier_type=self.classifier_type,
                 timestamp=datetime.now(),
                 drift_detected=False,
                 drift_score=0.0,
                 threshold=self.threshold,
-                details={"error": "No columns available for drift detection"},
+                details={
+                    "error": "No columns available for drift detection",
+                    "reference_columns": sorted(reference_data.columns),
+                    "current_columns": sorted(current_data.columns),
+                },
+                indeterminate=True,
+            )
+
+        # Say so when the reference cannot answer for a column the current data
+        # has. Fixing the novelty_score KeyError (issue #71) removed a crash
+        # that had been accidentally surfacing exactly this: a reference written
+        # against an older schema now compares the columns it happens to share
+        # and returns a verdict that looks complete. The comparison is still
+        # useful, so this does not make the report indeterminate -- but a
+        # partial check reported as a whole one is the defect this epic is
+        # about, so it is recorded and logged rather than left silent.
+        expected = [c for c in ["probability", "prediction", "novelty_score"] if c in current_data.columns]
+        missing_from_reference = [c for c in expected if c not in reference_data.columns]
+        if missing_from_reference:
+            logger.warning(
+                f"{self.classifier_type}: reference dataset lacks "
+                f"{', '.join(missing_from_reference)} - drift for those columns "
+                f"was NOT assessed. Regenerate the reference with "
+                f"--create-reference to compare them."
             )
 
         # Filter to only the columns we want to analyze
@@ -208,6 +265,7 @@ class DriftMonitor:
         report_dict = snapshot.dict()
         details = {
             "columns_checked": columns_to_check,
+            "columns_missing_from_reference": missing_from_reference,
             "core_metrics_drifted": [],
             "brand_metrics_drifted": [],
         }
@@ -272,14 +330,22 @@ class DriftMonitor:
         if "prediction" in current_data.columns:
             details["current_prediction_rate"] = float(current_data["prediction"].mean())
             details["reference_prediction_rate"] = float(reference_data["prediction"].mean())
+        # Guard BOTH frames independently. Guarding only `current_data` and then
+        # reading `reference_data["novelty_score"]` is what raised
+        # `KeyError: 'novelty_score'` on every run from 2026-01-17 onward: the
+        # database gained `novelty_score` while the reference parquet, written
+        # before it existed, did not have the column (issue #71). The
+        # columns_to_check block above already guards symmetrically; this one
+        # did not.
         if "novelty_score" in current_data.columns:
             # Filter out NaN values for novelty stats
             current_novelty = current_data["novelty_score"].dropna()
-            reference_novelty = reference_data["novelty_score"].dropna()
             if len(current_novelty) > 0:
                 details["current_novelty_mean"] = float(current_novelty.mean())
                 details["current_novelty_p90"] = float(current_novelty.quantile(0.9))
                 details["current_high_novelty_pct"] = float((current_novelty > 0.7).mean())
+        if "novelty_score" in reference_data.columns:
+            reference_novelty = reference_data["novelty_score"].dropna()
             if len(reference_novelty) > 0:
                 details["reference_novelty_mean"] = float(reference_novelty.mean())
                 details["reference_novelty_p90"] = float(reference_novelty.quantile(0.9))
