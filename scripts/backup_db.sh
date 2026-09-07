@@ -102,8 +102,10 @@ create_backup() {
         --no-owner \
         --no-privileges \
         | gzip > "$DAILY_PATH"; then
-        # `|| BACKUP_SIZE=` is deliberate. This is the one PLAIN (non-`local`)
-        # assignment in the file, so under `pipefail` a `du` failure propagates to
+        # `|| BACKUP_SIZE=` is deliberate. This is the only plain (non-`local`)
+        # assignment in the file whose right-hand side is a PIPELINE -- other plain
+        # assignments exist (`TIMESTAMP=$(date ...)`), but `pipefail` cannot reach
+        # them. So under `pipefail` a `du` failure propagates to
         # `set -e` and aborts INSIDE the success branch: a good archive is already
         # on disk, but there is no success line, no weekly/monthly copy, no
         # rotation, and the `rm -f` below is in the `else` and never runs. The size

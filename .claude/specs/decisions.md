@@ -138,8 +138,10 @@ earlier draft of this entry listed `list_backups()` among the `local`-assigned f
 not one.)
 
 The two sites that **do** change:
-1. **`BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)` in `create_backup()`** -- the one *plain*
-   (non-`local`) assignment, so its status now propagates to `set -e`. An earlier draft called this
+1. **`BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)` in `create_backup()`** -- the only plain
+   (non-`local`) assignment whose right-hand side is a *pipeline*, so its status now propagates to
+   `set -e`. (Other plain assignments exist, such as `TIMESTAMP=$(date ...)`; `pipefail` has
+   nothing to reach in them.) An earlier draft called this
    "correct behaviour on a just-written file". It is not merely correct-and-boring: it aborts
    *inside* the success branch, after a good archive is on disk, so the result is the AC2 invariant
    inverted -- archive kept, non-zero exit, no success line, no rotation, and the `rm -f` in the
@@ -155,9 +157,14 @@ does not stop `pipefail` from changing the pipeline's status. Correct conclusion
 and the wrong mechanism is what kept it untested.
 
 What the correction then found, and what it got wrong in turn, is recorded in #93 with the
-measurements. In summary: the SIGPIPE inversion is **real but unreachable here** -- it needs
-`docker ps` output above the ~64 KiB pipe buffer (measured: running at 48,894 bytes, inverted at
-108,894), and this host runs three containers. A second draft claimed it "would have failed the
+measurements. In summary: the SIGPIPE inversion is **real but unreachable here**. The mechanism is a *race*,
+not a size threshold: it fires whenever `docker ps` is still writing when `grep -q` matches and
+stops reading. Exceeding the ~64 KiB pipe buffer is simply the reliable way to force that (measured:
+running at 48,894 bytes, inverted at 108,894), but the acceptance-gate verifier inverted the same
+construct with **two lines** of output by inserting a delay after the matching line. What makes it
+unreachable here is not the byte count as such but that real `docker ps` emits its whole list --
+30 bytes on this host, three containers -- in a single buffered write and exits before `grep` can
+close the pipe. 30/30 runs of the real construct reported RUNNING. A second draft claimed it "would have failed the
 nightly cron backup on a healthy system"; it would not have. A third claimed that removing the pipe
 was a *prerequisite* for reporting a Docker failure separately from an absent container; that is
 false too -- `PIPESTATUS` exposes per-stage status and the `if !` condition keeps the function alive
