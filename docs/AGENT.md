@@ -172,13 +172,28 @@ LLM Analysis:
 
 | Step | Description |
 |------|-------------|
-| 1. `check_fp_drift` | Run Evidently drift detection for FP classifier |
-| 2. `check_ep_drift` | Run Evidently drift detection for EP classifier |
-| 3. `evaluate_drift_results` | Determine if action is needed |
-| 4. `send_drift_alerts` | Send alerts if drift detected |
+| 1. `check_fp_drift` | Run drift detection for FP classifier; map its exit code to a `HealthVerdict` |
+| 2. `check_ep_drift` | Same for EP -- **skipped by default** with a stated reason (`AGENT_EP_DRIFT_ENABLED`, see below) |
+| 3. `evaluate_drift_results` | Determine if action is needed, from the verdicts |
+| 4. `send_drift_alerts` | Alert on detected drift **and** on any check that produced no verdict |
 | 5. `generate_drift_report` | Generate summary report |
+| 6. `fail_on_unknown_verdict` | Fail the workflow if any verdict is not explicitly healthy/degraded/skipped |
 
-**Alert Trigger**: Drift score exceeds configured threshold (default: 0.1)
+**Health verdicts** (`src/agent/health.py`): `healthy | degraded | unknown | skipped`. A check that
+could not produce a verdict is `unknown`, never `healthy` -- see issue #71, where a failed check
+reported "all classifiers healthy" on 219 runs. `unknown` alerts and fails the workflow; `skipped`
+does neither, but never counts toward "all healthy" either.
+
+**Step 6 runs last on purpose**: the summary must be printed and the alert sent before the workflow
+goes red, and `Workflow._execute_step` records a step's result only on the non-raising path. It is a
+bridge, to be removed once #74 gives verdicts a first-class escalation path (see D008).
+
+**EP is on hold.** `classifier_predictions` has never held an `ep` row, so the check compared
+nothing and reported healthy. It is now gated on `AGENT_EP_DRIFT_ENABLED` (default `false`) and
+reports `skipped` with the reason in `AGENT_EP_DRIFT_SKIP_REASON`.
+
+**Alert Triggers**: drift score exceeds the configured threshold (default: 0.1), **or** a check
+produced no verdict.
 
 ### Website Export
 
@@ -396,6 +411,7 @@ ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 |------|---------|----------|
 | Labeling Summary | Daily after labeling | Email |
 | Drift Alert | When drift exceeds threshold | Email + Webhook |
+| Check Failed | When a scheduled check produces no verdict (severity `error`) | Email + Webhook |
 | Export Error | When website export fails | Email |
 | Training Ready | When data export completes | Email |
 | Promotion Complete | After model promotion | Email |

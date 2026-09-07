@@ -10,7 +10,7 @@ migrating for -- so epic #72 forbids it explicitly.
 The vocabulary exists because a check that could not run must have somewhere to
 say so. Before issue #71 it did not: a failed drift check set no key, the
 workflow read `context.get("fp_drift_detected", False)`, and absence resolved
-to "no drift" and then to "all classifiers healthy" -- on 217 of 230 runs.
+to "no drift" and then to "all classifiers healthy" -- on 219 runs.
 
 This module holds the vocabulary and nothing else. The mapping from a given
 check's exit codes to these verdicts belongs beside that check, because each
@@ -26,8 +26,19 @@ from enum import Enum
 class HealthVerdict(str, Enum):
     """What a scheduled check found.
 
-    Inherits from `str` so it serializes into the YAML run archive as a plain
-    string, the way `WorkflowStatus` does.
+    **Always store `verdict.value` in workflow context, never the member.**
+    The `str` mixin does NOT make this YAML-safe: `yaml.dump` renders a member
+    of a `str, Enum` as `!!python/object/apply:...HealthVerdict\\n- healthy`,
+    and `yaml.safe_dump` refuses it outright. `WorkflowStatus` survives only
+    because `WorkflowState.to_dict`/`StepState.to_dict` call `.value`
+    explicitly -- but `context` and `StepState.result` are dumped raw, so a
+    member stored there reaches the archive as a Python object tag, and the
+    next `yaml.safe_load` in `StateManager._load` raises into a bare `except`
+    that resets all workflow state to `{}`.
+
+    The mixin is kept because it makes `HealthVerdict.HEALTHY == "healthy"`
+    true, which keeps comparisons against archived strings readable. That is
+    what it is for; it is not a serialization guarantee.
     """
 
     HEALTHY = "healthy"

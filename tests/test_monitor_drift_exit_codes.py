@@ -176,10 +176,17 @@ class TestErrorStream:
         )
 
         assert proc.returncode == EXIT_INDETERMINATE
+        # The MESSAGE must be present on stderr, not merely something mentioning
+        # novelty_score: `traceback.print_exc` alone satisfies that, so without
+        # this line deleting the `print(..., file=sys.stderr)` entirely leaves
+        # every other assertion here passing (issue #71 review).
+        assert "Error running drift analysis" in proc.stderr
         assert "novelty_score" in proc.stderr
-        assert proc.stderr.strip() != ""
         # The defect was that this went to stdout, where nothing read it.
         assert "Error running drift analysis" not in proc.stdout
+        # Not merely "an error occurred": the traceback is what names the frame,
+        # and it is what the workflow now carries into the run archive.
+        assert "Traceback" in proc.stderr
 
 
 class TestRetryContract:
@@ -205,3 +212,139 @@ class TestRetryContract:
         kwargs = mock_run.call_args.kwargs
         assert kwargs["non_retryable_exit_codes"] == NON_RETRYABLE_EXIT_CODES
         assert kwargs["parse_json_output"] is True
+
+
+class TestMainWiring:
+    """`main()` must return the same code it prints, and always print one.
+
+    `exit_code_for` and `print_summary_json` are each tested in isolation
+    above; nothing tied them together. A hardcoded
+    `print_summary_json(report, EXIT_NO_DRIFT)` would pass every other test in
+    this file while silently degrading every non-zero run to `unknown`, because
+    the workflow rejects a summary whose exit_code disagrees with the process.
+    """
+
+    @pytest.mark.parametrize(
+        "drift_detected,indeterminate,expected",
+        [
+            (False, False, EXIT_NO_DRIFT),
+            (True, False, EXIT_DRIFT_DETECTED),
+            (False, True, EXIT_INDETERMINATE),
+        ],
+    )
+    def test_returned_code_matches_the_printed_summary(
+        self, monitor_drift, capsys, monkeypatch, drift_detected, indeterminate, expected
+    ):
+        report = make_report(
+            drift_detected=drift_detected,
+            indeterminate=indeterminate,
+            error="nothing to compare" if indeterminate else None,
+        )
+        monkeypatch.setattr(monitor_drift, "run_drift_analysis", lambda **kw: report)
+        monkeypatch.setattr(
+            sys, "argv", ["monitor_drift.py", "--classifier", "fp", "--from-db"]
+        )
+
+        returned = monitor_drift.main()
+
+        summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert returned == expected
+        assert summary["exit_code"] == returned
+
+
+class TestCreateReferenceExitCodes:
+    """`--create-reference` must obey the same contract.
+
+    Returning 1 there would mean "drift detected" — and it is non-retryable, so
+    `scripts/cron_monitor.sh` would log a failed reference build as
+    "WARNING: Drift detected".
+    """
+
+    def test_failure_is_indeterminate_not_drift(
+        self, monitor_drift, capsys, monkeypatch
+    ):
+        def boom(**kwargs):
+            raise ValueError("No prediction data found for fp")
+
+        monkeypatch.setattr(monitor_drift, "create_reference_dataset", boom)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["monitor_drift.py", "--classifier", "fp", "--from-db", "--create-reference"],
+        )
+
+        returned = monitor_drift.main()
+
+        assert returned == EXIT_INDETERMINATE
+        assert returned != EXIT_DRIFT_DETECTED
+        captured = capsys.readouterr()
+        assert "No prediction data found" in captured.err
+        assert "No prediction data found" not in captured.out
+
+    def test_non_value_errors_are_caught_too(self, monitor_drift, monkeypatch):
+        """An OSError writing the parquet would otherwise escape and exit 1."""
+
+        def boom(**kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(monitor_drift, "create_reference_dataset", boom)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["monitor_drift.py", "--classifier", "fp", "--from-db", "--create-reference"],
+        )
+
+        assert monitor_drift.main() == EXIT_INDETERMINATE
+
+    def test_success_returns_no_drift(self, monitor_drift, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            monitor_drift, "create_reference_dataset", lambda **kw: tmp_path / "ref.parquet"
+        )
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["monitor_drift.py", "--classifier", "fp", "--from-db", "--create-reference"],
+        )
+
+        assert monitor_drift.main() == EXIT_NO_DRIFT
+
+    def test_reference_stats_without_a_reference_is_not_success(
+        self, monitor_drift, monkeypatch
+    ):
+        monkeypatch.setattr(monitor_drift, "get_reference_stats", lambda c: None)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["monitor_drift.py", "--classifier", "fp", "--reference-stats"],
+        )
+
+        assert monitor_drift.main() == EXIT_INDETERMINATE
+
+
+class TestOutputJsonCarriesIndeterminate:
+    """`.github/workflows/monitoring.yml` reads this file with `jq`.
+
+    Without the field the CI step summary prints "✅ Healthy" for a check that
+    measured nothing.
+    """
+
+    def test_output_report_includes_indeterminate(
+        self, monitor_drift, monkeypatch, tmp_path
+    ):
+        report = make_report(indeterminate=True, error="Insufficient data")
+        monkeypatch.setattr(monitor_drift, "run_drift_analysis", lambda **kw: report)
+        out = tmp_path / "drift_report.json"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "monitor_drift.py", "--classifier", "fp", "--from-db",
+                "--output", str(out),
+            ],
+        )
+
+        monitor_drift.main()
+
+        written = json.loads(out.read_text())
+        assert written["indeterminate"] is True
+        assert written["details"]["error"] == "Insufficient data"

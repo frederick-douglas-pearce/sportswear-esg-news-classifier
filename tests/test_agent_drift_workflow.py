@@ -167,13 +167,20 @@ class TestCheckFpDrift:
             assert result["fp_verdict"] == HealthVerdict.UNKNOWN.value
 
     def test_unrecognised_exit_code_is_unknown(self, mock_workflow):
-        """The runner reports -1 for a timeout or an execution error."""
+        """The runner reports -1 for a timeout or an execution error.
+
+        The summary is deliberately PRESENT and self-consistent, so only the
+        unrecognised-exit-code guard can produce the verdict. With
+        `summary=None` this test also passes when that guard is deleted, via
+        the no-summary branch below it.
+        """
         with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
-            mock_run.return_value = script_result(exit_code=-1, summary=None)
+            mock_run.return_value = script_result(exit_code=-1, stderr="killed")
 
             result = check_fp_drift(mock_workflow, {})
 
             assert result["fp_verdict"] == HealthVerdict.UNKNOWN.value
+            assert "unrecognised exit code -1" in result["fp_error"]
 
 
 class TestCheckEpDrift:
@@ -370,7 +377,10 @@ class TestGenerateDriftReport:
         out = capsys.readouterr().out
         assert "UNKNOWN" in out
         assert "NOT being monitored" in out
-        assert "All classifiers healthy" not in out
+        # The real string production prints on the healthy path. Asserting the
+        # pre-#71 wording ("All classifiers healthy") would be inert: it exists
+        # nowhere in the codebase, so it can never appear.
+        assert "All checked classifiers healthy" not in out
 
     def test_healthy_report(self, mock_workflow, capsys):
         context = {
@@ -539,3 +549,261 @@ class TestDriftMonitoringWorkflow:
 
             assert result.status == WorkflowStatus.COMPLETED
             assert result.steps["send_drift_alerts"].result.get("skipped") is True
+
+
+class TestDiagnosisReachesTheContext:
+    """The traceback must land in the context, not only in the log.
+
+    The run archive and the alert body are built from the context. On the
+    dominant failure path — the script raised, so it returned before printing a
+    summary — a bare fallback records the literal string "no verdict produced",
+    which is an alert that names no cause.
+    """
+
+    def test_stderr_becomes_the_error_when_no_summary_exists(self, mock_workflow):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_INDETERMINATE,
+                summary=None,
+                stderr="Traceback (most recent call last):\n  KeyError: 'novelty_score'",
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_verdict"] == HealthVerdict.UNKNOWN.value
+            assert "novelty_score" in result["fp_error"]
+            assert result["fp_error"] != "no verdict produced"
+
+    def test_structured_error_is_preferred_over_stderr(self, mock_workflow):
+        """When the script DID produce a summary, its own reason is better."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_INDETERMINATE,
+                indeterminate=True,
+                error="Insufficient data for drift analysis",
+                stderr="some noisy warning",
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_error"] == "Insufficient data for drift analysis"
+
+    def test_silent_failure_says_so_rather_than_claiming_a_reason(self, mock_workflow):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_INDETERMINATE, summary=None, stderr=""
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert "wrote nothing to stderr" in result["fp_error"]
+
+    def test_tail_not_head_of_stderr(self, mock_workflow):
+        """A traceback's diagnosis is at the END (issue #81, same runner).
+
+        Swapping `tail(...)` back to `result.stderr[:200]` fails this test.
+        """
+        stderr = ("noise line\n" * 500) + "KeyError: 'the_real_cause'"
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_INDETERMINATE, summary=None, stderr=stderr
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert "the_real_cause" in result["fp_error"]
+
+
+class TestSummaryMustCarryEvidence:
+    """`_validate_summary` checks values, not just that keys are present."""
+
+    def test_summary_marked_indeterminate_is_not_healthy(self, mock_workflow):
+        """A summary that says "I could not tell" outranks its exit code."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_NO_DRIFT, indeterminate=True
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_verdict"] == HealthVerdict.UNKNOWN.value
+
+    def test_null_drift_score_is_not_healthy(self, mock_workflow):
+        """A health claim with no measurement under it is not a health claim."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_NO_DRIFT, drift_score=None
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_verdict"] == HealthVerdict.UNKNOWN.value
+
+    def test_non_numeric_drift_score_is_not_healthy(self, mock_workflow):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_NO_DRIFT, drift_score="not-a-number"
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_verdict"] == HealthVerdict.UNKNOWN.value
+
+    def test_summary_contradicting_the_exit_code_is_not_healthy(self, mock_workflow):
+        """exit 0 but drift_detected=true — two statements of one fact, disagreeing."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_NO_DRIFT, drift_detected=True
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_verdict"] == HealthVerdict.UNKNOWN.value
+
+    def test_wellformed_healthy_summary_still_passes(self, mock_workflow):
+        """Control: the new checks have not made every summary unreadable."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(exit_code=EXIT_NO_DRIFT)
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_verdict"] == HealthVerdict.HEALTHY.value
+
+    def test_wellformed_degraded_summary_still_passes(self, mock_workflow):
+        """Control for the drift_detected/exit-code agreement check."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_DRIFT_DETECTED, drift_detected=True, drift_score=0.4
+            )
+
+            result = check_fp_drift(mock_workflow, {})
+
+            assert result["fp_verdict"] == HealthVerdict.DEGRADED.value
+
+
+class TestSummaryReadsTheVerdictNotTheMetric:
+    """A degraded classifier must never print as Healthy."""
+
+    def test_degraded_without_metrics_does_not_print_healthy(self, mock_workflow, capsys):
+        """`_classifier_report` builds `drift_detected` with a bare `.get()`.
+
+        Deriving the printed status from that metric rather than from the
+        verdict printed "Status: Healthy" for a DEGRADED classifier.
+        """
+        context = {
+            "drift_days": 7,
+            "fp_verdict": HealthVerdict.DEGRADED.value,
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+            "ep_skip_reason": "on hold",
+        }
+
+        generate_drift_report(mock_workflow, context)
+
+        out = capsys.readouterr().out
+        assert "DRIFT DETECTED" in out
+        assert "Status: Healthy" not in out
+
+
+class TestBothVerdictsAlert:
+    def test_drift_and_failed_check_both_alert(self, mock_workflow):
+        with patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_drift, patch(
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
+        ) as mock_fail:
+            mock_drift.return_value = {"console": True}
+            mock_fail.return_value = {"console": True}
+            context = {
+                "dry_run": False,
+                "fp_verdict": HealthVerdict.DEGRADED.value,
+                "fp_drift_score": 0.4,
+                "fp_threshold": 0.15,
+                "ep_verdict": HealthVerdict.UNKNOWN.value,
+                "ep_error": "Insufficient data",
+            }
+
+            result = send_drift_alerts(mock_workflow, context)
+
+            assert result["alert_count"] == 2
+            mock_drift.assert_called_once()
+            mock_fail.assert_called_once()
+
+
+class TestDegradedRunEndToEnd:
+    """Drift detected is a RESULT: the workflow completes and alerts."""
+
+    def test_degraded_completes_with_a_drift_alert(self, state_manager):
+        with patch(
+            "src.agent.workflows.drift_monitoring.run_monitor_drift"
+        ) as mock_run, patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_drift, patch(
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
+        ) as mock_fail:
+            mock_run.return_value = script_result(
+                exit_code=EXIT_DRIFT_DETECTED, drift_detected=True, drift_score=0.4
+            )
+            mock_drift.return_value = {"console": True}
+
+            workflow = DriftMonitoringWorkflow(state_manager=state_manager, dry_run=False)
+            result = workflow.run()
+
+            assert result.status == WorkflowStatus.COMPLETED
+            mock_drift.assert_called_once()
+            mock_fail.assert_not_called()
+            report = result.steps["generate_drift_report"].result["report"]
+            assert report["fp_classifier"]["verdict"] == HealthVerdict.DEGRADED.value
+
+
+class TestVerdictsSerialiseSafely:
+    """Context is dumped to the run archive RAW — only `.value` is YAML-safe.
+
+    `HealthVerdict` inherits from `str`, but `yaml.dump` still renders an enum
+    MEMBER as a `!!python/object/apply:` tag, and `yaml.safe_dump` refuses it.
+    `WorkflowStatus` survives only because `to_dict()` calls `.value`
+    explicitly; `context` and `StepState.result` get no such treatment. So a
+    member stored in context would reach the archive as a Python tag, and the
+    next `safe_load` would raise into the bare except in `StateManager._load`
+    that resets all workflow state.
+    """
+
+    def test_a_member_is_not_yaml_safe(self):
+        """Pins the reason the discipline below is required."""
+        import yaml
+
+        with pytest.raises(yaml.YAMLError):
+            yaml.safe_dump({"verdict": HealthVerdict.HEALTHY})
+
+    def test_check_steps_store_plain_strings(self, mock_workflow):
+        import yaml
+
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result(exit_code=EXIT_NO_DRIFT)
+            fp = check_fp_drift(mock_workflow, {})
+        ep = check_ep_drift(mock_workflow, {})
+
+        for produced in (fp, ep):
+            for value in produced.values():
+                assert not isinstance(value, HealthVerdict), (
+                    "store verdict.value, not the enum member — see HealthVerdict"
+                )
+            # The real check: it survives the archive writer's safe round trip.
+            assert yaml.safe_load(yaml.safe_dump(produced)) == produced
+
+    def test_the_report_structure_is_yaml_safe(self, mock_workflow):
+        import yaml
+
+        context = {
+            "drift_days": 7,
+            "fp_verdict": HealthVerdict.HEALTHY.value,
+            "fp_drift_detected": False,
+            "fp_drift_score": 0.05,
+            "fp_threshold": 0.1,
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+            "ep_skip_reason": "on hold",
+            "all_checked_healthy": True,
+        }
+
+        result = generate_drift_report(mock_workflow, context)
+
+        assert yaml.safe_load(yaml.safe_dump(result)) == result

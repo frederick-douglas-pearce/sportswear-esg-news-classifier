@@ -132,9 +132,19 @@ jobs:
           for classifier in fp ep; do
             REPORT="all-reports/monitoring-reports-${classifier}/drift_report.json"
             if [ -f "$REPORT" ]; then
+              # Read `indeterminate` FIRST. A check that measured nothing still
+              # writes drift_detected=false and drift_score=0.0, so branching on
+              # drift alone prints "Healthy" for a check that never ran -- the
+              # defect issue #71 was about, in this summary (issue #71 review).
+              INDETERMINATE=$(jq -r '.indeterminate // "missing"' "$REPORT")
               DRIFT=$(jq -r '.drift_detected' "$REPORT")
               SCORE=$(jq -r '.drift_score' "$REPORT")
-              if [ "$DRIFT" = "true" ]; then
+              REASON=$(jq -r '.details.error // "no reason recorded"' "$REPORT")
+              if [ "$INDETERMINATE" = "missing" ]; then
+                echo "| $classifier | ❓ Unknown (report predates the indeterminate field) | - |" >> $GITHUB_STEP_SUMMARY
+              elif [ "$INDETERMINATE" = "true" ]; then
+                echo "| $classifier | ❗ Not assessed - $REASON | - |" >> $GITHUB_STEP_SUMMARY
+              elif [ "$DRIFT" = "true" ]; then
                 echo "| $classifier | ⚠️ Drift Detected | $SCORE |" >> $GITHUB_STEP_SUMMARY
               else
                 echo "| $classifier | ✅ Healthy | $SCORE |" >> $GITHUB_STEP_SUMMARY

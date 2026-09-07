@@ -80,7 +80,7 @@ class AgentSettings:
     # Drift monitoring
     #
     # The EP classifier is on hold (see CLAUDE.md) and `classifier_predictions`
-    # has never held an `ep` row, so its drift check compared two empty frames
+    # has never held an `ep` row, so its drift check found nothing to compare
     # and reported "Healthy" on every run. Gating it on config rather than on a
     # row count is deliberate: EP-on-hold is a governance decision, and zero
     # predictions is only its symptom. A row-count gate would re-enable

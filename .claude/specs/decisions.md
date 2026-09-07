@@ -264,22 +264,40 @@ good -- applied to the project's own documentation.
 **Code references:** by symbol and quoted construct, per [D007](#d007-decision-records-cite-symbols-and-quoted-constructs-not-line-numbers). Where "before" is meant, it is the state at base commit `a9603ad`.
 
 **Context:** Issue #71, order 1 of the `silent-success` epic (#72). The `drift_monitoring`
-workflow failed on 221 of 230 scheduled runs since 2026-01-17 and on 217 of those simultaneously
-logged `No action needed - all classifiers healthy` and exited 0. Four defects compound, all
-re-verified live at `a9603ad` rather than taken from the issue:
+workflow failed on **223 of 232** scheduled runs since 2026-01-17 and on **219** of those
+simultaneously logged `No action needed - all classifiers healthy` and exited 0 (re-counted from
+`logs/agent/cron_drift_monitoring_*.log` on 2026-09-07; the issue's 221/230/217 were measured
+2026-09-05). It produced a real verdict twice, on 2026-01-19 and 2026-01-23, and never again.
+
+Four defects compound. **The current behaviour of each was reproduced at `a9603ad`; the
+*historical* attribution was not, and one inherited claim was wrong** -- see the correction under
+defect 1.
 
 - `data/reference/fp_reference.parquet` (written 2026-01-17) carries 8 columns and no
   `novelty_score`, while `_evidently_drift_check` guards the novelty **stats** block on
   `current_data` alone and then reads `reference_data["novelty_score"]`. That asymmetry, not the
   staleness by itself, is the live raise site.
+
+  **Correction (review round 1).** An earlier draft of this record, and of the changelog, said this
+  raised "on every run from 2026-01-17". It cannot have: `novelty_score` was added to
+  `classifier_predictions` on **2026-01-25** (commit `4c17395`). The earlier failures have other
+  logged causes. The claim was inherited from #71's body and repeated as though verified -- which
+  is the defect class this epic is about, committed in the record of fixing it.
+
+  **Three** stats reads had the asymmetric shape, not one. `novelty_score` is merely the one that
+  fired; a reference sharing only `brand_*` columns would have died on `reference_prob_mean` first.
+  The first revision of this fix corrected `novelty_score` alone and asserted the other two were
+  already symmetric.
 - `monitor_drift.py` `main()` prints `Error running drift analysis: {e}` to **stdout** and returns
-  1; `check_fp_drift` logs `result.stderr`, which is empty. Hence 221 log lines reading
-  `FP drift check failed: ` with nothing after them.
+  1; `check_fp_drift` logs `result.stderr`, which is empty. Hence **220** log lines reading
+  `FP drift check failed: ` with nothing after the colon; the 3 non-empty ones name causes
+  (`Evidently not installed`, a missing `uv`) that never reached the analysis.
 - `evaluate_drift_results` reads `context.get("fp_drift_detected", False)` and
   `generate_drift_report` reads `context.get("fp_healthy", not context.get("fp_drift_detected", False))`.
   With both keys absent -- a check that never ran -- the second is `not False`, i.e. **healthy**.
-- `classifier_predictions` has never held an `ep` row, so the EP check compares two empty frames,
-  gets `drift_detected=False`, and passes vacuously.
+- `classifier_predictions` has never held an `ep` row, so the EP check finds nothing to compare.
+  No comparison actually occurs: `check_drift` returns from its empty-frame branch *before*
+  dispatching to either checker, so the `drift_detected=False` it reports is fabricated.
 
 **The governing rule the architect named, adopted for the whole change:** *a fix for a
 silent-success bug must not itself infer health from absence anywhere in its new code path.*
@@ -292,7 +310,8 @@ Every decision below is an application of it.
    first draft**, which inferred indeterminacy from `"error" in report.details`. `details` is a
    free-form grab-bag also carrying `columns_checked`, `reference_size` and per-column p-values;
    deriving control flow from a key's presence in it is the same meaning-hidden-in-a-dict shape the
-   epic removes, and #74/#76 consume this signal programmatically across ~1,040 archived run YAMLs.
+   epic removes, and #74/#76 **will** consume this signal programmatically across ~1,040 archived
+   run YAMLs (both issues are open and unimplemented at the time of writing).
    `drift_detected` is already a first-class field; "could the analysis produce a verdict" is
    equally load-bearing.
 2. **A three-value exit-code contract** in a new `src/mlops/exit_codes.py`: `0` no drift, `1` drift
@@ -346,12 +365,32 @@ Every decision below is an application of it.
   metric, and its `elif "healthy" in line_lower` is a second home for the absence-is-benign
   defect.
 
+**Amendment (review round 1): the guards had to land on BOTH code paths.** The decision as first
+implemented set `indeterminate` only inside `_evidently_drift_check`. But `mlops_settings.
+evidently_enabled` defaults to **false**, and `_setup_evidently` silently falls back to the legacy
+path on `ImportError` -- and `_legacy_drift_check` ended with
+`max(drift_scores) if drift_scores else 0.0`, so "nothing was comparable" became drift score 0.0,
+then no drift, then exit 0, then healthy. That is #71's exact shape surviving on the path taken by
+default, inside the change written to remove it. `_legacy_drift_check` now returns `indeterminate`
+on an empty score set, and the Evidently path additionally guards the case where a snapshot yields
+no readable `ValueDrift` metric at all.
+
 **Rationale:** the epic's thesis is that a missing signal must never collapse into "healthy". Every
 decision above moves a signal from *inferred by absence* to *stated explicitly and typed*: the
 indeterminate flag, the exit code, the verdict enum, the fail-loud field reads, and a terminal step
 that treats an absent verdict exactly as it treats a failed one.
 
-**Deferred to #74/#76, with rationale, rather than dropped:** a minimum-sample-size floor (exit 2
-covers empty frames and absent columns, not "enough rows to compute, too few to mean anything");
-the vacuously-healthy case when every check is skipped (cannot arise while FP is never skipped);
-and the inverse gap where a forgotten `AGENT_EP_DRIFT_ENABLED` leaves EP dark after it resumes.
+**Deferred, with rationale, rather than dropped -- each filed as its own issue so this record
+resolves in both directions:**
+- **[#94](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/94)** --
+  a minimum-sample-size floor. Exit 2 covers empty frames and absent columns, not "enough rows to
+  compute, too few to mean anything".
+- **[#95](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/95)** --
+  "all healthy" being vacuously true when every check is skipped. Note this is **implemented here**
+  (`evaluate_drift_results` computes `bool(checked) and not drifted and not unknown`, pinned by
+  `test_all_skipped_is_not_healthy`); what is deferred is generalising it beyond drift.
+- **[#96](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/96)** --
+  a forgotten `AGENT_EP_DRIFT_ENABLED` leaving EP dark after it resumes.
+- **[#97](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/97)** --
+  the reference window always contains the window it is compared against (7.6% overlap at 90 days),
+  biasing every comparison toward "no drift".

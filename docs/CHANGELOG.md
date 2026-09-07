@@ -6,21 +6,30 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ### 2026-09-07: A failed drift check no longer reports "all classifiers healthy"
 
-FP drift monitoring failed on 221 of 230 scheduled runs since 2026-01-17, and on 217 of those the
-workflow simultaneously logged `No action needed - all classifiers healthy` and exited 0. The
-safety net had never produced a valid result, so nothing would have reported FP degradation at any
-point in the project's life.
+FP drift monitoring failed on 223 of 232 scheduled runs since 2026-01-17, and on 219 of those the
+workflow simultaneously logged `No action needed - all classifiers healthy` and exited 0. (The
+issue's 221/230/217 were measured on 2026-09-05; these are the same logs re-counted on
+2026-09-07.)
+
+It produced a real verdict **twice** -- 2026-01-19 (drift score 0.1315) and 2026-01-23 (0.0000) --
+and never again. Of the nine runs with no failure line, the other seven are June 2026 `uv` DNS
+failures that never reached Python (the #51 class), which fail loudly and are not this defect.
 
 **Why a failure looked like health.** Four defects compounded, each of which turned a missing
 signal into a benign one:
 
 - `data/reference/fp_reference.parquet` was written 2026-01-17, before `novelty_score` existed.
   `_evidently_drift_check` guarded the novelty *stats* block on `current_data` alone and then read
-  `reference_data["novelty_score"]`, so every run raised `KeyError: 'novelty_score'`. The
-  column-list block four lines up already guarded both frames; this one did not.
+  `reference_data["novelty_score"]`, raising `KeyError: 'novelty_score'`. This became the cause
+  from **2026-01-25**, when `novelty_score` was added to `classifier_predictions` (commit
+  `4c17395`) -- it cannot explain the earlier failures, whose logged causes include
+  `Evidently not installed` and a missing `uv`. **Three** stats reads had that asymmetric shape,
+  not one; `novelty_score` is simply the one that fired, because a reference sharing only
+  `brand_*` columns would have died on `reference_prob_mean` first.
 - The script printed `Error running drift analysis: {e}` to **stdout** and returned 1, while the
-  workflow logged the command's **stderr** -- producing 221 log lines reading
-  `FP drift check failed: ` with the diagnosis nowhere.
+  workflow logged the command's **stderr** -- producing 220 log lines reading
+  `FP drift check failed: ` with nothing after the colon. (The 3 non-empty ones name causes that
+  never reached the analysis at all.)
 - Exit 1 meant *both* "drift detected" and "the analysis raised", and `ScriptResult.success` is
   `exit_code == 0`, so the workflow could not tell them apart and fell back to scraping the
   human-readable report. `evaluate_drift_results` then read
@@ -32,8 +41,11 @@ signal into a benign one:
 
 **The rule the fix is built on:** a missing value never resolves to healthy. Concretely:
 
-- `DriftReport` gains a typed `indeterminate` field, set wherever nothing was measured. A verdict
-  that was never produced is now distinguishable from one that was produced and was clean.
+- `DriftReport` gains a typed `indeterminate` field, set wherever nothing was measured -- on
+  **both** the Evidently and the legacy paths, the latter being the one taken by default
+  (`EVIDENTLY_ENABLED` defaults to false, and Evidently's absence silently falls back to it). A
+  verdict that was never produced is now distinguishable from one that was produced and was
+  clean.
 - A three-value exit-code contract (`src/mlops/exit_codes.py`): `0` no drift, `1` drift detected,
   `2` indeterminate. Drift detected is non-retryable -- it is a result, and before this it was
   retried with exponential backoff before being reported.

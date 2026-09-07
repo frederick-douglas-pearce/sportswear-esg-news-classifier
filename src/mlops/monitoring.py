@@ -26,6 +26,29 @@ DRIFT_CONFIG = {
 }
 
 
+# Columns whose absence from the reference is reported. Deliberately the core
+# metrics only: `brand_*` columns come and go with the TRACKED_BRANDS list, so
+# listing every one of them would bury the signal. Callers describing this
+# behaviour must say "a core column", not "a column" (issue #71 review).
+CORE_DRIFT_COLUMNS = ["probability", "prediction", "novelty_score"]
+
+
+def _missing_from_reference(
+    current_data: pd.DataFrame, reference_data: pd.DataFrame
+) -> list[str]:
+    """Core columns the current data has and the reference cannot answer for.
+
+    A reference written against an older schema silently compares whichever
+    columns it happens to share and returns a verdict that looks complete.
+    Recording the gap is what stops a partial check reading as a whole one.
+    """
+    return [
+        c
+        for c in CORE_DRIFT_COLUMNS
+        if c in current_data.columns and c not in reference_data.columns
+    ]
+
+
 @dataclass
 class DriftReport:
     """Results of a drift analysis.
@@ -126,10 +149,12 @@ class DriftMonitor:
                 current_data = current_data.iloc[midpoint:]
 
         if current_data.empty or reference_data.empty:
-            # No comparison was performed. Before #71 this returned
-            # drift_detected=False, which the script reported as exit 0 and the
-            # workflow read as healthy -- the EP classifier, which has never
-            # made a prediction, passed this way on every run for 231 days.
+            # This branch returns before either checker runs, so the
+            # `drift_detected=False` below is fabricated rather than measured.
+            # Before #71 that was indistinguishable from a real clean result:
+            # the script reported exit 0 and the workflow read it as healthy,
+            # which is how the EP classifier -- which has never made a single
+            # prediction -- passed on every run.
             logger.warning(
                 f"{self.classifier_type}: insufficient data for drift analysis "
                 f"(reference={len(reference_data)} rows, current={len(current_data)} rows)"
@@ -234,8 +259,7 @@ class DriftMonitor:
         # useful, so this does not make the report indeterminate -- but a
         # partial check reported as a whole one is the defect this epic is
         # about, so it is recorded and logged rather than left silent.
-        expected = [c for c in ["probability", "prediction", "novelty_score"] if c in current_data.columns]
-        missing_from_reference = [c for c in expected if c not in reference_data.columns]
+        missing_from_reference = _missing_from_reference(current_data, reference_data)
         if missing_from_reference:
             logger.warning(
                 f"{self.classifier_type}: reference dataset lacks "
@@ -299,6 +323,29 @@ class DriftMonitor:
                         core_drifted += 1
                         details["core_metrics_drifted"].append(col_name)
 
+        # Evidently returned a snapshot we could not read a single ValueDrift
+        # metric out of -- a changed snapshot shape or metric_name spelling
+        # (this code already targets "v0.7+", so that has happened once). The
+        # scores below would then be 0.0/0.0 and the report would say "no
+        # drift" on the strength of nothing at all.
+        if total_core == 0 and total_brand == 0:
+            logger.warning(
+                f"{self.classifier_type}: Evidently returned no readable ValueDrift "
+                f"metrics for {columns_to_check}; drift cannot be assessed"
+            )
+            details["error"] = "No drift metrics could be read from the Evidently report"
+            details["reference_size"] = len(reference_data)
+            details["current_size"] = len(current_data)
+            return DriftReport(
+                classifier_type=self.classifier_type,
+                timestamp=datetime.now(),
+                drift_detected=False,
+                drift_score=0.0,
+                threshold=self.threshold,
+                details=details,
+                indeterminate=True,
+            )
+
         # Calculate drift scores
         core_drift_score = core_drifted / total_core if total_core > 0 else 0.0
         brand_drift_score = brand_drifted / total_brand if total_brand > 0 else 0.0
@@ -321,22 +368,29 @@ class DriftMonitor:
             snapshot.save_html(str(report_path))
             logger.info(f"Saved drift report to {report_path}")
 
-        # Add data stats
+        # Add data stats.
+        #
+        # Every read below guards ITS OWN frame. Reading `reference_data[col]`
+        # under `if col in current_data.columns` is what raised
+        # `KeyError: 'novelty_score'` once `novelty_score` was added to
+        # `classifier_predictions` (2026-01-25) while the reference parquet,
+        # written 2026-01-17, lacked the column (issue #71).
+        #
+        # THREE sites had that shape, not one: novelty_score was merely the one
+        # that fired, because a reference sharing only `brand_*` columns would
+        # have died on `reference_prob_mean` first. An earlier revision of this
+        # fix corrected novelty_score alone and claimed the others were already
+        # symmetric; they were not.
         details["reference_size"] = len(reference_data)
         details["current_size"] = len(current_data)
         if "probability" in current_data.columns:
             details["current_prob_mean"] = float(current_data["probability"].mean())
+        if "probability" in reference_data.columns:
             details["reference_prob_mean"] = float(reference_data["probability"].mean())
         if "prediction" in current_data.columns:
             details["current_prediction_rate"] = float(current_data["prediction"].mean())
+        if "prediction" in reference_data.columns:
             details["reference_prediction_rate"] = float(reference_data["prediction"].mean())
-        # Guard BOTH frames independently. Guarding only `current_data` and then
-        # reading `reference_data["novelty_score"]` is what raised
-        # `KeyError: 'novelty_score'` on every run from 2026-01-17 onward: the
-        # database gained `novelty_score` while the reference parquet, written
-        # before it existed, did not have the column (issue #71). The
-        # columns_to_check block above already guards symmetrically; this one
-        # did not.
         if "novelty_score" in current_data.columns:
             # Filter out NaN values for novelty stats
             current_novelty = current_data["novelty_score"].dropna()
@@ -399,12 +453,45 @@ class DriftMonitor:
             details["prediction_rate_diff"] = float(rate_diff)
             drift_scores.append(rate_diff)
 
-        # Overall drift score
-        overall_drift = max(drift_scores) if drift_scores else 0.0
-        drift_detected = overall_drift > self.threshold
-
         details["reference_size"] = len(reference_data)
         details["current_size"] = len(current_data)
+        details["columns_missing_from_reference"] = _missing_from_reference(
+            current_data, reference_data
+        )
+
+        # Nothing comparable was found, so nothing was measured. Without this,
+        # `max(drift_scores) if drift_scores else 0.0` yields 0.0 -> no drift ->
+        # exit 0 -> "healthy", which is issue #71's exact shape on the path this
+        # module takes BY DEFAULT (`EVIDENTLY_ENABLED` defaults to false, and
+        # `_setup_evidently` also falls back here on ImportError). The Evidently
+        # path got its guard first; this one had to have it too.
+        if not drift_scores:
+            logger.warning(
+                f"{self.classifier_type}: reference and current data share no "
+                f"comparable column; drift cannot be assessed"
+            )
+            details["error"] = "No columns available for drift detection"
+            return DriftReport(
+                classifier_type=self.classifier_type,
+                timestamp=datetime.now(),
+                drift_detected=False,
+                drift_score=0.0,
+                threshold=self.threshold,
+                details=details,
+                indeterminate=True,
+            )
+
+        if details["columns_missing_from_reference"]:
+            logger.warning(
+                f"{self.classifier_type}: reference dataset lacks "
+                f"{', '.join(details['columns_missing_from_reference'])} - drift "
+                f"for those columns was NOT assessed. Regenerate the reference "
+                f"with --create-reference to compare them."
+            )
+
+        # Overall drift score
+        overall_drift = max(drift_scores)
+        drift_detected = overall_drift > self.threshold
 
         return DriftReport(
             classifier_type=self.classifier_type,

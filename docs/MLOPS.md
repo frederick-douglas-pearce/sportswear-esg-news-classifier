@@ -102,7 +102,7 @@ reads the exit code, never the report text.
 
 Exit 2 never reads as healthy. Before this contract (issue #71) exit 1 meant both "drift detected"
 and "the analysis raised", so a failed check was indistinguishable from a clean one and the drift
-safety net reported "all classifiers healthy" through 221 of 230 failed runs.
+safety net reported "all classifiers healthy" on 219 of the 223 runs that failed (out of 232).
 
 Errors go to **stderr**, with a traceback; the agent runner logs the tail of that stream.
 
@@ -133,13 +133,15 @@ incomplete, or inconsistent with the exit code is treated as `unknown` rather th
 
 A reference written against an older schema is the failure that started #71: `novelty_score` was
 added to `classifier_predictions` after `fp_reference.parquet` was written, and the mismatch raised
-`KeyError` on every run for eight months. Two guards now exist, and neither removes the need to
-regenerate:
+`KeyError` from 2026-01-25 (when the column was added) until 2026-09-07. Two guards now exist --
+on **both** the Evidently and the legacy code paths -- and neither removes the need to regenerate:
 
-- a column present in the current data but missing from the reference is **logged as not assessed**
-  and recorded in `details["columns_missing_from_reference"]`, so a partial comparison is not
-  reported as a whole one;
-- a reference sharing *no* comparable column returns `indeterminate`, i.e. exit 2.
+- a **core** column (`probability`, `prediction`, `novelty_score`) present in the current data but
+  missing from the reference is **logged as not assessed** and recorded in
+  `details["columns_missing_from_reference"]`, so a partial comparison is not reported as a whole
+  one. `brand_*` columns are not tracked this way: they come and go with `TRACKED_BRANDS` and would
+  bury the signal;
+- a reference sharing *no* comparable core column returns `indeterminate`, i.e. exit 2.
 
 Regenerate after any change to what is written to `classifier_predictions`:
 

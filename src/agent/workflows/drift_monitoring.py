@@ -6,7 +6,7 @@ fix, `evaluate_drift_results` read `context.get("fp_drift_detected", False)`
 and `generate_drift_report` read
 `context.get("fp_healthy", not context.get("fp_drift_detected", False))`. A
 check that never ran set neither key, so the second expression evaluated
-`not False` -> True -> "all classifiers healthy". That ran 217 times.
+`not False` -> True -> "all classifiers healthy". That ran 219 times.
 
 So the check steps produce an explicit `HealthVerdict`, the reporting steps
 read it rather than inferring one, and `fail_on_unknown_verdict` refuses to let
@@ -22,6 +22,11 @@ from ..health import HealthVerdict
 from ..notifications import send_check_failure_notification, send_drift_notification
 from ..runner import ScriptResult, run_monitor_drift, tail
 from .base import StepDefinition, Workflow, WorkflowRegistry
+from src.mlops.exit_codes import (
+    EXIT_DRIFT_DETECTED,
+    EXIT_INDETERMINATE,
+    EXIT_NO_DRIFT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +43,14 @@ REQUIRED_SUMMARY_FIELDS = (
     "threshold",
 )
 
-# Exit codes from scripts/monitor_drift.py, per src/mlops/exit_codes.py.
-# Imported lazily inside the mapping function so this module does not pull the
-# mlops package (and pandas) in at import time.
+# The scripts/monitor_drift.py exit-code contract, mapped to verdicts. Imported
+# rather than written as literals so the two halves cannot drift apart: this
+# module already pulls src.mlops in transitively (via ..runner), so there is no
+# import cost to avoid by hardcoding them.
 _VERDICT_BY_EXIT_CODE = {
-    0: HealthVerdict.HEALTHY,
-    1: HealthVerdict.DEGRADED,
-    2: HealthVerdict.UNKNOWN,
+    EXIT_NO_DRIFT: HealthVerdict.HEALTHY,
+    EXIT_DRIFT_DETECTED: HealthVerdict.DEGRADED,
+    EXIT_INDETERMINATE: HealthVerdict.UNKNOWN,
 }
 
 
@@ -84,6 +90,51 @@ def _validate_summary(result: ScriptResult, classifier: str) -> dict[str, Any] |
             f"{classifier} drift summary reports exit code "
             f"{summary['exit_code']} but the process exited {result.exit_code} "
             f"-- refusing to read it"
+        )
+        return None
+
+    # `indeterminate` must AGREE with the exit code. Checking only that the key
+    # is present would let a summary saying "I could not tell" be read as
+    # healthy whenever it arrived with exit 0 -- the field named after the
+    # invariant collected and then discarded. Rejecting it outright would be
+    # wrong in the other direction: on exit 2 the flag is *supposed* to be
+    # true, and that summary carries the reason the alert needs.
+    expected_indeterminate = result.exit_code == EXIT_INDETERMINATE
+    if summary["indeterminate"] is not expected_indeterminate:
+        logger.error(
+            f"{classifier} drift summary says indeterminate="
+            f"{summary['indeterminate']!r} but exit code {result.exit_code} says "
+            f"{expected_indeterminate} -- refusing to read it"
+        )
+        return None
+
+    # A verdict needs a number behind it. Presence is not enough: a summary
+    # whose drift_score is null, or a string, is a health claim with no
+    # measurement under it.
+    for field in ("drift_score", "threshold"):
+        if not isinstance(summary[field], (int, float)) or isinstance(
+            summary[field], bool
+        ):
+            logger.error(
+                f"{classifier} drift summary has a non-numeric {field} "
+                f"({summary[field]!r}) -- refusing to read it"
+            )
+            return None
+
+    if not isinstance(summary["drift_detected"], bool):
+        logger.error(
+            f"{classifier} drift summary has a non-boolean drift_detected "
+            f"({summary['drift_detected']!r}) -- refusing to read it"
+        )
+        return None
+
+    # The two statements of the same fact must agree.
+    expected_detected = result.exit_code == EXIT_DRIFT_DETECTED
+    if summary["drift_detected"] != expected_detected:
+        logger.error(
+            f"{classifier} drift summary says drift_detected="
+            f"{summary['drift_detected']} but exit code {result.exit_code} says "
+            f"{expected_detected} -- refusing to read it"
         )
         return None
 
@@ -142,13 +193,22 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
     out[f"{classifier}_verdict"] = verdict.value
 
     if verdict is HealthVerdict.UNKNOWN:
-        reason = (summary or {}).get("error") or "no verdict produced"
-        out[f"{classifier}_error"] = reason
+        # Keep the diagnosis IN THE CONTEXT, not only in the log. This is the
+        # dominant failure path -- the script raised and returned before
+        # printing a summary -- so `(summary or {}).get("error")` is None and a
+        # bare fallback would record the literal string "no verdict produced".
+        # That string is what would land in the run archive #75/#76 read and in
+        # the alert body, i.e. an alert that names no cause, which is most of
+        # what made #71 invisible for 231 days.
+        #
         # tail, not head: a traceback's diagnosis is at the END of the stream
         # (issue #81, same runner).
+        reason = (summary or {}).get("error") or tail(result.stderr).strip() or (
+            "no verdict produced, and the command wrote nothing to stderr"
+        )
+        out[f"{classifier}_error"] = reason
         logger.error(
-            f"{classifier.upper()} drift check produced no verdict ({reason}): "
-            f"{tail(result.stderr)}"
+            f"{classifier.upper()} drift check produced no verdict: {reason}"
         )
         return out
 
@@ -182,7 +242,7 @@ def check_ep_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
     """Run drift detection for EP classifier, unless it is gated off.
 
     EP is on hold and `classifier_predictions` has never held an `ep` row, so
-    the check compared two empty frames and reported Healthy on every run. It is
+    the check found no data to compare and reported Healthy on every run. It is
     now skipped explicitly, with the reason recorded -- `skipped` is a verdict,
     not a silent absence, and it never counts toward "all classifiers healthy".
     """
@@ -366,7 +426,17 @@ def _log_classifier_line(label: str, section: dict[str, Any]) -> None:
         print("  This classifier is NOT being monitored.")
         return
 
-    print(f"  Status: {'DRIFT DETECTED' if section['drift_detected'] else 'Healthy'}")
+    # Read the VERDICT, not `drift_detected`. Deriving the healthy/degraded
+    # split from the metric is a second source for a fact the verdict already
+    # states, and `_classifier_report` builds that metric with a bare `.get()`
+    # -- so a degraded classifier whose metric keys were absent printed
+    # "Status: Healthy". That is this module's own rule broken inside it.
+    if verdict == HealthVerdict.DEGRADED.value:
+        print("  Status: DRIFT DETECTED")
+    elif verdict == HealthVerdict.HEALTHY.value:
+        print("  Status: Healthy")
+    else:
+        print(f"  Status: {verdict}")
     if section["drift_score"] is not None:
         print(f"  Drift Score: {section['drift_score']:.4f}")
     if section["threshold"] is not None:

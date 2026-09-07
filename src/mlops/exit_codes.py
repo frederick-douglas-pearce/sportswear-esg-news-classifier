@@ -5,8 +5,8 @@ analysis raised", and `ScriptResult.success` is `exit_code == 0`. So the
 `drift_monitoring` workflow could not tell a result from a failure, and fell
 back to scraping the human-readable report out of stdout -- where a check that
 never ran left no line to scrape, and absence read as healthy. That is how a
-drift check could fail on 221 of 230 runs while reporting
-"No action needed - all classifiers healthy".
+drift check could fail on 223 of 232 runs, and report
+"No action needed - all classifiers healthy" on 219 of those failures.
 
 So the script has to say which of three things happened:
 

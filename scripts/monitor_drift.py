@@ -20,7 +20,7 @@ Usage:
     uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report
 
     # Create reference dataset from database predictions
-    uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30
+    uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90
 
     # Send alert if drift detected
     uv run python scripts/monitor_drift.py --classifier fp --from-db --alert
@@ -205,10 +205,18 @@ def main() -> int:
                 from_database=args.from_db,
             )
             print(f"Reference dataset created: {path}")
-            return 0
-        except ValueError as e:
-            print(f"Error: {e}")
-            return 1
+            return EXIT_NO_DRIFT
+        except Exception as e:
+            # EXIT_INDETERMINATE, not 1: under this script's contract 1 means
+            # "drift detected", and it is non-retryable -- so a failed
+            # reference build would be logged by scripts/cron_monitor.sh as
+            # "WARNING: Drift detected". stderr for the same reason the
+            # analysis path uses it (issue #71). `Exception`, not `ValueError`:
+            # a database error or an OSError writing the parquet would
+            # otherwise escape and exit 1 by default.
+            print(f"Error creating reference dataset: {e}", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            return EXIT_INDETERMINATE
 
     if args.reference_stats:
         stats = get_reference_stats(args.classifier)
@@ -216,9 +224,10 @@ def main() -> int:
             print(f"\nReference Dataset Stats ({args.classifier}):")
             print("-" * 40)
             print(json.dumps(stats, indent=2, default=str))
-        else:
-            print(f"No reference dataset found for {args.classifier}")
-        return 0
+            return EXIT_NO_DRIFT
+        # "The thing you asked about does not exist" is not success.
+        print(f"No reference dataset found for {args.classifier}", file=sys.stderr)
+        return EXIT_INDETERMINATE
 
     # Check if Evidently is enabled for HTML reports
     if args.html_report and not mlops_settings.evidently_enabled:
@@ -261,6 +270,7 @@ def main() -> int:
             "drift_detected": report.drift_detected,
             "drift_score": report.drift_score,
             "threshold": report.threshold,
+            "indeterminate": report.indeterminate,
             "details": report.details,
             "report_path": str(report.report_path) if report.report_path else None,
         }
@@ -269,10 +279,11 @@ def main() -> int:
             json.dump(report_dict, f, indent=2)
         print(f"\nJSON report written to: {args.output}")
 
-    # Send alert if requested and drift detected. An indeterminate report never
-    # reaches here with drift_detected=True, so this stays a drift-only alert;
-    # the agent workflow raises its own alert for an indeterminate verdict.
-    if args.alert and report.drift_detected and not report.indeterminate:
+    # Send alert if requested and drift detected. Derived from the same
+    # exit-code mapping the process returns, so there is exactly one definition
+    # of "drift detected" in this script; the agent workflow raises its own
+    # alert for an indeterminate verdict.
+    if args.alert and exit_code_for(report) == EXIT_DRIFT_DETECTED:
         if mlops_settings.alert_webhook_url:
             success = send_drift_alert(
                 classifier_type=args.classifier,
