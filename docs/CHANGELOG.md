@@ -21,15 +21,21 @@ exempt from `set -e`, so the cleanup branch actually runs.
 
 Also: the pre-restore safety copy aborts the restore and removes its partial file rather than
 proceeding; and the `ls *.sql.gz | awk` listing is guarded with `|| true`, the one read-only
-pipeline `pipefail` would newly abort (its enclosing guard tests directory non-emptiness, not the
+pipeline `pipefail` would newly *abort* (its enclosing guard tests directory non-emptiness, not the
 glob). The `local var=$(cmd | cmd)` sites in `rotate`/`status` are unaffected -- `local` returns
 its own exit status, so the pipeline's never reaches `set -e`.
+
+One further site changes *value* rather than aborting, and code review caught it being audited
+wrong: `check_container`'s `docker ps | grep -q` could report a **running** container as stopped,
+because `grep -q` exiting at the first match can SIGPIPE `docker ps` (141) and `pipefail` then makes
+the pipeline non-zero, which `if !` inverts. That would have failed the nightly cron backup on a
+healthy system. The pipe is gone: the container list is read into a variable and matched with
+`grep -qxF`.
 
 Instance 7 of the `silent-success` class (#72), and the only one whose outcome is data loss rather
 than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` on `PATH`
 to force a mid-pipeline failure, asserting both non-zero exit **and** no leftover archive -- a test
 asserting only the exit code passes against a fix that leaves the partial file. (#89)
-
 
 ### 2026-09-05: Stop the labeling retry from erasing a run's results
 

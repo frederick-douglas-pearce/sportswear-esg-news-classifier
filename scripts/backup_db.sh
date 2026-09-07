@@ -52,7 +52,21 @@ usage() {
 }
 
 check_container() {
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    # Deliberately NOT a pipeline. As `docker ps ... | grep -q ...`, grep exits at
+    # the first match and can SIGPIPE the upstream `docker ps` (status 141). `if !`
+    # exempts that from aborting under `set -e`, but it does NOT stop `pipefail`
+    # from making the pipeline non-zero -- and here the pipeline's status IS the
+    # branch condition, so `!` would invert it and report a container that is
+    # RUNNING as stopped, failing the nightly cron backup. Reading the list into a
+    # variable first removes the pipe and the failure mode with it.
+    #
+    # `|| true` keeps a `docker ps` failure (daemon down) on the same path it
+    # always took: empty list, no match, "not running".
+    # Asserted by
+    # tests/test_backup_db_script.py::test_running_container_is_detected_in_a_long_docker_ps_list
+    local running
+    running=$(docker ps --format '{{.Names}}' 2>/dev/null) || true
+    if ! grep -qxF -- "$CONTAINER_NAME" <<<"$running"; then
         log_error "Container '$CONTAINER_NAME' is not running"
         log_info "Start it with: docker compose up -d postgres"
         exit 1

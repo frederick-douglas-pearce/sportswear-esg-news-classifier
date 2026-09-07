@@ -113,11 +113,48 @@ step-4 gate.
    by `pipefail` alone and the restore restructure is unguarded.
 
 **Audit result (AC5):** `local var=$(cmd | cmd)` returns `local`'s own status, so the pipeline
-status never reaches `set -e`. Every `ls | wc -l` / `du | cut` / `ls -t | head -1` site
-(`:189, :196, :203, :220-222, :231, :236, :238, :247`) is `local`-assigned and therefore unaffected
-by `pipefail`. `:83` is the one *plain* assignment where the status does propagate (correct
-behaviour on a just-written file). `:52` is exempt (`if !` condition). Confirmed twice: by architect
-review and by an empirical bash harness.
+status never reaches `set -e`. Every command-substitution site
+(`:189, :196, :203, :220-222, :231, :236, :238, :247` -- `ls | wc -l`, `du | cut`,
+`ls -t | head -1`, `stat | cut` at `:238`, `psql | tr` at `:247`) is `local`-assigned and therefore
+unaffected by `pipefail`. `:83` is the one *plain* assignment where the status does propagate
+(correct behaviour on a just-written file).
+
+**Correction, found in code review -- `:52` was audited wrong, and the wrong reason hid a real
+regression.** The first pass recorded `:52` (`docker ps --format '{{.Names}}' | grep -q ...`) as
+"exempt (`if !` condition)". `if !` exempts a command from a `set -e` *abort*; it does **not** stop
+`pipefail` from changing the pipeline's *status*, and here that status **is** the branch condition.
+`grep -q` exits at the first match, which can SIGPIPE the upstream `docker ps` (status 141);
+`pipefail` then makes the pipeline non-zero, `!` inverts it, and a container that **is** running is
+reported as stopped -- failing the nightly cron backup, `restore`, and the agent's backup-status
+check. So `:52` is not exempt: it is the one site whose *semantics* this change alters. Fixed by
+removing the pipe (read `docker ps` into a variable, match with `grep -qxF` against a here-string)
+and guarded by
+`tests/test_backup_db_script.py::test_running_container_is_detected_in_a_long_docker_ps_list`.
+
+**Alternatives considered:**
+- **`ERR` trap** for the failure branches -- rejected: needs `set -E` for function inheritance, and
+  cannot scope the `rm -f` to the one file that was being written.
+- **`PIPESTATUS` inspection** after a bare pipeline -- rejected: unreachable. Under `set -e` the
+  bare pipeline aborts the function before `PIPESTATUS` can be read, which is the very defect being
+  fixed.
+- **`|| { ...; }`** instead of `if ... then ... else ... fi` -- equivalent in effect, rejected on
+  readability for a multi-statement success branch.
+- **`pipefail` alone, leaving the `if [ $? -eq 0 ]` handlers in place** -- rejected, and this is the
+  substantive alternative: it makes the failure *louder* without making the cleanup reachable, so a
+  truncated archive still survives on disk and is still reported by `list`/`status` as the latest
+  backup. It fixes AC1 and leaves AC2 unmet.
+- **Keeping `check_container` as a pipeline and accepting the SIGPIPE risk** -- rejected: the
+  failure mode is a false "not running" on a healthy system, which is a silent-success inversion in
+  a script whose whole purpose here is to stop lying about outcomes.
+
+**Rationale:** the two halves of the defect have different causes and need different fixes, and
+fixing only the visible one is worse than it looks. `pipefail` addresses *detection* -- the script
+can now see that `pg_dump` failed. Putting the pipeline in the `if` condition addresses
+*reachability* -- the handler that cleans up after that failure can now run. Shipping only the first
+converts "silently wrong" into "loudly wrong with the bad artifact still on disk", which still
+loses data on the next restore. The `if`-condition form was chosen over the alternatives above
+because it is the mechanism the issue itself proposes, it keeps `set -e` active inside the success
+branch, and it leaves an obvious extension point for #80.
 
 **Conscious exclusion:** `:144-146` (`DROP` / `CREATE` / `CREATE EXTENSION`) can leave the database
 dropped-but-not-recreated if a middle statement fails. Not pipelines, and `set -e` aborts loudly
