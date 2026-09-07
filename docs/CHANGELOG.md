@@ -25,12 +25,21 @@ pipeline `pipefail` would newly *abort* (its enclosing guard tests directory non
 glob). The `local var=$(cmd | cmd)` sites in `rotate`/`status` are unaffected -- `local` returns
 its own exit status, so the pipeline's never reaches `set -e`.
 
-One further site changes *value* rather than aborting, and code review caught it being audited
-wrong: `check_container`'s `docker ps | grep -q` could report a **running** container as stopped,
-because `grep -q` exiting at the first match can SIGPIPE `docker ps` (141) and `pipefail` then makes
-the pipeline non-zero, which `if !` inverts. That would have failed the nightly cron backup on a
-healthy system. The pipe is gone: the container list is read into a variable and matched with
-`grep -qxF`.
+`check_container` also stopped being a pipeline, and the reason is error attribution rather than
+`pipefail`. "Docker could not be queried" and "docker answered, and the container is absent" are
+different verdicts, and a pipeline reports one status for both stages -- so the script told an
+operator to `docker compose up -d postgres` when the daemon was dead, which fails the same way.
+It now branches on the query's own status and surfaces docker's message.
+
+Removing the pipe retires two narrower hazards as well, both stated at their real size. The old
+`grep -q "^${CONTAINER_NAME}$"` interpolated the container name as a *regex*; unreachable with the
+default name, but `.` is legal in a container name, so a non-default one could match the wrong line
+(a false positive, not data loss). And `grep -q` exiting at the first match can SIGPIPE `docker ps`,
+which `pipefail` would turn into a false "not running" -- real in principle, but it needs `docker ps`
+output above the ~64 KiB pipe buffer (thousands of containers), so it would not have fired here. An
+earlier draft of this entry called that an averted cron failure; it was not, and in an epic about
+work that reports success it did not achieve, the claim had to be corrected rather than quietly
+dropped.
 
 Instance 7 of the `silent-success` class (#72), and the only one whose outcome is data loss rather
 than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` on `PATH`

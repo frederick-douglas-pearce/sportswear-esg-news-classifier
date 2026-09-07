@@ -52,20 +52,40 @@ usage() {
 }
 
 check_container() {
-    # Deliberately NOT a pipeline. As `docker ps ... | grep -q ...`, grep exits at
-    # the first match and can SIGPIPE the upstream `docker ps` (status 141). `if !`
-    # exempts that from aborting under `set -e`, but it does NOT stop `pipefail`
-    # from making the pipeline non-zero -- and here the pipeline's status IS the
-    # branch condition, so `!` would invert it and report a container that is
-    # RUNNING as stopped, failing the nightly cron backup. Reading the list into a
-    # variable first removes the pipe and the failure mode with it.
+    # Deliberately NOT a pipeline, and the reason is error attribution rather than
+    # anything exotic: "docker could not be queried" and "docker answered, and the
+    # container is not in the list" are DIFFERENT verdicts, and you cannot branch on
+    # them separately while `docker ps` is buried mid-pipeline -- a pipeline reports
+    # one status for both stages. Collapsing them is the defect class this epic
+    # exists to remove (#72), and it produces actively wrong guidance: telling an
+    # operator to `docker compose up -d postgres` when the daemon is dead sends them
+    # at a command that fails the same way.
     #
-    # `|| true` keeps a `docker ps` failure (daemon down) on the same path it
-    # always took: empty list, no match, "not running".
-    # Asserted by
-    # tests/test_backup_db_script.py::test_running_container_is_detected_in_a_long_docker_ps_list
+    # Capturing stderr with 2>&1 is what makes the first branch useful -- docker's
+    # own message distinguishes "daemon unreachable" from "command not found"
+    # without this script hand-coding either. The capture is the `if` condition, so
+    # it is exempt from `set -e`; a plain assignment would abort the script here
+    # with no message at all.
+    #
+    # Removing the pipe also retires two narrower hazards, neither of which is the
+    # reason above and neither of which is reachable at this deployment's scale:
+    # `grep -q` exiting at the first match can SIGPIPE `docker ps` (141) once its
+    # output exceeds the pipe buffer (~64 KiB, thousands of containers), which under
+    # `pipefail` would invert to a false "not running"; and the old
+    # `grep -q "^${CONTAINER_NAME}$"` interpolated the name as a REGEX, so a
+    # non-default CONTAINER_NAME containing a metacharacter (`.` is legal in a
+    # container name) could match the wrong line. `grep -qxF --` is fixed-string,
+    # whole-line.
+    #
+    # Asserted by, in tests/test_backup_db_script.py:
+    #   test_backup_surfaces_docker_failure_instead_of_reporting_not_running
+    #   test_running_container_is_detected_in_a_long_docker_ps_list
     local running
-    running=$(docker ps --format '{{.Names}}' 2>/dev/null) || true
+    if ! running=$(docker ps --format '{{.Names}}' 2>&1); then
+        log_error "Could not query Docker: $running"
+        log_info "Is the Docker daemon running? Check with: docker info"
+        exit 1
+    fi
     if ! grep -qxF -- "$CONTAINER_NAME" <<<"$running"; then
         log_error "Container '$CONTAINER_NAME' is not running"
         log_info "Start it with: docker compose up -d postgres"

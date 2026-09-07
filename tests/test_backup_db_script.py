@@ -29,6 +29,10 @@ BACKUP_SCRIPT = REPO_ROOT / "scripts" / "backup_db.sh"
 FAKE_DOCKER = """#!/bin/bash
 case "$1" in
     ps)
+        if [ -n "${FAKE_DOCKER_DAEMON_DOWN:-}" ]; then
+            echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2
+            exit 1
+        fi
         echo "${CONTAINER_NAME:-esg_news_db}"
         # Optional filler AFTER the match, so a consumer that stops reading at the
         # first match leaves this side still writing -- which is what provokes
@@ -210,14 +214,22 @@ def test_list_backups_survives_a_failing_glob_under_pipefail(harness: Harness):
 def test_running_container_is_detected_in_a_long_docker_ps_list(harness: Harness):
     """A running container must be found even when ``docker ps`` output is large.
 
-    Regression guard for a failure mode ``pipefail`` introduces. Written as
+    A *latent* hazard, not an averted incident: written as
     ``docker ps ... | grep -q ...``, grep exits at the first match and can SIGPIPE
-    the upstream (status 141); ``pipefail`` then makes the pipeline non-zero, the
-    ``!`` inverts it, and a container that IS running is reported as stopped --
-    failing the nightly cron backup and the agent backup-status check.
+    the upstream (status 141), which ``pipefail`` turns into a false "not running".
+    It needs ``docker ps`` output to exceed the pipe buffer (~64 KiB, i.e.
+    thousands of containers); this project emits about a dozen bytes, so it would
+    not have fired here. Note the asymmetry that made the story seductive: it can
+    only bite when the container IS present, because that is when grep matches
+    early and stops reading. An absent container makes grep drain the whole stream.
 
-    The fake emits the container name FIRST and then a large amount of filler, so
-    a consumer that stops reading early leaves the writer blocked mid-stream.
+    Kept because the hazard is real in principle and the guard is nearly free. The
+    reason the pipe actually had to go is error attribution -- see
+    ``test_backup_surfaces_docker_failure_instead_of_reporting_not_running``.
+
+    ``FAKE_DOCKER_PS_PADDING`` is 200000 lines (~1.3 MB) deliberately: measured,
+    the inversion does not occur below roughly 64 KiB, so a small value would make
+    this test vacuous rather than merely weaker.
     """
     harness.environ["FAKE_DOCKER_PS_PADDING"] = "200000"
     harness.environ["FAKE_PGDUMP_EXIT"] = "0"
@@ -298,3 +310,34 @@ def test_list_backups_shows_an_existing_archive(harness: Harness):
     assert archive.name in result.stdout, (
         f"an existing archive must actually be listed.\n{result.stdout}"
     )
+
+
+def test_backup_surfaces_docker_failure_instead_of_reporting_not_running(harness: Harness):
+    """A docker/daemon failure must surface docker's own message, not collapse.
+
+    The exit code cannot tell the fix from the bug here -- both exit non-zero, so
+    ``assert returncode != 0`` passes against the very code this guards. What
+    distinguishes them is the *mechanism*: the buggy form discarded docker's
+    diagnostic (``2>/dev/null``) and its status (``|| true``), leaving the operator
+    with "not running / start it with docker compose up" -- guidance that fails the
+    same way the daemon just did. The fix branches on the status and re-emits the
+    message.
+
+    So the load-bearing assertions are the presence of docker's own text and the
+    absence of the misattributed guidance.
+    """
+    harness.environ["FAKE_DOCKER_DAEMON_DOWN"] = "1"
+
+    result = harness.run("backup")
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0, output
+    assert "Cannot connect to the Docker daemon" in output, (
+        "docker's own diagnostic must reach the operator, not be hidden by "
+        f"2>/dev/null.\n{output}"
+    )
+    assert "Start it with: docker compose up -d postgres" not in output, (
+        "a daemon failure must not be reported as a stopped container, which sends "
+        f"the operator at a command that fails identically.\n{output}"
+    )
+    assert harness.daily_archives == [], "no archive should be written"
