@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from .config import mlops_settings
@@ -31,6 +32,23 @@ DRIFT_CONFIG = {
 # listing every one of them would bury the signal. Callers describing this
 # behaviour must say "a core column", not "a column" (issue #71 review).
 CORE_DRIFT_COLUMNS = ["probability", "prediction", "novelty_score"]
+
+
+def _to_builtin(value: Any) -> Any:
+    """Convert numpy scalars to Python built-ins, recursively.
+
+    `numpy.generic.item()` handles every numpy scalar in one branch --
+    `np.bool_` -> `bool`, `np.float64` -> `float`, `np.int64` -> `int` --
+    which matters because `np.bool_` is the one that does NOT subclass its
+    Python counterpart and so is the one `json.dumps` refuses.
+    """
+    if isinstance(value, dict):
+        return {k: _to_builtin(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_builtin(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
 def _missing_from_reference(
@@ -87,14 +105,24 @@ class DriftReport:
         `__name__` is even "bool", so it does not look wrong when printed.
 
         That crashed `print_summary_json` on every successful run of the legacy
-        path, and it reaches `json.dump` on the `--output` path too. Coercing
-        here rather than at each call site means a construction site added
-        later cannot reintroduce it.
+        path. Coercing here rather than at each call site means a construction
+        site added later cannot reintroduce it.
+
+        **`details` is coerced too, and that is not belt-and-braces.** Evidently
+        returns `numpy.float64` for a metric's value, so
+        `col_drift = p_value < p_value_threshold` in `_evidently_drift_check` is
+        a `numpy.bool_` -- and `scripts/monitor_drift.py` writes `report.details`
+        straight into the `--output` JSON that
+        `.github/workflows/monitoring.yml` reads with `jq`. Coercing only the
+        four scalar fields left that path raising `TypeError` mid-write, exiting
+        1 (which this project's contract reads as "drift detected") and leaving
+        a truncated file on disk.
         """
         self.drift_detected = bool(self.drift_detected)
         self.indeterminate = bool(self.indeterminate)
         self.drift_score = float(self.drift_score)
         self.threshold = float(self.threshold)
+        self.details = _to_builtin(self.details)
 
 
 class DriftMonitor:

@@ -994,6 +994,32 @@ class TestAllThreeAsymmetricReadsAreGuarded:
         assert "current_novelty_mean" in report.details
         assert "reference_novelty_mean" not in report.details
 
+    def test_reference_missing_probability_guards_that_read(
+        self, mock_mlops_settings_enabled
+    ):
+        """Covers `reference_prob_mean` specifically.
+
+        The brand-only case no longer reaches the stats block — widening the
+        indeterminate guard to `total_core == 0` made it early-return above it —
+        so without this test, reverting `reference_prob_mean`'s guard back to
+        `current_data` would raise KeyError in production and no test would
+        fail. The reference here keeps `prediction`, so one core column is
+        comparable and the pass proceeds.
+        """
+        current = pd.DataFrame(
+            {"probability": [0.5, 0.6], "prediction": [0, 1], "novelty_score": [0.2, 0.8]}
+        )
+        reference = pd.DataFrame({"prediction": [0, 1], "novelty_score": [0.1, 0.3]})
+
+        report = self._monitor(["prediction", "novelty_score"])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is False
+        assert "current_prob_mean" in report.details
+        assert "reference_prob_mean" not in report.details
+        assert report.details["columns_missing_from_reference"] == ["probability"]
+
     def test_brand_only_reference_is_indeterminate(self, mock_mlops_settings_enabled):
         """No core metric assessed, so any drift score would be fabricated.
 
@@ -1194,3 +1220,84 @@ class TestReportIsSerializable:
 
         assert report.drift_detected is True
         assert report.drift_score == pytest.approx(0.42)
+
+
+class TestDetailsAreSerializable:
+    """`details` reaches the `--output` JSON that CI reads with `jq`.
+
+    Evidently returns `numpy.float64` for a metric value, so
+    `col_drift = p_value < p_value_threshold` is a `numpy.bool_`. Coercing only
+    the four scalar fields left `--output` raising `TypeError` mid-write on the
+    live path, exiting 1, and leaving a truncated file behind.
+    """
+
+    def test_numpy_inside_details_is_coerced(self):
+        report = DriftReport(
+            classifier_type="fp",
+            timestamp=datetime.now(),
+            drift_detected=False,
+            drift_score=0.0,
+            threshold=0.1,
+            details={
+                "probability_drift": np.bool_(True),
+                "probability_p_value": np.float64(0.0035),
+                "reference_size": np.int64(934),
+                "core_metrics_drifted": ["probability"],
+                "nested": {"brand_nike_drift": np.bool_(False)},
+            },
+        )
+
+        json.dumps(report.details)
+        assert type(report.details["probability_drift"]) is bool
+        assert type(report.details["reference_size"]) is int
+        assert type(report.details["nested"]["brand_nike_drift"]) is bool
+
+    def test_values_inside_details_are_preserved(self):
+        """Control: coercion must not flatten what it converts."""
+        report = DriftReport(
+            classifier_type="fp",
+            timestamp=datetime.now(),
+            drift_detected=False,
+            drift_score=0.0,
+            threshold=0.1,
+            details={"drifted": np.bool_(True), "p": np.float64(0.0035)},
+        )
+
+        assert report.details["drifted"] is True
+        assert report.details["p"] == pytest.approx(0.0035)
+        assert report.details == {"drifted": True, "p": pytest.approx(0.0035)}
+
+    def test_the_full_output_report_is_serializable(self, mock_mlops_settings_enabled):
+        """The exact dict `scripts/monitor_drift.py --output` writes."""
+        monitor = DriftMonitor.__new__(DriftMonitor)
+        monitor.classifier_type = "fp"
+        monitor.enabled = True
+        monitor.threshold = 0.1
+        snapshot = MagicMock()
+        # numpy value, as Evidently really returns.
+        snapshot.dict.return_value = {
+            "metrics": [
+                {
+                    "metric_name": "ValueDrift",
+                    "config": {"column": "probability", "threshold": 0.05},
+                    "value": np.float64(0.0035),
+                }
+            ]
+        }
+        run = MagicMock()
+        run.run.return_value = snapshot
+        monitor._evidently = {"Report": MagicMock(return_value=run), "ValueDrift": MagicMock()}
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+
+        report = monitor._evidently_drift_check(frame, frame, save_report=False)
+
+        json.dumps(
+            {
+                "classifier_type": report.classifier_type,
+                "drift_detected": report.drift_detected,
+                "drift_score": report.drift_score,
+                "threshold": report.threshold,
+                "indeterminate": report.indeterminate,
+                "details": report.details,
+            }
+        )

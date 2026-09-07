@@ -390,7 +390,21 @@ fix had itself introduced two defects, and left a third:
 3. The Evidently guard keyed on `total_core == 0 and total_brand == 0`, so a reference sharing only
    `brand_*` columns reported HEALTHY with a fabricated `core_drift_score` of 0.0 while the legacy
    path called the same input indeterminate. It now keys on `total_core == 0`, and the two paths
-   agree. The test covering that input had asserted only that it did not raise.
+   agree **on that input**. They are not equivalent in general: `_legacy_drift_check` scores only
+   `probability` and `prediction`, so a reference whose sole shared core column is `novelty_score`
+   is measurable on the Evidently path and indeterminate on the legacy one. The test covering the
+   brand-only input had asserted only that it did not raise.
+
+**Amendment (review round 4, human-authorised).** Round 3's re-check flagged one item it could not
+settle by reading; settled by inspection, it was a live bug. Evidently returns `numpy.float64` for
+a metric value, so `col_drift = p_value < p_value_threshold` is a `numpy.bool_` written raw into
+`details` -- and `--output` dumps `details` into the JSON `.github/workflows/monitoring.yml` reads.
+Reproduced: `TypeError` mid-write, exit 1 (read as "drift detected"), and a truncated 872-byte file
+left behind, which is the #89 shape. `__post_init__` now coerces `details` recursively via
+`_to_builtin`, so the guarantee its docstring states is the one the code delivers. Round 3 also
+removed test coverage without saying so: widening the guard made the brand-only input early-return
+above the stats block, leaving `reference_prob_mean` unguarded by any test. Restored with a
+reference that keeps one comparable core column.
 
 **Rationale:** the epic's thesis is that a missing signal must never collapse into "healthy". Every
 decision above moves a signal from *inferred by absence* to *stated explicitly and typed*: the
