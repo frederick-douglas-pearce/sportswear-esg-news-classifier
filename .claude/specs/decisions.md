@@ -102,8 +102,9 @@ aborted first. That is only one of two routes, and it is not the one #89 is abou
 - **`pg_dump` dies mid-stream** (the #89 case): the pipeline reports `gzip`'s 0, nothing aborts,
   `$?` **is** read, it **is** 0, and the *success* branch runs. Rotation runs. The truncated archive
   is reported by `list`/`status` as the latest backup.
-- **`gzip` itself fails** (disk full): the pipeline is non-zero, and `set -e` aborts the function
-  before `$?` can be read.
+- **`gzip` itself fails** (disk full): the pipeline is non-zero, and `set -e` aborts the *script*
+  before `$?` can be read. (`create_backup` is called bare from the `case` dispatch, not in a
+  tested context, so there is no enclosing construct for `set -e` to stop at.)
 
 Either way the `else` -- including the `rm -f "$DAILY_PATH"` cleanup -- was dead code. Recording
 both routes because stating only the abort teaches that `set -e` alone notices a mid-pipeline
@@ -214,8 +215,9 @@ the same one, which was false of the second:
   reach it but because AC5 asks that such sites be *checked and stated*, which is done above and in
   #93. Two things an earlier draft left unsaid: the hazard is one this change **introduces**, not
   one it inherits -- on `main` that pipeline runs under plain `set -e`, where its status cannot
-  flip the branch -- and it is **untested**, because a test asserting the correct verdict would
-  fail against the code as it stands. That is exactly what #93 is for.
+  flip the branch -- and its *signal collapse* is **untested**. The happy path runs in every test
+  in the file, via the fake `docker ps`; what has no test is the collapsed verdict, because a test
+  asserting the correct verdict would fail against the code as it stands. That is exactly what #93 is for.
 
 **Forward compatibility:** the `if <pipeline>; then ...` restructure gives #80 ("assert the output
 is *good*") a home -- `gzip -t`, size and row-count checks compose into the `then` branch without

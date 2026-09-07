@@ -44,8 +44,8 @@ branch. It is deferred rather than pre-existing, and rewriting it is a behaviour
 this issue's acceptance criteria ask for.
 
 Instance 7 of the `silent-success` class (#72), and the only one whose outcome is data loss rather
-than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` on `PATH`
-to force a mid-pipeline failure, asserting both non-zero exit **and** no leftover archive -- a test
+than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` and `du` on
+`PATH` to force a mid-pipeline failure, asserting both non-zero exit **and** no leftover archive -- a test
 asserting only the exit code passes against a fix that leaves the partial file. (#89)
 
 ### 2026-09-05: Stop the labeling retry from erasing a run's results

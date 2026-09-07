@@ -321,7 +321,8 @@ def test_backup_survives_a_du_failure_after_the_archive_is_written(harness: Harn
     ``BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)`` is the only plain (non-``local``)
     assignment in the script whose right-hand side is a *pipeline* -- other plain
     assignments exist, but ``pipefail`` has nothing to reach in them -- so
-    ``pipefail`` propagates a ``du`` failure to ``set -e`` -- which aborts *inside* the success branch, after the archive is
+    ``pipefail`` propagates a ``du`` failure to ``set -e`` -- which aborts *inside* the
+    success branch, after the archive is
     safely written. Without the guard the result is the AC2 invariant inverted: a
     good archive on disk, a non-zero exit, no success line, no rotation, and the
     ``rm -f`` unreachable in the ``else``. This hazard did not exist before
