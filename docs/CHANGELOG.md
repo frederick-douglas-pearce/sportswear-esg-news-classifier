@@ -4,6 +4,50 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-06: A failed pg_dump no longer records a good backup
+
+`scripts/backup_db.sh` ran `pg_dump | gzip > "$PATH"` under `set -e` with no `pipefail`. A
+pipeline reports its *last* command's status, so a `pg_dump` that died mid-stream was masked by
+`gzip` exiting 0: a truncated archive was written, "Backup created successfully" was printed,
+rotation ran, and `list`/`status` reported the partial file as the latest good backup. The same
+shape on the restore path printed "Restore completed successfully!" over partially-loaded data.
+
+**The second half, which `pipefail` alone does not fix.** The `if [ $? -eq 0 ]` handlers were
+unreachable -- by two different routes, and only one of them is a `set -e` abort. When `pg_dump`
+died the pipeline reported `gzip`'s 0, so `$?` was read, was 0, and the *success* branch ran; when
+`gzip` itself failed the pipeline was non-zero and `set -e` aborted before `$?` could be read. The
+first is the case this fix is about. Either way the `else` -- including the `rm -f "$DAILY_PATH"`
+cleanup -- was dead code, so adding `pipefail` on its own would only make the failure louder while
+leaving the truncated file on disk. Each of the three pipelines is now the `if` **condition**,
+which is exempt from `set -e`, so the cleanup branch actually runs.
+
+Also: the pre-restore safety copy aborts the restore and removes its partial file rather than
+proceeding; the `ls *.sql.gz | awk` listing is guarded with `|| true`, the only *top-level*
+pipeline `pipefail` would newly abort; and `BACKUP_SIZE=$(du -h ... | cut -f1)` is guarded with
+`|| BACKUP_SIZE="unknown"`. That last one is the subtle site: it is the only plain (non-`local`)
+assignment whose *right-hand side is a pipeline* -- other plain assignments exist, but `pipefail`
+has nothing to reach in them -- so under `pipefail` a `du` failure would abort inside the success
+branch and invert the invariant this change exists to establish: a good archive on disk, a non-zero
+exit, no rotation, and the cleanup unreachable in the `else`. The `local var=$(cmd | cmd)` sites in `rotate` and
+`status` are unaffected: `local` returns its own exit status, so the pipeline's never reaches
+`set -e`.
+
+`check_container`'s `docker ps | grep -q` also changes behaviour under `pipefail` -- it is a change
+of *value* rather than an abort, since there the pipeline's status is the branch condition. It is
+checked, measured and filed as #93 rather than fixed here. The inversion is a *race*, not a size
+threshold: it fires whenever `docker ps` is still writing when `grep -q` matches and stops reading.
+Exceeding the ~64 KiB pipe buffer is merely the reliable way to force it. What makes it unreachable
+here is that real `docker ps` emits its whole list -- 30 bytes, two running containers -- in one
+buffered write and exits before `grep` can close the pipe. Note this is a hazard the change
+*introduces*: on `main` that pipeline runs under plain `set -e`, where its status cannot flip the
+branch. It is deferred rather than pre-existing, and rewriting it is a behaviour change none of
+this issue's acceptance criteria ask for.
+
+Instance 7 of the `silent-success` class (#72), and the only one whose outcome is data loss rather
+than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` and `du` on
+`PATH` to force a mid-pipeline failure, asserting both non-zero exit **and** no leftover archive -- a test
+asserting only the exit code passes against a fix that leaves the partial file. (#89)
+
 ### 2026-09-05: Stop the labeling retry from erasing a run's results
 
 The `daily_labeling` report for 2026-09-05 read `0 processed / 0 labeled / 0 failed`
