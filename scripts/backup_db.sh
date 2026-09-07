@@ -89,14 +89,16 @@ create_backup() {
     #   * pg_dump dying mid-stream left the pipeline reporting gzip's 0, so `$?`
     #     was read, was 0, and the SUCCESS branch ran -- this is the #89 case;
     #   * gzip itself failing (disk full) made the pipeline non-zero, which under
-    #     `set -e` aborted the function before `$?` could be read at all.
+    #     `set -e` aborted the SCRIPT before `$?` could be read at all.
     # Either way the `rm -f` below was dead code and the partial file survived to
     # be reported as the latest backup by `list`/`status`. Stating only the abort
     # would teach the belief that caused #89 -- that `set -e` alone notices a
     # mid-pipeline death.
     #
-    # Both halves are asserted by
+    # The two bullets at the top -- detection and reachability -- are asserted by
     # tests/test_backup_db_script.py::test_backup_failure_exits_nonzero_and_removes_partial_archive
+    # Route 2 (gzip itself failing) has no test: it is the route `set -e` already
+    # caught before this change, so nothing here regressed it.
     if docker exec "$CONTAINER_NAME" pg_dump -U "$DB_USER" -d "$DB_NAME" \
         --format=plain \
         --no-owner \

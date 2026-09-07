@@ -22,20 +22,26 @@ leaving the truncated file on disk. Each of the three pipelines is now the `if` 
 which is exempt from `set -e`, so the cleanup branch actually runs.
 
 Also: the pre-restore safety copy aborts the restore and removes its partial file rather than
-proceeding; the `ls *.sql.gz | awk` listing is guarded with `|| true`, the one read-only pipeline
-`pipefail` would newly abort; and `BACKUP_SIZE=$(du -h ... | cut -f1)` is guarded with
-`|| BACKUP_SIZE="unknown"`. That last one is the subtle site: it is the only *plain* assignment in
-the script, so under `pipefail` a `du` failure would abort inside the success branch and invert the
-invariant this change exists to establish -- a good archive on disk, a non-zero exit, no rotation,
-and the cleanup unreachable in the `else`. The `local var=$(cmd | cmd)` sites in `rotate` and
+proceeding; the `ls *.sql.gz | awk` listing is guarded with `|| true`, the only *top-level*
+pipeline `pipefail` would newly abort; and `BACKUP_SIZE=$(du -h ... | cut -f1)` is guarded with
+`|| BACKUP_SIZE="unknown"`. That last one is the subtle site: it is the only plain (non-`local`)
+assignment whose *right-hand side is a pipeline* -- other plain assignments exist, but `pipefail`
+has nothing to reach in them -- so under `pipefail` a `du` failure would abort inside the success
+branch and invert the invariant this change exists to establish: a good archive on disk, a non-zero
+exit, no rotation, and the cleanup unreachable in the `else`. The `local var=$(cmd | cmd)` sites in `rotate` and
 `status` are unaffected: `local` returns its own exit status, so the pipeline's never reaches
 `set -e`.
 
 `check_container`'s `docker ps | grep -q` also changes behaviour under `pipefail` -- it is a change
 of *value* rather than an abort, since there the pipeline's status is the branch condition. It is
-checked, measured and filed as #93 rather than fixed here: the inversion needs `docker ps` output
-above the ~64 KiB pipe buffer (measured, this host emits about 48 bytes for three containers), and
-rewriting it is a behaviour change none of this issue's acceptance criteria ask for.
+checked, measured and filed as #93 rather than fixed here. The inversion is a *race*, not a size
+threshold: it fires whenever `docker ps` is still writing when `grep -q` matches and stops reading.
+Exceeding the ~64 KiB pipe buffer is merely the reliable way to force it. What makes it unreachable
+here is that real `docker ps` emits its whole list -- 30 bytes, two running containers -- in one
+buffered write and exits before `grep` can close the pipe. Note this is a hazard the change
+*introduces*: on `main` that pipeline runs under plain `set -e`, where its status cannot flip the
+branch. It is deferred rather than pre-existing, and rewriting it is a behaviour change none of
+this issue's acceptance criteria ask for.
 
 Instance 7 of the `silent-success` class (#72), and the only one whose outcome is data loss rather
 than a missed alert. Regression tests in `tests/test_backup_db_script.py` stub `docker` on `PATH`

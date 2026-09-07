@@ -11,14 +11,16 @@ the pipeline reported ``gzip``'s 0, so ``$?`` was read, was 0, and the *success*
 branch ran; when ``gzip`` itself failed the pipeline was non-zero and ``set -e``
 aborted before ``$?`` could be read. The first is the case #89 is about.
 
-Hermetic: no Docker and no PostgreSQL. A fake ``docker`` executable is placed
-first on ``PATH``; its ``pg_dump`` and ``psql`` exit codes are driven by
-environment variables so a mid-pipeline failure can be forced deterministically.
+Hermetic: no Docker and no PostgreSQL. Fake ``docker`` and ``du`` executables are
+placed first on ``PATH``; their exit codes are driven by ``FAKE_*`` environment
+variables so a mid-pipeline failure can be forced deterministically. The ``du``
+stub passes through to the real binary unless asked to fail.
 """
 
 import gzip
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -59,9 +61,11 @@ exit 0
 """
 
 
-# Pass-through stub for `du`: the script's one PLAIN assignment pipes through it,
-# so `pipefail` makes a `du` failure abort the success branch unless guarded. The
-# real binary's absolute path is baked in at fixture time, before PATH is shadowed.
+# Pass-through stub for `du`: the script's only plain assignment with a PIPELINE on
+# the right-hand side runs through it, so `pipefail` makes a `du` failure abort the
+# success branch unless guarded. The real binary's absolute path is resolved from
+# the parent's PATH (which this fixture never modifies -- only the child's copy) and
+# baked in, so the stub cannot recurse into itself.
 FAKE_DU = """#!/bin/bash
 if [ -n "${FAKE_DU_EXIT:-}" ]; then
     exit "$FAKE_DU_EXIT"
@@ -102,7 +106,7 @@ def harness(tmp_path: Path) -> Harness:
     real_du = shutil.which("du")
     assert real_du, "du must exist on PATH for these tests"
     fake_du = bin_dir / "du"
-    fake_du.write_text(FAKE_DU % real_du)
+    fake_du.write_text(FAKE_DU % shlex.quote(real_du))
     fake_du.chmod(0o755)
 
     child_env = os.environ.copy()
@@ -119,6 +123,9 @@ def harness(tmp_path: Path) -> Harness:
     # turns the listing assertion red for no code reason.
     child_env["TIME_STYLE"] = "locale"
     child_env["LC_ALL"] = "C"
+    # GNU ls honours QUOTING_STYLE independently of LC_ALL, and `shell-always`
+    # wraps the name in quotes, which the listing regex would reject.
+    child_env["QUOTING_STYLE"] = "literal"
     return Harness(environ=child_env, backup_dir=tmp_path / "backups")
 
 
@@ -229,6 +236,8 @@ def test_list_backups_survives_a_failing_glob_under_pipefail(harness: Harness):
         "listing a directory with no *.sql.gz must not abort under pipefail.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
 def test_restore_aborts_and_removes_partial_pre_restore_backup(harness: Harness):
     """The pre-restore safety copy must fail loudly and leave nothing behind.
 
@@ -309,17 +318,19 @@ def test_list_backups_shows_an_existing_archive(harness: Harness):
 def test_backup_survives_a_du_failure_after_the_archive_is_written(harness: Harness):
     """A cosmetic `du` failure must not fail a backup that actually worked.
 
-    ``BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)`` is the one PLAIN (non-``local``)
-    assignment in the script, so ``pipefail`` propagates a ``du`` failure to
-    ``set -e`` -- which aborts *inside* the success branch, after the archive is
+    ``BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)`` is the only plain (non-``local``)
+    assignment in the script whose right-hand side is a *pipeline* -- other plain
+    assignments exist, but ``pipefail`` has nothing to reach in them -- so
+    ``pipefail`` propagates a ``du`` failure to ``set -e`` -- which aborts *inside* the success branch, after the archive is
     safely written. Without the guard the result is the AC2 invariant inverted: a
     good archive on disk, a non-zero exit, no success line, no rotation, and the
     ``rm -f`` unreachable in the ``else``. This hazard did not exist before
     ``pipefail`` was added, so this PR owns it.
 
-    Asserting exit 0 alone would be enough to kill the mutant, but the success
-    line and the surviving archive are what say the backup was *kept*, not merely
-    that the script exited quietly.
+    Asserting exit 0 alone would kill the mutant only so long as the stub really
+    fires; the final ``"(unknown)"`` assertion is what pins that, and the success
+    line and surviving archive are what say the backup was *kept* rather than that
+    the script merely exited quietly.
     """
     harness.environ["FAKE_PGDUMP_EXIT"] = "0"
     harness.environ["FAKE_DU_EXIT"] = "1"
@@ -332,3 +343,10 @@ def test_backup_survives_a_du_failure_after_the_archive_is_written(harness: Harn
     )
     assert len(harness.daily_archives) == 1, "the good archive must be kept"
     assert "Backup created successfully" in output, output
+    # Pins that the stub actually fired. Exit 0 + an archive + the success line all
+    # hold identically if the stub was never reached and the REAL du ran, in which
+    # case this test would no longer fail if the guard were deleted. "(unknown)" is
+    # the guard's own observable signature and only appears when du failed.
+    assert "(unknown)" in output, (
+        f"the du stub must actually have failed, or this test proves nothing.\n{output}"
+    )

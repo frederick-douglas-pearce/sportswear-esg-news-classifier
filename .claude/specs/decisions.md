@@ -122,11 +122,11 @@ death, which is the belief that produced #89 in the first place.
    top-level pipeline `pipefail` would newly *abort*. Its enclosing guard tests `ls -A` (directory
    non-empty), not the `*.sql.gz` glob, so a directory of non-archive files would abort the listing.
 5. Guard `BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)` with `|| BACKUP_SIZE="unknown"`. See the
-   audit below: this is the second site `pipefail` changes, and it is the dangerous one.
+   audit below: of the sites `pipefail` changes, this is the dangerous one.
 6. The AC3 restore test must assert the failure-guidance branch **ran**, not merely that the success
    line is absent -- otherwise it is satisfied by `pipefail` alone and the restructure is unguarded.
 
-**Audit result (AC5) -- two sites change under `pipefail`, not one.**
+**Audit result (AC5) -- three sites change under `pipefail`, not one.**
 
 `local var=$(cmd | cmd)` returns `local`'s own status, so the pipeline status never reaches
 `set -e`. Every `local`-assigned command substitution -- the `ls | wc -l` sites in
@@ -137,7 +137,14 @@ all: its `$(ls -A ...)` sits inside a `[ ... ]` test in an `if` condition, so it
 earlier draft of this entry listed `list_backups()` among the `local`-assigned functions. It is
 not one.)
 
-The two sites that **do** change:
+The three sites that **do** change (over and above the three pipelines this change deliberately
+restructures):
+
+0. **The `ls -lh ...*.sql.gz | awk` listing in `list_backups()`** -- the only *top-level* pipeline
+   `pipefail` would newly abort. Guarded with `|| true` per decision 4 and covered by
+   `tests/test_backup_db_script.py::test_list_backups_survives_a_failing_glob_under_pipefail`.
+   Listed here for completeness: decision 4 already handles it, and an earlier draft of this
+   heading counted only the two below.
 1. **`BACKUP_SIZE=$(du -h "$DAILY_PATH" | cut -f1)` in `create_backup()`** -- the only plain
    (non-`local`) assignment whose right-hand side is a *pipeline*, so its status now propagates to
    `set -e`. (Other plain assignments exist, such as `TIMESTAMP=$(date ...)`; `pipefail` has
@@ -145,7 +152,8 @@ The two sites that **do** change:
    "correct behaviour on a just-written file". It is not merely correct-and-boring: it aborts
    *inside* the success branch, after a good archive is on disk, so the result is the AC2 invariant
    inverted -- archive kept, non-zero exit, no success line, no rotation, and the `rm -f` in the
-   `else` never reached, with no error message at all. Guarded per decision 5 and covered by
+   `else` never reached. The *script* says nothing; `du`'s own stderr still reaches the operator,
+   so "no error message at all" (an earlier draft) overstated it. Guarded per decision 5 and covered by
    `tests/test_backup_db_script.py::test_backup_survives_a_du_failure_after_the_archive_is_written`.
 2. **`check_container()`'s `docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"`** --
    `pipefail` changes this pipeline's *status*, and there the status **is** the branch condition, so
@@ -163,7 +171,7 @@ stops reading. Exceeding the ~64 KiB pipe buffer is simply the reliable way to f
 running at 48,894 bytes, inverted at 108,894), but the acceptance-gate verifier inverted the same
 construct with **two lines** of output by inserting a delay after the matching line. What makes it
 unreachable here is not the byte count as such but that real `docker ps` emits its whole list --
-30 bytes on this host, three containers -- in a single buffered write and exits before `grep` can
+measured at 30 bytes, two running containers -- in one buffered write and exits before `grep` can
 close the pipe. 30/30 runs of the real construct reported RUNNING. A second draft claimed it "would have failed the
 nightly cron backup on a healthy system"; it would not have. A third claimed that removing the pipe
 was a *prerequisite* for reporting a Docker failure separately from an absent container; that is
@@ -196,9 +204,18 @@ can now see that `pg_dump` failed. Putting the pipeline in the `if` condition ad
 converts "silently wrong" into "loudly wrong with the bad artifact still on disk", which still loses
 data on the next restore.
 
-**Conscious exclusions:** the `DROP DATABASE` / `CREATE DATABASE` / `CREATE EXTENSION` sequence in
-`restore_backup()` can leave the database dropped-but-not-recreated (#91). `check_container()`'s
-signal collapse (#93). Neither is a pipeline, and both are outside AC1-AC5.
+**Conscious exclusions**, and they are excluded for different reasons -- an earlier draft gave both
+the same one, which was false of the second:
+- The `DROP DATABASE` / `CREATE DATABASE` / `CREATE EXTENSION` sequence in `restore_backup()` can
+  leave the database dropped-but-not-recreated (#91). These are **not pipelines**, `pipefail` does
+  not touch them, and `set -e` already aborts loudly -- genuinely outside AC1-AC5.
+- `check_container()`'s signal collapse (#93). This one **is** a pipeline, and it **is** one of the
+  three sites above whose behaviour `pipefail` changes. It is excluded not because AC5 fails to
+  reach it but because AC5 asks that such sites be *checked and stated*, which is done above and in
+  #93. Two things an earlier draft left unsaid: the hazard is one this change **introduces**, not
+  one it inherits -- on `main` that pipeline runs under plain `set -e`, where its status cannot
+  flip the branch -- and it is **untested**, because a test asserting the correct verdict would
+  fail against the code as it stands. That is exactly what #93 is for.
 
 **Forward compatibility:** the `if <pipeline>; then ...` restructure gives #80 ("assert the output
 is *good*") a home -- `gzip -t`, size and row-count checks compose into the `then` branch without
