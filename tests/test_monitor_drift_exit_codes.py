@@ -74,7 +74,7 @@ class TestExitCodeMapping:
 
         An indeterminate report carries drift_detected=False because nothing
         was measured. Testing drift first would map "the check never ran" to
-        exit 0 — which is how EP reported Healthy on every run for 231 days.
+        exit 0 — which is how EP reported Healthy on every run it ever made.
         """
         report = make_report(
             drift_detected=False,

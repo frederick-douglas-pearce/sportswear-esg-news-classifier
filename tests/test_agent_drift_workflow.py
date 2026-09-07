@@ -313,7 +313,7 @@ class TestSendDriftAlerts:
     def test_alert_sent_on_failed_check(self, mock_workflow):
         """AC2: an induced check failure produces an alert.
 
-        This is the notification that never fired across 231 days.
+        This is the notification that never fired across 223 failed runs.
         """
         with patch(
             "src.agent.workflows.drift_monitoring.send_check_failure_notification"

@@ -1,5 +1,6 @@
 """Tests for the MLOps monitoring module."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -963,8 +964,43 @@ class TestAllThreeAsymmetricReadsAreGuarded:
         }
         return monitor
 
-    def test_brand_only_reference_does_not_raise(self, mock_mlops_settings_enabled):
-        """The case that would have died on `reference_prob_mean`."""
+    def test_partial_reference_guards_each_frame_separately(
+        self, mock_mlops_settings_enabled
+    ):
+        """Reference has `probability` but not `prediction` or `novelty_score`.
+
+        One core column is comparable, so the pass proceeds to the stats block
+        — which is the code under test here. `reference_prediction_rate` and
+        `reference_novelty_mean` must be absent without raising, while their
+        current-side counterparts are present.
+        """
+        current = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6],
+                "prediction": [0, 1],
+                "novelty_score": [0.2, 0.8],
+            }
+        )
+        reference = pd.DataFrame({"probability": [0.4, 0.5]})
+
+        report = self._monitor(["probability"])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is False
+        assert "reference_prob_mean" in report.details
+        assert "current_prediction_rate" in report.details
+        assert "reference_prediction_rate" not in report.details
+        assert "current_novelty_mean" in report.details
+        assert "reference_novelty_mean" not in report.details
+
+    def test_brand_only_reference_is_indeterminate(self, mock_mlops_settings_enabled):
+        """No core metric assessed, so any drift score would be fabricated.
+
+        An earlier version of this test asserted only that it did not raise,
+        which blessed a HEALTHY verdict with a 0.0 score — the epic's defect
+        class inside the test written to guard against it.
+        """
         current = pd.DataFrame(
             {"probability": [0.5, 0.6], "prediction": [0, 1], "brand_nike": [1, 0]}
         )
@@ -974,10 +1010,31 @@ class TestAllThreeAsymmetricReadsAreGuarded:
             current, reference, save_report=False
         )
 
-        assert "current_prob_mean" in report.details
-        assert "reference_prob_mean" not in report.details
-        assert "current_prediction_rate" in report.details
-        assert "reference_prediction_rate" not in report.details
+        assert report.indeterminate is True
+        assert report.drift_detected is False
+
+    def test_both_paths_agree_on_a_brand_only_reference(
+        self, mock_mlops_settings_enabled, disabled_monitor
+    ):
+        """The Evidently and legacy paths must reach the same verdict.
+
+        They disagreed: legacy called this indeterminate while Evidently
+        reported healthy, and `docs/MLOPS.md` documented the legacy answer as
+        if it were universal.
+        """
+        current = pd.DataFrame(
+            {"probability": [0.5, 0.6], "prediction": [0, 1], "brand_nike": [1, 0]}
+        )
+        reference = pd.DataFrame({"brand_nike": [1, 1]})
+
+        evidently = self._monitor(["brand_nike"])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+        legacy = disabled_monitor.check_drift(
+            current_data=current, reference_data=reference, save_report=False
+        )
+
+        assert evidently.indeterminate == legacy.indeterminate is True
 
     def test_both_sides_present_reports_both(self, mock_mlops_settings_enabled):
         """Control: splitting the guards did not drop stats that should appear."""
@@ -1022,7 +1079,7 @@ class TestUnreadableEvidentlyMetrics:
         )
 
         assert report.indeterminate is True
-        assert "No drift metrics" in report.details["error"]
+        assert "No core drift metrics" in report.details["error"]
 
     def test_unrecognised_metric_name_is_indeterminate(self, mock_mlops_settings_enabled):
         """The Evidently API has already changed once (this targets 'v0.7+')."""
@@ -1070,3 +1127,70 @@ class TestCheckedInReferenceDataset:
             assert column in df.columns, f"reference is missing {column}"
         assert df["novelty_score"].notna().any()
         assert len(df) > 0
+
+
+class TestReportIsSerializable:
+    """A report must survive `json.dumps`, whatever produced its numbers.
+
+    `drift_detected = overall_drift > self.threshold` yields a `numpy.bool_`
+    when `overall_drift` came from scipy/pandas. `numpy.bool_` does NOT
+    subclass `bool` (`numpy.float64` DOES subclass `float`, which is why the
+    score slipped through unnoticed), so `json.dumps` refused it — crashing
+    `print_summary_json` on every successful run of the legacy path, which is
+    the path taken by default.
+    """
+
+    def test_numpy_scalars_are_coerced(self):
+        report = DriftReport(
+            classifier_type="fp",
+            timestamp=datetime.now(),
+            drift_detected=np.bool_(False),
+            drift_score=np.float64(0.05),
+            threshold=np.float64(0.1),
+            details={},
+            indeterminate=np.bool_(False),
+        )
+
+        assert type(report.drift_detected) is bool
+        assert type(report.indeterminate) is bool
+        assert type(report.drift_score) is float
+        json.dumps(
+            {
+                "drift_detected": report.drift_detected,
+                "drift_score": report.drift_score,
+                "indeterminate": report.indeterminate,
+                "threshold": report.threshold,
+            }
+        )
+
+    def test_a_real_legacy_report_is_json_serializable(
+        self, disabled_monitor, reference_data, current_data_no_drift
+    ):
+        """End to end through the real scipy path, which is where it came from."""
+        report = disabled_monitor.check_drift(
+            current_data=current_data_no_drift,
+            reference_data=reference_data,
+            save_report=False,
+        )
+
+        json.dumps(
+            {
+                "drift_detected": report.drift_detected,
+                "drift_score": report.drift_score,
+                "indeterminate": report.indeterminate,
+            }
+        )
+
+    def test_values_are_preserved_not_just_coerced(self):
+        """Control: coercion must not flatten a real result to False/0.0."""
+        report = DriftReport(
+            classifier_type="fp",
+            timestamp=datetime.now(),
+            drift_detected=np.bool_(True),
+            drift_score=np.float64(0.42),
+            threshold=np.float64(0.1),
+            details={},
+        )
+
+        assert report.drift_detected is True
+        assert report.drift_score == pytest.approx(0.42)

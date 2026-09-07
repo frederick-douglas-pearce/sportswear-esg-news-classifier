@@ -702,7 +702,7 @@ def send_check_failure_notification(
 
     Distinct from `send_drift_notification`, which reports a *result*. This one
     reports that there is no result -- the case that produced no notification at
-    all for 231 days, because a failed check looked identical to a clean one
+    all across 223 failed runs, because a failed check looked identical to a clean one
     (issue #71).
 
     Args:

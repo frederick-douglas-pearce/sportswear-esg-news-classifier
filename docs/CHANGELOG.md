@@ -11,25 +11,31 @@ workflow simultaneously logged `No action needed - all classifiers healthy` and 
 issue's 221/230/217 were measured on 2026-09-05; these are the same logs re-counted on
 2026-09-07.)
 
-It produced a real verdict **twice** -- 2026-01-19 (drift score 0.1315) and 2026-01-23 (0.0000) --
-and never again. Of the nine runs with no failure line, the other seven are June 2026 `uv` DNS
-failures that never reached Python (the #51 class), which fail loudly and are not this defect.
+It produced a real verdict at least once -- **2026-01-19**, drift score 0.1315 -- so
+"never produced a valid result" was wrong; #71's own title says "worked once". A second run,
+2026-01-23, completed without a failure line but recorded `fp_drift_score: 0.0`, which is exactly
+the value both fabricating paths emit; the script's stdout was never archived, so **whether it
+measured anything cannot be determined** and it is not counted as a verdict here. Of the nine runs
+with no failure line, the other seven are June 2026 `uv` DNS failures that never reached Python
+(the #51 class), which fail loudly and are not this defect.
 
 **Why a failure looked like health.** Four defects compounded, each of which turned a missing
 signal into a benign one:
 
 - `data/reference/fp_reference.parquet` was written 2026-01-17, before `novelty_score` existed.
   `_evidently_drift_check` guarded the novelty *stats* block on `current_data` alone and then read
-  `reference_data["novelty_score"]`, raising `KeyError: 'novelty_score'`. This became the cause
-  from **2026-01-25**, when `novelty_score` was added to `classifier_predictions` (commit
-  `4c17395`) -- it cannot explain the earlier failures, whose logged causes include
-  `Evidently not installed` and a missing `uv`. **Three** stats reads had that asymmetric shape,
+  `reference_data["novelty_score"]`, raising `KeyError: 'novelty_score'`. This can only have been
+  the cause from **2026-01-25**, when `novelty_score` was added to `classifier_predictions`
+  (commit `4c17395`). It cannot explain the six earlier failures: three of those logged other
+  causes (`Evidently not installed`, a missing `uv`) and the remaining three (01-21, 01-22, 01-24)
+  logged an empty message, so **their cause is not recoverable from the logs** -- that being
+  defect 2 below. **Three** stats reads had that asymmetric shape,
   not one; `novelty_score` is simply the one that fired, because a reference sharing only
   `brand_*` columns would have died on `reference_prob_mean` first.
 - The script printed `Error running drift analysis: {e}` to **stdout** and returned 1, while the
   workflow logged the command's **stderr** -- producing 220 log lines reading
-  `FP drift check failed: ` with nothing after the colon. (The 3 non-empty ones name causes that
-  never reached the analysis at all.)
+  `drift check failed: ` with nothing after the colon, out of 224. The 4 non-empty ones name
+  causes that never reached the analysis (`Evidently not installed`, a missing `uv`).
 - Exit 1 meant *both* "drift detected" and "the analysis raised", and `ScriptResult.success` is
   `exit_code == 0`, so the workflow could not tell them apart and fell back to scraping the
   human-readable report. `evaluate_drift_results` then read

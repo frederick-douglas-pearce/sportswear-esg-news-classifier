@@ -199,7 +199,7 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
         # bare fallback would record the literal string "no verdict produced".
         # That string is what would land in the run archive #75/#76 read and in
         # the alert body, i.e. an alert that names no cause, which is most of
-        # what made #71 invisible for 231 days.
+        # what made #71 invisible across 223 failed runs.
         #
         # tail, not head: a traceback's diagnosis is at the END of the stream
         # (issue #81, same runner).
@@ -349,7 +349,7 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
             )
 
         elif verdict is HealthVerdict.UNKNOWN:
-            # The alert that never fired for 231 days.
+            # The alert that never fired across 223 failed runs.
             result = send_check_failure_notification(
                 check_name=f"{classifier.upper()} drift",
                 reason=context.get(f"{classifier}_error") or "no verdict produced",

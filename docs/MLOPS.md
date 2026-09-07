@@ -133,15 +133,20 @@ incomplete, or inconsistent with the exit code is treated as `unknown` rather th
 
 A reference written against an older schema is the failure that started #71: `novelty_score` was
 added to `classifier_predictions` after `fp_reference.parquet` was written, and the mismatch raised
-`KeyError` from 2026-01-25 (when the column was added) until 2026-09-07. Two guards now exist --
-on **both** the Evidently and the legacy code paths -- and neither removes the need to regenerate:
+`KeyError` from 2026-01-25 (when the column was added) until 2026-09-06, the last run before the
+fix. The failure logs are empty -- that is defect 2 of #71 -- so the attribution is from the code
+and the schema dates, not from a logged traceback. Two guards now exist, on **both** the Evidently
+and the legacy code paths, and neither removes the need to regenerate:
 
 - a **core** column (`probability`, `prediction`, `novelty_score`) present in the current data but
   missing from the reference is **logged as not assessed** and recorded in
   `details["columns_missing_from_reference"]`, so a partial comparison is not reported as a whole
   one. `brand_*` columns are not tracked this way: they come and go with `TRACKED_BRANDS` and would
   bury the signal;
-- a reference sharing *no* comparable core column returns `indeterminate`, i.e. exit 2.
+- a reference sharing *no* comparable core column returns `indeterminate`, i.e. exit 2 -- on both
+  paths. On the Evidently path this also covers the case where core columns are offered but no
+  core metric comes back readable: the reported score is `core_drift_score`, so without a core
+  metric it would be a fabricated 0.0.
 
 Regenerate after any change to what is written to `classifier_predictions`:
 

@@ -267,7 +267,9 @@ good -- applied to the project's own documentation.
 workflow failed on **223 of 232** scheduled runs since 2026-01-17 and on **219** of those
 simultaneously logged `No action needed - all classifiers healthy` and exited 0 (re-counted from
 `logs/agent/cron_drift_monitoring_*.log` on 2026-09-07; the issue's 221/230/217 were measured
-2026-09-05). It produced a real verdict twice, on 2026-01-19 and 2026-01-23, and never again.
+2026-09-05). It produced a real verdict at least once, on 2026-01-19 (score 0.1315). The 2026-01-23 run
+completed without a failure line but recorded `fp_drift_score: 0.0` -- the value both fabricating
+paths emit -- and its stdout was never archived, so whether it measured anything is undetermined.
 
 Four defects compound. **The current behaviour of each was reproduced at `a9603ad`; the
 *historical* attribution was not, and one inherited claim was wrong** -- see the correction under
@@ -310,8 +312,9 @@ Every decision below is an application of it.
    first draft**, which inferred indeterminacy from `"error" in report.details`. `details` is a
    free-form grab-bag also carrying `columns_checked`, `reference_size` and per-column p-values;
    deriving control flow from a key's presence in it is the same meaning-hidden-in-a-dict shape the
-   epic removes, and #74/#76 **will** consume this signal programmatically across ~1,040 archived
-   run YAMLs (both issues are open and unimplemented at the time of writing).
+   epic removes, and #74/#76 **will** consume this signal programmatically across the run archive
+   (778 YAMLs across the four scheduled workflows as of 2026-09-07; 1,234 files in total, the rest
+   being test artifacts). Both issues are open and unimplemented at the time of writing.
    `drift_detected` is already a first-class field; "could the analysis produce a verdict" is
    equally load-bearing.
 2. **A three-value exit-code contract** in a new `src/mlops/exit_codes.py`: `0` no drift, `1` drift
@@ -374,6 +377,20 @@ then no drift, then exit 0, then healthy. That is #71's exact shape surviving on
 default, inside the change written to remove it. `_legacy_drift_check` now returns `indeterminate`
 on an empty score set, and the Evidently path additionally guards the case where a snapshot yields
 no readable `ValueDrift` metric at all.
+
+**Amendment (review round 3, human-authorised after the round-2 cap).** Round 2 found the round-1
+fix had itself introduced two defects, and left a third:
+1. `print_summary_json` crashed on every successful run of the legacy path. `drift_detected =
+   overall_drift > self.threshold` is a `numpy.bool_` when `overall_drift` came from scipy, and
+   **`numpy.bool_` does not subclass `bool`** -- where `numpy.float64` does subclass `float`, which
+   is why the score passed unnoticed -- so `json.dumps` refused it. `DriftReport.__post_init__` now
+   coerces at construction, so no call site can reintroduce it.
+2. The `jq` guard added for the CI summary used `.indeterminate // "missing"`, and `//` returns its
+   RHS for `false` as well as `null`, making the "Healthy" branch unreachable. Now `has(...)`.
+3. The Evidently guard keyed on `total_core == 0 and total_brand == 0`, so a reference sharing only
+   `brand_*` columns reported HEALTHY with a fabricated `core_drift_score` of 0.0 while the legacy
+   path called the same input indeterminate. It now keys on `total_core == 0`, and the two paths
+   agree. The test covering that input had asserted only that it did not raise.
 
 **Rationale:** the epic's thesis is that a missing signal must never collapse into "healthy". Every
 decision above moves a signal from *inferred by absence* to *stated explicitly and typed*: the

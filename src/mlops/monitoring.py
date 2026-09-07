@@ -75,6 +75,27 @@ class DriftReport:
     report_path: Path | None = None
     indeterminate: bool = False
 
+    def __post_init__(self) -> None:
+        """Coerce numpy scalars to built-ins so this report can be serialized.
+
+        `drift_detected` is computed as `overall_drift > self.threshold`, and
+        when `overall_drift` came out of scipy/pandas that comparison yields a
+        `numpy.bool_`. **`numpy.bool_` does not subclass `bool`** -- unlike
+        `numpy.float64`, which does subclass `float` and so passes unnoticed --
+        and `json.dumps` refuses it with
+        `TypeError: Object of type bool is not JSON serializable`. The type's
+        `__name__` is even "bool", so it does not look wrong when printed.
+
+        That crashed `print_summary_json` on every successful run of the legacy
+        path, and it reaches `json.dump` on the `--output` path too. Coercing
+        here rather than at each call site means a construction site added
+        later cannot reintroduce it.
+        """
+        self.drift_detected = bool(self.drift_detected)
+        self.indeterminate = bool(self.indeterminate)
+        self.drift_score = float(self.drift_score)
+        self.threshold = float(self.threshold)
+
 
 class DriftMonitor:
     """Monitor for prediction drift using Evidently.
@@ -323,17 +344,27 @@ class DriftMonitor:
                         core_drifted += 1
                         details["core_metrics_drifted"].append(col_name)
 
-        # Evidently returned a snapshot we could not read a single ValueDrift
-        # metric out of -- a changed snapshot shape or metric_name spelling
-        # (this code already targets "v0.7+", so that has happened once). The
-        # scores below would then be 0.0/0.0 and the report would say "no
-        # drift" on the strength of nothing at all.
-        if total_core == 0 and total_brand == 0:
+        # No CORE metric was assessed, so the drift score below -- which is
+        # `core_drift_score`, and only that -- would be a fabricated 0.0.
+        #
+        # Keyed on `total_core`, not on `total_core == 0 and total_brand == 0`.
+        # The stricter form let a reference sharing only `brand_*` columns
+        # through: `columns_to_check` was non-empty so the guard above did not
+        # fire, one brand metric came back so this one did not either, and the
+        # report said HEALTHY with a 0.0 score while the log said probability
+        # and prediction had not been assessed. `_legacy_drift_check` calls that
+        # same input indeterminate; the two paths must agree.
+        #
+        # It also covers the case this guard was added for: a snapshot whose
+        # shape or `metric_name` spelling changed, yielding no readable metric
+        # at all (this code targets "v0.7+", so that has happened once).
+        if total_core == 0:
             logger.warning(
-                f"{self.classifier_type}: Evidently returned no readable ValueDrift "
-                f"metrics for {columns_to_check}; drift cannot be assessed"
+                f"{self.classifier_type}: no core drift metric could be read "
+                f"(columns offered: {columns_to_check}, brand metrics read: "
+                f"{total_brand}); drift cannot be assessed"
             )
-            details["error"] = "No drift metrics could be read from the Evidently report"
+            details["error"] = "No core drift metrics could be read from the Evidently report"
             details["reference_size"] = len(reference_data)
             details["current_size"] = len(current_data)
             return DriftReport(

@@ -59,7 +59,7 @@ from src.mlops import (
 # Label for the machine-readable summary block. The agent workflow reads the
 # summary via ScriptResult.parsed_output rather than scraping the
 # human-readable report above it -- a scraper finds nothing when a check never
-# ran, and absence read as healthy for 231 days (issue #71).
+# ran, and absence read as healthy on 219 of them (issue #71).
 #
 # The label sits on its OWN line and the JSON on the next, because the runner's
 # `_parse_json_from_output` takes whole lines: a `label: {...}` line fails to

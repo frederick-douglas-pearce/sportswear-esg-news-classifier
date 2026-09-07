@@ -398,7 +398,7 @@ class TestConvenienceFunctions:
 
 
 class TestCheckFailureNotification:
-    """The alert that never fired across 231 days (issue #71).
+    """The alert that never fired across 223 failed runs (issue #71).
 
     It is mocked everywhere it is used, so without these the type, the severity
     and the message could all be changed with no test failing.
