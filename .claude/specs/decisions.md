@@ -500,8 +500,8 @@ Where "before" is meant, it is the state at base commit `2f30ab2`.
 handler that catches its own error and returns a dict is recorded COMPLETED, so `run()`'s
 `all_completed` test passes and the run archives `status: completed, error: null`. The run archive
 under `~/.esg-agent/history/` holds runs of that shape -- `status: completed`, `error: null`, a
-`*_success: false` context key, and no step recorded FAILED -- concentrated in `drift_monitoring`
-and residually in `daily_labeling`.
+`*_success: false` context key, and no step recorded FAILED -- concentrated in `drift_monitoring`,
+with the remainder in `daily_labeling` and `website_export`.
 
 **No counts are recorded here, and that is itself the decision.** Three successive drafts of this
 entry quoted figures from that archive and all three were wrong -- once on arithmetic, once by

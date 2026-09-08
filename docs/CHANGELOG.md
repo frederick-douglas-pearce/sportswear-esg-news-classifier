@@ -13,8 +13,8 @@ test passed and the run archived `status: completed, error: null`.
 The run archive under `~/.esg-agent/history/` holds runs of exactly that shape: archived
 `status: completed` with `error: null`, carrying a `*_success: false` context key, and **no step
 recorded FAILED** — which is the mechanism itself. They are concentrated in `drift_monitoring`,
-whose instance `2f30ab2` (#71, the commit before this one) has already closed; the residual is in
-`daily_labeling`.
+whose instance `2f30ab2` (#71, the commit before this one) has already closed; the remainder are in
+`daily_labeling` and `website_export`, the latter predating that workflow's own terminal raise.
 
 **No counts are quoted here deliberately.** The archive is not a stable corpus to measure against:
 the test suite writes into the same directory, under production workflow names as well as synthetic

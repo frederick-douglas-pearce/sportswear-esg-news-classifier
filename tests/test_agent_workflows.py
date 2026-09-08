@@ -1923,7 +1923,7 @@ class TestStepFailureContract:
     def test_failed_middle_step_archives_as_failed(
         self, state_manager, cleanup_registry
     ):
-        """AC5: the regression the 230 archived false-success runs describe."""
+        """AC5: the regression the archived false-success runs describe."""
         workflow = self._build(
             "sf_archive",
             [
