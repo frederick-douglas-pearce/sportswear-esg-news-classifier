@@ -395,3 +395,78 @@ class TestConvenienceFunctions:
             assert "FP" in notification.subject
             assert notification.severity == "warning"
             assert notification.details["drift_score"] == 0.15
+
+
+class TestCheckFailureNotification:
+    """The alert that never fired across 223 failed runs (issue #71).
+
+    It is mocked everywhere it is used, so without these the type, the severity
+    and the message could all be changed with no test failing.
+    """
+
+    def test_uses_the_check_failed_type_and_error_severity(self):
+        from unittest.mock import patch
+
+        from src.agent.notifications import (
+            NotificationType,
+            send_check_failure_notification,
+        )
+
+        with patch("src.agent.notifications.NotificationManager") as mock_manager:
+            mock_manager.return_value.send.return_value = {"console": True}
+
+            send_check_failure_notification(
+                check_name="FP drift",
+                reason="Insufficient data for drift analysis",
+            )
+
+            notification = mock_manager.return_value.send.call_args.args[0]
+
+        assert notification.notification_type is NotificationType.CHECK_FAILED
+        # Not "warning": nothing was checked, so nothing is known.
+        assert notification.severity == "error"
+        assert "FP drift" in notification.subject
+
+    def test_message_says_the_subject_is_unmonitored(self):
+        from unittest.mock import patch
+
+        from src.agent.notifications import send_check_failure_notification
+
+        with patch("src.agent.notifications.NotificationManager") as mock_manager:
+            mock_manager.return_value.send.return_value = {"console": True}
+
+            send_check_failure_notification(
+                check_name="FP drift", reason="KeyError: 'novelty_score'"
+            )
+
+            notification = mock_manager.return_value.send.call_args.args[0]
+
+        # The point of the alert is that this is NOT a healthy result.
+        assert "NOT a healthy result" in notification.message
+        assert "unmonitored" in notification.message
+        # The cause must travel with it, or the operator learns nothing.
+        assert "novelty_score" in notification.message
+        assert notification.details["reason"] == "KeyError: 'novelty_score'"
+
+    def test_is_distinct_from_a_drift_notification(self):
+        from unittest.mock import patch
+
+        from src.agent.notifications import (
+            NotificationType,
+            send_check_failure_notification,
+            send_drift_notification,
+        )
+
+        with patch("src.agent.notifications.NotificationManager") as mock_manager:
+            mock_manager.return_value.send.return_value = {}
+            send_drift_notification(
+                classifier_type="fp", drift_score=0.4, threshold=0.15
+            )
+            drift = mock_manager.return_value.send.call_args.args[0]
+
+            send_check_failure_notification(check_name="FP drift", reason="boom")
+            failure = mock_manager.return_value.send.call_args.args[0]
+
+        assert drift.notification_type is NotificationType.DRIFT_DETECTED
+        assert failure.notification_type is NotificationType.CHECK_FAILED
+        assert drift.severity != failure.severity

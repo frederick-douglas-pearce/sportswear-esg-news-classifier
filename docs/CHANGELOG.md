@@ -4,6 +4,107 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-07: A failed drift check no longer reports "all classifiers healthy"
+
+FP drift monitoring failed on 223 of 232 scheduled runs since 2026-01-17, and on 219 of those the
+workflow simultaneously logged `No action needed - all classifiers healthy` and exited 0. (The
+issue's 221/230/217 were measured on 2026-09-05; these are the same logs re-counted on
+2026-09-07.)
+
+It produced a real verdict at least once -- **2026-01-19**, drift score 0.1315 -- so
+"never produced a valid result" was wrong; #71's own title says "worked once". A second run,
+2026-01-23, completed without a failure line but recorded `fp_drift_score: 0.0`, which is exactly
+the value both fabricating paths emit; the script's stdout was never archived, so **whether it
+measured anything cannot be determined** and it is not counted as a verdict here. Of the nine runs
+with no failure line, the other seven are June 2026 `uv` DNS failures that never reached Python
+(the #51 class), which fail loudly and are not this defect.
+
+**Why a failure looked like health.** Four defects compounded, each of which turned a missing
+signal into a benign one:
+
+- `data/reference/fp_reference.parquet` was written 2026-01-17, before `novelty_score` existed.
+  `_evidently_drift_check` guarded the novelty *stats* block on `current_data` alone and then read
+  `reference_data["novelty_score"]`, raising `KeyError: 'novelty_score'`. This can only have been
+  the cause from **2026-01-25**, when `novelty_score` was added to `classifier_predictions`
+  (commit `4c17395`). It cannot explain the six earlier failures: three of those logged other
+  causes (`Evidently not installed`, a missing `uv`) and the remaining three (01-21, 01-22, 01-24)
+  logged an empty message, so **their cause is not recoverable from the logs** -- that being
+  defect 2 below. **Three** stats reads had that asymmetric shape,
+  not one; `novelty_score` is simply the one that fired, because a reference sharing only
+  `brand_*` columns would have died on `reference_prob_mean` first.
+- The script printed `Error running drift analysis: {e}` to **stdout** and returned 1, while the
+  workflow logged the command's **stderr** -- producing 220 log lines reading
+  `drift check failed: ` with nothing after the colon, out of 224. The 4 non-empty ones name
+  causes that never reached the analysis (`Evidently not installed`, a missing `uv`).
+- Exit 1 meant *both* "drift detected" and "the analysis raised", and `ScriptResult.success` is
+  `exit_code == 0`, so the workflow could not tell them apart and fell back to scraping the
+  human-readable report. `evaluate_drift_results` then read
+  `context.get("fp_drift_detected", False)` and the report step read
+  `context.get("fp_healthy", not context.get("fp_drift_detected", False))` -- with both keys
+  absent, `not False` is **True**.
+- The EP check ran against a classifier with **zero predictions, ever**. Two empty frames compared
+  to each other returned `drift_detected=False` and passed vacuously.
+
+**The rule the fix is built on:** a missing value never resolves to healthy. Concretely:
+
+- `DriftReport` gains a typed `indeterminate` field, set wherever nothing was measured -- on
+  **both** the Evidently and the legacy paths, the latter being the one taken by default
+  (`EVIDENTLY_ENABLED` defaults to false, and Evidently's absence silently falls back to it). A
+  verdict that was never produced is now distinguishable from one that was produced and was
+  clean.
+- A three-value exit-code contract (`src/mlops/exit_codes.py`): `0` no drift, `1` drift detected,
+  `2` indeterminate. Drift detected is non-retryable -- it is a result, and before this it was
+  retried with exponential backoff before being reported.
+- Errors go to stderr with a traceback; the workflow logs the **tail** of that stream, since a
+  traceback's diagnosis is at its end (the lesson of #81, same runner).
+- `HealthVerdict` (`healthy | degraded | unknown | skipped`) in `src/agent/health.py`. It is
+  deliberately **not** a `WorkflowStatus` member: a health verdict is not a lifecycle state, and
+  archives carrying `status: unknown` would need migrating.
+- The workflow derives its verdict from the exit code, not from scraping stdout; `_parse_drift_output`
+  is deleted. A run whose exit code claims a verdict but whose summary is missing or inconsistent
+  is treated as `unknown` -- a health claim with no evidence behind it is not a health claim.
+- EP is skipped explicitly behind `AGENT_EP_DRIFT_ENABLED` (default off) with a stated reason.
+  A config gate rather than a row count: EP-on-hold is a governance decision and zero predictions
+  is only its symptom.
+- A terminal `fail_on_unknown_verdict` step marks the workflow FAILED when any verdict is not
+  explicitly healthy/degraded/skipped -- including absent. It runs *last* so the summary is printed
+  and the alert sent first. It is a bridge, to be removed once #74 gives verdicts a first-class
+  escalation path (D008).
+- The FP reference is regenerated over 90 days (934 rows, complete `novelty_score`, plus the brand
+  columns the old file lacked).
+
+Also: a column present in the current data but missing from the reference is now logged as *not
+assessed* and recorded in the report details, so fixing the crash does not leave a partial
+comparison silently reported as a whole one.
+
+Four further instances of the same class were found by review *inside this fix* and closed here:
+
+- **A missing reference dataset used to answer itself.** `check_drift` split the current window in
+  half on `FileNotFoundError` and compared the halves -- which agree by construction, so it always
+  read as "no drift", with nothing recording that there was no baseline. Now indeterminate;
+  `--create-reference` is the way to establish a baseline. This is **latent**, not live: it needs a
+  classifier that has predictions and lacks a reference, and today `fp` is the only one with
+  predictions and its reference is tracked. It goes live when EP resumes.
+- **`drift_score` did not match the detection that reported it.** `drift_detected` reads core drift
+  *or* brand drift, but the report carried the core score alone, so brand-only drift alerted with
+  "score 0.0 exceeds 0.15". Now `max(core, brand)`, with both kept in the details.
+- **An unreadable Evidently metric counted as "no drift".** Coercing a missing value to `p=1.0`
+  made it both non-drifting and a contributor to the metric count, so the "nothing was readable"
+  guard could not fire. Now skipped and recorded.
+- **The CI summary printed "✅ Healthy" for an unreadable report.** Every `jq` returns an empty
+  string on a truncated or malformed file, which matched no branch and fell through to the healthy
+  default. Reproduced before fixing. Also, `|| echo DRIFT_DETECTED=true` reported exit 2
+  ("could not assess") as drift; replaced with a `case` on the real exit code.
+
+And `alerts_sent` now means *delivered*: both notification helpers return one bool per channel, and
+every channel could fail while the step still recorded success.
+
+Follow-ups filed rather than folded in: #94 (minimum sample size), #95 (vacuously-healthy when
+every check is skipped), #96 (a forgotten EP flag leaves EP dark), #97 (the reference window
+overlaps the window it is compared against), #99 (an unguarded `--output` write turns a disk error
+into "drift detected"), #100 (`_to_builtin` type gaps), #101 (nothing consumes the new
+`CHECK_INDETERMINATE` CI output).
+
 ### 2026-09-06: A failed pg_dump no longer records a good backup
 
 `scripts/backup_db.sh` ran `pg_dump | gzip > "$PATH"` under `set -e` with no `pipefail`. A
