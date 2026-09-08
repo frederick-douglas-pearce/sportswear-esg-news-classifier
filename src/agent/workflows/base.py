@@ -2,14 +2,66 @@
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..config import agent_settings
-from ..state import StateManager, WorkflowState, WorkflowStatus, state_manager
+from ..state import (
+    StateManager,
+    StepState,
+    WorkflowState,
+    WorkflowStatus,
+    state_manager,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _describe_exception(exc: BaseException) -> str:
+    """A never-empty description of an exception.
+
+    `str(RuntimeError())` is `""`, which would record a failed step whose error
+    names nothing at all. Used by both the recording side and the summary side
+    so the two agree -- the summary dedups by exact equality against what was
+    recorded.
+    """
+    return str(exc) or type(exc).__name__
+
+
+@dataclass
+class StepFailure:
+    """Returned by a step handler to mark the step -- and the run -- FAILED.
+
+    A handler that catches its own error and returns a plain dict is recorded
+    COMPLETED, which is how a run whose work failed archives as
+    ``status: completed, error: null``. Returning this instead marks the step
+    FAILED without the handler having to raise.
+
+    Three properties of the contract that callers depend on:
+
+    1. **``error`` is always on the step**, as ``StepState.error``. Read it there;
+       it is the one field guaranteed to carry the failure detail.
+    2. **``context`` goes to both places.** It is merged into the workflow
+       context, exactly as a returned dict would be, *and* recorded as this
+       step's ``StepState.result`` -- the workflow context is a flat namespace
+       that several steps write the same keys into (``website_export`` has three
+       writers of ``"error"`` alone), so per-step attribution would otherwise be
+       lost to the run archive. A step that fails by *raising* has no payload and
+       leaves ``result`` None.
+    3. **``context`` fully replaces the dict return**, so it must carry every key
+       downstream steps read. Dropping one is silent.
+
+    Returning this does NOT halt the remaining steps: a failure dict does not
+    halt them today, and aggregate-then-notify terminal steps require the
+    earlier steps to have run. Guarding on context flags is therefore a
+    requirement on downstream steps -- not a property they already have. It does
+    not halt them, but it does decide the run: a FAILED step fails the workflow
+    even if a later step pauses.
+    """
+
+    error: str
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -18,7 +70,7 @@ class StepDefinition:
 
     name: str
     description: str
-    handler: Callable[["Workflow", dict[str, Any]], dict[str, Any] | None]
+    handler: Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure | None]
     skip_on_dry_run: bool = False
     requires_approval: bool = False
 
@@ -34,6 +86,10 @@ class Workflow(ABC):
     name: str = ""
     description: str = ""
     steps: list[StepDefinition] = []
+
+    # Per-step cap on how much of a step's error reaches the workflow-level
+    # summary built by _failure_summary(). The full text stays in step.error.
+    _ERROR_SUMMARY_LIMIT = 500
 
     def __init__(
         self,
@@ -107,24 +163,114 @@ class Workflow(ABC):
                 # Execute step
                 self._execute_step(step)
 
-            # Check if all steps completed
-            all_completed = all(
-                self._workflow_state.steps[s].status == WorkflowStatus.COMPLETED
-                for s in self.step_names
-            )
-
-            if all_completed:
-                self.state.complete_workflow(self.name)
-                logger.info(f"Workflow completed: {self.name}")
-            elif self._workflow_state.status != WorkflowStatus.PAUSED:
-                # Some steps didn't complete but workflow isn't paused
-                self.state.fail_workflow(self.name, "Not all steps completed")
+            self._finalize()
 
         except Exception as e:
             logger.exception(f"Workflow failed: {e}")
-            self.state.fail_workflow(self.name, str(e))
+            self._finalize(exception=e)
 
         return self.state.get_workflow(self.name)  # type: ignore
+
+    def _recorded_steps(self) -> list[tuple[str, StepState | None]]:
+        """Pair every defined step name with its persisted state, if any.
+
+        `.get()` rather than indexing, because `resume()` loads state written by
+        an earlier process: a step added to the workflow class since that run
+        started has no record. Indexing raised `KeyError` from inside
+        `_finalize` -- including from the `except` handler that calls it -- so
+        the exception escaped `run()`/`resume()` entirely and left the run
+        RUNNING and unarchived. That is the very state this class exists to make
+        impossible, so the finalizer must not be the thing that produces it.
+        """
+        steps = self._workflow_state.steps if self._workflow_state else {}
+        return [(name, steps.get(name)) for name in self.step_names]
+
+    def _failure_summary(self, exception: Exception | None = None) -> str:
+        """Build the workflow-level error from the steps that actually failed.
+
+        Each failed step contributes its name and its recorded error, truncated
+        to ``_ERROR_SUMMARY_LIMIT`` -- several steps can fail in one run (a
+        ``StepFailure`` does not halt the loop) and a step error can be large,
+        e.g. a captured stderr tail. The untruncated text always remains in
+        ``StepState.error``. The cap is per step, so the summary grows with the
+        number of failed steps.
+        """
+        parts = []
+        for name, step in self._recorded_steps():
+            if step is None:
+                parts.append(
+                    f"Step '{name}' has no recorded state "
+                    "(the workflow definition changed since this run started)"
+                )
+                continue
+            if step.status != WorkflowStatus.FAILED:
+                continue
+            error = step.error or "no error recorded"
+            if len(error) > self._ERROR_SUMMARY_LIMIT:
+                error = (
+                    f"{error[: self._ERROR_SUMMARY_LIMIT]}... "
+                    "(truncated; full text in step.error)"
+                )
+            parts.append(f"Step '{name}' failed: {error}")
+
+        if exception is not None:
+            # A step that raises is recorded by _execute_step with exactly
+            # str(e), so an exact match means this exception is already
+            # represented above. Anything else -- including an exception raised
+            # outside any step, which matches nothing -- is appended, since this
+            # is the only route by which it reaches the workflow error.
+            # Exact equality can in principle drop a runner-level exception whose
+            # message coincides with an unrelated step's error; that costs one
+            # omitted duplicate at worst and never loses a step's own failure.
+            described = _describe_exception(exception)
+            if not any(
+                step is not None and step.error == described
+                for _, step in self._recorded_steps()
+            ):
+                parts.append(f"Workflow error: {described}")
+
+        return "; ".join(parts) or "Not all steps completed"
+
+    def _finalize(self, exception: Exception | None = None) -> None:
+        """Turn step outcomes into the workflow verdict.
+
+        The single place step statuses become a workflow status. ``run()`` and
+        ``resume()`` both call it, and so do both of their ``except`` branches,
+        so the two paths cannot drift apart -- two copies of this logic is the
+        divergence this change exists to remove (see D009). ``resume()``
+        previously had no *non-exception* failure branch: it completed the
+        workflow when every step had completed and did nothing otherwise, so a
+        resumed run carrying a failed step stayed RUNNING and was never archived
+        (the archive is written only by ``complete_workflow``/``fail_workflow``).
+        A raised failure on resume was always caught and failed by its
+        ``except``, so that gap was latent until ``StepFailure`` made a
+        non-raising failure possible.
+        """
+        recorded = self._recorded_steps()
+        all_completed = all(
+            step is not None and step.status == WorkflowStatus.COMPLETED
+            for _, step in recorded
+        )
+        any_failed = any(
+            step is not None and step.status == WorkflowStatus.FAILED
+            for _, step in recorded
+        )
+
+        if exception is None:
+            if all_completed:
+                self.state.complete_workflow(self.name)
+                logger.info(f"Workflow completed: {self.name}")
+                return
+            if self._workflow_state.status == WorkflowStatus.PAUSED and not any_failed:  # type: ignore[union-attr]
+                # Waiting on a human, not a failure. Left for resume().
+                return
+            # A pause does NOT mask a failed step. Without this, a step that
+            # returned StepFailure followed by any pausing step archived
+            # nowhere, reported `paused` with error None, and exited 0 -- a
+            # failed run that reads as waiting. Reachable as soon as a workflow
+            # with an approval step adopts StepFailure.
+
+        self.state.fail_workflow(self.name, self._failure_summary(exception))
 
     def _execute_step(self, step: StepDefinition) -> None:
         """Execute a single step with error handling."""
@@ -133,14 +279,32 @@ class Workflow(ABC):
 
         try:
             result = step.handler(self, self._workflow_state.context)  # type: ignore
+
+            if isinstance(result, StepFailure):
+                # Must precede complete_step, which records COMPLETED
+                # unconditionally. Independently, a StepFailure is truthy, so
+                # the `if result:` line below would reach
+                # update_context(..., StepFailure) and raise TypeError -- a
+                # dataclass is not a mapping. Two separate reasons; either one
+                # requires this branch to come first.
+                logger.error(f"Step reported failure: {step.name} - {result.error}")
+                self.state.fail_step(
+                    self.name, step.name, result.error, result=result.context or None
+                )
+                if result.context:
+                    self.state.update_context(self.name, result.context)
+                # Deliberately no raise: the loop continues, exactly as it does
+                # for a handler that returns a failure dict today.
+                return
+
             self.state.complete_step(self.name, step.name, result=result)
             if result:
                 self.state.update_context(self.name, result)
             logger.info(f"Step completed: {step.name}")
 
         except Exception as e:
-            logger.error(f"Step failed: {step.name} - {e}")
-            self.state.fail_step(self.name, step.name, str(e))
+            logger.error(f"Step failed: {step.name} - {_describe_exception(e)}")
+            self.state.fail_step(self.name, step.name, _describe_exception(e))
             raise
 
     def resume(self) -> WorkflowState:
@@ -199,18 +363,11 @@ class Workflow(ABC):
 
                 self._execute_step(step)
 
-            all_completed = all(
-                self._workflow_state.steps[s].status == WorkflowStatus.COMPLETED
-                for s in self.step_names
-            )
-
-            if all_completed:
-                self.state.complete_workflow(self.name)
-                logger.info(f"Workflow completed: {self.name}")
+            self._finalize()
 
         except Exception as e:
             logger.exception(f"Workflow failed on resume: {e}")
-            self.state.fail_workflow(self.name, str(e))
+            self._finalize(exception=e)
 
         return self.state.get_workflow(self.name)  # type: ignore
 

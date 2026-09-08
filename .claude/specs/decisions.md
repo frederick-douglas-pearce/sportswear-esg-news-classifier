@@ -487,3 +487,125 @@ unguarded `--output` write -- the *class* behind round 3's numpy *instance*),
 (`_to_builtin` gaps and a test whose name overpromises),
 [#101](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/101)
 (nothing consumes the new `CHECK_INDETERMINATE` output).
+
+---
+
+## D009: A Step Signals Failure With a Typed `StepFailure` Return, and One `_finalize()` Decides Workflow Status (#73)
+
+**Date:** 2026-09-08
+**Code references:** by symbol and quoted construct, per [D007](#d007-decision-records-cite-symbols-and-quoted-constructs-not-line-numbers).
+Where "before" is meant, it is the state at base commit `2f30ab2`.
+
+**Context:** `Workflow._execute_step()` marked a step FAILED only when its handler *raised*. A
+handler that catches its own error and returns a dict is recorded COMPLETED, so `run()`'s
+`all_completed` test passes and the run archives `status: completed, error: null`. The run archive
+under `~/.esg-agent/history/` holds runs of that shape -- `status: completed`, `error: null`, a
+`*_success: false` context key, and no step recorded FAILED -- concentrated in `drift_monitoring`,
+with the remainder in `daily_labeling` and `website_export`.
+
+**No counts are recorded here, and that is itself the decision.** Three successive drafts of this
+entry quoted figures from that archive and all three were wrong -- once on arithmetic, once by
+presenting instances `2f30ab2` had already closed as a live rate, and once by classifying test-written
+archives as scheduled runs. The archive is not a stable corpus: the test suite writes into it, under
+production workflow names as well as synthetic ones, so any figure is stale on the next test run.
+The case for #73 is forward-looking rather than remedial in any event -- five stories are about to
+bind to this contract, and the alternative is a fourth hand-rolled terminal raise -- so no decision
+below rests on a count. **A claim that cannot be re-derived stably should not be written down**;
+that generalises D007's preference for citation forms that fail loudly.
+
+**Correction (made before merge).** This entry first read "Two workflows papered over this by
+hand-rolling a terminal raising step; `drift_monitoring` and `model_training` did not." That is
+false. There are **three** -- `website_export.send_error_notification`,
+`daily_labeling.send_notification` (narrower: it fires only when every notification channel failed,
+so it is silent about whether labeling worked), and `drift_monitoring.fail_on_unknown_verdict`,
+added by #71 in `2f30ab2`, the commit this branch is based on. Only `model_training` has none. The
+sentence was inherited verbatim from #73's issue body, written 2026-09-05 before #71 landed, and
+repeated without being re-checked against the tree -- the same defect D008 already recorded a
+correction for, one entry earlier, and the third consecutive instance of correct code shipped with
+a false claim attached.
+
+Epic #72 deferred the representation (its question 3) to this gate. #73 is the foundation five
+stories bind to.
+
+**Decision (architect-reviewed 2026-09-08, verdict "proceed with changes"):**
+
+1. **A typed sentinel, not a reserved key.** A handler returns `StepFailure(error, context)` --
+   a dataclass beside `StepDefinition` -- and `_execute_step()` inspects it with `isinstance`
+   *before* the `complete_step()` path, returning early. `StepDefinition.handler`'s annotation is
+   widened to admit it.
+2. **`error` is always on the step; `context` is recorded in both places.** `fail_step()` grows an
+   optional `result` parameter, and `_execute_step` passes `StepFailure.context` to it as well as
+   merging it into the workflow context. *Amended after code review:* the entry first ruled that a
+   failed step's `result` stays `None`. The reason for reversing that is per-step attribution --
+   `WorkflowState.context` is a flat, clobbering namespace (`website_export` has three steps writing
+   `"error"` alone), so under the original rule a migration from failure-dicts to `StepFailure` would
+   have silently dropped detail that #76's archive audit reads. A step that fails by *raising* has no
+   payload and keeps `result is None`. `StepFailure.context` still fully replaces the dict return and
+   must carry every key downstream steps read.
+3. **Continue, not halt.** A `StepFailure` does not stop the loop. A failure-dict return does not
+   stop it today, and `website_export`'s `send_error_notification()` -- a terminal step -- aggregates
+   prior-step context and requires the earlier steps to have run. Guarding on context flags is a
+   requirement on downstream steps, not a property they already have: `model_training`'s
+   `check_data_quality()` guards on `export_success`, but `promote_model()` and
+   `trigger_deployment()` guard only on their own empty input lists, and `compare_models()` guards on
+   nothing. A `halt` field is purely additive and is deferred until a step must suppress a
+   *downstream side-effect* -- #79 does not need it, given point 6.
+4. **One `_finalize()`, called from `run()`, `resume()` and both `except` branches.** `resume()` has
+   no `else` after its `all_completed` test, so a resumed run carrying a failed step is left RUNNING
+   and *never archived* -- `_archive_workflow()` fires only from
+   `complete_workflow()`/`fail_workflow()`. Note the scope of that gap: `resume()` does have an
+   `except` branch that fails and archives, so before `StepFailure` no reachable input produced a
+   FAILED step without an exception routing through it. The defect was **latent, not live**, and the
+   looser phrasing "no failure branch at all" -- which appeared in the first draft of the changelog,
+   the docstring and a test -- was false. The obvious fix is to mirror `run()`'s finalization into
+   `resume()`; that was rejected. **Two parallel implementations that drift is this epic's own
+   defect class**, and this repository already has an instance of it: one workflow got a correct
+   hand-rolled terminal raise, another got a narrower lookalike that only fires when every
+   notification channel fails.
+5. **`WorkflowState.error` echoes the real step errors**, bounded -- each failed step contributes
+   its name plus a truncated prefix; the untruncated text stays in `step.error`. The prior
+   `"Not all steps completed"` survives as the fallback. An exception with an empty `str()` is
+   described by its type name rather than recorded as an empty string.
+6. **A FAILED step beats a pause** (added after code review). `_finalize()` takes its PAUSED
+   early-return only when no step has failed. Without this qualifier a `StepFailure` followed by any
+   pausing step -- `model_training`'s `notify_and_pause()` pauses unconditionally, immediately after
+   the step #79 migrates -- archived nowhere, reported `paused` with `error` None, and exited 0.
+   That is this epic's defect class reintroduced by the fix for it. The cost is that such a run can
+   no longer be resumed; that is intended, since a step marking itself FAILED asserts the run failed,
+   and a step wanting the run to survive should return a normal dict with a warning flag. #79 owns
+   the follow-on: `notify_and_pause()` needs a guard so it does not email "action required" for a
+   run that has already failed.
+7. **The finalizer must never be the thing that leaves a run unfinalized** (added after code
+   review). `_finalize()`/`_failure_summary()` read step state with `.get()`, not indexing. `resume()`
+   loads state persisted by an earlier process, so a step added to the class since that run started
+   has no record; indexing raised `KeyError` from inside `_finalize()` -- including from the `except`
+   handler that calls it -- so the exception escaped `run()`/`resume()` entirely and left the run
+   RUNNING and unarchived. On `2f30ab2` the same input ended FAILED and archived, so the unification
+   had made that case strictly worse.
+
+**Alternatives considered:**
+- **A reserved dict key** (`{"__step_failed__": True}`) -- rejected: silently absorbed by handlers
+  that build their dict dynamically, and it leaks a meaningless key into the archived context.
+- **Require every handler to return an explicit status** -- rejected: a breaking migration across
+  roughly thirty handlers in four workflows, which blocks every story that depends on this one.
+- **Keep exceptions as the only channel** -- rejected by the issue, and concretely incompatible with
+  the aggregate-then-notify shape, which needs later steps to run.
+- **Mirror the finalization into `resume()`** -- rejected per point 4.
+
+**Explicitly not decided here:** no member is added to `WorkflowStatus`. #72's constraint 1 as
+written binds #71 and #74; extending it to #73 is this entry's own reading, and nothing here needs
+the member. `unknown`/`check_failed` is a *health verdict* and remains #74's.
+
+The three hand-rolled terminal raises are not migrated in #73 -- AC4 asks only that they *can* be,
+all three are terminal so re-expression is behaviourally identical, and migrating
+`send_error_notification()` alone cascades into nine `pytest.raises(WorkflowError)` assertions across
+`tests/test_agent_workflows.py` and `tests/test_integration_extended.py`. That is #74/#77/#78's work,
+and #78 is to be sized for it. **What #73 therefore does not establish:** the AC4 tests exercise the
+real base runner through *hand-written* handlers in the shape of those steps. They demonstrate that
+the mechanism supports the shape; they do not observe the real functions, and nothing in #73 would
+fail if one of them turned out to be unmigratable.
+
+**Rationale:** the epic's thesis is that a missing or ignored signal must never read as success. The
+same principle applied to the base runner means a step must be able to *say* it failed without
+throwing, and exactly one piece of code may turn step outcomes into a workflow verdict -- because a
+second copy of that logic is the next silent divergence.

@@ -4,6 +4,70 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-08: A step that reports its own failure now marks the workflow FAILED
+
+`Workflow._execute_step()` marked a step FAILED only when its handler *raised*. A handler that
+caught its own error and returned a dict was recorded COMPLETED, so `run()`'s "all steps completed"
+test passed and the run archived `status: completed, error: null`.
+
+The run archive under `~/.esg-agent/history/` holds runs of exactly that shape: archived
+`status: completed` with `error: null`, carrying a `*_success: false` context key, and **no step
+recorded FAILED** — which is the mechanism itself. They are concentrated in `drift_monitoring`,
+whose instance `2f30ab2` (#71, the commit before this one) has already closed; the remainder are in
+`daily_labeling` and `website_export`, the latter predating that workflow's own terminal raise.
+
+**No counts are quoted here deliberately.** The archive is not a stable corpus to measure against:
+the test suite writes into the same directory, under production workflow names as well as synthetic
+ones, so any figure is stale on the next test run and is inflated by artifacts that look like
+scheduled runs. Earlier drafts of this entry quoted such figures and were wrong three times. The
+case for fixing this in the base runner does not rest on a rate in any event — it is forward-looking:
+five stories are about to bind to this contract, and the alternative is a fourth hand-rolled
+terminal raise.
+
+**What changed:**
+
+- **`StepFailure(error, context)`** — a handler can now signal failure through its return value.
+  The base runner marks the step FAILED and the run FAILED. Raising still works unchanged.
+- A returned failure **does not halt** the loop, matching what a failure dict does today. That is
+  what an aggregate-then-notify terminal step depends on; downstream steps guard on context flags.
+- **One `_finalize()`** turns step outcomes into a workflow verdict, called from `run()`,
+  `resume()` and both `except` branches. `resume()` previously had no **non-exception** failure
+  branch: it completed the run when every step had completed and did nothing otherwise, so a
+  resumed run carrying a failed step stayed RUNNING and was never archived (the archive is written
+  only by `complete_workflow`/`fail_workflow`). A resumed step that *raised* was always caught and
+  failed by its `except`, so that gap was **latent, not live** — nothing on `main` could produce a
+  FAILED step without an exception escaping to that handler. `StepFailure` is what would have made
+  it reachable.
+- **A FAILED step beats a pause.** `_finalize` fails and archives even when the workflow is PAUSED,
+  if any step failed. Without this, a `StepFailure` followed by any pausing step reported `paused`
+  with a null error, wrote no archive, and exited 0 — the same defect class this change removes,
+  reachable as soon as a workflow with an approval step adopts the contract.
+- **`WorkflowState.error` echoes the real step errors** instead of the bare "Not all steps
+  completed", truncated per step in the summary; the full text stays in `step.error`. A run where
+  one step returns a failure and a later one raises now reports both.
+- **A step name missing from persisted state no longer kills the finalizer.** `resume()` loads
+  state written by an earlier process, so a step added since that run started has no record;
+  indexing it raised `KeyError` from inside `_finalize` — including from the `except` handler that
+  calls it — which would have left the run RUNNING and unarchived.
+
+**Not changed:** no member was added to `WorkflowStatus` — `unknown`/`check_failed` is a health
+verdict, not a lifecycle state (#74). The hand-rolled terminal-raise workarounds are **not**
+migrated here; tests demonstrate the shapes re-expressed via `StepFailure`, and the migration
+belongs to #74/#77/#78.
+
+**There are three such workarounds, not two:** `website_export.send_error_notification`,
+`daily_labeling.send_notification`, and `drift_monitoring.fail_on_unknown_verdict` — the last added
+by #71 in `2f30ab2`, the commit immediately before this one. Only `model_training` has none. (This
+entry and D009 first said `drift_monitoring` had none, a sentence inherited from #73's body, which
+was written before #71 landed and was not re-checked against the tree.)
+
+Worth recording, because it changes what one of those workarounds is worth:
+`daily_labeling.send_notification` raises only when *every* notification channel fails. It says
+nothing about whether labeling worked — so a failed labeling run whose report was delivered archives
+as `completed`. It is not a guard for this defect class, though #73's issue body treats it as one.
+
+Decision record: `.claude/specs/decisions.md` D009. Issue #73.
+
 ### 2026-09-07: A failed drift check no longer reports "all classifiers healthy"
 
 FP drift monitoring failed on 223 of 232 scheduled runs since 2026-01-17, and on 219 of those the

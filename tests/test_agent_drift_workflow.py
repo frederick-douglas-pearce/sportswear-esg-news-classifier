@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.agent.config import AgentSettings
 from src.agent.health import HealthVerdict
 from src.agent.state import StateManager, WorkflowStatus
 from src.agent.workflows.drift_monitoring import (
@@ -26,6 +27,22 @@ from src.mlops.exit_codes import (
     EXIT_INDETERMINATE,
     EXIT_NO_DRIFT,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_history(tmp_path):
+    """Keep these tests out of the real ~/.esg-agent/history archive.
+
+    Tests here run the real DriftMonitoringWorkflow to a terminal state, and
+    completing or failing a workflow archives it. Without this the suite wrote
+    archives named `drift_monitoring_*` — indistinguishable by name from
+    scheduled production runs — into the developer's own history directory,
+    which is the corpus #76 audits.
+    """
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    with patch.object(AgentSettings, "history_dir", history_dir):
+        yield history_dir
 
 
 @pytest.fixture
