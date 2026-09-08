@@ -4,6 +4,45 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-08: A step that reports its own failure now marks the workflow FAILED
+
+`Workflow._execute_step()` marked a step FAILED only when its handler *raised*. A handler that
+caught its own error and returned a dict was recorded COMPLETED, so `run()`'s "all steps completed"
+test passed and the run archived `status: completed, error: null`.
+
+Measured over the 1,305 run YAMLs in `~/.esg-agent/history/`: **230 runs archived `completed` while
+carrying an internal failure flag** — 225 `drift_monitoring`, 4 `daily_labeling`, 1
+`website_export`. In every one of them **no step is recorded FAILED**, which is the mechanism
+itself. `daily_labeling_20260118_143003.yaml` is representative: seven steps `completed`,
+`error: null`, `labeling_success: false`,
+`labeling_error: "[Errno 2] No such file or directory: 'uv'"`.
+
+**What changed:**
+
+- **`StepFailure(error, context)`** — a handler can now signal failure through its return value.
+  The base runner marks the step FAILED and the run FAILED. Raising still works unchanged.
+- A returned failure **does not halt** the loop, matching what a failure dict does today. That is
+  what an aggregate-then-notify terminal step depends on; downstream steps guard on context flags.
+- **One `_finalize()`** turns step outcomes into a workflow verdict, called from `run()`,
+  `resume()` and both `except` branches. `resume()` previously had **no failure branch at all**: a
+  resumed run carrying a failed step was left RUNNING and — since the archive is written only by
+  `complete_workflow`/`fail_workflow` — **never archived**.
+- **`WorkflowState.error` echoes the real step errors** instead of the bare "Not all steps
+  completed", truncated per step in the summary; the full text stays in `step.error`. A run where
+  one step returns a failure and a later one raises now reports both.
+
+**Not changed:** no member was added to `WorkflowStatus` — `unknown`/`check_failed` is a health
+verdict, not a lifecycle state (#74). The two hand-rolled terminal-raise workarounds in
+`website_export` and `daily_labeling` are **not** migrated here; tests demonstrate both shapes
+re-expressed via `StepFailure`, and the migration belongs to #77/#78.
+
+Worth recording, because it changes what the existing workaround is worth:
+`daily_labeling.send_notification` raises only when *every* notification channel fails. It says
+nothing about whether labeling worked — so a failed labeling run whose email was delivered archived
+as `completed`. Those are the 4 `daily_labeling` runs above.
+
+Decision record: `.claude/specs/decisions.md` D009. Issue #73.
+
 ### 2026-09-07: A failed drift check no longer reports "all classifiers healthy"
 
 FP drift monitoring failed on 223 of 232 scheduled runs since 2026-01-17, and on 219 of those the

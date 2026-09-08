@@ -2,7 +2,7 @@
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -13,12 +13,39 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class StepFailure:
+    """Returned by a step handler to mark the step -- and the run -- FAILED.
+
+    A handler that catches its own error and returns a plain dict is recorded
+    COMPLETED, which is how a run whose work failed archives as
+    ``status: completed, error: null``. Returning this instead marks the step
+    FAILED without the handler having to raise.
+
+    Two properties of the contract that callers depend on:
+
+    1. **Failure detail lives in ``StepState.error``, never ``StepState.result``.**
+       ``StateManager.fail_step()`` accepts only an error string, so a step that
+       returns ``StepFailure`` ends with ``result is None`` -- unlike a failure
+       *dict*, which is stored whole as the step result.
+    2. **``context`` fully replaces the dict return** for context purposes, so it
+       must carry every key downstream steps read.
+
+    Returning this does NOT halt the remaining steps: a failure dict does not
+    halt them today, and aggregate-then-notify terminal steps require the
+    earlier steps to have run. Downstream steps guard on context flags.
+    """
+
+    error: str
+    context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class StepDefinition:
     """Definition of a workflow step."""
 
     name: str
     description: str
-    handler: Callable[["Workflow", dict[str, Any]], dict[str, Any] | None]
+    handler: Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure | None]
     skip_on_dry_run: bool = False
     requires_approval: bool = False
 
@@ -34,6 +61,10 @@ class Workflow(ABC):
     name: str = ""
     description: str = ""
     steps: list[StepDefinition] = []
+
+    # Per-step cap on how much of a step's error reaches the workflow-level
+    # summary built by _failure_summary(). The full text stays in step.error.
+    _ERROR_SUMMARY_LIMIT = 500
 
     def __init__(
         self,
@@ -107,24 +138,78 @@ class Workflow(ABC):
                 # Execute step
                 self._execute_step(step)
 
-            # Check if all steps completed
-            all_completed = all(
-                self._workflow_state.steps[s].status == WorkflowStatus.COMPLETED
-                for s in self.step_names
-            )
-
-            if all_completed:
-                self.state.complete_workflow(self.name)
-                logger.info(f"Workflow completed: {self.name}")
-            elif self._workflow_state.status != WorkflowStatus.PAUSED:
-                # Some steps didn't complete but workflow isn't paused
-                self.state.fail_workflow(self.name, "Not all steps completed")
+            self._finalize()
 
         except Exception as e:
             logger.exception(f"Workflow failed: {e}")
-            self.state.fail_workflow(self.name, str(e))
+            self._finalize(exception=e)
 
         return self.state.get_workflow(self.name)  # type: ignore
+
+    def _failure_summary(self, exception: Exception | None = None) -> str:
+        """Build the workflow-level error from the steps that actually failed.
+
+        Each failed step contributes its name and its recorded error, truncated
+        to ``_ERROR_SUMMARY_LIMIT`` -- several steps can fail in one run (a
+        ``StepFailure`` does not halt the loop) and a step error can be large,
+        e.g. a captured stderr tail. The untruncated text always remains in
+        ``StepState.error``.
+        """
+        failed = [
+            self._workflow_state.steps[name]  # type: ignore[union-attr]
+            for name in self.step_names
+            if self._workflow_state.steps[name].status  # type: ignore[union-attr]
+            == WorkflowStatus.FAILED
+        ]
+
+        parts = []
+        for step in failed:
+            error = step.error or "no error recorded"
+            if len(error) > self._ERROR_SUMMARY_LIMIT:
+                error = (
+                    f"{error[: self._ERROR_SUMMARY_LIMIT]}... "
+                    "(truncated; full text in step.error)"
+                )
+            parts.append(f"Step '{step.name}' failed: {error}")
+
+        if exception is not None:
+            # An exception raised inside a step is already recorded on that step
+            # by _execute_step, which stores exactly str(e) -- so an exact match
+            # means it is represented and must not be repeated. An exception
+            # raised outside any step matches nothing and is added here, which is
+            # the only way it reaches the workflow error at all.
+            raw = str(exception)
+            if not any(step.error == raw for step in failed):
+                parts.append(f"Workflow error: {raw or type(exception).__name__}")
+
+        return "; ".join(parts) or "Not all steps completed"
+
+    def _finalize(self, exception: Exception | None = None) -> None:
+        """Turn step outcomes into the workflow verdict.
+
+        The single place step statuses become a workflow status. ``run()`` and
+        ``resume()`` both call it, and so do both of their ``except`` branches,
+        so the two paths cannot drift apart -- two copies of this logic is the
+        divergence this change exists to remove (see D009). Without it,
+        ``resume()`` had no failure branch at all: a resumed run carrying a
+        failed step was left RUNNING and never archived, since the archive is
+        written only by ``complete_workflow``/``fail_workflow``.
+        """
+        all_completed = all(
+            self._workflow_state.steps[s].status == WorkflowStatus.COMPLETED  # type: ignore[union-attr]
+            for s in self.step_names
+        )
+
+        if exception is None:
+            if all_completed:
+                self.state.complete_workflow(self.name)
+                logger.info(f"Workflow completed: {self.name}")
+                return
+            if self._workflow_state.status == WorkflowStatus.PAUSED:  # type: ignore[union-attr]
+                # Waiting on a human, not a failure. Left for resume().
+                return
+
+        self.state.fail_workflow(self.name, self._failure_summary(exception))
 
     def _execute_step(self, step: StepDefinition) -> None:
         """Execute a single step with error handling."""
@@ -133,6 +218,19 @@ class Workflow(ABC):
 
         try:
             result = step.handler(self, self._workflow_state.context)  # type: ignore
+
+            if isinstance(result, StepFailure):
+                # Must precede complete_step: a StepFailure is truthy, so the
+                # `if result:` branch below would fire on it, and complete_step
+                # would record a failed step as COMPLETED.
+                logger.error(f"Step reported failure: {step.name} - {result.error}")
+                self.state.fail_step(self.name, step.name, result.error)
+                if result.context:
+                    self.state.update_context(self.name, result.context)
+                # Deliberately no raise: the loop continues, exactly as it does
+                # for a handler that returns a failure dict today.
+                return
+
             self.state.complete_step(self.name, step.name, result=result)
             if result:
                 self.state.update_context(self.name, result)
@@ -199,18 +297,11 @@ class Workflow(ABC):
 
                 self._execute_step(step)
 
-            all_completed = all(
-                self._workflow_state.steps[s].status == WorkflowStatus.COMPLETED
-                for s in self.step_names
-            )
-
-            if all_completed:
-                self.state.complete_workflow(self.name)
-                logger.info(f"Workflow completed: {self.name}")
+            self._finalize()
 
         except Exception as e:
             logger.exception(f"Workflow failed on resume: {e}")
-            self.state.fail_workflow(self.name, str(e))
+            self._finalize(exception=e)
 
         return self.state.get_workflow(self.name)  # type: ignore
 

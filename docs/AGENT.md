@@ -83,6 +83,48 @@ The custom agent provides:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Step Failure Contract
+
+A step handler has **two** ways to fail, and both mark the step FAILED and the workflow FAILED.
+Anything else is recorded as success.
+
+| Channel | Effect on the loop | Use when |
+|---------|--------------------|----------|
+| `raise` | Aborts the run; remaining steps stay `pending` | The step cannot meaningfully continue |
+| `return StepFailure(error, context)` | **Continues** to the next step | Later steps still need to run — e.g. a terminal step that aggregates failures and notifies |
+
+```python
+from src.agent.workflows.base import StepFailure
+
+def run_labeling(workflow, context):
+    result = runner.run("label_articles.py")
+    if not result.success:
+        return StepFailure(
+            error=f"labeling failed: {result.error}",
+            context={"labeling_success": False, "articles_labeled": 0},
+        )
+    return {"labeling_success": True, "articles_labeled": result.count}
+```
+
+Three properties adopters depend on:
+
+1. **Returning a plain dict always means success.** A handler that catches its own error and
+   returns `{"..._success": False}` is recorded COMPLETED and the run archives as
+   `status: completed, error: null`. That is the defect `StepFailure` exists to remove — 230 runs
+   in the history archive have this shape.
+2. **Failure detail lives in `step.error`, never `step.result`.** `StateManager.fail_step()`
+   accepts only an error string, so a step that returns `StepFailure` ends with `result is None` —
+   unlike a failure *dict*, which is stored whole as the step result. Read `step.error`.
+3. **`StepFailure.context` fully replaces the dict return** for context purposes, so it must carry
+   every key downstream steps read. A returned failure does not halt the loop, so those steps will
+   run: **guarding on context flags is the downstream step's responsibility.**
+
+`Workflow._finalize()` is the single place step outcomes become a workflow status — `run()`,
+`resume()` and both of their `except` branches call it, so the two paths cannot drift. It also
+means a resumed run that fails is archived, which before was not true of any resume.
+`WorkflowState.error` echoes the failed steps' own errors (each truncated in the summary; the full
+text stays on the step).
+
 ### Module Structure
 
 ```
