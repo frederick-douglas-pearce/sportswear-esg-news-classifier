@@ -245,8 +245,21 @@ class StateManager:
         workflow_name: str,
         step_name: str,
         error: str,
+        result: dict[str, Any] | None = None,
     ) -> StepState:
-        """Mark a step as failed."""
+        """Mark a step as failed.
+
+        Args:
+            workflow_name: Workflow the step belongs to
+            step_name: Step to mark failed
+            error: Failure detail, always recorded on the step
+            result: Optional structured payload. A step that signals failure by
+                returning `StepFailure` records its context here as well as
+                merging it into the workflow context, so per-step attribution
+                survives into the run archive -- the workflow context is a flat
+                namespace several steps write the same keys into. A step that
+                fails by *raising* has no payload and leaves this None.
+        """
         workflow = self._state.get(workflow_name)
         if not workflow:
             raise ValueError(f"Workflow '{workflow_name}' not found")
@@ -258,6 +271,7 @@ class StateManager:
         step.status = WorkflowStatus.FAILED
         step.completed_at = datetime.now(timezone.utc)
         step.error = error
+        step.result = result
         self._save()
         return step
 

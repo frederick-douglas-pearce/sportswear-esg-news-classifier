@@ -10,12 +10,22 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 caught its own error and returned a dict was recorded COMPLETED, so `run()`'s "all steps completed"
 test passed and the run archived `status: completed, error: null`.
 
-Measured over the 1,305 run YAMLs in `~/.esg-agent/history/`: **230 runs archived `completed` while
-carrying an internal failure flag** — 225 `drift_monitoring`, 4 `daily_labeling`, 1
-`website_export`. In every one of them **no step is recorded FAILED**, which is the mechanism
-itself. `daily_labeling_20260118_143003.yaml` is representative: seven steps `completed`,
-`error: null`, `labeling_success: false`,
+Measured over the 1,305 run YAMLs in `~/.esg-agent/history/` (predicate: archived `status:
+completed` while some `*_success` context key is `false`): **230 runs** — 225 `drift_monitoring`,
+4 `daily_labeling`, 1 `website_export`. In every one of them **no step is recorded FAILED**, which
+is the mechanism itself. `daily_labeling_20260118_143003.yaml` is representative: seven steps
+`completed`, `error: null`, `labeling_success: false`,
 `labeling_error: "[Errno 2] No such file or directory: 'uv'"`.
+
+**Read that 230 as archaeology, not as a live count.** 225 of them are `drift_monitoring` runs that
+`2f30ab2` (#71, one commit before this one) already closes, and the single `website_export` run
+predates that workflow's own terminal raise. The live residual is the 4 `daily_labeling` runs. The
+count measures how often this defect *has* occurred, not how often it still would; the case for
+fixing it in the base runner is forward-looking — five stories are about to bind to this contract,
+and the alternative is a fourth hand-rolled terminal raise. Two further caveats: 505 of the 1,305
+files are the test suite's own synthetic workflows, so the rate across real scheduled runs is
+230/801; and a broader predicate (`*_error` set as well) gives 237, the extra 7 being
+`daily_labeling` runs carrying `llm_analysis_error`.
 
 **What changed:**
 
@@ -24,22 +34,43 @@ itself. `daily_labeling_20260118_143003.yaml` is representative: seven steps `co
 - A returned failure **does not halt** the loop, matching what a failure dict does today. That is
   what an aggregate-then-notify terminal step depends on; downstream steps guard on context flags.
 - **One `_finalize()`** turns step outcomes into a workflow verdict, called from `run()`,
-  `resume()` and both `except` branches. `resume()` previously had **no failure branch at all**: a
-  resumed run carrying a failed step was left RUNNING and — since the archive is written only by
-  `complete_workflow`/`fail_workflow` — **never archived**.
+  `resume()` and both `except` branches. `resume()` previously had no **non-exception** failure
+  branch: it completed the run when every step had completed and did nothing otherwise, so a
+  resumed run carrying a failed step stayed RUNNING and was never archived (the archive is written
+  only by `complete_workflow`/`fail_workflow`). A resumed step that *raised* was always caught and
+  failed by its `except`, so that gap was **latent, not live** — nothing on `main` could produce a
+  FAILED step without an exception escaping to that handler. `StepFailure` is what would have made
+  it reachable.
+- **A FAILED step beats a pause.** `_finalize` fails and archives even when the workflow is PAUSED,
+  if any step failed. Without this, a `StepFailure` followed by any pausing step reported `paused`
+  with a null error, wrote no archive, and exited 0 — the same defect class this change removes,
+  reachable as soon as a workflow with an approval step adopts the contract.
 - **`WorkflowState.error` echoes the real step errors** instead of the bare "Not all steps
   completed", truncated per step in the summary; the full text stays in `step.error`. A run where
   one step returns a failure and a later one raises now reports both.
+- **A step name missing from persisted state no longer kills the finalizer.** `resume()` loads
+  state written by an earlier process, so a step added since that run started has no record;
+  indexing it raised `KeyError` from inside `_finalize` — including from the `except` handler that
+  calls it — which would have left the run RUNNING and unarchived.
 
 **Not changed:** no member was added to `WorkflowStatus` — `unknown`/`check_failed` is a health
-verdict, not a lifecycle state (#74). The two hand-rolled terminal-raise workarounds in
-`website_export` and `daily_labeling` are **not** migrated here; tests demonstrate both shapes
-re-expressed via `StepFailure`, and the migration belongs to #77/#78.
+verdict, not a lifecycle state (#74). The hand-rolled terminal-raise workarounds are **not**
+migrated here; tests demonstrate the shapes re-expressed via `StepFailure`, and the migration
+belongs to #74/#77/#78.
 
-Worth recording, because it changes what the existing workaround is worth:
+**There are three such workarounds, not two:** `website_export.send_error_notification`,
+`daily_labeling.send_notification`, and `drift_monitoring.fail_on_unknown_verdict` — the last added
+by #71 in `2f30ab2`, the commit immediately before this one. Only `model_training` has none. (This
+entry and D009 first said `drift_monitoring` had none, a sentence inherited from #73's body, which
+was written before #71 landed and was not re-checked against the tree.)
+
+Worth recording, because it changes what one of those workarounds is worth:
 `daily_labeling.send_notification` raises only when *every* notification channel fails. It says
-nothing about whether labeling worked — so a failed labeling run whose email was delivered archived
-as `completed`. Those are the 4 `daily_labeling` runs above.
+nothing about whether labeling worked — so a failed labeling run whose email was delivered archives
+as `completed`. **Three** of the 4 `daily_labeling` runs above are that shape. The fourth
+(`20260617_133002`) recorded `notification_sent: false` with no channel delivering, which the guard
+should have caught — it ran at 13:30 UTC and the guard landed at 20:31 UTC the same day, so it
+predates the guard rather than escaping it.
 
 Decision record: `.claude/specs/decisions.md` D009. Issue #73.
 

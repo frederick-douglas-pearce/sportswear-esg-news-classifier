@@ -1540,7 +1540,6 @@ class TestStepFailureContract:
     def _build(name, steps, state_manager):
         """Register and instantiate a workflow from (step_name, handler) pairs."""
 
-        @WorkflowRegistry.register
         class _Workflow(Workflow):
             pass
 
@@ -1573,15 +1572,16 @@ class TestStepFailureContract:
         assert result.error
         assert "labeling produced nothing" in result.error
 
-    def test_failure_detail_is_on_step_error_not_step_result(
+    def test_failure_detail_is_recorded_on_the_step(
         self, state_manager, cleanup_registry
     ):
         """The contract clause five downstream stories read (D009 point 2).
 
-        fail_step() takes only an error string, so a StepFailure step ends with
-        result None -- unlike a failure *dict*, which is stored whole as the
-        step result. An adopter reading step.result for the failure detail
-        would find nothing.
+        `error` is always on the step, and `context` is recorded as that step's
+        result as well as merged into the workflow context. Per-step attribution
+        is the point: the workflow context is a flat namespace several steps
+        write the same keys into, so #76's archive audit cannot tell from the
+        context alone which step contributed which key.
         """
         workflow = self._build(
             "sf_detail",
@@ -1594,6 +1594,38 @@ class TestStepFailureContract:
         step = result.steps["only"]
         assert step.status == WorkflowStatus.FAILED
         assert step.error == "boom"
+        assert step.result == {"k": "v"}, "context must survive as per-step detail"
+        assert result.context.get("k") == "v", "and must still reach the context"
+
+    def test_failure_with_no_context_records_no_result(
+        self, state_manager, cleanup_registry
+    ):
+        """An empty context is recorded as None, not as an empty dict.
+
+        Distinguishes "this step carried no payload" from "{}", and matches a
+        raising step, which has no payload to record.
+        """
+        workflow = self._build(
+            "sf_nocontext",
+            [("only", lambda w, c: StepFailure(error="boom"))],
+            state_manager,
+        )
+
+        step = workflow.run().steps["only"]
+        assert step.status == WorkflowStatus.FAILED
+        assert step.result is None
+
+    def test_raising_step_records_no_result(self, state_manager, cleanup_registry):
+        """A step that fails by raising has no payload -- result stays None."""
+
+        def boom(workflow, context):
+            raise RuntimeError("exploded")
+
+        workflow = self._build("sf_raise_result", [("only", boom)], state_manager)
+
+        step = workflow.run().steps["only"]
+        assert step.status == WorkflowStatus.FAILED
+        assert step.error == "exploded"
         assert step.result is None
 
     def test_failure_context_reaches_downstream_steps(
@@ -1707,11 +1739,15 @@ class TestStepFailureContract:
     def test_returned_failure_on_resume_fails_the_workflow(
         self, state_manager, cleanup_registry
     ):
-        """AC3: resume() had no failure branch at all before this change.
+        """AC3: resume() had no NON-EXCEPTION failure branch before this change.
 
-        A resumed run carrying a failed step was left RUNNING -- neither
-        completed nor failed -- and, because the archive is written only by
-        complete_workflow/fail_workflow, never archived.
+        It completed the run when every step had completed and did nothing
+        otherwise, so a resumed run carrying a failed step was left RUNNING and,
+        because the archive is written only by complete_workflow/fail_workflow,
+        never archived. A resumed step that *raised* was always caught by
+        resume()'s except and failed there, so this gap was latent until
+        StepFailure made a non-raising failure possible -- which is why this
+        test has to use StepFailure to reach it at all.
         """
         workflow = self._build(
             "sf_resume",
@@ -1791,9 +1827,16 @@ class TestStepFailureContract:
 
         This is the shape of website_export.send_error_notification: earlier
         steps record failures in context and keep going, and a terminal step
-        aggregates them. It exercises the real contract -- the aggregation
-        reads context written by a *failed* earlier step -- rather than
-        asserting a stub.
+        aggregates them.
+
+        What it does and does not establish. The base runner is real, and the
+        aggregation genuinely reads context written by a *failed* earlier step,
+        which is only possible because a returned failure does not halt the
+        loop. But `notify` below is a hand-written stand-in, not
+        `website_export.send_error_notification` -- that function is not
+        migrated by #73 and is not imported here. So this demonstrates that the
+        mechanism supports the shape; it does not observe the real function, and
+        nothing here would fail if that function turned out to be unmigratable.
         """
         notified = {}
 
@@ -1844,8 +1887,12 @@ class TestStepFailureContract:
         daily_labeling.send_notification raises only when every notification
         channel fails; it says nothing about whether labeling worked. So a
         failed labeling run whose email was delivered archives as completed --
-        four such runs exist in the real history. Expressed via StepFailure the
-        run fails, and the notification is still sent.
+        three such runs exist in the real history (a fourth failed run predates
+        that guard). Expressed via StepFailure the run fails, and the
+        notification is still sent.
+
+        As with the website_export-shape test above, the handlers here are
+        stand-ins: the real send_notification is not migrated by #73.
         """
         sent = []
 
@@ -1948,3 +1995,191 @@ class TestStepFailureContract:
         assert state_manager.get_workflow("sf_fallback").error == (
             "Not all steps completed"
         )
+
+    # --- regressions the code review caught -----------------------------------
+
+    def test_a_failed_step_is_not_masked_by_a_later_pause(
+        self, state_manager, cleanup_registry
+    ):
+        """A pause must not swallow a failure.
+
+        `_finalize` checked `all_completed`, then returned early on PAUSED
+        without asking whether any step had FAILED. So a step returning
+        StepFailure followed by any pausing step archived nowhere, reported
+        `paused` with error None, and exited 0 -- a failed run that reads as
+        waiting for a human, which is this epic's own defect class.
+
+        Reachable the moment a workflow with an approval step adopts the
+        contract: `model_training.notify_and_pause` pauses unconditionally,
+        immediately after the step #79 migrates.
+        """
+        workflow = self._build(
+            "sf_fail_then_pause",
+            [
+                ("export", lambda w, c: StepFailure(error="export failed")),
+                ("approval", lambda w, c: {}, {"requires_approval": True}),
+                ("later", lambda w, c: {}),
+            ],
+            state_manager,
+        )
+
+        result = workflow.run()
+
+        assert result.status == WorkflowStatus.FAILED, (
+            "a FAILED step must beat a pause"
+        )
+        assert "export failed" in result.error
+        assert list(self.history_dir.glob("sf_fail_then_pause_*.yaml")), (
+            "and the run must be archived, not left unrecorded"
+        )
+
+    def test_a_pause_with_no_failure_is_still_a_pause(
+        self, state_manager, cleanup_registry
+    ):
+        """The other half of the guard: don't fail an ordinary approval pause.
+
+        Pins the `not any_failed` qualifier specifically -- dropping it would
+        turn every approval workflow into a failed one.
+        """
+        workflow = self._build(
+            "sf_clean_pause",
+            [
+                ("first", lambda w, c: {"ok": True}),
+                ("approval", lambda w, c: {}, {"requires_approval": True}),
+            ],
+            state_manager,
+        )
+
+        result = workflow.run()
+
+        assert result.status == WorkflowStatus.PAUSED
+        assert result.error is None
+
+    def test_a_missing_step_record_fails_the_run_instead_of_escaping(
+        self, state_manager, cleanup_registry
+    ):
+        """The finalizer must never be the thing that leaves a run RUNNING.
+
+        `resume()` loads state persisted by an earlier process, so a step added
+        to the workflow class since that run started has no record. Indexing
+        `steps[name]` raised KeyError from inside `_finalize` -- including from
+        the `except` handler that calls it -- so the exception escaped `resume()`
+        entirely, leaving the run RUNNING and unarchived and every later
+        `agent continue` dead with "Workflow is not paused".
+
+        On main this input ended FAILED and archived, so the unified finalizer
+        must not be worse.
+        """
+        workflow = self._build(
+            "sf_missing",
+            [
+                ("first", lambda w, c: {}),
+                ("approval", lambda w, c: {}, {"requires_approval": True}),
+            ],
+            state_manager,
+        )
+        assert workflow.run().status == WorkflowStatus.PAUSED
+
+        # The workflow definition gains a step while the run is paused.
+        workflow.steps = list(workflow.steps) + [
+            StepDefinition(name="added_later", description="new", handler=lambda w, c: {})
+        ]
+
+        result = workflow.resume()
+
+        assert result.status == WorkflowStatus.FAILED
+        assert "added_later" in result.error
+        assert list(self.history_dir.glob("sf_missing_*.yaml")), (
+            "the run must still be archived"
+        )
+
+    def test_raising_on_the_resume_path_fails_and_archives(
+        self, state_manager, cleanup_registry
+    ):
+        """`resume()`'s except branch, which nothing else covers.
+
+        Reverting `resume()`'s `self._finalize(exception=e)` to a bare
+        `fail_workflow(self.name, str(e))` passes every other test in this
+        class -- exactly the run/resume fork the shared finalizer exists to
+        prevent, on the path AC3 names.
+        """
+
+        def boom(workflow, context):
+            raise RuntimeError("resumed step exploded")
+
+        workflow = self._build(
+            "sf_resume_raise",
+            [
+                ("approval", lambda w, c: {}, {"requires_approval": True}),
+                ("after", boom),
+            ],
+            state_manager,
+        )
+        assert workflow.run().status == WorkflowStatus.PAUSED
+
+        result = workflow.resume()
+
+        assert result.status == WorkflowStatus.FAILED
+        assert result.steps["after"].status == WorkflowStatus.FAILED
+        # The shared summary shape, not the bare str(e) the old branch produced.
+        assert result.error == "Step 'after' failed: resumed step exploded"
+        assert list(self.history_dir.glob("sf_resume_raise_*.yaml"))
+
+    def test_a_raised_exception_is_not_reported_twice(
+        self, state_manager, cleanup_registry
+    ):
+        """Pins the dedup guard: a step's own raise appears once, not twice.
+
+        Deleting the `any(step.error == raw ...)` check leaves every other test
+        passing, because they use substring membership.
+        """
+
+        def boom(workflow, context):
+            raise RuntimeError("single failure")
+
+        workflow = self._build("sf_dedup", [("only", boom)], state_manager)
+
+        result = workflow.run()
+
+        assert result.error == "Step 'only' failed: single failure"
+        assert "Workflow error:" not in result.error
+
+    def test_an_exception_with_no_message_still_names_its_type(
+        self, state_manager, cleanup_registry
+    ):
+        """`raise RuntimeError()` must not produce an error that names nothing."""
+
+        def boom(workflow, context):
+            raise RuntimeError()
+
+        workflow = self._build("sf_empty_exc", [("only", boom)], state_manager)
+
+        result = workflow.run()
+
+        assert result.error
+        assert "RuntimeError" in result.error
+
+    def test_the_summary_cap_is_per_step_not_per_summary(
+        self, state_manager, cleanup_registry
+    ):
+        """Every failed step keeps its own budget.
+
+        A cap applied to the joined summary instead would silently drop the
+        later steps' names, contradicting
+        `test_summary_names_every_failed_step`.
+        """
+        long_a, long_b = "A" * 4000, "B" * 4000
+        workflow = self._build(
+            "sf_percap",
+            [
+                ("one", lambda w, c: StepFailure(error=long_a)),
+                ("two", lambda w, c: StepFailure(error=long_b)),
+            ],
+            state_manager,
+        )
+
+        result = workflow.run()
+
+        assert "Step 'one' failed: " + "A" * 500 in result.error
+        assert "Step 'two' failed: " + "B" * 500 in result.error
+        assert result.error.count("truncated") == 2

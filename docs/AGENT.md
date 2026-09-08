@@ -93,37 +93,51 @@ Anything else is recorded as success.
 | `raise` | Aborts the run; remaining steps stay `pending` | The step cannot meaningfully continue |
 | `return StepFailure(error, context)` | **Continues** to the next step | Later steps still need to run — e.g. a terminal step that aggregates failures and notifies |
 
+Sketch, in the shape of `daily_labeling.run_labeling` (see that function for the real one — it
+returns eight context keys, and dropping any of them is the footgun in point 3):
+
 ```python
 from src.agent.workflows.base import StepFailure
 
 def run_labeling(workflow, context):
-    result = runner.run("label_articles.py")
+    result = run_label_articles(batch_size=pending, dry_run=context.get("dry_run", False))
     if not result.success:
         return StepFailure(
-            error=f"labeling failed: {result.error}",
-            context={"labeling_success": False, "articles_labeled": 0},
+            error=f"labeling exited {result.exit_code}: {result.stderr[-2000:]}",
+            context={"labeling_success": False, "labeling_exit_code": result.exit_code, ...},
         )
-    return {"labeling_success": True, "articles_labeled": result.count}
+    return {"labeling_success": True, ...}
 ```
 
-Three properties adopters depend on:
+Four properties adopters depend on:
 
 1. **Returning a plain dict always means success.** A handler that catches its own error and
    returns `{"..._success": False}` is recorded COMPLETED and the run archives as
-   `status: completed, error: null`. That is the defect `StepFailure` exists to remove — 230 runs
-   in the history archive have this shape.
-2. **Failure detail lives in `step.error`, never `step.result`.** `StateManager.fail_step()`
-   accepts only an error string, so a step that returns `StepFailure` ends with `result is None` —
-   unlike a failure *dict*, which is stored whole as the step result. Read `step.error`.
-3. **`StepFailure.context` fully replaces the dict return** for context purposes, so it must carry
-   every key downstream steps read. A returned failure does not halt the loop, so those steps will
-   run: **guarding on context flags is the downstream step's responsibility.**
+   `status: completed, error: null`. That is the defect `StepFailure` exists to remove.
+2. **`error` is always on the step**, as `step.error`. `context` is recorded in *both* places —
+   merged into the workflow context, and stored as that step's `step.result`. Per-step attribution
+   is why: the workflow context is a flat namespace several steps write the same keys into
+   (`website_export` has three writers of `"error"` alone), so the archive could not otherwise say
+   which step contributed what. A step that fails by *raising* has no payload and leaves
+   `step.result` as `None`.
+3. **`StepFailure.context` fully replaces the dict return**, so it must carry every key downstream
+   steps read — dropping one is silent. A returned failure does not halt the loop, so those steps
+   will run: **guarding on context flags is a requirement on the downstream step, not something
+   the framework does for you, and today's workflows do not all have such guards.**
+4. **A FAILED step beats a pause.** If any step has failed, the run is FAILED and archived even
+   when a later step pauses. Otherwise a failure followed by an approval step would report `paused`
+   with a null error and exit 0 — a failed run that reads as waiting for a human.
 
 `Workflow._finalize()` is the single place step outcomes become a workflow status — `run()`,
-`resume()` and both of their `except` branches call it, so the two paths cannot drift. It also
-means a resumed run that fails is archived, which before was not true of any resume.
+`resume()` and both of their `except` branches call it, so the two paths cannot drift.
 `WorkflowState.error` echoes the failed steps' own errors (each truncated in the summary; the full
 text stays on the step).
+
+**What this replaces.** Three workflows hand-rolled a terminal raising step to get the same effect:
+`website_export.send_error_notification`, `daily_labeling.send_notification` (narrower — it fires
+only when *every* notification channel failed, so it says nothing about whether labeling worked),
+and `drift_monitoring.fail_on_unknown_verdict` (added in #71). Only `model_training` has none.
+Migrating them is #77/#78/#74's work, not #73's.
 
 ### Module Structure
 
