@@ -2037,8 +2037,9 @@ class TestStepFailureContract:
     # pause -- is `test_approval_pause_is_not_a_failure` above, which asserts
     # the same thing plus the absence of an archive. Note what neither test
     # can do: dropping the `not any_failed` qualifier changes behaviour ONLY
-    # when a step has failed, so no clean-pause test can detect it. The
-    # fail-then-pause test above is the guard for that qualifier.
+    # when a step has failed, so no clean-pause test can detect it.
+    # `test_a_failed_step_is_not_masked_by_a_later_pause` above is the guard
+    # for that qualifier.
 
     def test_a_missing_step_record_fails_the_run_instead_of_escaping(
         self, state_manager, cleanup_registry

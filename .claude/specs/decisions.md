@@ -498,16 +498,20 @@ Where "before" is meant, it is the state at base commit `2f30ab2`.
 
 **Context:** `Workflow._execute_step()` marked a step FAILED only when its handler *raised*. A
 handler that catches its own error and returns a dict is recorded COMPLETED, so `run()`'s
-`all_completed` test passes and the run archives `status: completed, error: null`. Measured against
-the 1,305 YAMLs in `~/.esg-agent/history/` (predicate: `status: completed` with some `*_success`
-key `false`): **230 runs** -- 225 `drift_monitoring`, 4 `daily_labeling`, 1 `website_export` -- and
-in every one of them no step is recorded FAILED, which is the mechanism itself.
+`all_completed` test passes and the run archives `status: completed, error: null`. The run archive
+under `~/.esg-agent/history/` holds runs of that shape -- `status: completed`, `error: null`, a
+`*_success: false` context key, and no step recorded FAILED -- concentrated in `drift_monitoring`
+and residually in `daily_labeling`.
 
-**That 230 is archaeology, and the record should not have implied otherwise.** 225 of them are
-`drift_monitoring` runs already closed by `2f30ab2` (#71), and the 1 `website_export` run predates
-that workflow's own terminal raise; the live residual is ~4 `daily_labeling` runs. The case for
-#73 is forward-looking rather than remedial: five stories are about to bind to this contract, and
-the alternative is a fourth hand-rolled terminal raise.
+**No counts are recorded here, and that is itself the decision.** Three successive drafts of this
+entry quoted figures from that archive and all three were wrong -- once on arithmetic, once by
+presenting instances `2f30ab2` had already closed as a live rate, and once by classifying test-written
+archives as scheduled runs. The archive is not a stable corpus: the test suite writes into it, under
+production workflow names as well as synthetic ones, so any figure is stale on the next test run.
+The case for #73 is forward-looking rather than remedial in any event -- five stories are about to
+bind to this contract, and the alternative is a fourth hand-rolled terminal raise -- so no decision
+below rests on a count. **A claim that cannot be re-derived stably should not be written down**;
+that generalises D007's preference for citation forms that fail loudly.
 
 **Correction (made before merge).** This entry first read "Two workflows papered over this by
 hand-rolling a terminal raising step; `drift_monitoring` and `model_training` did not." That is

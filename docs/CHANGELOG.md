@@ -10,24 +10,19 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 caught its own error and returned a dict was recorded COMPLETED, so `run()`'s "all steps completed"
 test passed and the run archived `status: completed, error: null`.
 
-Measured over the 1,305 run YAMLs in `~/.esg-agent/history/` (predicate: archived `status:
-completed` while some `*_success` context key is `false`): **230 runs** — 225 `drift_monitoring`,
-4 `daily_labeling`, 1 `website_export`. In every one of them **no step is recorded FAILED**, which
-is the mechanism itself. `daily_labeling_20260118_143003.yaml` is representative: seven steps
-`completed`, `error: null`, `labeling_success: false`,
-`labeling_error: "[Errno 2] No such file or directory: 'uv'"`.
+The run archive under `~/.esg-agent/history/` holds runs of exactly that shape: archived
+`status: completed` with `error: null`, carrying a `*_success: false` context key, and **no step
+recorded FAILED** — which is the mechanism itself. They are concentrated in `drift_monitoring`,
+whose instance `2f30ab2` (#71, the commit before this one) has already closed; the residual is in
+`daily_labeling`.
 
-**Read that 230 as archaeology, not as a live count.** 225 of them are `drift_monitoring` runs that
-`2f30ab2` (#71, one commit before this one) already closes, and the single `website_export` run
-predates that workflow's own terminal raise. The live residual is the 4 `daily_labeling` runs. The
-count measures how often this defect *has* occurred, not how often it still would; the case for
-fixing it in the base runner is forward-looking — five stories are about to bind to this contract,
-and the alternative is a fourth hand-rolled terminal raise. Two further caveats: 504 of those 1,305
-files are the test suite's own synthetic workflows (`simple`, `failing`, `resume_test`,
-`context_test`, `dryrun_test`, `test`), so the rate across real scheduled runs is 230/801; and a
-broader predicate (`*_error` set as well) gives 237, the extra 7 being `daily_labeling` runs
-carrying `llm_analysis_error`. All of these are counts at one moment — running the suite adds
-synthetic runs to the same directory, so the totals drift upward on every test run.
+**No counts are quoted here deliberately.** The archive is not a stable corpus to measure against:
+the test suite writes into the same directory, under production workflow names as well as synthetic
+ones, so any figure is stale on the next test run and is inflated by artifacts that look like
+scheduled runs. Earlier drafts of this entry quoted such figures and were wrong three times. The
+case for fixing this in the base runner does not rest on a rate in any event — it is forward-looking:
+five stories are about to bind to this contract, and the alternative is a fourth hand-rolled
+terminal raise.
 
 **What changed:**
 
@@ -68,11 +63,8 @@ was written before #71 landed and was not re-checked against the tree.)
 
 Worth recording, because it changes what one of those workarounds is worth:
 `daily_labeling.send_notification` raises only when *every* notification channel fails. It says
-nothing about whether labeling worked — so a failed labeling run whose email was delivered archives
-as `completed`. **Three** of the 4 `daily_labeling` runs above are that shape. The fourth
-(`20260617_133002`) recorded `notification_sent: false` with no channel delivering, which the guard
-should have caught — it ran at 13:30 UTC and the guard landed at 20:31 UTC the same day, so it
-predates the guard rather than escaping it.
+nothing about whether labeling worked — so a failed labeling run whose report was delivered archives
+as `completed`. It is not a guard for this defect class, though #73's issue body treats it as one.
 
 Decision record: `.claude/specs/decisions.md` D009. Issue #73.
 
