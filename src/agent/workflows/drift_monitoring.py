@@ -220,9 +220,14 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
     out[f"{classifier}_threshold"] = summary["threshold"]
 
     if verdict is HealthVerdict.DEGRADED:
+        # States the score; does NOT claim it exceeds the threshold. Core drift
+        # is a COUNT test (`core_drifted > 0`), not a threshold test, so a
+        # detection can be correct while the score sits below the threshold --
+        # and this line used to read "score 0.0 exceeds 0.15" on brand-only
+        # drift, an alert contradicted by its own number.
         logger.warning(
             f"{classifier.upper()} classifier drift detected: "
-            f"score {summary['drift_score']} exceeds {summary['threshold']}"
+            f"score {summary['drift_score']} (threshold {summary['threshold']})"
         )
     else:
         logger.info(
@@ -345,7 +350,12 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
                 },
             )
             alerts_sent.append(
-                {"classifier": classifier, "kind": "drift", "result": result}
+                {
+                    "classifier": classifier,
+                    "kind": "drift",
+                    "result": result,
+                    "delivered": any(result.values()),
+                }
             )
 
         elif verdict is HealthVerdict.UNKNOWN:
@@ -359,15 +369,42 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
                 },
             )
             alerts_sent.append(
-                {"classifier": classifier, "kind": "check_failed", "result": result}
+                {
+                    "classifier": classifier,
+                    "kind": "check_failed",
+                    "result": result,
+                    "delivered": any(result.values()),
+                }
             )
 
     if not alerts_sent:
         logger.info("No drift and no failed checks - no alerts needed")
         return {"alerts_sent": False, "reason": "nothing_to_report"}
 
+    # `alerts_sent` means DELIVERED, not attempted.
+    #
+    # Both notification helpers return `dict[str, bool]` -- one entry per
+    # channel -- and every channel can return False (no webhook configured, an
+    # HTTP error, Resend rejecting the key) while this step still reported
+    # `alerts_sent: True`. That is #72's class in the alerting path itself: the
+    # step whose whole job is to raise the alarm recording success for an alarm
+    # nobody received. Not escalated to a workflow failure -- an undelivered
+    # alert about drift should not erase the drift finding -- but it is stated,
+    # and the archive #75/#76 will read now carries the difference.
+    undelivered = [a for a in alerts_sent if not a["delivered"]]
+    for alert in undelivered:
+        logger.error(
+            f"{alert['classifier'].upper()} {alert['kind']} alert reached NO "
+            f"channel (results: {alert['result']})"
+        )
+
     return {
-        "alerts_sent": True,
+        "alerts_sent": not undelivered,
+        "alerts_attempted": len(alerts_sent),
+        "alerts_delivered": len(alerts_sent) - len(undelivered),
+        "alerts_undelivered": [
+            f"{a['classifier']}:{a['kind']}" for a in undelivered
+        ],
         "alert_count": len(alerts_sent),
         "alert_details": alerts_sent,
     }

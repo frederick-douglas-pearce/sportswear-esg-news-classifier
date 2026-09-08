@@ -335,6 +335,82 @@ class TestSendDriftAlerts:
             assert kwargs["check_name"] == "FP drift"
             assert kwargs["reason"] == "Insufficient data for drift analysis"
 
+    def test_alerts_sent_is_false_when_no_channel_accepted_it(self, mock_workflow):
+        """`alerts_sent` means delivered, not attempted.
+
+        Both helpers return one bool per channel. Every channel can fail -- no
+        webhook configured, an HTTP error, Resend rejecting the key -- and this
+        step used to record `alerts_sent: True` regardless. #72's class in the
+        alerting path itself: the step whose job is raising the alarm reporting
+        success for an alarm nobody received.
+        """
+        with patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_notify:
+            mock_notify.return_value = {"webhook": False, "email": False}
+            context = {
+                "dry_run": False,
+                "fp_verdict": HealthVerdict.DEGRADED.value,
+                "fp_drift_score": 0.15,
+                "fp_threshold": 0.1,
+                "ep_verdict": HealthVerdict.SKIPPED.value,
+            }
+
+            result = send_drift_alerts(mock_workflow, context)
+
+            assert result["alerts_sent"] is False
+            assert result["alerts_attempted"] == 1
+            assert result["alerts_delivered"] == 0
+            assert result["alerts_undelivered"] == ["fp:drift"]
+            # The finding itself is not erased by a delivery failure.
+            assert result["alert_count"] == 1
+
+    def test_alerts_sent_is_true_only_when_every_alert_landed(self, mock_workflow):
+        """One delivered and one not is not a success."""
+        with patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_drift, patch(
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
+        ) as mock_failed:
+            mock_drift.return_value = {"webhook": True}
+            mock_failed.return_value = {"webhook": False}
+            context = {
+                "dry_run": False,
+                "fp_verdict": HealthVerdict.DEGRADED.value,
+                "fp_drift_score": 0.15,
+                "fp_threshold": 0.1,
+                "ep_verdict": HealthVerdict.UNKNOWN.value,
+                "ep_error": "boom",
+                "ep_drift_exit_code": EXIT_INDETERMINATE,
+            }
+
+            result = send_drift_alerts(mock_workflow, context)
+
+            assert result["alerts_attempted"] == 2
+            assert result["alerts_delivered"] == 1
+            assert result["alerts_sent"] is False
+            assert result["alerts_undelivered"] == ["ep:check_failed"]
+
+    def test_alerts_sent_is_true_when_a_channel_accepted_it(self, mock_workflow):
+        """The control for the two above: real delivery still reports True."""
+        with patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_notify:
+            mock_notify.return_value = {"webhook": False, "email": True}
+            context = {
+                "dry_run": False,
+                "fp_verdict": HealthVerdict.DEGRADED.value,
+                "fp_drift_score": 0.15,
+                "fp_threshold": 0.1,
+                "ep_verdict": HealthVerdict.SKIPPED.value,
+            }
+
+            result = send_drift_alerts(mock_workflow, context)
+
+            assert result["alerts_sent"] is True
+            assert result["alerts_delivered"] == 1
+            assert result["alerts_undelivered"] == []
+
 
 class TestGenerateDriftReport:
     """Tests for drift report generation."""

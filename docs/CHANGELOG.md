@@ -77,9 +77,32 @@ Also: a column present in the current data but missing from the reference is now
 assessed* and recorded in the report details, so fixing the crash does not leave a partial
 comparison silently reported as a whole one.
 
+Four further instances of the same class were found by review *inside this fix* and closed here:
+
+- **A missing reference dataset used to answer itself.** `check_drift` split the current window in
+  half on `FileNotFoundError` and compared the halves -- which agree by construction, so it always
+  read as "no drift", with nothing recording that there was no baseline. Live for `esg`, for EP,
+  and on any fresh checkout. Now indeterminate; `--create-reference` is the way to establish a
+  baseline.
+- **`drift_score` did not match the detection that reported it.** `drift_detected` reads core drift
+  *or* brand drift, but the report carried the core score alone, so brand-only drift alerted with
+  "score 0.0 exceeds 0.15". Now `max(core, brand)`, with both kept in the details.
+- **An unreadable Evidently metric counted as "no drift".** Coercing a missing value to `p=1.0`
+  made it both non-drifting and a contributor to the metric count, so the "nothing was readable"
+  guard could not fire. Now skipped and recorded.
+- **The CI summary printed "✅ Healthy" for an unreadable report.** Every `jq` returns an empty
+  string on a truncated or malformed file, which matched no branch and fell through to the healthy
+  default. Reproduced before fixing. Also, `|| echo DRIFT_DETECTED=true` reported exit 2
+  ("could not assess") as drift; replaced with a `case` on the real exit code.
+
+And `alerts_sent` now means *delivered*: both notification helpers return one bool per channel, and
+every channel could fail while the step still recorded success.
+
 Follow-ups filed rather than folded in: #94 (minimum sample size), #95 (vacuously-healthy when
 every check is skipped), #96 (a forgotten EP flag leaves EP dark), #97 (the reference window
-overlaps the window it is compared against).
+overlaps the window it is compared against), #99 (an unguarded `--output` write turns a disk error
+into "drift detected"), #100 (`_to_builtin` type gaps), #101 (nothing consumes the new
+`CHECK_INDETERMINATE` CI output).
 
 ### 2026-09-06: A failed pg_dump no longer records a good backup
 

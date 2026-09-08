@@ -145,8 +145,13 @@ and the legacy code paths, and neither removes the need to regenerate:
   bury the signal;
 - a reference sharing *no* comparable core column returns `indeterminate`, i.e. exit 2 -- on both
   paths. On the Evidently path this also covers the case where core columns are offered but no
-  core metric comes back readable: the reported score is `core_drift_score`, so without a core
-  metric it would be a fabricated 0.0.
+  core metric comes back readable: a metric whose value cannot be read is skipped and recorded in
+  `details["metrics_unreadable"]` rather than counted as p=1.0, so it does not prop up
+  `total_core` and the guard actually fires. Without it the score would be a fabricated 0.0;
+- **no reference dataset at all** returns `indeterminate` as well. This used to split the current
+  window in half and compare the halves -- two samples from one window, which agree by
+  construction and so always read as "no drift". Use `--create-reference` to establish a
+  baseline.
 
 Regenerate after any change to what is written to `classifier_predictions`:
 

@@ -319,8 +319,16 @@ class TestCheckDrift:
             mock_load_logs.assert_called_once_with("fp", days=7, from_database=True)
             mock_load_ref.assert_called_once_with("fp")
 
-    def test_check_drift_splits_data_when_no_reference(self, mock_mlops_settings_disabled):
-        """Test that check_drift splits current data when no reference exists."""
+    def test_no_reference_is_indeterminate_not_healthy(self, mock_mlops_settings_disabled):
+        """A missing reference must not be answered by self-comparison.
+
+        This used to split `current_data` in half and compare the halves. Two
+        halves of one window share a distribution by construction, so the KS
+        statistic came back ~0 and the report said `drift_detected=False`,
+        `indeterminate=False` -- a healthy verdict manufactured out of the
+        absence of a baseline, which is issue #71's class. Reachable today for
+        `esg`, for EP, and on any fresh checkout.
+        """
         current_data = pd.DataFrame({
             "probability": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
             "prediction": [0, 0, 1, 1, 1, 1],
@@ -335,8 +343,43 @@ class TestCheckDrift:
             monitor = DriftMonitor("fp")
             report = monitor.check_drift()
 
-            # Should still produce a valid report using split data
             assert report.classifier_type == "fp"
+            assert report.indeterminate is True, (
+                "no reference means nothing was measured"
+            )
+            assert report.drift_detected is False
+            assert "reference" in report.details["error"].lower()
+            # The absence itself has to be recorded, not just logged: the run
+            # archive is what #75/#76 will read.
+            assert "reference_path" in report.details
+            assert report.details["current_size"] == 6
+
+    def test_no_reference_does_not_consult_the_checkers(
+        self, mock_mlops_settings_disabled
+    ):
+        """The refusal happens before any statistic is computed.
+
+        Guards the mechanism rather than the return value: if the fallback were
+        restored, these would run on the split halves and the assertions above
+        could still be satisfied by a coincidence of the data.
+        """
+        with patch('src.mlops.monitoring.load_prediction_logs') as mock_load_logs, \
+             patch('src.mlops.monitoring.load_reference_dataset') as mock_load_ref:
+
+            mock_load_logs.return_value = pd.DataFrame({
+                "probability": [0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+                "prediction": [0, 0, 1, 1, 1, 1],
+            })
+            mock_load_ref.side_effect = FileNotFoundError("No reference data")
+
+            monitor = DriftMonitor("fp")
+            with patch.object(monitor, "_legacy_drift_check") as mock_legacy, \
+                 patch.object(monitor, "_evidently_drift_check") as mock_evidently:
+                report = monitor.check_drift()
+
+            mock_legacy.assert_not_called()
+            mock_evidently.assert_not_called()
+            assert report.indeterminate is True
 
 
 # ============================================================================
@@ -679,7 +722,7 @@ class TestNoveltyScoreGuardSymmetry:
     `novelty_score` was added to the database after the reference parquet was
     written, so current had the column and reference did not. The stats block
     guarded only `current_data` and then read `reference_data["novelty_score"]`,
-    raising KeyError on every run from 2026-01-17 to 2026-09-06.
+    raising KeyError on every run from 2026-01-25 to 2026-09-06.
     """
 
     def _monitor(self):
@@ -1134,6 +1177,151 @@ class TestUnreadableEvidentlyMetrics:
         )
 
         assert report.indeterminate is False
+
+    def test_an_unreadable_value_is_not_counted_as_no_drift(
+        self, mock_mlops_settings_enabled
+    ):
+        """p=1.0 coercion made an unreadable metric *prop up* the guard.
+
+        `p_value = value if isinstance(value, (int, float)) else 1.0` turned an
+        unreadable metric into `col_drift=False` AND incremented `total_core`,
+        so `total_core == 0` could not fire and the run reported a
+        measured-looking 0.0 built from a metric nobody could read.
+        """
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": None,
+            }
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.details["metrics_unreadable"] == ["probability"]
+        # It must not have been silently scored as "no drift".
+        assert "probability_p_value" not in report.details
+
+    def test_one_unreadable_core_metric_does_not_hide_behind_a_readable_one(
+        self, mock_mlops_settings_enabled
+    ):
+        """The partial case: one core metric readable, one not."""
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.5,
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": "not-a-number",
+            },
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        # Still assessed -- one core metric was readable -- but the gap is
+        # recorded rather than counted as evidence of health.
+        assert report.indeterminate is False
+        assert report.details["metrics_unreadable"] == ["prediction"]
+        assert "prediction_p_value" not in report.details
+
+
+class TestDriftScoreMatchesTheDetection:
+    """`drift_detected` reads both scores; the report must not carry one."""
+
+    def _monitor(self, metrics, threshold=0.1):
+        monitor = DriftMonitor.__new__(DriftMonitor)
+        monitor.classifier_type = "fp"
+        monitor.enabled = True
+        monitor.threshold = threshold
+        mock_snapshot = MagicMock()
+        mock_snapshot.dict.return_value = {"metrics": metrics}
+        mock_report = MagicMock()
+        mock_report.run.return_value = mock_snapshot
+        monitor._evidently = {
+            "Report": MagicMock(return_value=mock_report),
+            "ValueDrift": MagicMock(),
+        }
+        return monitor
+
+    def _frame(self):
+        return pd.DataFrame(
+            {"probability": [0.5, 0.6], "prediction": [0, 1], "brand_nike": [0, 1]}
+        )
+
+    def test_brand_only_drift_does_not_report_a_zero_score(
+        self, mock_mlops_settings_enabled
+    ):
+        """The live "score 0.0 exceeds 0.15" alert.
+
+        `drift_detected = core_drifted > 0 or brand_drift_score > threshold`,
+        but the report carried `core_drift_score` alone -- so brand-only drift
+        emitted `drift_detected=True` with `drift_score=0.0`, an alert
+        contradicted by its own number.
+        """
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.9,  # not drifting
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": 0.9,  # not drifting
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "brand_nike", "threshold": 0.05},
+                "value": 0.001,  # drifting
+            },
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            self._frame(), self._frame(), save_report=False
+        )
+
+        assert report.drift_detected is True
+        assert report.drift_score > 0.0, (
+            "a detection reported with a 0.0 score contradicts itself"
+        )
+        assert report.drift_score == report.details["brand_drift_score"]
+        # Both components stay available.
+        assert report.details["core_drift_score"] == 0.0
+
+    def test_core_drift_still_reports_the_core_score(
+        self, mock_mlops_settings_enabled
+    ):
+        """Control: core drift must not be masked by a quiet brand score."""
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.001,  # drifting
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "brand_nike", "threshold": 0.05},
+                "value": 0.9,  # not drifting
+            },
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            self._frame(), self._frame(), save_report=False
+        )
+
+        assert report.drift_detected is True
+        assert report.drift_score == 1.0
+        assert report.details["brand_drift_score"] == 0.0
 
 
 class TestCheckedInReferenceDataset:

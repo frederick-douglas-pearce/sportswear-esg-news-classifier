@@ -192,10 +192,41 @@ class DriftMonitor:
             try:
                 reference_data = load_reference_dataset(self.classifier_type)
             except FileNotFoundError:
-                logger.warning("No reference data found, using first half of current data")
-                midpoint = len(current_data) // 2
-                reference_data = current_data.iloc[:midpoint]
-                current_data = current_data.iloc[midpoint:]
+                # Refuse to compare the window against itself.
+                #
+                # This branch used to split `current_data` in half and call the
+                # first half the reference. Two halves of one window have the
+                # same distribution by construction, so every statistic below
+                # returns "no drift" -- a HEALTHY verdict with
+                # `indeterminate=False`, manufactured out of the ABSENCE of a
+                # baseline. That is issue #71's class exactly, and it is live:
+                # `data/reference/` holds only `fp_reference.parquet`, so
+                # `--classifier esg`, EP the moment it makes a prediction, and
+                # any fresh checkout all took this path.
+                #
+                # `--create-reference` is the deliberate way to establish a
+                # baseline, which leaves the bootstrap nothing to justify it.
+                reference_path = mlops_settings.get_reference_data_path(
+                    self.classifier_type
+                )
+                logger.warning(
+                    f"{self.classifier_type}: no reference dataset at "
+                    f"{reference_path}; drift cannot be assessed "
+                    f"(run --create-reference to establish one)"
+                )
+                return DriftReport(
+                    classifier_type=self.classifier_type,
+                    timestamp=datetime.now(),
+                    drift_detected=False,
+                    drift_score=0.0,
+                    threshold=self.threshold,
+                    details={
+                        "error": "No reference dataset for this classifier",
+                        "reference_path": str(reference_path),
+                        "current_size": len(current_data),
+                    },
+                    indeterminate=True,
+                )
 
         if current_data.empty or reference_data.empty:
             # This branch returns before either checker runs, so the
@@ -355,11 +386,25 @@ class DriftMonitor:
             if "ValueDrift" in metric_name:
                 col_name = config.get("column", "unknown")
                 p_value_threshold = config.get("threshold", 0.05)
-                p_value = value if isinstance(value, (int, float)) else 1.0
+                # An unreadable value is NOT evidence of no drift. This
+                # used to coerce it to `p_value = 1.0`, which made
+                # `col_drift` False AND counted the metric toward
+                # `total_core` -- so the `total_core == 0` guard below could
+                # not fire, and the run reported a measured-looking 0.0 built
+                # from a metric nobody could read. Skip it and say so.
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    logger.warning(
+                        f"{self.classifier_type}: metric for {col_name!r} had no "
+                        f"readable value (got {type(value).__name__}); it is not "
+                        f"counted as 'no drift'"
+                    )
+                    details.setdefault("metrics_unreadable", []).append(col_name)
+                    continue
 
+                p_value = float(value)
                 col_drift = p_value < p_value_threshold
                 details[f"{col_name}_drift"] = col_drift
-                details[f"{col_name}_p_value"] = float(p_value)
+                details[f"{col_name}_p_value"] = p_value
 
                 if col_name.startswith("brand_"):
                     total_brand += 1
@@ -372,8 +417,9 @@ class DriftMonitor:
                         core_drifted += 1
                         details["core_metrics_drifted"].append(col_name)
 
-        # No CORE metric was assessed, so the drift score below -- which is
-        # `core_drift_score`, and only that -- would be a fabricated 0.0.
+        # No CORE metric was assessed, so the drift score below would be a
+        # fabricated 0.0 -- `max()` of two scores neither of which measured
+        # probability or prediction.
         #
         # Keyed on `total_core`, not on `total_core == 0 and total_brand == 0`.
         # The stricter form let a reference sharing only `brand_*` columns
@@ -385,7 +431,10 @@ class DriftMonitor:
         #
         # It also covers the case this guard was added for: a snapshot whose
         # shape or `metric_name` spelling changed, yielding no readable metric
-        # at all (this code targets "v0.7+", so that has happened once).
+        # at all (this code targets "v0.7+", so that has happened once). That
+        # is true only because the loop above `continue`s past an unreadable
+        # value rather than counting it as p=1.0; an earlier revision of this
+        # comment claimed the coverage while the coercion still defeated it.
         if total_core == 0:
             logger.warning(
                 f"{self.classifier_type}: no core drift metric could be read "
@@ -412,6 +461,15 @@ class DriftMonitor:
         # Overall drift: triggered if any core metric drifts OR significant brand drift
         # Core metrics (probability, prediction) are more important
         drift_detected = core_drifted > 0 or brand_drift_score > self.threshold
+
+        # Report the larger of the two, NOT `core_drift_score` alone.
+        #
+        # `drift_detected` reads both scores; the report used to carry only the
+        # core one. Brand-only drift therefore emitted `drift_detected=True`
+        # with `drift_score=0.0`, and the workflow logged "score 0.0 exceeds
+        # 0.15" -- an alert whose own number contradicts it. Confirmed live on
+        # 940 rows. Both components stay in `details` below.
+        drift_score = max(core_drift_score, brand_drift_score)
 
         details["core_drift_score"] = core_drift_score
         details["brand_drift_score"] = brand_drift_score
@@ -467,7 +525,7 @@ class DriftMonitor:
             classifier_type=self.classifier_type,
             timestamp=datetime.now(),
             drift_detected=drift_detected,
-            drift_score=core_drift_score,  # Use core drift as primary score
+            drift_score=drift_score,
             threshold=self.threshold,
             details=details,
             report_path=report_path,

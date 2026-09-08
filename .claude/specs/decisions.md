@@ -425,3 +425,54 @@ resolves in both directions:**
 - **[#97](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/97)** --
   the reference window always contains the window it is compared against (7.6% overlap at 90 days),
   biasing every comparison toward "no drift".
+
+**Amendment (review round 5, human-authorised — final round, architect-scoped).** Four rounds had
+each found a new instance of the epic's own class inside the fix. Rather than open a fifth round on
+the same footing, the architect was asked to rule on the remaining findings and to name the
+*minimum* set that makes the change honest. Five landed, plus one the four earlier rounds had all
+missed:
+
+- **A missing reference dataset no longer answers itself.** `check_drift` used to split the current
+  window in half on `FileNotFoundError` and compare the halves. Two halves of one window agree by
+  construction, so the statistic always returned "no drift" -- `indeterminate=False`, a healthy
+  verdict manufactured from the *absence* of a baseline, with nothing in `details` recording that
+  there was no reference. Live for `esg`, for EP the moment it predicts, and on any fresh checkout.
+  Now indeterminate, with the expected path in `details`. Verified live: `--classifier esg` exits 2
+  where it previously exited 0. `--create-reference` is the deliberate way to establish a baseline,
+  which left the bootstrap nothing to justify it.
+- **`drift_score` now matches the detection that reports it.** `drift_detected` reads
+  `core_drifted > 0 or brand_drift_score > threshold`, but the report carried `core_drift_score`
+  alone -- so brand-only drift emitted `drift_detected=True` with `drift_score=0.0` and the alert
+  read "score 0.0 exceeds 0.15", contradicted by its own number. Now
+  `max(core_drift_score, brand_drift_score)`, both components kept in `details`. The workflow's
+  degraded log states the score rather than asserting it exceeds the threshold, because core drift
+  is a *count* test and the two are only equivalent below `1/|core|`.
+- **An unreadable Evidently metric is no longer counted as "no drift".** `p_value = value if
+  isinstance(...) else 1.0` made an unreadable metric both non-drifting *and* a contributor to
+  `total_core`, so the `total_core == 0` guard could not fire. Now skipped and recorded in
+  `details["metrics_unreadable"]`. This is also what makes the comment above that guard true; the
+  round-2 revision claimed the coverage while the coercion still defeated it.
+- **`alerts_sent` now means delivered.** Both notification helpers return `dict[str, bool]` per
+  channel; every channel could return False while the step recorded `alerts_sent: True`. The
+  archive now carries `alerts_attempted` / `alerts_delivered` / `alerts_undelivered`. Not escalated
+  to a workflow failure: an undelivered alert should not erase the finding it was about.
+- **CI no longer calls exit 2 "drift".** `--verbose || echo "DRIFT_DETECTED=true"` reported every
+  non-zero exit as drift and swallowed the status; replaced with a `case` on the real code.
+
+**The finding four rounds missed, and why they missed it.** Every round audited how a *check*
+collapses into healthy. None audited the **summary job**. In `.github/workflows/monitoring.yml`,
+each `jq` returns an empty string on a truncated, empty or malformed report -- jq fails, stderr is
+discarded, `$( )` captures nothing -- so every branch missed and control fell through the ladder to
+the terminal `else`, printing "✅ Healthy" with a blank score. Round 2 had edited this exact block
+(the `//`-vs-`has()` fix) and left the fallthrough. Reproduced with a truncated file before fixing,
+and the fixed ladder re-run against six fixtures including a genuinely healthy one, so the guard
+is not just "everything is unknown now". The agent side already refused this via `_validate_summary`;
+the CI side never had the guard.
+
+**Deferred from this round, each filed:**
+[#99](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/99) (the
+unguarded `--output` write -- the *class* behind round 3's numpy *instance*),
+[#100](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/100)
+(`_to_builtin` gaps and a test whose name overpromises),
+[#101](https://github.com/frederick-douglas-pearce/sportswear-esg-news-classifier/issues/101)
+(nothing consumes the new `CHECK_INDETERMINATE` output).

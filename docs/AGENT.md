@@ -192,8 +192,14 @@ bridge, to be removed once #74 gives verdicts a first-class escalation path (see
 nothing and reported healthy. It is now gated on `AGENT_EP_DRIFT_ENABLED` (default `false`) and
 reports `skipped` with the reason in `AGENT_EP_DRIFT_SKIP_REASON`.
 
-**Alert Triggers**: drift score exceeds the configured threshold (default: 0.1), **or** a check
+**Alert Triggers**: **any** core metric (`probability`, `prediction`, `novelty_score`) drifts,
+**or** the `brand_*` drift score exceeds the configured threshold (default: 0.1), **or** a check
 produced no verdict.
+
+Core drift is a *count* test, not a threshold test -- one core metric drifting is enough. The
+reported `drift_score` is `max(core_drift_score, brand_drift_score)`, and both components are kept
+in `details`. This used to be described as a single threshold rule while the reported score was
+`core_drift_score` alone, so brand-only drift alerted with "score 0.0 exceeds 0.15" (issue #71).
 
 ### Website Export
 

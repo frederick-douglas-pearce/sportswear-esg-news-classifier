@@ -83,12 +83,29 @@ jobs:
         run: |
           DAYS=${{ github.event.inputs.days || '7' }}
 
+          # The script's contract is 0 = no drift, 1 = drift, 2 = could not
+          # assess (src/mlops/exit_codes.py). `|| echo DRIFT_DETECTED=true`
+          # treated all three non-zero cases as drift, so a check that could
+          # not run was reported as a measured drift finding -- and `||`
+          # swallowed the status, leaving the job green either way.
+          set +e
           uv run python scripts/monitor_drift.py \
             --classifier ${{ matrix.classifier }} \
             --days $DAYS \
             --html-report \
             --output reports/monitoring/${{ matrix.classifier }}/drift_report.json \
-            --verbose || echo "DRIFT_DETECTED=true" >> $GITHUB_OUTPUT
+            --verbose
+          STATUS=$?
+          set -e
+
+          case "$STATUS" in
+            0) echo "No drift detected for ${{ matrix.classifier }}" ;;
+            1) echo "DRIFT_DETECTED=true" >> $GITHUB_OUTPUT ;;
+            2) echo "CHECK_INDETERMINATE=true" >> $GITHUB_OUTPUT
+               echo "::warning::${{ matrix.classifier }} drift could not be assessed (exit 2)" ;;
+            *) echo "CHECK_INDETERMINATE=true" >> $GITHUB_OUTPUT
+               echo "::warning::${{ matrix.classifier }} drift monitor exited $STATUS (unrecognised)" ;;
+          esac
 
       - name: Upload monitoring reports
         uses: actions/upload-artifact@v7
@@ -132,6 +149,20 @@ jobs:
           for classifier in fp ep; do
             REPORT="all-reports/monitoring-reports-${classifier}/drift_report.json"
             if [ -f "$REPORT" ]; then
+              # A report that does not parse is NOT a healthy report.
+              #
+              # Every `jq` below returns an empty string on a truncated,
+              # empty or malformed file (jq fails, stderr is discarded, `$( )`
+              # captures nothing). Empty matched no branch, so control fell
+              # through the whole ladder to the terminal `else` and printed
+              # "Healthy" with a blank score -- absence reported as health, in
+              # the summary job, which is issue #71's own class. The agent side
+              # already refuses this (`_validate_summary` -> UNKNOWN); this
+              # side never had the guard. Reproduced with a truncated file.
+              if ! jq -e . "$REPORT" >/dev/null 2>&1; then
+                echo "| $classifier | ❓ Unreadable report (truncated or malformed) | - |" >> $GITHUB_STEP_SUMMARY
+                continue
+              fi
               # Read `indeterminate` FIRST. A check that measured nothing still
               # writes drift_detected=false and drift_score=0.0, so branching on
               # drift alone prints "Healthy" for a check that never ran -- the
@@ -140,17 +171,22 @@ jobs:
               # returns its RHS when the LHS is `false` as well as `null`, so
               # the fallback form reported every CLEAN run as unknown.
               INDETERMINATE=$(jq -r 'if has("indeterminate") then (.indeterminate | tostring) else "missing" end' "$REPORT")
-              DRIFT=$(jq -r '.drift_detected' "$REPORT")
-              SCORE=$(jq -r '.drift_score' "$REPORT")
+              # `has()` for drift too: a report missing the field must not
+              # reach the healthy branch by being neither "true" nor absent.
+              DRIFT=$(jq -r 'if has("drift_detected") then (.drift_detected | tostring) else "missing" end' "$REPORT")
+              SCORE=$(jq -r 'if has("drift_score") then (.drift_score | tostring) else "-" end' "$REPORT")
               REASON=$(jq -r '.details.error // "no reason recorded"' "$REPORT")
-              if [ "$INDETERMINATE" = "missing" ]; then
-                echo "| $classifier | ❓ Unknown (report predates the indeterminate field) | - |" >> $GITHUB_STEP_SUMMARY
+              if [ "$INDETERMINATE" = "missing" ] || [ "$DRIFT" = "missing" ]; then
+                echo "| $classifier | ❓ Unknown (report missing required fields) | - |" >> $GITHUB_STEP_SUMMARY
               elif [ "$INDETERMINATE" = "true" ]; then
                 echo "| $classifier | ❗ Not assessed - $REASON | - |" >> $GITHUB_STEP_SUMMARY
               elif [ "$DRIFT" = "true" ]; then
                 echo "| $classifier | ⚠️ Drift Detected | $SCORE |" >> $GITHUB_STEP_SUMMARY
-              else
+              elif [ "$DRIFT" = "false" ] && [ "$INDETERMINATE" = "false" ]; then
                 echo "| $classifier | ✅ Healthy | $SCORE |" >> $GITHUB_STEP_SUMMARY
+              else
+                # Only reachable if a field is present but not a boolean.
+                echo "| $classifier | ❓ Unknown (indeterminate=$INDETERMINATE drift=$DRIFT) | - |" >> $GITHUB_STEP_SUMMARY
               fi
             else
               echo "| $classifier | ❓ No Report | - |" >> $GITHUB_STEP_SUMMARY
