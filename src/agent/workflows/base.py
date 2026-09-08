@@ -303,7 +303,7 @@ class Workflow(ABC):
             logger.info(f"Step completed: {step.name}")
 
         except Exception as e:
-            logger.error(f"Step failed: {step.name} - {e}")
+            logger.error(f"Step failed: {step.name} - {_describe_exception(e)}")
             self.state.fail_step(self.name, step.name, _describe_exception(e))
             raise
 

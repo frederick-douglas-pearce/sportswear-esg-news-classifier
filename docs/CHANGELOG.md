@@ -22,10 +22,12 @@ is the mechanism itself. `daily_labeling_20260118_143003.yaml` is representative
 predates that workflow's own terminal raise. The live residual is the 4 `daily_labeling` runs. The
 count measures how often this defect *has* occurred, not how often it still would; the case for
 fixing it in the base runner is forward-looking — five stories are about to bind to this contract,
-and the alternative is a fourth hand-rolled terminal raise. Two further caveats: 505 of the 1,305
-files are the test suite's own synthetic workflows, so the rate across real scheduled runs is
-230/801; and a broader predicate (`*_error` set as well) gives 237, the extra 7 being
-`daily_labeling` runs carrying `llm_analysis_error`.
+and the alternative is a fourth hand-rolled terminal raise. Two further caveats: 504 of those 1,305
+files are the test suite's own synthetic workflows (`simple`, `failing`, `resume_test`,
+`context_test`, `dryrun_test`, `test`), so the rate across real scheduled runs is 230/801; and a
+broader predicate (`*_error` set as well) gives 237, the extra 7 being `daily_labeling` runs
+carrying `llm_analysis_error`. All of these are counts at one moment — running the suite adds
+synthetic runs to the same directory, so the totals drift upward on every test run.
 
 **What changed:**
 

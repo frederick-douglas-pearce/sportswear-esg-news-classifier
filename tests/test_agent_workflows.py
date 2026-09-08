@@ -2033,27 +2033,12 @@ class TestStepFailureContract:
             "and the run must be archived, not left unrecorded"
         )
 
-    def test_a_pause_with_no_failure_is_still_a_pause(
-        self, state_manager, cleanup_registry
-    ):
-        """The other half of the guard: don't fail an ordinary approval pause.
-
-        Pins the `not any_failed` qualifier specifically -- dropping it would
-        turn every approval workflow into a failed one.
-        """
-        workflow = self._build(
-            "sf_clean_pause",
-            [
-                ("first", lambda w, c: {"ok": True}),
-                ("approval", lambda w, c: {}, {"requires_approval": True}),
-            ],
-            state_manager,
-        )
-
-        result = workflow.run()
-
-        assert result.status == WorkflowStatus.PAUSED
-        assert result.error is None
+    # The other half of that guard -- an ordinary approval pause must still
+    # pause -- is `test_approval_pause_is_not_a_failure` above, which asserts
+    # the same thing plus the absence of an archive. Note what neither test
+    # can do: dropping the `not any_failed` qualifier changes behaviour ONLY
+    # when a step has failed, so no clean-pause test can detect it. The
+    # fail-then-pause test above is the guard for that qualifier.
 
     def test_a_missing_step_record_fails_the_run_instead_of_escaping(
         self, state_manager, cleanup_registry
@@ -2092,6 +2077,46 @@ class TestStepFailureContract:
         assert list(self.history_dir.glob("sf_missing_*.yaml")), (
             "the run must still be archived"
         )
+
+    def test_a_missing_step_record_is_named_on_the_non_exception_path(
+        self, state_manager, cleanup_registry
+    ):
+        """The other route to a missing record, which reaches _finalize cleanly.
+
+        In the test above the added step is *after* `current_step`, so
+        `_execute_step` runs it and `start_step` raises before `_finalize` is
+        reached -- that exercises the `except` route, and its assertion on the
+        error text is satisfied by the ValueError alone. Here the added step
+        sits *before* `current_step`, so it is never in `remaining_steps`, never
+        executed, and nothing raises: `_finalize()` is entered with no exception
+        and a step that has no record. This is the case that pins
+        `_failure_summary`'s "has no recorded state" branch -- deleting that
+        branch leaves the test above green but makes this one fail with the
+        bare fallback.
+        """
+        workflow = self._build(
+            "sf_missing_clean",
+            [
+                ("first", lambda w, c: {}),
+                ("approval", lambda w, c: {}, {"requires_approval": True}),
+            ],
+            state_manager,
+        )
+        assert workflow.run().status == WorkflowStatus.PAUSED
+
+        # A step is inserted BEFORE the pause point while the run is paused.
+        workflow.steps = [
+            workflow.steps[0],
+            StepDefinition(name="inserted", description="new", handler=lambda w, c: {}),
+            workflow.steps[1],
+        ]
+
+        result = workflow.resume()
+
+        assert result.status == WorkflowStatus.FAILED
+        assert "Step 'inserted' has no recorded state" in result.error
+        assert "the workflow definition changed" in result.error
+        assert list(self.history_dir.glob("sf_missing_clean_*.yaml"))
 
     def test_raising_on_the_resume_path_fails_and_archives(
         self, state_manager, cleanup_registry
