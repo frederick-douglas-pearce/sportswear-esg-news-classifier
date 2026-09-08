@@ -436,10 +436,21 @@ missed:
   window in half on `FileNotFoundError` and compare the halves. Two halves of one window agree by
   construction, so the statistic always returned "no drift" -- `indeterminate=False`, a healthy
   verdict manufactured from the *absence* of a baseline, with nothing in `details` recording that
-  there was no reference. Live for `esg`, for EP the moment it predicts, and on any fresh checkout.
-  Now indeterminate, with the expected path in `details`. Verified live: `--classifier esg` exits 2
-  where it previously exited 0. `--create-reference` is the deliberate way to establish a baseline,
-  which left the bootstrap nothing to justify it.
+  there was no reference. Now indeterminate, with the expected path in `details`.
+  `--create-reference` is the deliberate way to establish a baseline, which left the bootstrap
+  nothing to justify it.
+
+  **Correction (round-5 re-check).** The commit message for `7ec0850` and an earlier draft of this
+  paragraph claimed this was verified live -- "`--classifier esg` exits 2 where it previously
+  exited 0" -- and that it was reachable "on any fresh checkout". Both are false, and the
+  re-checker established it by running the counterfactual I had not: with the split-half fallback
+  restored, `esg` still exits 2, because it has **zero** predictions and stops at the pre-existing
+  empty-frame guard. `classifier_predictions` holds 3,995 `fp` rows and nothing else, and
+  `data/reference/fp_reference.parquet` is tracked, so a fresh checkout has an FP reference. The
+  branch is **latent**: reachable for any classifier that has predictions and lacks a reference,
+  which is none of them today and becomes EP the moment it resumes. The hole is real and worth
+  closing; the evidence offered for it was not. Running the fixed code proves the outcome, never
+  the attribution -- only the counterfactual does.
 - **`drift_score` now matches the detection that reports it.** `drift_detected` reads
   `core_drifted > 0 or brand_drift_score > threshold`, but the report carried `core_drift_score`
   alone -- so brand-only drift emitted `drift_detected=True` with `drift_score=0.0` and the alert

@@ -338,9 +338,10 @@ class TestSendDriftAlerts:
     def test_alerts_sent_is_false_when_no_channel_accepted_it(self, mock_workflow):
         """`alerts_sent` means delivered, not attempted.
 
-        Both helpers return one bool per channel. Every channel can fail -- no
-        webhook configured, an HTTP error, Resend rejecting the key -- and this
-        step used to record `alerts_sent: True` regardless. #72's class in the
+        Both helpers return one bool per channel, and none need have accepted
+        it -- an HTTP error, Resend rejecting the key, or no channel enabled at
+        all, which returns `{"console": True}`. This step used to record
+        `alerts_sent: True` regardless. #72's class in the
         alerting path itself: the step whose job is raising the alarm reporting
         success for an alarm nobody received.
         """
@@ -390,6 +391,52 @@ class TestSendDriftAlerts:
             assert result["alerts_delivered"] == 1
             assert result["alerts_sent"] is False
             assert result["alerts_undelivered"] == ["ep:check_failed"]
+
+    def test_console_fallback_is_not_delivery(self, mock_workflow):
+        """The default configuration's return shape, which is the one that ships.
+
+        `NotificationManager.send()` returns `{"console": True}` when NO channel
+        is enabled -- `AGENT_EMAIL_ENABLED=false` and no `ALERT_WEBHOOK_URL`,
+        the documented default. `any(result.values())` was True for it, so an
+        alert that reached nobody but the agent log recorded a clean delivery --
+        and the agent log is exactly where #71 says nobody was looking.
+        """
+        with patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_notify:
+            mock_notify.return_value = {"console": True}
+            context = {
+                "dry_run": False,
+                "fp_verdict": HealthVerdict.DEGRADED.value,
+                "fp_drift_score": 0.15,
+                "fp_threshold": 0.1,
+                "ep_verdict": HealthVerdict.SKIPPED.value,
+            }
+
+            result = send_drift_alerts(mock_workflow, context)
+
+            assert result["alerts_sent"] is False
+            assert result["alerts_delivered"] == 0
+            assert result["alerts_undelivered"] == ["fp:drift"]
+
+    def test_a_real_channel_alongside_console_still_counts(self, mock_workflow):
+        """Control: `console` is ignored, not poisonous."""
+        with patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_notify:
+            mock_notify.return_value = {"console": True, "webhook": True}
+            context = {
+                "dry_run": False,
+                "fp_verdict": HealthVerdict.DEGRADED.value,
+                "fp_drift_score": 0.15,
+                "fp_threshold": 0.1,
+                "ep_verdict": HealthVerdict.SKIPPED.value,
+            }
+
+            result = send_drift_alerts(mock_workflow, context)
+
+            assert result["alerts_sent"] is True
+            assert result["alerts_delivered"] == 1
 
     def test_alerts_sent_is_true_when_a_channel_accepted_it(self, mock_workflow):
         """The control for the two above: real delivery still reports True."""

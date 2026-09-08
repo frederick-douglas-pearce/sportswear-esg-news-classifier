@@ -196,10 +196,17 @@ reports `skipped` with the reason in `AGENT_EP_DRIFT_SKIP_REASON`.
 **or** the `brand_*` drift score exceeds the configured threshold (default: 0.1), **or** a check
 produced no verdict.
 
-Core drift is a *count* test, not a threshold test -- one core metric drifting is enough. The
-reported `drift_score` is `max(core_drift_score, brand_drift_score)`, and both components are kept
-in `details`. This used to be described as a single threshold rule while the reported score was
-`core_drift_score` alone, so brand-only drift alerted with "score 0.0 exceeds 0.15" (issue #71).
+That describes the **Evidently** path (`EVIDENTLY_ENABLED=true`). There, core drift is a *count*
+test, not a threshold test -- one core metric drifting is enough -- and the reported `drift_score`
+is `max(core_drift_score, brand_drift_score)`, with both components kept in `details`. It used to
+be described as a single threshold rule while the reported score was `core_drift_score` alone, so
+brand-only drift alerted with "score 0.0 exceeds 0.15" (issue #71).
+
+On the **default** path (`EVIDENTLY_ENABLED=false`, which is what the cron agent runs),
+`_legacy_drift_check` compares only `probability` (KS statistic) and `prediction` (rate difference)
+against a plain threshold. It does **not** assess `novelty_score` or any `brand_*` column, and
+`columns_missing_from_reference` stays empty because those columns *are* in the reference -- so a
+partial check is not currently distinguishable from a whole one there. Tracked as #102.
 
 ### Website Export
 

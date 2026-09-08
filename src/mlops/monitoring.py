@@ -199,10 +199,16 @@ class DriftMonitor:
                 # same distribution by construction, so every statistic below
                 # returns "no drift" -- a HEALTHY verdict with
                 # `indeterminate=False`, manufactured out of the ABSENCE of a
-                # baseline. That is issue #71's class exactly, and it is live:
-                # `data/reference/` holds only `fp_reference.parquet`, so
-                # `--classifier esg`, EP the moment it makes a prediction, and
-                # any fresh checkout all took this path.
+                # baseline. That is issue #71's class exactly.
+                #
+                # Reachable for any classifier that HAS predictions and LACKS a
+                # reference. Today that is none of them -- `fp` is the only one
+                # with rows and its reference is tracked in git -- so this is
+                # latent, not live; an earlier revision of this comment claimed
+                # otherwise. It goes live the moment EP resumes, or a third
+                # classifier lands, ahead of `--create-reference`. A classifier
+                # with no predictions at all stops at the empty-frame guard
+                # below instead, which is why `esg` was already indeterminate.
                 #
                 # `--create-reference` is the deliberate way to establish a
                 # baseline, which leaves the bootstrap nothing to justify it.

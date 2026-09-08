@@ -327,6 +327,18 @@ def evaluate_drift_results(workflow: Workflow, context: dict[str, Any]) -> dict[
     return evaluation
 
 
+def _delivered(result: dict[str, bool]) -> bool:
+    """Did this alert reach a real channel?
+
+    `NotificationManager.send()` returns `{"console": True}` when NO channel is
+    enabled -- which is the documented default (`AGENT_EMAIL_ENABLED=false` and
+    no `ALERT_WEBHOOK_URL`). Counting that as delivery made `alerts_sent: True`
+    for an alert that reached nobody but the agent log, which is precisely
+    where #71 says nobody was looking. "console" is a fallback, not a channel.
+    """
+    return any(value for channel, value in result.items() if channel != "console")
+
+
 def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     """Send notifications for detected drift and for checks that produced none."""
     if context.get("dry_run"):
@@ -354,7 +366,7 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
                     "classifier": classifier,
                     "kind": "drift",
                     "result": result,
-                    "delivered": any(result.values()),
+                    "delivered": _delivered(result),
                 }
             )
 
@@ -373,7 +385,7 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
                     "classifier": classifier,
                     "kind": "check_failed",
                     "result": result,
-                    "delivered": any(result.values()),
+                    "delivered": _delivered(result),
                 }
             )
 
@@ -384,9 +396,10 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
     # `alerts_sent` means DELIVERED, not attempted.
     #
     # Both notification helpers return `dict[str, bool]` -- one entry per
-    # channel -- and every channel can return False (no webhook configured, an
-    # HTTP error, Resend rejecting the key) while this step still reported
-    # `alerts_sent: True`. That is #72's class in the alerting path itself: the
+    # channel -- and no channel need have accepted it: an HTTP error, Resend
+    # rejecting the key, or (the default configuration) no channel enabled at
+    # all, which returns `{"console": True}`. Any of those left this step
+    # reporting `alerts_sent: True`. That is #72's class in the alerting path itself: the
     # step whose whole job is to raise the alarm recording success for an alarm
     # nobody received. Not escalated to a workflow failure -- an undelivered
     # alert about drift should not erase the drift finding -- but it is stated,

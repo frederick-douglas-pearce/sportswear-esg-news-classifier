@@ -81,9 +81,10 @@ Four further instances of the same class were found by review *inside this fix* 
 
 - **A missing reference dataset used to answer itself.** `check_drift` split the current window in
   half on `FileNotFoundError` and compared the halves -- which agree by construction, so it always
-  read as "no drift", with nothing recording that there was no baseline. Live for `esg`, for EP,
-  and on any fresh checkout. Now indeterminate; `--create-reference` is the way to establish a
-  baseline.
+  read as "no drift", with nothing recording that there was no baseline. Now indeterminate;
+  `--create-reference` is the way to establish a baseline. This is **latent**, not live: it needs a
+  classifier that has predictions and lacks a reference, and today `fp` is the only one with
+  predictions and its reference is tracked. It goes live when EP resumes.
 - **`drift_score` did not match the detection that reported it.** `drift_detected` reads core drift
   *or* brand drift, but the report carried the core score alone, so brand-only drift alerted with
   "score 0.0 exceeds 0.15". Now `max(core, brand)`, with both kept in the details.
