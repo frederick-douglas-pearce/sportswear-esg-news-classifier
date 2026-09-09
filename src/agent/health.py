@@ -30,8 +30,8 @@ is a cycle **today** -- not a hazard that arrives with a future adopter.
 `workflows/__init__` eagerly imports every workflow module, and
 `drift_monitoring` already imports this one, so adding `health -> workflows.base`
 makes `import src.agent.health` fail immediately with `ImportError: cannot
-import name 'HealthVerdict' from partially initialized module`. Measured on the
-counterfactual tree, where `drift_monitoring` alone closes the loop. The
+import name 'HealthVerdict' from partially initialized module`, with
+`drift_monitoring` alone closing the loop. The
 escalation gate that turns an unresolved verdict into a FAILED workflow
 therefore lives in `workflows/base.py` as `fail_on_unresolved_verdicts`, not
 here (D010.2).
@@ -91,22 +91,12 @@ class HealthSummary(TypedDict):
 
     **A `TypedDict`, and not a dataclass or `NamedTuple`, so that a caller may
     put it in the workflow context.** The state file is written with `yaml.dump`
-    but read back with `yaml.safe_load` (`StateManager._save` / `._load`), and a
-    dataclass serializes happily on write, then fails to load on the next run
-    and lands in `_load`'s catch-all `except Exception` -- **which resets every
-    workflow's state to `{}`**. A `TypedDict` is a plain `dict` at runtime, so
-    it round-trips, while still giving #77/#78/#79 a typed shape to bind to.
+    but read back with `yaml.safe_load` (`StateManager._save` / `._load`), so a
+    non-primitive here fails to load on the next run. A `TypedDict` is a plain
+    `dict` at runtime, and gives #77/#78/#79 a typed shape to bind to.
 
-    No production caller stores the summary whole today: `evaluate_drift_results`
-    unpacks it into its own context keys. The constraint is written down because
-    the shape invites it, and a caller that does store it must not be the one who
-    discovers this.
-
-    **The fields hold the caller's own subject names, so those must be strings.**
-    No verdict appears in this structure at all -- only subject names and a
-    bool. `summarize` does not coerce the subjects, because that would change
-    what the caller gets back; `fail_on_unresolved_verdicts` coerces at the
-    boundary where a subject actually reaches the archive.
+    The fields hold the caller's own subject names, so those must be strings.
+    No verdict appears in this structure -- only subject names and a bool.
     """
 
     all_checked_healthy: bool
@@ -130,11 +120,10 @@ class HealthSummary(TypedDict):
 
 
 def _describe(value: object, limit: int = 120) -> str:
-    """A repr that cannot itself raise, and cannot flood the log.
+    """A bounded repr that does not itself raise.
 
-    `repr()` is not total: it raises on an int over 4300 digits (CPython's
-    integer-to-string limit) and on any object whose `__repr__` raises. A log
-    line built to explain a bad value must not become a second bad value.
+    `repr()` is not total -- a very large int and a raising `__repr__` both
+    escape it -- and a log line explaining a bad value must not become one.
     """
     try:
         shown = repr(value)
@@ -153,19 +142,10 @@ def as_verdict(value: object, *, label: str | None = None) -> HealthVerdict:
     context stores `.value` strings by mandate (see `HealthVerdict`): reading a
     verdict back out of a run archive and handing it here has to work.
 
-    **Does not raise, and the broad `except` is the point rather than a
-    shortcut.** `UNKNOWN` is the designed route for "we cannot tell": it fails
-    the run at the terminal gate. An exception would leave a workflow by a
-    different path and could be swallowed by a reporting step's own error
-    handling, bypassing that gate -- so a value this cannot interpret must come
-    back as a verdict, whatever went wrong while trying to read it. That covers
-    the enum lookup (an unhashable value, an object whose `__hash__` raises) and
-    the log line itself (`repr()` raises on an int over 4300 digits, and an
-    object's `__repr__` can raise anything at all).
-
-    This is not `StateManager._load`'s catch-all, which discards every
-    workflow's state on any error. Here the fallback is the module's own
-    fail-safe value, and it is logged.
+    `UNKNOWN` is the route for "we cannot tell": it fails the run at the
+    terminal gate. The `except` is deliberately broad so that a value this
+    cannot interpret comes back as a verdict rather than as an exception; the
+    fallback is logged, not silent.
     """
     try:
         return HealthVerdict(value)
@@ -203,14 +183,10 @@ def summarize(verdicts: Mapping[str, object]) -> HealthSummary:
     Subject *identity* stays with the caller. This returns the generic
     partition; a workflow maps it onto its own context keys.
 
-    **Values are normalized through `as_verdict`, so stored `.value` strings are
-    accepted and anything unrecognised becomes `UNKNOWN`.** Comparing the raw
-    input by identity would have been a trap on this module's own mandated wire
-    form: the context stores `.value` strings, so the natural call -- read the
-    verdicts out of a context, hand them here -- matched no branch, every
-    subject counted as `checked`, and a run with a skipped check reported
-    healthy. That is this epic's defect reachable through the API written to
-    prevent it, so the coercion is the fix rather than a docstring warning.
+    **Values are normalized through `as_verdict`**, so stored `.value` strings
+    are accepted and anything unrecognised becomes `UNKNOWN`. Identity
+    comparison against the raw input would misclassify the stored form, which
+    is what the context actually holds.
     """
     normalized = {s: as_verdict(v, label=s) for s, v in verdicts.items()}
 
@@ -236,10 +212,6 @@ def unresolved(verdicts: Mapping[str, object]) -> list[str]:
     returned a dict without its verdict key is caught here rather than sailing
     past the one gate placed to catch it -- and so is a caller who passes stored
     `.value` strings, which is the shape a run archive holds.
-
-    This one carries more weight than `summarize`: it is the predicate that
-    fails the run, so a value it silently failed to recognise would be a green
-    run rather than a wrong report.
     """
     return [
         s for s, v in verdicts.items() if as_verdict(v, label=s) is HealthVerdict.UNKNOWN

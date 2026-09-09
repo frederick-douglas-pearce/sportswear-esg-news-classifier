@@ -80,22 +80,13 @@ class StepDefinition:
 class UnresolvedVerdictReport(TypedDict):
     """What the terminal verdict gate writes into the workflow context.
 
-    **Both paths return this whole shape**, so the archive carries the same keys
-    whether the run passed or failed. The success path used to return only
-    `verdicts_confirmed`, which meant the type annotated onto it described a
-    payload it did not produce -- a type introduced to stop prose drifting,
-    drifting itself.
+    Both paths write this whole shape, so the archive carries the same keys
+    whether a run passed or failed.
 
-    A `TypedDict` for the same reason `HealthSummary` is one: this reaches the
-    run archive, which is written with `yaml.dump` and read back with
-    `yaml.safe_load`, so every field has to be a plain primitive or the next
-    load resets all workflow state. Stating the shape as a type rather than in
-    prose is deliberate -- an earlier docstring here described these three
-    fields as "a `str` or a `bool`", which two of them are not.
-
-    The runtime guarantee is separate and lives at the boundary: the factory
-    coerces subjects and reason values with `str()` on the way in. This type
-    says what the shape is; the coercion is what makes it true.
+    A `TypedDict` because this reaches the run archive, which is written with
+    `yaml.dump` and read with `yaml.safe_load`: every field must be a plain
+    primitive. Subjects are validated as `str` at construction and reason values
+    are coerced at read time.
     """
 
     verdicts_confirmed: bool
@@ -124,69 +115,38 @@ def fail_on_unresolved_verdicts(
     verdict_key: str = "{subject}_verdict",
     reason_key: str = "{subject}_error",
     describe: Callable[[list[str], dict[str, str]], str] | None = None,
-) -> Callable[["Workflow", dict[str, Any]], UnresolvedVerdictReport | StepFailure]:
+) -> Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure]:
     """Build the terminal step that fails a run whose checks produced no verdict.
-
-    This is the first-class escalation path issue #74 owes: before it, the only
-    implementation was hand-rolled inside ``drift_monitoring`` and every other
-    workflow adopting the vocabulary would have written its own (D010.2).
 
     **Register the step it returns after every step that writes a verdict** --
     in practice, last. The gate reads verdicts out of the context, so a subject
     whose check has not run yet reads as ``unknown`` and fails the run
-    spuriously. That is the whole constraint.
+    spuriously. That is the whole ordering constraint: returning ``StepFailure``
+    does not halt the loop, so steps after the gate still run and are still
+    recorded.
 
-    It is *not* an archive-ordering constraint, and an earlier draft of this
-    docstring said it was: it claimed a gate placed before the reporting step
-    would discard that report, which is the behaviour of the **raising** gate
-    this factory replaced. Returning ``StepFailure`` does not halt the loop
-    (see ``StepFailure``), so later steps still run and are still recorded --
-    measured, with the gate registered second of four: the alert step still
-    sent and the report step still recorded ``COMPLETED`` with its result.
-
-    **It returns ``StepFailure`` rather than raising** (D010.3). Both reach
-    FAILED through ``_finalize`` -- the raising path via ``run()``'s ``except``,
-    this one via ``any_failed`` -- and ``_failure_summary`` wraps the text as
-    ``"Step '<name>' failed: <error>"`` either way, so the archived
-    ``WorkflowState.error`` keeps its shape. What ``StepFailure`` adds is the
-    payload on ``StepState.result``, which is the per-step attribution #75/#76
-    want, and the absence of a traceback that describes nothing.
-
-    The gate passes only on an **explicit** healthy/degraded/skipped: because
-    ``verdict_of`` maps an absent, ``None`` or unrecognised value to ``UNKNOWN``,
-    a handler that returned a dict without its verdict key is caught here rather
-    than slipping past the one gate placed to catch it.
+    The gate passes only on an explicit healthy/degraded/skipped, because
+    ``verdict_of`` maps an absent, ``None`` or unrecognised value to ``UNKNOWN``.
 
     Args:
         subjects: What was checked -- classifiers, feeds, stages. Used to build
             each context key and reported in the failure message.
         verdict_key: Template for a subject's verdict key in the workflow
             context. Formatted with ``subject=``.
-        reason_key: Template for a subject's failure-reason key. The reason is
-            threaded into the message and the payload rather than dropped: a
-            gate that names *which* checks are unresolved but not *why* thins
-            the detail #75/#76 read out of the archive (D010.5).
+        reason_key: Template for a subject's failure-reason key.
         describe: Builds the failure text from the unresolved subjects and their
             reasons. Workflows with their own wording pass one; the default
             covers the rest.
 
     Returns:
-        A step handler whose failure payload is an ``UnresolvedVerdictReport``
-        -- see that type for the shape. It round-trips ``yaml.safe_load``
-        because subjects are *validated* as ``str`` at construction and reason
-        values are coerced with ``str()`` at read time. The asymmetry is
-        deliberate: a subject is supplied by the workflow author, so a wrong one
-        is a bug worth refusing outright; a reason is whatever happened to be in
-        the context at runtime, which the gate cannot refuse and so must make
-        safe. An uncoerced reason -- an exception object, a ``Path`` -- reaches
-        ``yaml.dump`` intact and fails only on the *next* run's load.
+        A step handler. Its payload on both paths is an
+        ``UnresolvedVerdictReport``.
 
     Raises:
         TypeError: if ``subjects`` is a ``str``/``bytes``/``bytearray`` itself,
             or if any element is not a ``str``.
         ValueError: if ``subjects`` is empty. A gate over no subjects would
-            report ``verdicts_confirmed`` having confirmed nothing -- the same
-            vacuous truth ``summarize`` exists to refuse.
+            report success having confirmed nothing.
     """
     if isinstance(subjects, (str, bytes, bytearray)):
         raise TypeError(
@@ -200,11 +160,8 @@ def fail_on_unresolved_verdicts(
             "fail_on_unresolved_verdicts() needs at least one subject: a gate over "
             "no subjects always passes, which is the vacuous truth this contract refuses"
         )
-    # Validate rather than coerce. str() on a non-str subject would manufacture a
-    # plausible-looking name -- a memoryview or an array of bytes yields ints, and
-    # str() turns those into subjects called '102', '101'. Requiring str is both
-    # stronger and shorter than enumerating the sequence types that misbehave,
-    # which the previous guard tried to do and got wrong.
+    # Validate rather than coerce: str() on a non-str subject manufactures a
+    # plausible-looking name out of whatever the sequence yields.
     if not all(isinstance(subject, str) for subject in subjects):
         raise TypeError(
             f"every subject must be a str; got "
@@ -213,7 +170,7 @@ def fail_on_unresolved_verdicts(
 
     def handler(
         workflow: "Workflow", context: dict[str, Any]
-    ) -> UnresolvedVerdictReport | StepFailure:
+    ) -> dict[str, Any] | StepFailure:
         verdicts = {
             subject: verdict_of(context, verdict_key.format(subject=subject))
             for subject in subjects
@@ -221,14 +178,15 @@ def fail_on_unresolved_verdicts(
         missing = unresolved(verdicts)
 
         if not missing:
-            return UnresolvedVerdictReport(
-                verdicts_confirmed=True, unresolved_verdicts=[], unresolved_reasons={}
+            return dict(
+                UnresolvedVerdictReport(
+                    verdicts_confirmed=True, unresolved_verdicts=[], unresolved_reasons={}
+                )
             )
 
         reasons = {
-            # str() because the value is whatever the workflow stored: an
-            # exception object or a Path survives yaml.dump and then fails the
-            # next yaml.safe_load, taking all workflow state with it.
+            # str() because the value is whatever the workflow stored, and a
+            # non-primitive here fails the next yaml.safe_load.
             subject: str(context.get(reason_key.format(subject=subject)) or "no reason recorded")
             for subject in missing
         }
@@ -240,9 +198,9 @@ def fail_on_unresolved_verdicts(
             unresolved_verdicts=missing,
             unresolved_reasons=reasons,
         )
-        # dict() because StepFailure.context is a plain dict[str, Any]; a
-        # TypedDict is one at runtime but is not assignable to it. Building the
-        # report first is what keeps both paths pinned to the same declared shape.
+        # dict() because a TypedDict is one at runtime but is not assignable to
+        # dict[str, Any]. Both paths build the report first, so both are pinned
+        # to the declared shape.
         return StepFailure(error=message, context=dict(report))
 
     return handler

@@ -37,6 +37,7 @@ from src.agent.state import StateManager, WorkflowState, WorkflowStatus
 from src.agent.workflows.base import (
     StepDefinition,
     StepFailure,
+    UnresolvedVerdictReport,
     Workflow,
     WorkflowRegistry,
     fail_on_unresolved_verdicts,
@@ -262,17 +263,10 @@ class TestSummarySurvivesTheRunArchive:
         assert type(summarize({"a": HealthVerdict.HEALTHY})) is dict
 
     def test_state_manager_round_trips_a_summary_in_context(self, state_manager):
-        """Drive the real save→load path, because that is what production does.
+        """Drive the real save→load path: `yaml.dump` out, `yaml.safe_load` back.
 
-        Not a `yaml.safe_dump` assertion — but not for the reason an earlier
-        version of this docstring gave. It claimed `safe_dump` would *pass* on
-        the object that breaks; measured, `safe_dump` raises `RepresenterError`
-        on a dataclass, a `NamedTuple` and an enum member, so it would have
-        caught all three. The real argument is fidelity: `safe_dump` is not a
-        function this agent ever calls, so asserting on it tests a path nothing
-        takes, and it does miss the one case it cannot see — a bare `tuple`,
-        which `safe_dump` accepts and `yaml.dump` writes as `!!python/tuple`.
-        (See D010.4.)
+        Asserting on `yaml.safe_dump` instead would test a function this agent
+        never calls. (See D010.4.)
         """
         summary = summarize({"fp": HealthVerdict.HEALTHY, "ep": HealthVerdict.SKIPPED})
         state_manager.create_workflow(name="round_trip", steps=["one"], context={})
@@ -503,6 +497,18 @@ class TestUnresolvedVerdictFailsTheRun:
 class TestGateReasons:
     """The gate reports why a check is unresolved, not only which (D010.5)."""
 
+    def test_both_paths_write_the_whole_declared_shape(self):
+        """Pins the claim that both paths return the full report.
+
+        Exact equality, not a single-key probe: a probe leaves a revert to the
+        old one-key success return green, which is how that claim went unpinned.
+        """
+        handler = fail_on_unresolved_verdicts(("fp",))
+        expected_keys = set(UnresolvedVerdictReport.__annotations__)
+
+        assert set(handler(None, {"fp_verdict": "healthy"})) == expected_keys
+        assert set(handler(None, {}).context) == expected_keys
+
     def test_a_recorded_reason_reaches_the_message_and_the_payload(self):
         handler = fail_on_unresolved_verdicts(("fp",))
 
@@ -541,21 +547,17 @@ class TestGateReasons:
         """
         handler = fail_on_unresolved_verdicts(("feed",), verdict_key="{subject}_health")
 
-        assert handler(None, {"feed_health": HealthVerdict.HEALTHY.value})[
-            "verdicts_confirmed"
-        ] is True
+        assert handler(None, {"feed_health": HealthVerdict.HEALTHY.value}) == {
+            "verdicts_confirmed": True,
+            "unresolved_verdicts": [],
+            "unresolved_reasons": {},
+        }
 
-    def test_a_non_string_reason_is_coerced_before_it_reaches_the_archive(self):
+    def test_a_non_string_reason_is_coerced_into_the_gate_payload(self):
         """A reason is whatever the workflow stored, so the gate must coerce it.
 
-        An exception object or a `Path` under `<subject>_error` serializes
-        through `yaml.dump` and only fails on the NEXT run's `safe_load`, taking
-        all workflow state with it.
-
-        No claim here about whether any current caller can reach that state.
-        Two attempts at one were wrong in opposite directions, and the coercion
-        is worth having either way — what it guards is the factory's contract
-        with callers that do not exist yet.
+        A non-primitive under `<subject>_error` would otherwise reach the
+        gate's payload, which is archived.
         """
         result = fail_on_unresolved_verdicts(("fp",))(
             None, {"fp_error": RuntimeError("KeyError: 'novelty_score'")}
@@ -596,22 +598,15 @@ class TestGateConstructionRefusesVacuousConfigurations:
     def test_a_non_string_subject_is_refused(self, sequence):
         """Validate subjects rather than `str()` them.
 
-        Coercion would manufacture plausible-looking names: a memoryview or an
-        array of bytes yields ints, and `str()` turns those into subjects called
-        `'102'`, `'112'`. Requiring `str` is both stronger and shorter than
-        enumerating the sequence types that misbehave — which an earlier guard
-        tried to do and got wrong, missing exactly these two.
+        Coercion would manufacture plausible-looking names: these sequences
+        yield ints, which `str()` turns into subjects called `'102'`, `'112'`.
         """
         with pytest.raises(TypeError):
             fail_on_unresolved_verdicts(sequence)
 
     @pytest.mark.parametrize("blob", [b"feed", bytearray(b"feed")])
     def test_a_bytes_like_subject_is_refused(self, blob):
-        """Bytes slip past a `str`-only guard and iterate as ints.
-
-        `str()` then turns those into subjects named `'102'`, `'101'`, ... —
-        the same defect the `str` guard exists for, wearing a different type.
-        """
+        """Bytes slip past a `str`-only guard and iterate as ints."""
         with pytest.raises(TypeError):
             fail_on_unresolved_verdicts(blob)
 

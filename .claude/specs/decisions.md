@@ -669,37 +669,30 @@ on the three with a design component. Three rulings, all applied:
    corrected in two of them.
 
 **Round 4 (review), amending 8 and 9 above.** Round 3 confirmed the normalizer works and found
-three more claims stated more strongly than the code supported. The response was to make each claim
-true rather than to reword it a fourth time -- this epic has now had four consecutive correcting
-commits each ship a new false claim, so restating was the option with the worst track record.
+three claims stated more strongly than the code supported. Each was made true in code rather than
+reworded.
 
-- **"Never raises" is now true rather than qualified.** It was falsifiable at `as_verdict`'s own log
-  line: `repr()` is not total (it raises on an int over 4300 digits), and an object's `__repr__` or
-  `__hash__` can raise anything. The catch is now broad and the repr is bounded and guarded, so a
-  value that cannot be read -- for any reason, including while trying to describe it -- comes back
-  as `UNKNOWN`. The broad `except` is the contract, not a shortcut: the whole purpose is that
-  nothing escapes as an exception, because an exception leaves by a path that bypasses the gate.
-  Measured against a 4301-digit int and objects whose `__repr__`/`__hash__` raise.
-- **Both gate paths now return the whole `UnresolvedVerdictReport`.** The success path returned one
-  of its three keys, so the type introduced in 9 to stop prose drifting did not describe the path it
-  annotated. Measured: mypy reported `Incompatible return value type (got "dict[str, bool]",
-  expected "UnresolvedVerdictReport | StepFailure")` on that line before the change, and reports
-  nothing in `base.py` after it. The first attempt at the fix traded that error for a new one --
-  a `TypedDict` is not assignable to `StepFailure.context`'s `dict[str, Any]` -- which is why the
-  failure path builds the report and passes `dict(report)`. The archive now carries the same keys
-  whether a run passed or failed, which is also the better shape for #75/#76. (mypy is not
-  configured for this project and reports many pre-existing errors elsewhere; the statement here is
-  scoped to `base.py`.)
-- **`result_key` is removed.** With a non-default value neither path could satisfy the type, and
-  nothing passed one. A parameter that makes the payload untypeable, for a flexibility no caller
-  wanted, is not worth the hole.
-- **Subjects are validated as `str`, not coerced with `str()`** -- this narrows 9's "coercion at the
-  boundary" to reasons only, and the asymmetry is the point: a subject comes from the workflow
-  author, so a wrong one is a bug worth refusing at import; a reason is whatever was in the context
-  at runtime, which the gate cannot refuse and so must make safe. Validation also closed the hole 9
-  claimed to have closed and had not: `memoryview` and `array` still slipped a guard that
-  enumerated bytes-like types, and both yield ints that `str()` would have turned into subjects
-  named `'102'`, `'112'`. Requiring `str` is shorter than the enumeration and does not need to be
-  complete to be correct.
+- **`as_verdict` does not raise.** It was falsifiable at its own log line: `repr()` is not total.
+  The `except` is now broad and the repr bounded and guarded, so a value that cannot be read comes
+  back as `UNKNOWN`.
+- **Both gate paths return the whole `UnresolvedVerdictReport`.** The success path returned one of
+  three keys, so the type did not describe the path it annotated. The handler's declared return is
+  `dict[str, Any] | StepFailure`, matching `StepDefinition.handler`; the `TypedDict` constructs and
+  documents the shape. Annotating the callable as the `TypedDict` instead produced a new mypy error
+  at the factory's only call site, because a `TypedDict` is not assignable to `dict[str, Any]`. With
+  the current form the branch is mypy-neutral: 463 errors on `main`, 463 on the branch.
+- **`result_key` is removed.** With a non-default value neither path could satisfy the type, and no
+  caller passed one.
+- **Subjects are validated as `str` rather than coerced**, narrowing 9's "coercion at the boundary"
+  to reasons only. A subject comes from the workflow author, so a wrong one is refused at import; a
+  reason is whatever was in the context at runtime, which the gate cannot refuse and so coerces.
+
+**A note on this record's own reliability, which is the finding of the review.** Five consecutive
+commits on this change each shipped a new false claim while correcting an earlier one, every
+instance in *explanatory* prose rather than in code or tests. The code was verified sound at every
+round, most heavily by a 5,887-context differential against `main` that found zero behavioural
+differences. The last round of fixes therefore deleted rationale prose rather than rewriting it, and
+kept only claims a test pins. Read the docstrings in `health.py` and `base.py` as descriptions of
+what the code does; read this record as a dated snapshot of why, not as a maintained document.
 
 **Status:** implemented and shipped in the same commit as this record (#74 / PR #108). The decisions above were taken at the plan gate, before implementation; the corrections marked in 2 and 4 were made during code review, when the claims were measured rather than reasoned about.
