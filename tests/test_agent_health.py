@@ -18,6 +18,7 @@ Three of these classes exist because of a specific way this can go wrong:
 
 import array
 import ast
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -159,6 +160,83 @@ class TestSummarizeIsNotVacuous:
 
         assert summary["checked"] == []
         assert summary["skipped"] == ["ep"]
+
+    def test_checked_counts_every_non_skipped_verdict_not_only_healthy_ones(self):
+        """`checked` means "not skipped", and only this pins that.
+
+        Class B found that redefining it to *healthy only* survived: every other
+        test that asserts on `checked` happens to put a HEALTHY subject in it, so
+        both definitions produce the same list. `all_checked_healthy` is
+        accidentally immune, because a degraded or unknown subject already
+        falsifies the other conjuncts.
+
+        Not cosmetic. `checked` is a declared field of the TypedDict #77/#78/#79
+        bind to, and `evaluate_drift_results` branches on `elif checked:` — under
+        the mutation a run where every classifier drifted reports "No classifiers
+        were checked - nothing is being monitored".
+
+        Also the only assertion pinning the documented ordering: every other
+        `checked` assertion holds fewer than two elements.
+        """
+        summary = summarize(
+            {
+                "fp": HealthVerdict.DEGRADED,
+                "ep": HealthVerdict.UNKNOWN,
+                "web": HealthVerdict.SKIPPED,
+            }
+        )
+
+        assert summary["checked"] == ["fp", "ep"]
+        assert summary["skipped"] == ["web"]
+
+
+class TestAnUnreadableVerdictIsVisibleBeforeTheGate:
+    """The coercion must be *logged*, not silent.
+
+    Class B found these: deleting the whole `logger.error` from `as_verdict`, and
+    removing `_describe`'s truncation, both left every test green. Every test
+    that drives this path asserted the returned verdict, and UNKNOWN is returned
+    by the logging and the silent implementation alike — outcome, not mechanism.
+
+    It matters because #71 was an invisible failure that ran hundreds of times.
+    A verdict coerced to UNKNOWN fails the run at the terminal gate, but the log
+    line is the only thing that says *which* subject and *why* before that, and
+    the `label` threaded through `verdict_of`/`summarize`/`unresolved` exists
+    solely to build it.
+    """
+
+    def test_an_unreadable_verdict_is_logged_with_its_label(self, caplog):
+        with caplog.at_level(logging.ERROR, logger="src.agent.health"):
+            assert as_verdict("probably_fine", label="fp_verdict") is HealthVerdict.UNKNOWN
+
+        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        assert errors, "coercing to UNKNOWN logged nothing at all"
+        assert any("fp_verdict" in m for m in errors), (
+            f"the label never reached the log line: {errors}"
+        )
+        assert any("probably_fine" in m for m in errors)
+
+    def test_summarize_logs_the_subject_whose_verdict_it_could_not_read(self, caplog):
+        """`label` is threaded through the aggregates too, so pin it there."""
+        with caplog.at_level(logging.ERROR, logger="src.agent.health"):
+            summarize({"ep": "nonsense"})
+
+        assert any(
+            "ep" in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR
+        )
+
+    def test_a_huge_value_is_truncated_in_the_log(self, caplog):
+        """`_describe` promises a *bounded* repr; nothing observed the bound.
+
+        Asserted through the log rather than on `_describe` directly, because the
+        log line is where an unbounded repr would actually do harm.
+        """
+        with caplog.at_level(logging.ERROR, logger="src.agent.health"):
+            as_verdict("x" * 10_000, label="fp_verdict")
+
+        message = next(r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
+        assert "..." in message
+        assert len(message) < 500, f"log line was {len(message)} chars — repr not bounded"
 
 
 class TestVerdictsAreNormalizedNotIdentityCompared:
