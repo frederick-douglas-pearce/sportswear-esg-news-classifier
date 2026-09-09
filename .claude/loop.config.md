@@ -146,3 +146,43 @@ Two project-specific cautions:
 
 **Do not reach for a new `n/a` reason.** The engine's list is closed at two and this file does not
 reopen it.
+
+---
+
+## 6. Claim authoring — the class this project does not assert
+
+The engine carries an authoring rule at step 6: verify what you assert, and write neither an
+unresolvable named claim nor a comment that misdescribes the code it sits on. Step 8's finders check
+the diff against it. **This section adds a project-specific prohibition on top of it** — a class of
+claim to *not write*, rather than a claim to check harder.
+
+**The rule, written default-deny.** In any surface this loop authors — commit messages, docstrings,
+test names and docstrings, `CHANGELOG`, `.claude/specs/decisions.md`, PR bodies, issue comments —
+**do not assert a quantity or a causal history about an artifact the test suite or a scheduled run
+writes into.** That covers `~/.esg-agent/history/`, `data/*.jsonl`, `logs/`, `mlruns/`, archived run
+YAMLs, test counts, coverage figures and type-checker error counts. Say what changed. Do not say how
+many, how often, since when, or what it was that caused it.
+
+**If you cannot state it without a quantity or a cause, state less.** Deletion is always available
+and always in the safe direction; an unstated quantity misleads nobody. This is the disposition to
+reach for first, not the fallback after two rewrites.
+
+**The two-correction cap.** Where a class of claim has been corrected **twice** in an iteration, the
+third disposition is **deletion of the class**, not a third correction. Not a reword with a hedge
+added — remove the sentences and let the code and its named tests carry the point. A claim that is
+worth keeping is worth pinning with a test; one that cannot be pinned is one to cut.
+
+**What this rule does not do, so it is not over-credited.** It attacks the *rate* at which review
+rounds are re-armed by the change's claims about itself. It does **not** shorten a round that a real
+defect is also holding open, and on this project's own corpus most rounds past the first have had
+one. Read a shorter gate as evidence only after the ledger shows a round whose entire finding set
+was claims.
+
+> Evidence and the round-by-round corpus live on the tracker
+> ([claude-code-loop#1, F119](https://github.com/frederick-douglas-pearce/claude-code-loop/issues/1)),
+> not here. This file carries the rule the loop reads at runtime; the argument for it is not the rule.
+
+**Tooling, adopted 2026-09-07 after a silent no-op shipped as a completed fix:** do not hand-roll a
+mechanism the harness already provides with a failure mode you cannot see. A batched
+`str.replace(old, new, 1)` that does not match writes the file unchanged and reports success; `Edit`
+fails loudly on the same input. Use `Edit`.
