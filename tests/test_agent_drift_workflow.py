@@ -9,9 +9,11 @@ word "healthy" also passes for a workflow that crashed before printing at all.
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 from src.agent.config import AgentSettings
 from src.agent.health import HealthVerdict
+from src.agent.workflows.base import StepFailure
 from src.agent.state import StateManager, WorkflowStatus
 from src.agent.workflows.drift_monitoring import (
     DriftMonitoringWorkflow,
@@ -563,30 +565,95 @@ class TestFailOnUnknownVerdict:
 
         assert fail_on_unknown_verdict(mock_workflow, context)["verdicts_confirmed"]
 
-    def test_raises_on_unknown(self, mock_workflow):
+    def test_fails_on_unknown(self, mock_workflow):
+        """#74 moved the gate onto `StepFailure`; what it catches is unchanged.
+
+        The assertion tracks the contract, not the mechanism: a returned
+        `StepFailure` marks the step — and so the run — FAILED via `_finalize`,
+        exactly as the raise this replaced did (D010.3).
+        """
         context = {
             "fp_verdict": HealthVerdict.UNKNOWN.value,
             "fp_error": "KeyError: 'novelty_score'",
             "ep_verdict": HealthVerdict.SKIPPED.value,
         }
 
-        with pytest.raises(RuntimeError, match="no verdict"):
-            fail_on_unknown_verdict(mock_workflow, context)
+        result = fail_on_unknown_verdict(mock_workflow, context)
 
-    def test_raises_on_absent_verdict(self, mock_workflow):
+        assert isinstance(result, StepFailure)
+        assert "no verdict" in result.error
+        assert result.context["verdicts_confirmed"] is False
+        assert result.context["unresolved_verdicts"] == ["fp"]
+
+    def test_failure_names_the_reason_not_just_the_classifier(self, mock_workflow):
+        """The reason is threaded through, not dropped (D010.5).
+
+        A gate that names *which* checks are unresolved but not *why* thins the
+        detail the run archive carries for #75/#76.
+        """
+        context = {
+            "fp_verdict": HealthVerdict.UNKNOWN.value,
+            "fp_error": "KeyError: 'novelty_score'",
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+        }
+
+        result = fail_on_unknown_verdict(mock_workflow, context)
+
+        assert "KeyError: 'novelty_score'" in result.error
+        assert result.context["unresolved_reasons"]["fp"] == "KeyError: 'novelty_score'"
+
+    def test_failure_wording_is_unchanged_by_the_refactor(self, mock_workflow):
+        """The archived text is a contract with #75/#76, so pin it verbatim.
+
+        Moving the gate into the shared factory must not move what a failed run
+        records. Kept as an exact string rather than a `match=` so a reworded
+        message fails here instead of silently changing the archive.
+        """
+        context = {
+            "fp_verdict": HealthVerdict.UNKNOWN.value,
+            "fp_error": "boom",
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+        }
+
+        result = fail_on_unknown_verdict(mock_workflow, context)
+
+        assert result.error == (
+            "Drift check produced no verdict for FP - these classifiers are "
+            "unmonitored and this run must not be recorded as successful "
+            "(fp: boom)"
+        )
+
+    def test_fails_on_absent_verdict(self, mock_workflow):
         """A handler that returned no verdict key must not slip past the gate.
 
         Testing `== "unknown"` alone would pass this context, since the value
         is None — re-creating the bug at the one step placed to catch it.
         """
-        with pytest.raises(RuntimeError, match="no verdict"):
-            fail_on_unknown_verdict(mock_workflow, {})
+        result = fail_on_unknown_verdict(mock_workflow, {})
 
-    def test_raises_on_unrecognised_verdict(self, mock_workflow):
+        assert isinstance(result, StepFailure)
+        assert "no verdict" in result.error
+        assert result.context["unresolved_verdicts"] == ["fp", "ep"]
+
+    def test_fails_on_unrecognised_verdict(self, mock_workflow):
         context = {"fp_verdict": "probably_fine", "ep_verdict": HealthVerdict.SKIPPED.value}
 
-        with pytest.raises(RuntimeError, match="no verdict"):
-            fail_on_unknown_verdict(mock_workflow, context)
+        result = fail_on_unknown_verdict(mock_workflow, context)
+
+        assert isinstance(result, StepFailure)
+        assert "no verdict" in result.error
+
+    def test_failure_payload_survives_the_run_archive(self, mock_workflow):
+        """Everything the gate writes must round-trip `yaml.dump` → `safe_load`.
+
+        `StepFailure.context` is merged into the workflow context and recorded
+        as `StepState.result`, both of which reach the archive. A non-primitive
+        there loads back into `StateManager._load`'s bare `except`, which resets
+        all workflow state (see `HealthSummary`).
+        """
+        result = fail_on_unknown_verdict(mock_workflow, {})
+
+        assert yaml.safe_load(yaml.dump(result.context)) == result.context
 
 
 class TestDriftMonitoringWorkflow:

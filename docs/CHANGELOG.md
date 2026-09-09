@@ -4,6 +4,56 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-09: The health verdict becomes a shared contract with a first-class escalation path
+
+#71 introduced `HealthVerdict` (`healthy | degraded | unknown | skipped`) and wired it into
+`drift_monitoring`. It was shared in name only: `src/agent/health.py` had exactly two importers —
+the drift workflow and its test — and the step that turns an unresolved verdict into a failed run
+was hand-rolled inside that workflow, which said so in its own docstring ("This is a bridge. Once
+#74 gives verdicts a first-class escalation path in the base runner, it should be deleted"). Each
+of the four remaining adopters (#77, #78, #79, and the shell-side #93) would otherwise have written
+its own third state.
+
+**What changed:**
+
+- **`health.py` gains the subject-agnostic operations** — `verdict_of` (absent/`None`/unrecognised
+  coerce to `unknown`), `summarize` (aggregate), `unresolved` (the gate's predicate). The
+  signal→verdict *mapping* stays per-workflow: drift keeps `_VERDICT_BY_EXIT_CODE`, because a
+  labeling or export check has nothing to do with drift's exit codes. D008 phrased this boundary as
+  "enum only"; D010 revises the phrasing and keeps the invariant it was protecting.
+- **`fail_on_unresolved_verdicts()` in `workflows/base.py`** builds the terminal gate any workflow
+  can register. It returns `StepFailure` rather than raising, making it the first production adopter
+  of #73's contract: the same FAILED outcome through the same `_finalize()`, plus the payload on
+  `StepState.result` that #75/#76 will read, minus a traceback that describes nothing.
+- **`drift_monitoring`'s bridge is retired** onto it. The step's registered **name** is unchanged,
+  and the failure wording is preserved verbatim, so nothing an archive reader might match on moves.
+- **`summarize` is non-vacuous by construction.** `all_checked_healthy` is "at least one check ran
+  and every check that ran passed", never `all(...)` over the non-skipped checks — `True` for an
+  empty sequence, which would report a run that checked nothing as healthy. That invariant already
+  shipped inside drift; putting it in the shared helper is what stops the next adopter writing the
+  vacuous form. #95 stays open for the run-level half.
+- **`HealthSummary` is a `TypedDict`, not a dataclass**, and everything the gate writes to the
+  context is a primitive. The state file is written with `yaml.dump` and read with
+  `yaml.safe_load`, so a richer object serializes cleanly and then fails to load on the *next* run,
+  landing in `StateManager._load`'s bare `except` — which resets every workflow's state. The test
+  for this exercises a real `StateManager` save→load round trip: a `yaml.safe_dump` assertion would
+  have passed on precisely the object that breaks.
+- **The contract is documented as a contract** — `docs/AGENT.md` gains a Health Verdict Contract
+  section beside the Step Failure Contract, listing the four canonical *string* values so a
+  non-Python consumer (#93) binds to the same spellings, and `health.py` finally appears in the
+  module tree.
+
+**Also fixed:** an archived run written before the vocabulary existed had no test proving it still
+loads. It does, and it does not acquire a healthy reading it never earned — the free-text
+"all classifiers healthy" in an old archive still resolves to `unknown`.
+
+**Why `health.py` stays an import leaf:** `workflows/__init__` eagerly imports every workflow
+module, so had the gate lived in `health.py` (importing `workflows.base`), `import src.agent.health`
+would have raised from a partially initialized module the moment #77 made `daily_labeling` import
+`health`. Latent today, guaranteed later. An import-order test pins the direction.
+
+See [D010](../.claude/specs/decisions.md) for the full decision record.
+
 ### 2026-09-08: A step that reports its own failure now marks the workflow FAILED
 
 `Workflow._execute_step()` marked a step FAILED only when its handler *raised*. A handler that

@@ -6,6 +6,8 @@ The ESG News Classifier includes a custom-built agent orchestrator that automate
 
 - [Overview](#overview)
 - [Architecture](#architecture)
+  - [Step Failure Contract](#step-failure-contract)
+  - [Health Verdict Contract](#health-verdict-contract)
 - [Workflows](#workflows)
   - [Daily Labeling](#daily-labeling)
   - [Drift Monitoring](#drift-monitoring)
@@ -137,7 +139,68 @@ text stays on the step).
 `website_export.send_error_notification`, `daily_labeling.send_notification` (narrower — it fires
 only when *every* notification channel failed, so it says nothing about whether labeling worked),
 and `drift_monitoring.fail_on_unknown_verdict` (added in #71). Only `model_training` has none.
-Migrating them is #77/#78/#74's work, not #73's.
+`drift_monitoring`'s was migrated in #74 onto the shared gate below; the remaining two are
+#77's and #78's work.
+
+### Health Verdict Contract
+
+A **health verdict** answers *"what did this check find?"*. It is not a workflow lifecycle state:
+`WorkflowStatus` says where a workflow *is*, a `HealthVerdict` says what one of its checks *saw*.
+`unknown` is deliberately **not** a `WorkflowStatus` member — that would write archives carrying
+`status: unknown` that every existing reader would need migrating for (epic #72, D008, D010).
+
+**The four values, spelled as they appear on the wire** (`src/agent/health.py`). These strings are
+the contract, not just the Python enum — a shell script or any non-Python consumer binds to the same
+four spellings rather than inventing a fifth:
+
+| Value | Meaning | Fails the run? |
+|-------|---------|----------------|
+| `healthy` | The check ran and found nothing wrong | no |
+| `degraded` | The check ran and found a real problem — actionable | no; it is reported through the workflow's own alerting |
+| `unknown` | The check produced **no verdict**: it raised, had nothing to compare, or returned a result with no evidence | **yes** |
+| `skipped` | The check was deliberately not run, for a reason that must be stated | no — but it never counts toward "all healthy" either |
+
+**Three rules, and each exists because it was once violated:**
+
+1. **Absence is `unknown`, never `healthy`.** `verdict_of(context, key)` coerces an absent, `None`
+   or unrecognised value to `unknown`. Reading a health judgement off a key a failed check never
+   wrote is how a broken drift check reported "all classifiers healthy" (#71).
+2. **"All healthy" means at least one check ran.** `summarize(verdicts)` computes
+   `all_checked_healthy` as *"at least one check ran and every check that ran passed"* — never
+   `all(...)` over the non-skipped checks, which Python reports as `True` for an empty sequence. A
+   run in which everything was skipped would otherwise report healthy having checked nothing (#95).
+3. **Store `verdict.value`, never the enum member, and keep anything context-bound primitive.**
+   The state file is written with `yaml.dump` but read with `yaml.safe_load`. A member — or a
+   dataclass — serializes fine and then fails to load, landing in `StateManager._load`'s bare
+   `except`, **which resets every workflow's state**. `HealthSummary` is a `TypedDict` for exactly
+   this reason: a real `dict` at runtime, so it round-trips.
+
+**Failing the run on an unresolved verdict** is `fail_on_unresolved_verdicts()` in
+`workflows/base.py`. It builds a terminal step handler that returns `StepFailure` when any verdict
+is unresolved, so the run is FAILED by the same `_finalize()` path as any other step failure:
+
+```python
+StepDefinition(
+    name="fail_on_unknown_verdict",
+    description="Fail the workflow if any check produced no verdict",
+    handler=fail_on_unresolved_verdicts(("fp", "ep"), describe=_unmonitored_message),
+    # Deliberately NOT skip_on_dry_run: a dry run should still surface that a
+    # check could not tell us anything.
+)
+```
+
+**Register it LAST.** `Workflow._execute_step` records a step's result only on the non-raising
+path, so a gate placed before the reporting step would discard that report from the run archive,
+and one placed before the alert step would skip the alert. Last means the summary is printed, the
+alert is sent, and only then does the run go red.
+
+**The signal→verdict mapping stays in the workflow, not in `health.py`.** Each scheduled check has
+its own contract — drift reads exit codes (`src/mlops/exit_codes.py`), labeling will read rates,
+the export will read a written file — and pushing those semantics into the shared module would make
+every workflow depend on drift's. `health.py` owns the vocabulary and the subject-agnostic
+operations (`verdict_of`, `summarize`, `unresolved`) and nothing else. It is also an **import
+leaf**: `workflows/base.py` imports it, never the reverse, or the cycle fires as soon as a second
+workflow adopts the vocabulary (D010).
 
 ### Module Structure
 
@@ -147,12 +210,13 @@ src/agent/
 ├── __main__.py          # CLI entry point
 ├── config.py            # Configuration from environment
 ├── state.py             # YAML-based state management
+├── health.py            # HealthVerdict vocabulary + summarize/verdict_of (import leaf)
 ├── runner.py            # Script execution with retries
 ├── notifications.py     # Email (Resend) + webhook notifications
 ├── llm.py               # Claude integration
 └── workflows/
     ├── __init__.py
-    ├── base.py              # Workflow base class + registry
+    ├── base.py              # Workflow base class, registry, StepFailure, verdict gate
     ├── daily_labeling.py    # Daily labeling workflow
     ├── drift_monitoring.py  # Classifier drift detection
     ├── website_export.py    # Jekyll feed export
@@ -235,14 +299,15 @@ LLM Analysis:
 | 5. `generate_drift_report` | Generate summary report |
 | 6. `fail_on_unknown_verdict` | Fail the workflow if any verdict is not explicitly healthy/degraded/skipped |
 
-**Health verdicts** (`src/agent/health.py`): `healthy | degraded | unknown | skipped`. A check that
-could not produce a verdict is `unknown`, never `healthy` -- see issue #71, where a failed check
-reported "all classifiers healthy" on 219 runs. `unknown` alerts and fails the workflow; `skipped`
-does neither, but never counts toward "all healthy" either.
+**Health verdicts**: see the [Health Verdict Contract](#health-verdict-contract) for the shared
+vocabulary and its rules. Drift owns only the mapping from `scripts/monitor_drift.py`'s exit codes
+to verdicts (`_VERDICT_BY_EXIT_CODE`). This is where the vocabulary was first needed — issue #71,
+where a failed check reported "all classifiers healthy" — and #74 generalized it.
 
-**Step 6 runs last on purpose**: the summary must be printed and the alert sent before the workflow
-goes red, and `Workflow._execute_step` records a step's result only on the non-raising path. It is a
-bridge, to be removed once #74 gives verdicts a first-class escalation path (see D008).
+**Step 6 runs last on purpose**, for the reason the shared contract gives. It is no longer
+hand-rolled here: #74 replaced the local implementation with `fail_on_unresolved_verdicts` from
+`workflows/base.py`, which is the retirement D008 asked for. The step *name* is unchanged so the
+archive key stays stable for #75/#76.
 
 **EP is on hold.** `classifier_predictions` has never held an `ep` row, so the check compared
 nothing and reported healthy. It is now gated on `AGENT_EP_DRIFT_ENABLED` (default `false`) and

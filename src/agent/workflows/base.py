@@ -2,11 +2,13 @@
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 from ..config import agent_settings
+from ..health import unresolved, verdict_of
 from ..state import (
     StateManager,
     StepState,
@@ -73,6 +75,99 @@ class StepDefinition:
     handler: Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure | None]
     skip_on_dry_run: bool = False
     requires_approval: bool = False
+
+
+def _default_unresolved_message(subjects: list[str], reasons: dict[str, str]) -> str:
+    """Fallback wording for a gate whose workflow supplied none."""
+    names = ", ".join(subjects)
+    detail = "; ".join(f"{s}: {reasons[s]}" for s in subjects)
+    return (
+        f"No verdict was produced for {names} - this run must not be recorded "
+        f"as successful ({detail})"
+    )
+
+
+def fail_on_unresolved_verdicts(
+    subjects: Sequence[str],
+    *,
+    verdict_key: str = "{subject}_verdict",
+    reason_key: str = "{subject}_error",
+    describe: Callable[[list[str], dict[str, str]], str] | None = None,
+    result_key: str = "verdicts_confirmed",
+) -> Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure]:
+    """Build the terminal step that fails a run whose checks produced no verdict.
+
+    This is the first-class escalation path issue #74 owes: before it, the only
+    implementation was hand-rolled inside ``drift_monitoring`` and every other
+    workflow adopting the vocabulary would have written its own (D010.2).
+
+    **Register the step it returns LAST.** ``_execute_step`` calls
+    ``complete_step`` only on the non-raising path, so a gate placed before the
+    reporting step would discard that report from the run archive, and one
+    placed before the alert step would skip the alert. Last means: the summary
+    is printed, the alert is sent, and only then does the run go red.
+
+    **It returns ``StepFailure`` rather than raising** (D010.3). Both reach
+    FAILED through ``_finalize`` -- the raising path via ``run()``'s ``except``,
+    this one via ``any_failed`` -- and ``_failure_summary`` wraps the text as
+    ``"Step '<name>' failed: <error>"`` either way, so the archived
+    ``WorkflowState.error`` keeps its shape. What ``StepFailure`` adds is the
+    payload on ``StepState.result``, which is the per-step attribution #75/#76
+    want, and the absence of a traceback that describes nothing.
+
+    The gate passes only on an **explicit** healthy/degraded/skipped: because
+    ``verdict_of`` maps an absent, ``None`` or unrecognised value to ``UNKNOWN``,
+    a handler that returned a dict without its verdict key is caught here rather
+    than slipping past the one gate placed to catch it.
+
+    Args:
+        subjects: What was checked -- classifiers, feeds, stages. Used to build
+            each context key and reported in the failure message.
+        verdict_key: Template for a subject's verdict key in the workflow
+            context. Formatted with ``subject=``.
+        reason_key: Template for a subject's failure-reason key. The reason is
+            threaded into the message and the payload rather than dropped: a
+            gate that names *which* checks are unresolved but not *why* thins
+            the detail #75/#76 read out of the archive (D010.5).
+        describe: Builds the failure text from the unresolved subjects and their
+            reasons. Workflows with their own wording pass one; the default
+            covers the rest.
+        result_key: Context key set ``True`` when every verdict resolved, and
+            ``False`` when they did not.
+
+    Returns:
+        A step handler. Everything it writes to the context is a primitive, so
+        the run archive round-trips through ``yaml.safe_load`` (see
+        ``HealthSummary``).
+    """
+
+    def handler(workflow: "Workflow", context: dict[str, Any]) -> dict[str, Any] | StepFailure:
+        verdicts = {
+            subject: verdict_of(context, verdict_key.format(subject=subject))
+            for subject in subjects
+        }
+        missing = unresolved(verdicts)
+
+        if not missing:
+            return {result_key: True}
+
+        reasons = {
+            subject: context.get(reason_key.format(subject=subject)) or "no reason recorded"
+            for subject in missing
+        }
+        message = (describe or _default_unresolved_message)(missing, reasons)
+        logger.error(message)
+
+        return StepFailure(
+            error=message,
+            context={
+                result_key: False,
+                "unresolved_verdicts": missing,
+                "unresolved_reasons": reasons,
+            },
+        )
+
+    return handler
 
 
 class Workflow(ABC):
