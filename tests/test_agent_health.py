@@ -26,6 +26,7 @@ import yaml
 
 from src.agent.health import (
     HealthSummary,
+    as_verdict,
     HealthVerdict,
     summarize,
     unresolved,
@@ -94,6 +95,7 @@ class TestVerdictOf:
     def test_an_unrecognised_value_is_unknown(self):
         assert verdict_of({"x_verdict": "probably_fine"}, "x_verdict") is HealthVerdict.UNKNOWN
 
+
 class TestSummarizeIsNotVacuous:
     """`all_checked_healthy` must mean "something ran and it passed" (#95)."""
 
@@ -143,6 +145,72 @@ class TestSummarizeIsNotVacuous:
         assert summary["skipped"] == ["ep"]
 
 
+class TestVerdictsAreNormalizedNotIdentityCompared:
+    """The aggregate helpers must accept the form the archive actually holds.
+
+    Verdicts are stored in the context as `.value` strings by mandate (a member
+    reaching the archive breaks `yaml.safe_load`). So the natural call — read
+    verdicts out of a context, hand them to `summarize` — passes strings. Before
+    the normalizer these helpers compared raw input by identity, so every string
+    matched no branch: `summarize({"fp": "healthy", "ep": "skipped"})` returned
+    `all_checked_healthy=True` with `skipped=[]`, counting the skipped check as
+    a passing one. This epic's own defect, reached through the API written to
+    prevent it.
+    """
+
+    def test_summarize_accepts_stored_value_strings(self):
+        summary = summarize({"fp": "healthy", "ep": "skipped"})
+
+        assert summary["checked"] == ["fp"]
+        assert summary["skipped"] == ["ep"]
+        assert summary["all_checked_healthy"] is True
+
+    def test_a_skip_passed_as_a_string_is_not_counted_as_checked(self):
+        """The precise regression: the skip must not read as a passing check."""
+        summary = summarize({"fp": "skipped", "ep": "skipped"})
+
+        assert summary["checked"] == []
+        assert summary["all_checked_healthy"] is False
+
+    def test_an_unrecognised_string_blocks_healthy_rather_than_passing(self):
+        """Fail-safe, which is why `==` was not the fix.
+
+        Switching identity to equality would classify recognised strings and
+        still let an unrecognised one match no branch, land in `checked`, and
+        read healthy. Normalizing sends it to UNKNOWN instead.
+        """
+        summary = summarize({"fp": "probably_fine"})
+
+        assert summary["unknown"] == ["fp"]
+        assert summary["all_checked_healthy"] is False
+
+    def test_unresolved_catches_a_string_it_does_not_recognise(self):
+        """`unresolved` carries more weight than `summarize`.
+
+        It is the predicate that fails the run, so a value it silently failed to
+        recognise is a green run, not merely a wrong report.
+        """
+        assert unresolved({"a": "probably_fine"}) == ["a"]
+        assert unresolved({"a": "healthy"}) == []
+
+    def test_members_still_work_unchanged(self):
+        """Normalizing must not break the callers that already pass members."""
+        summary = summarize({"fp": HealthVerdict.HEALTHY, "ep": HealthVerdict.SKIPPED})
+
+        assert summary["all_checked_healthy"] is True
+        assert unresolved({"fp": HealthVerdict.UNKNOWN}) == ["fp"]
+
+    @pytest.mark.parametrize("junk", [None, 42, {}, [], object(), b"healthy"])
+    def test_anything_unreadable_becomes_unknown_and_never_raises(self, junk):
+        """`as_verdict` never raises — UNKNOWN is the designed route.
+
+        An exception would leave a workflow by a different path and could be
+        swallowed by a reporting step's own error handling, bypassing the gate
+        that exists to fail the run.
+        """
+        assert as_verdict(junk) is HealthVerdict.UNKNOWN
+
+
 class TestUnresolved:
     """The gate's predicate: only an explicit good verdict passes."""
 
@@ -167,13 +235,17 @@ class TestSummarySurvivesTheRunArchive:
         assert type(summarize({"a": HealthVerdict.HEALTHY})) is dict
 
     def test_state_manager_round_trips_a_summary_in_context(self, state_manager):
-        """The load path is `yaml.safe_load`, so test that, not `safe_dump`.
+        """Drive the real save→load path, because that is what production does.
 
-        Production writes with `yaml.dump`, which happily serializes a dataclass
-        or an enum member — so a `yaml.safe_dump` assertion would PASS on
-        precisely the object that breaks, and the breakage only appears on the
-        next run, as `StateManager._load` falling into its bare `except` and
-        resetting every workflow's state to `{}`.
+        Not a `yaml.safe_dump` assertion — but not for the reason an earlier
+        version of this docstring gave. It claimed `safe_dump` would *pass* on
+        the object that breaks; measured, `safe_dump` raises `RepresenterError`
+        on a dataclass, a `NamedTuple` and an enum member, so it would have
+        caught all three. The real argument is fidelity: `safe_dump` is not a
+        function this agent ever calls, so asserting on it tests a path nothing
+        takes, and it does miss the one case it cannot see — a bare `tuple`,
+        which `safe_dump` accepts and `yaml.dump` writes as `!!python/tuple`.
+        (See D010.4.)
         """
         summary = summarize({"fp": HealthVerdict.HEALTHY, "ep": HealthVerdict.SKIPPED})
         state_manager.create_workflow(name="round_trip", steps=["one"], context={})
@@ -451,8 +523,9 @@ class TestGateReasons:
 
         An exception object or a `Path` under `<subject>_error` serializes
         through `yaml.dump` and only fails on the NEXT run's `safe_load`, taking
-        all workflow state with it. Drift's reasons are always f-strings, so this
-        guards the factory for #77/#78/#79 rather than a live path.
+        all workflow state with it. Drift's reasons are mostly f-strings, but
+        one comes from parsed JSON (`drift_monitoring` reads it out of the
+        script's summary), so this guards a live path as well as #77/#78/#79.
         """
         result = fail_on_unresolved_verdicts(("fp",))(
             None, {"fp_error": RuntimeError("KeyError: 'novelty_score'")}
@@ -484,6 +557,16 @@ class TestGateConstructionRefusesVacuousConfigurations:
         """
         with pytest.raises(TypeError, match="bare string"):
             fail_on_unresolved_verdicts("feed")
+
+    @pytest.mark.parametrize("blob", [b"feed", bytearray(b"feed")])
+    def test_a_bytes_like_subject_is_refused(self, blob):
+        """Bytes slip past a `str`-only guard and iterate as ints.
+
+        `str()` then turns those into subjects named `'102'`, `'101'`, ... —
+        the same defect the `str` guard exists for, wearing a different type.
+        """
+        with pytest.raises(TypeError):
+            fail_on_unresolved_verdicts(blob)
 
 
 class TestImportDirection:

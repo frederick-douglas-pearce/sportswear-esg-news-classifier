@@ -41,6 +41,16 @@ its own third state.
   the agent never calls. (An earlier draft justified it by claiming `safe_dump` would have *passed*
   on the object that breaks — measured, it raises `RepresenterError` on a dataclass, a `NamedTuple`
   and an enum member, so it would have caught them.)
+- **The aggregate helpers normalize their input rather than comparing it by identity.** Verdicts
+  are stored as `.value` strings, so the natural call — read them out of a context and aggregate —
+  handed `summarize()` strings, which matched no `is` branch: every subject counted as *checked*,
+  and a run whose only other check was skipped reported healthy. One shared `as_verdict()` now
+  holds the coerce-unrecognised-to-`unknown` rule and `verdict_of`, `summarize` and `unresolved` all
+  route through it, so an unrecognised spelling — including a future one from a non-Python
+  consumer — fails safe instead of reading as a passing check.
+- **The gate's failure payload is a `TypedDict`** (`UnresolvedVerdictReport`), for the same reason
+  `HealthSummary` is one. Its shape had been described in prose, and the prose had drifted.
+
 - **The contract is documented as a contract** — `docs/AGENT.md` gains a Health Verdict Contract
   section beside the Step Failure Contract, listing the four canonical *string* values so a
   non-Python consumer (#93) binds to the same spellings, and `health.py` finally appears in the

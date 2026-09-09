@@ -162,9 +162,19 @@ four spellings rather than inventing a fifth:
 
 **Three rules, and each exists because it was once violated:**
 
-1. **Absence is `unknown`, never `healthy`.** `verdict_of(context, key)` coerces an absent, `None`
-   or unrecognised value to `unknown`. Reading a health judgement off a key a failed check never
-   wrote is how a broken drift check reported "all classifiers healthy" (#71).
+1. **Absence is `unknown`, never `healthy`.** `as_verdict()` holds this rule and every entry point
+   applies it: `verdict_of(context, key)` for a single read, and `summarize()` / `unresolved()` on
+   each value they are handed. Absent, `None`, an unrecognised string, or junk all coerce to
+   `unknown`, logged. Reading a health judgement off a key a failed check never wrote is how a
+   broken drift check reported "all classifiers healthy" (#71).
+
+   **This is why the aggregates normalize rather than compare by identity.** Verdicts are stored as
+   `.value` strings (rule 3), so the natural call — read them out of a context and aggregate — hands
+   `summarize()` strings. Identity comparison matched none of them: every subject counted as
+   *checked*, and `summarize({"fp": "healthy", "ep": "skipped"})` reported healthy with the skipped
+   check counted as a pass. Equality alone would not have fixed it either, since an unrecognised
+   spelling would still match no branch and read as checked. Coercion is what makes an unknown
+   spelling — including a future one from a non-Python consumer — fail safe.
 2. **"All healthy" means at least one check ran.** `summarize(verdicts)` computes
    `all_checked_healthy` as *"at least one check ran and every check that ran passed"* — never
    `all(...)` over the non-skipped checks, which Python reports as `True` for an empty sequence. A
@@ -209,7 +219,7 @@ property, and an earlier draft of this section carried its rationale over unchan
 its own contract — drift reads exit codes (`src/mlops/exit_codes.py`), labeling will read rates,
 the export will read a written file — and pushing those semantics into the shared module would make
 every workflow depend on drift's. `health.py` owns the vocabulary and the subject-agnostic
-operations (`verdict_of`, `summarize`, `unresolved`) and nothing else. It is also an **import
+operations (`as_verdict`, `verdict_of`, `summarize`, `unresolved`) and nothing else. It is also an **import
 leaf**: `workflows/base.py` imports it, never the reverse. The reverse is a cycle **today**, not a
 future hazard — `workflows/__init__` eagerly imports every workflow module and `drift_monitoring`
 already imports `health`, so `health` importing `workflows.base` breaks `import src.agent.health`
@@ -315,7 +325,8 @@ LLM Analysis:
 **Health verdicts**: see the [Health Verdict Contract](#health-verdict-contract) for the shared
 vocabulary and its rules. What is drift-specific is how a verdict is *reached*: the
 `_VERDICT_BY_EXIT_CODE` table over `scripts/monitor_drift.py`'s exit codes, plus `unknown` for an
-exit code outside that contract or a summary with no evidence behind it, and `skipped` for EP. This is where the vocabulary was first needed — issue #71,
+exit code outside that contract or a summary with no evidence behind it, and
+`skipped` for EP. This is where the vocabulary was first needed — issue #71,
 where a failed check reported "all classifiers healthy" — and #74 generalized it.
 
 **Step 6 runs last on purpose**, for the reason the shared contract gives. It is no longer

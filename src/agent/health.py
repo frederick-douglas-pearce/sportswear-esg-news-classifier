@@ -102,11 +102,10 @@ class HealthSummary(TypedDict):
     discovers this.
 
     **The fields hold the caller's own subject names, so those must be strings.**
-    A verdict never appears here as an enum member -- only as the `.value`
-    strings inside the caller's mapping (see `HealthVerdict`) -- but this
-    function cannot coerce subjects without changing what the caller gets back;
-    `fail_on_unresolved_verdicts` does coerce, at the boundary where the value
-    reaches the archive.
+    No verdict appears in this structure at all -- only subject names and a
+    bool. `summarize` does not coerce the subjects, because that would change
+    what the caller gets back; `fail_on_unresolved_verdicts` coerces at the
+    boundary where a subject actually reaches the archive.
     """
 
     all_checked_healthy: bool
@@ -129,26 +128,44 @@ class HealthSummary(TypedDict):
     """Subjects deliberately not checked."""
 
 
-def verdict_of(context: Mapping[str, Any], key: str) -> HealthVerdict:
-    """Read one verdict out of a workflow context, defaulting to UNKNOWN.
+def as_verdict(value: object, *, label: str | None = None) -> HealthVerdict:
+    """Coerce anything to a verdict, resolving what we cannot read to UNKNOWN.
 
-    Absent, `None`, and unrecognised all coerce to `UNKNOWN`. That default is
-    the whole point of the module: a step that returned a dict without its
-    verdict key must not read as healthy, which is the shape that let a failed
-    drift check report "all classifiers healthy" (#71).
+    This is the module's core rule in one place, so that every entry point
+    applies it identically. `None`, an unrecognised string, an int, an
+    unhashable object -- all become `UNKNOWN` and are logged. A member passes
+    through, and so does a stored `.value` string, which matters because the
+    context stores `.value` strings by mandate (see `HealthVerdict`): reading a
+    verdict back out of a run archive and handing it here has to work.
+
+    Never raises. `UNKNOWN` fails the run at the terminal gate, which is the
+    designed route for "we cannot tell"; an exception would take a different
+    path out of a workflow and could be swallowed by a reporting step's own
+    error handling, bypassing the gate entirely.
     """
-    raw = context.get(key)
     try:
-        return HealthVerdict(raw)
+        return HealthVerdict(value)
     except ValueError:
+        where = f" at {label!r}" if label else ""
         logger.error(
-            f"health verdict at {key!r} is missing or unrecognised ({raw!r}); "
+            f"health verdict{where} is missing or unrecognised ({value!r}); "
             f"treating as unknown"
         )
         return HealthVerdict.UNKNOWN
 
 
-def summarize(verdicts: Mapping[str, HealthVerdict]) -> HealthSummary:
+def verdict_of(context: Mapping[str, Any], key: str) -> HealthVerdict:
+    """Read one verdict out of a workflow context, defaulting to UNKNOWN.
+
+    Absent, `None`, and unrecognised all coerce to `UNKNOWN` (via `as_verdict`).
+    That default is the whole point of the module: a step that returned a dict
+    without its verdict key must not read as healthy, which is the shape that
+    let a failed drift check report "all classifiers healthy" (#71).
+    """
+    return as_verdict(context.get(key), label=key)
+
+
+def summarize(verdicts: Mapping[str, object]) -> HealthSummary:
     """Aggregate per-subject verdicts, without the vacuous-truth trap.
 
     `all_checked_healthy` is **"at least one check ran and every check that ran
@@ -161,11 +178,22 @@ def summarize(verdicts: Mapping[str, HealthVerdict]) -> HealthSummary:
 
     Subject *identity* stays with the caller. This returns the generic
     partition; a workflow maps it onto its own context keys.
+
+    **Values are normalized through `as_verdict`, so stored `.value` strings are
+    accepted and anything unrecognised becomes `UNKNOWN`.** Comparing the raw
+    input by identity would have been a trap on this module's own mandated wire
+    form: the context stores `.value` strings, so the natural call -- read the
+    verdicts out of a context, hand them here -- matched no branch, every
+    subject counted as `checked`, and a run with a skipped check reported
+    healthy. That is this epic's defect reachable through the API written to
+    prevent it, so the coercion is the fix rather than a docstring warning.
     """
-    degraded = [s for s, v in verdicts.items() if v is HealthVerdict.DEGRADED]
-    unknown = [s for s, v in verdicts.items() if v is HealthVerdict.UNKNOWN]
-    skipped = [s for s, v in verdicts.items() if v is HealthVerdict.SKIPPED]
-    checked = [s for s, v in verdicts.items() if v is not HealthVerdict.SKIPPED]
+    normalized = {s: as_verdict(v, label=s) for s, v in verdicts.items()}
+
+    degraded = [s for s, v in normalized.items() if v is HealthVerdict.DEGRADED]
+    unknown = [s for s, v in normalized.items() if v is HealthVerdict.UNKNOWN]
+    skipped = [s for s, v in normalized.items() if v is HealthVerdict.SKIPPED]
+    checked = [s for s, v in normalized.items() if v is not HealthVerdict.SKIPPED]
 
     return HealthSummary(
         all_checked_healthy=bool(checked) and not degraded and not unknown,
@@ -176,12 +204,19 @@ def summarize(verdicts: Mapping[str, HealthVerdict]) -> HealthSummary:
     )
 
 
-def unresolved(verdicts: Mapping[str, HealthVerdict]) -> list[str]:
+def unresolved(verdicts: Mapping[str, object]) -> list[str]:
     """Subjects whose check never produced a verdict.
 
     The test is for an *explicit* healthy/degraded/skipped; anything else is
-    unresolved. Because `verdict_of` maps an absent or unrecognised value to
-    `UNKNOWN`, a handler that returned a dict without its verdict key is caught
-    here rather than sailing past the one gate placed to catch it.
+    unresolved. Values are normalized through `as_verdict`, so a handler that
+    returned a dict without its verdict key is caught here rather than sailing
+    past the one gate placed to catch it -- and so is a caller who passes stored
+    `.value` strings, which is the shape a run archive holds.
+
+    This one carries more weight than `summarize`: it is the predicate that
+    fails the run, so a value it silently failed to recognise would be a green
+    run rather than a wrong report.
     """
-    return [s for s, v in verdicts.items() if v is HealthVerdict.UNKNOWN]
+    return [
+        s for s, v in verdicts.items() if as_verdict(v, label=s) is HealthVerdict.UNKNOWN
+    ]

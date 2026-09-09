@@ -635,4 +635,37 @@ The vocabulary is shared in name and drift-only in fact: `health.py` is imported
 
 7. **#95's non-vacuity invariant is implemented here; #95 is NOT closed.** `summarize` computes "at least one check ran and every check that ran passed", never "no failures found". This is refactor-preservation, not scope leakage: the invariant already ships in `evaluate_drift_results`, so a vacuous `all()` in the shared helper would **regress** it -- #74 shipping the defect it exists to prevent. #95 is narrowed to generalizing the rule into wave-3 run-level reporting, recorded here so the two do not double-implement.
 
+**Correction and extension (code review, round 2).** Two review rounds found no defect in
+behaviour and a cluster in what the change asserted about itself; the architect was consulted again
+on the three with a design component. Three rulings, all applied:
+
+8. **`summarize`/`unresolved` normalize their input; they no longer identity-compare it.** This was
+   the blocking one, and it is a design defect rather than a prose defect. Verdicts are stored as
+   `.value` strings by the rule in 4, so the natural call -- read verdicts out of a context, hand
+   them to `summarize` -- passed strings, which matched no `is` branch: every subject counted as
+   *checked* and `summarize({"fp": "healthy", "ep": "skipped"})` returned `all_checked_healthy:
+   True` with the skipped check counted as a pass. The epic's own defect, reachable through the API
+   written to prevent it, with four adopters about to bind to it. The fix is one shared normalizer,
+   `as_verdict`, holding the coerce-unrecognised-to-`UNKNOWN` rule that `verdict_of` already owned;
+   `verdict_of`, `summarize` and `unresolved` all route through it. **Equality was rejected** as the
+   fix: `HealthVerdict` is a `str, Enum`, so `==` would classify recognised strings but leave an
+   unrecognised one matching no branch, landing in `checked`, and reading healthy -- trading a known
+   failure for a quieter one. **Raising was rejected** because `verdict_of` does not raise on the
+   same input, and because an exception leaves a workflow by a path a reporting step's own error
+   handling can swallow, bypassing the gate; `UNKNOWN` is the designed route for "we cannot tell".
+9. **The gate's payload is a `TypedDict` (`UnresolvedVerdictReport`), not a prose promise.** Same
+   reasoning as `HealthSummary` in 4, applied for consistency. An earlier docstring described its
+   three fields as "a `str` or a `bool`", which two of them are not -- prose in a Returns block is
+   the form that drifted, so the shape moves into a type. The runtime guarantee stays where it was,
+   as `str()` coercion at the boundary; a per-call round-trip assertion was rejected as
+   belt-and-suspenders over a payload built from parts already coerced. The bytes-like hole in the
+   bare-`str` guard is closed in the same place.
+10. **A load-bearing rationale gets one live home, chosen by who must act on it.** The justification
+   for testing a real save-then-load round trip is a justification for a *test's shape*, so it lives
+   in that test's docstring -- the only site where someone deciding to "simplify" the test needs the
+   reason. `decisions.md` and the changelog are dated snapshots that carry the argument as of their
+   date and are never edited to stay in sync; `docs/AGENT.md` carries the *rule*, not the test
+   design. This is the rule that was missing when the same claim, restated in three places, was
+   corrected in two of them.
+
 **Status:** implemented and shipped in the same commit as this record (#74 / PR #108). The decisions above were taken at the plan gate, before implementation; the corrections marked in 2 and 4 were made during code review, when the claims were measured rather than reasoned about.

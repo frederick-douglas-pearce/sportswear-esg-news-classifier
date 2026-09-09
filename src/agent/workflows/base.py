@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
 
 from ..config import agent_settings
 from ..health import unresolved, verdict_of
@@ -77,6 +77,31 @@ class StepDefinition:
     requires_approval: bool = False
 
 
+class UnresolvedVerdictReport(TypedDict):
+    """What the terminal verdict gate writes into the workflow context.
+
+    A `TypedDict` for the same reason `HealthSummary` is one: this reaches the
+    run archive, which is written with `yaml.dump` and read back with
+    `yaml.safe_load`, so every field has to be a plain primitive or the next
+    load resets all workflow state. Stating the shape as a type rather than in
+    prose is deliberate -- an earlier docstring here described these three
+    fields as "a `str` or a `bool`", which two of them are not.
+
+    The runtime guarantee is separate and lives at the boundary: the factory
+    coerces subjects and reason values with `str()` on the way in. This type
+    says what the shape is; the coercion is what makes it true.
+    """
+
+    verdicts_confirmed: bool
+    """False on the failure path, True when every verdict resolved."""
+
+    unresolved_verdicts: list[str]
+    """Subjects whose check produced no verdict."""
+
+    unresolved_reasons: dict[str, str]
+    """Why each of those is unresolved, or "no reason recorded"."""
+
+
 def _default_unresolved_message(subjects: list[str], reasons: dict[str, str]) -> str:
     """Fallback wording for a gate whose workflow supplied none."""
     names = ", ".join(subjects)
@@ -94,7 +119,7 @@ def fail_on_unresolved_verdicts(
     reason_key: str = "{subject}_error",
     describe: Callable[[list[str], dict[str, str]], str] | None = None,
     result_key: str = "verdicts_confirmed",
-) -> Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure]:
+) -> Callable[["Workflow", dict[str, Any]], UnresolvedVerdictReport | StepFailure]:
     """Build the terminal step that fails a run whose checks produced no verdict.
 
     This is the first-class escalation path issue #74 owes: before it, the only
@@ -143,26 +168,26 @@ def fail_on_unresolved_verdicts(
             ``False`` when they did not.
 
     Returns:
-        A step handler. Everything it writes to the context is a ``str`` or a
-        ``bool``, which is what lets the run archive round-trip through
-        ``yaml.safe_load`` (see ``HealthSummary``). That is enforced here by
-        coercion rather than asserted: both the subject names and the reason
-        values are stringified on the way in, because a reason is whatever a
-        workflow happened to store under ``reason_key`` -- an exception object
-        or a ``Path`` reaches ``yaml.dump`` intact and only fails on the *next*
-        run's load.
+        A step handler whose failure payload is an ``UnresolvedVerdictReport``
+        -- see that type for the shape. It round-trips ``yaml.safe_load``
+        because this factory coerces both the subject names and the reason
+        values with ``str()`` on the way in: a reason is whatever a workflow
+        happened to store under ``reason_key``, and an exception object or a
+        ``Path`` reaches ``yaml.dump`` intact, failing only on the *next* run's
+        load.
 
     Raises:
-        TypeError: if ``subjects`` is a bare ``str``. It would satisfy
-            ``Sequence[str]`` and silently iterate as one subject per character.
+        TypeError: if ``subjects`` is a bare ``str`` or bytes-like. Both
+            satisfy ``Sequence[str]`` and iterate per character or per byte.
         ValueError: if ``subjects`` is empty. A gate over no subjects would
             report ``verdicts_confirmed`` having confirmed nothing -- the same
             vacuous truth ``summarize`` exists to refuse.
     """
-    if isinstance(subjects, str):
+    if isinstance(subjects, (str, bytes, bytearray)):
         raise TypeError(
             f"subjects must be a sequence of names, not the bare string {subjects!r} "
-            f"-- a str is a Sequence[str] and would iterate one subject per character"
+            f"-- a str is a Sequence[str] and would iterate one subject per character, "
+            f"and a bytes-like iterates as ints that str() turns into '102', '101', ..."
         )
 
     subjects = tuple(str(subject) for subject in subjects)
@@ -172,7 +197,9 @@ def fail_on_unresolved_verdicts(
             "no subjects always passes, which is the vacuous truth this contract refuses"
         )
 
-    def handler(workflow: "Workflow", context: dict[str, Any]) -> dict[str, Any] | StepFailure:
+    def handler(
+        workflow: "Workflow", context: dict[str, Any]
+    ) -> UnresolvedVerdictReport | StepFailure:
         verdicts = {
             subject: verdict_of(context, verdict_key.format(subject=subject))
             for subject in subjects
