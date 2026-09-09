@@ -101,11 +101,18 @@ def fail_on_unresolved_verdicts(
     implementation was hand-rolled inside ``drift_monitoring`` and every other
     workflow adopting the vocabulary would have written its own (D010.2).
 
-    **Register the step it returns LAST.** ``_execute_step`` calls
-    ``complete_step`` only on the non-raising path, so a gate placed before the
-    reporting step would discard that report from the run archive, and one
-    placed before the alert step would skip the alert. Last means: the summary
-    is printed, the alert is sent, and only then does the run go red.
+    **Register the step it returns after every step that writes a verdict** --
+    in practice, last. The gate reads verdicts out of the context, so a subject
+    whose check has not run yet reads as ``unknown`` and fails the run
+    spuriously. That is the whole constraint.
+
+    It is *not* an archive-ordering constraint, and an earlier draft of this
+    docstring said it was: it claimed a gate placed before the reporting step
+    would discard that report, which is the behaviour of the **raising** gate
+    this factory replaced. Returning ``StepFailure`` does not halt the loop
+    (see ``StepFailure``), so later steps still run and are still recorded --
+    measured, with the gate registered second of four: the alert step still
+    sent and the report step still recorded ``COMPLETED`` with its result.
 
     **It returns ``StepFailure`` rather than raising** (D010.3). Both reach
     FAILED through ``_finalize`` -- the raising path via ``run()``'s ``except``,
@@ -136,10 +143,34 @@ def fail_on_unresolved_verdicts(
             ``False`` when they did not.
 
     Returns:
-        A step handler. Everything it writes to the context is a primitive, so
-        the run archive round-trips through ``yaml.safe_load`` (see
-        ``HealthSummary``).
+        A step handler. Everything it writes to the context is a ``str`` or a
+        ``bool``, which is what lets the run archive round-trip through
+        ``yaml.safe_load`` (see ``HealthSummary``). That is enforced here by
+        coercion rather than asserted: both the subject names and the reason
+        values are stringified on the way in, because a reason is whatever a
+        workflow happened to store under ``reason_key`` -- an exception object
+        or a ``Path`` reaches ``yaml.dump`` intact and only fails on the *next*
+        run's load.
+
+    Raises:
+        TypeError: if ``subjects`` is a bare ``str``. It would satisfy
+            ``Sequence[str]`` and silently iterate as one subject per character.
+        ValueError: if ``subjects`` is empty. A gate over no subjects would
+            report ``verdicts_confirmed`` having confirmed nothing -- the same
+            vacuous truth ``summarize`` exists to refuse.
     """
+    if isinstance(subjects, str):
+        raise TypeError(
+            f"subjects must be a sequence of names, not the bare string {subjects!r} "
+            f"-- a str is a Sequence[str] and would iterate one subject per character"
+        )
+
+    subjects = tuple(str(subject) for subject in subjects)
+    if not subjects:
+        raise ValueError(
+            "fail_on_unresolved_verdicts() needs at least one subject: a gate over "
+            "no subjects always passes, which is the vacuous truth this contract refuses"
+        )
 
     def handler(workflow: "Workflow", context: dict[str, Any]) -> dict[str, Any] | StepFailure:
         verdicts = {
@@ -152,7 +183,10 @@ def fail_on_unresolved_verdicts(
             return {result_key: True}
 
         reasons = {
-            subject: context.get(reason_key.format(subject=subject)) or "no reason recorded"
+            # str() because the value is whatever the workflow stored: an
+            # exception object or a Path survives yaml.dump and then fails the
+            # next yaml.safe_load, taking all workflow state with it.
+            subject: str(context.get(reason_key.format(subject=subject)) or "no reason recorded")
             for subject in missing
         }
         message = (describe or _default_unresolved_message)(missing, reasons)

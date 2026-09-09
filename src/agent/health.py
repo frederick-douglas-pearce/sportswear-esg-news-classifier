@@ -25,13 +25,15 @@ functions.
 
 **This module is an import leaf, deliberately.** It imports nothing from the
 `agent` package, so `workflows/base.py` can import *it*. The reverse direction
-would be a cycle that is latent today and fires the moment a second workflow
-adopts the vocabulary: `workflows/__init__` eagerly imports every workflow
-module, so `health` importing `workflows.base` makes `import src.agent.health`
-raise `ImportError: cannot import name ... from partially initialized module`
-as soon as `daily_labeling` imports `health` (D010.2). The escalation gate that
-turns an unresolved verdict into a FAILED workflow therefore lives in
-`workflows/base.py` as `fail_on_unresolved_verdicts`, not here.
+is a cycle **today** -- not a hazard that arrives with a future adopter.
+`workflows/__init__` eagerly imports every workflow module, and
+`drift_monitoring` already imports this one, so adding `health -> workflows.base`
+makes `import src.agent.health` fail immediately with `ImportError: cannot
+import name 'HealthVerdict' from partially initialized module`. Measured on the
+counterfactual tree, where `drift_monitoring` alone closes the loop. The
+escalation gate that turns an unresolved verdict into a FAILED workflow
+therefore lives in `workflows/base.py` as `fail_on_unresolved_verdicts`, not
+here (D010.2).
 """
 
 import logging
@@ -86,16 +88,25 @@ class HealthVerdict(str, Enum):
 class HealthSummary(TypedDict):
     """An aggregate verdict over several checks, in a form safe to archive.
 
-    **A `TypedDict`, and not a dataclass or `NamedTuple`, for a reason that bites
-    silently.** Callers put this in the workflow context, and the state file is
-    written with `yaml.dump` but read back with `yaml.safe_load`
-    (`StateManager._save` / `._load`). A dataclass serializes happily on write
-    and then fails to load on the next run, landing in `_load`'s bare `except`
-    -- **which resets every workflow's state to `{}`**. A `TypedDict` is a plain
-    `dict` at runtime, so it round-trips, while still giving #77/#78/#79 a typed
-    shape to bind to. Every field below is a primitive for the same reason;
-    verdicts appear as their `.value` strings, never as members (see
-    `HealthVerdict`).
+    **A `TypedDict`, and not a dataclass or `NamedTuple`, so that a caller may
+    put it in the workflow context.** The state file is written with `yaml.dump`
+    but read back with `yaml.safe_load` (`StateManager._save` / `._load`), and a
+    dataclass serializes happily on write, then fails to load on the next run
+    and lands in `_load`'s catch-all `except Exception` -- **which resets every
+    workflow's state to `{}`**. A `TypedDict` is a plain `dict` at runtime, so
+    it round-trips, while still giving #77/#78/#79 a typed shape to bind to.
+
+    No production caller stores the summary whole today: `evaluate_drift_results`
+    unpacks it into its own context keys. The constraint is written down because
+    the shape invites it, and a caller that does store it must not be the one who
+    discovers this.
+
+    **The fields hold the caller's own subject names, so those must be strings.**
+    A verdict never appears here as an enum member -- only as the `.value`
+    strings inside the caller's mapping (see `HealthVerdict`) -- but this
+    function cannot coerce subjects without changing what the caller gets back;
+    `fail_on_unresolved_verdicts` does coerce, at the boundary where the value
+    reaches the archive.
     """
 
     all_checked_healthy: bool

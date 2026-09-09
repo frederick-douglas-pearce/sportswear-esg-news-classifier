@@ -12,8 +12,8 @@ Three of these classes exist because of a specific way this can go wrong:
 - `TestSummarySurvivesTheRunArchive` — the state file is written with
   `yaml.dump` and read with `yaml.safe_load`, so a non-primitive in the context
   loads into a bare `except` that resets all workflow state.
-- `TestImportDirection` — `health` must stay an import leaf, or the cycle fires
-  once a second workflow adopts the vocabulary (D010.2).
+- `TestImportDirection` — `health` must stay an import leaf; the reverse edge is a
+  cycle today, via the adopter that already exists (D010.2).
 """
 
 import ast
@@ -61,9 +61,11 @@ def cleanup_registry():
 def isolated_history(tmp_path):
     """Keep these tests out of the real ~/.esg-agent/history archive.
 
-    Without this the suite writes archives under production workflow names into
-    the directory the archive audit (#76) reads, which is the defect a prior
-    iteration had to clean up after.
+    The workflows below reach `complete_workflow`/`fail_workflow`, which archive
+    into `agent_settings.history_dir`. Their names are local (`unresolved_run`
+    and friends), so this is not the "archived under a production name" case —
+    it is the plainer one: a test suite should not deposit runs in the directory
+    #76 will audit.
     """
     from unittest.mock import patch
 
@@ -91,16 +93,6 @@ class TestVerdictOf:
 
     def test_an_unrecognised_value_is_unknown(self):
         assert verdict_of({"x_verdict": "probably_fine"}, "x_verdict") is HealthVerdict.UNKNOWN
-
-    def test_unknown_is_never_healthy(self):
-        """AC5's second half, stated as its own assertion.
-
-        The other tests establish that absence maps to UNKNOWN; this one pins
-        that UNKNOWN is not a synonym for HEALTHY, which is the property the
-        whole vocabulary exists for.
-        """
-        assert verdict_of({}, "x_verdict") is not HealthVerdict.HEALTHY
-
 
 class TestSummarizeIsNotVacuous:
     """`all_checked_healthy` must mean "something ran and it passed" (#95)."""
@@ -174,7 +166,7 @@ class TestSummarySurvivesTheRunArchive:
         """`HealthSummary` is a TypedDict, so this is a `dict`, not an object."""
         assert type(summarize({"a": HealthVerdict.HEALTHY})) is dict
 
-    def test_state_manager_round_trips_a_summary_in_context(self, state_manager, tmp_path):
+    def test_state_manager_round_trips_a_summary_in_context(self, state_manager):
         """The load path is `yaml.safe_load`, so test that, not `safe_dump`.
 
         Production writes with `yaml.dump`, which happily serializes a dataclass
@@ -194,12 +186,15 @@ class TestSummarySurvivesTheRunArchive:
         )
         assert reloaded.get_workflow("round_trip").context["health"] == summary
 
-    def test_a_verdict_member_would_not_survive_but_its_value_does(self):
-        """Why `summarize` stores `.value` strings and never members.
+    def test_the_serialization_premise_this_design_rests_on_still_holds(self):
+        """Pin PyYAML's behaviour, not this repo's — the premise, not the rule.
 
-        Pinned as a test because the hazard is documented on `HealthVerdict` but
-        nothing enforced it: `yaml.dump` writes a member as a Python object tag,
-        which `safe_load` then refuses.
+        Everything above assumes `yaml.dump` writes a `str, Enum` member as a
+        Python object tag that `safe_load` then refuses. That is a property of
+        PyYAML, so if a future version changed it, the reasoning in
+        `HealthVerdict`'s docstring would silently become wrong while every
+        other test kept passing. This test fails in that case and nowhere else;
+        it does NOT guard `summarize` (that is the round-trip test above).
         """
         with pytest.raises(yaml.YAMLError):
             yaml.safe_load(yaml.dump({"verdict": HealthVerdict.HEALTHY}))
@@ -312,14 +307,18 @@ class TestUnresolvedVerdictFailsTheRun:
         assert state.status is not WorkflowStatus.COMPLETED
         assert "No verdict was produced" in state.error
 
-    def test_a_check_that_raised_fails_the_workflow_as_unknown(
+    def test_a_raising_check_never_reaches_the_gate(
         self, state_manager, cleanup_registry
     ):
-        """AC5's "a check that raised" half.
+        """The gate is NOT what catches a raising check — the base runner is.
 
-        The raising step is already FAILED by the base runner; what this pins is
-        that the gate downstream ALSO refuses the run, so a workflow that
-        swallowed the raise could not still finish green.
+        Worth a test because the opposite is easy to assume, and an earlier
+        version of this file asserted it: `_execute_step` re-raises, so `run()`'s
+        `except` finalizes the workflow and every later step, gate included, is
+        left PENDING. AC5's "a check that raised yields unknown" is therefore a
+        statement about `verdict_of` (a raise writes no verdict key), not about
+        this gate — and a workflow that *swallows* its error is the case the
+        gate exists for, covered by the test above.
         """
 
         def explode(workflow, context):
@@ -334,6 +333,11 @@ class TestUnresolvedVerdictFailsTheRun:
         state = workflow.run()
 
         assert state.status is WorkflowStatus.FAILED
+        assert state.steps["check"].status is WorkflowStatus.FAILED
+        assert state.steps["gate"].status is WorkflowStatus.PENDING
+        assert "evidently blew up" in state.error
+        # And the verdict a raise leaves behind is unknown, which is AC5's half.
+        assert verdict_of(state.context, "fp_verdict") is HealthVerdict.UNKNOWN
 
     def test_explicit_verdicts_let_the_workflow_complete(
         self, state_manager, cleanup_registry
@@ -419,7 +423,7 @@ class TestGateReasons:
 
         assert "no reason recorded" in result.error
 
-    def test_key_templates_are_configurable_per_workflow(self):
+    def test_reason_key_is_configurable_per_workflow(self):
         """Wave-3 workflows do not have to adopt drift's key convention."""
         handler = fail_on_unresolved_verdicts(
             ("feed",), verdict_key="{subject}_health", reason_key="{subject}_why"
@@ -429,16 +433,73 @@ class TestGateReasons:
 
         assert "empty file" in result.error
 
+    def test_verdict_key_is_honoured_and_can_pass_the_gate(self):
+        """The passing direction, which is what actually pins `verdict_key`.
+
+        Asserting only that a custom-key context FAILS proves nothing: the gate
+        fails an absent verdict either way, so ignoring `verdict_key` entirely
+        would pass such a test. This one fails if the template is ignored.
+        """
+        handler = fail_on_unresolved_verdicts(("feed",), verdict_key="{subject}_health")
+
+        assert handler(None, {"feed_health": HealthVerdict.HEALTHY.value}) == {
+            "verdicts_confirmed": True
+        }
+
+    def test_a_non_string_reason_is_coerced_before_it_reaches_the_archive(self):
+        """A reason is whatever the workflow stored, so the gate must coerce it.
+
+        An exception object or a `Path` under `<subject>_error` serializes
+        through `yaml.dump` and only fails on the NEXT run's `safe_load`, taking
+        all workflow state with it. Drift's reasons are always f-strings, so this
+        guards the factory for #77/#78/#79 rather than a live path.
+        """
+        result = fail_on_unresolved_verdicts(("fp",))(
+            None, {"fp_error": RuntimeError("KeyError: 'novelty_score'")}
+        )
+
+        assert result.context["unresolved_reasons"]["fp"] == "KeyError: 'novelty_score'"
+        assert yaml.safe_load(yaml.dump(result.context)) == result.context
+
+
+class TestGateConstructionRefusesVacuousConfigurations:
+    """The factory rejects two shapes that would make the gate meaningless."""
+
+    def test_an_empty_subject_list_is_refused(self):
+        """A gate over no subjects would confirm nothing and report success.
+
+        The same vacuous truth `summarize` refuses — caught at construction
+        rather than at runtime, because `subjects` is fixed when the workflow
+        class is defined.
+        """
+        with pytest.raises(ValueError, match="at least one subject"):
+            fail_on_unresolved_verdicts(())
+
+    def test_a_bare_string_subject_is_refused(self):
+        """`str` satisfies `Sequence[str]` and iterates one subject per char.
+
+        A single-subject workflow (#78's feed, #79's stage) is exactly where
+        this would be written, and it would fail every run with subjects named
+        `f`, `e`, `e`, `d`.
+        """
+        with pytest.raises(TypeError, match="bare string"):
+            fail_on_unresolved_verdicts("feed")
+
 
 class TestImportDirection:
     """`health` stays an import leaf so `base` can import it (D010.2).
 
-    The cycle this guards is latent today and fires when a second workflow
-    adopts the vocabulary: `workflows/__init__` eagerly imports every workflow
-    module, so `health` importing `workflows.base` makes `import
-    src.agent.health` raise from a partially initialized module. A subprocess is
-    the only honest way to assert an import ORDER — by the time this test runs,
-    pytest has already imported everything.
+    The cycle is live **today**, not waiting on a second adopter:
+    `workflows/__init__` eagerly imports every workflow module and
+    `drift_monitoring` already imports `health`, so adding the reverse edge
+    breaks `import src.agent.health` immediately.
+
+    Note what each test below is worth. The subprocess pair is a smoke check
+    only — under a real cycle this *file* would fail to collect (it imports
+    `workflows.base` at module scope), so those two would never get to run. The
+    test with actual bite is the `ast` one: it is the only thing here that
+    catches a lazy `from .workflows.base import ...` placed inside a function,
+    which leaves module import clean and reintroduces the cycle at call time.
     """
 
     @pytest.mark.parametrize(
@@ -491,9 +552,12 @@ class TestImportDirection:
 
 
 def test_health_summary_is_a_typed_dict_not_a_dataclass():
-    """Guard the choice itself, since the alternative fails silently.
+    """Guard the choice itself, in one line that names the requirement.
 
-    A dataclass here would pass every behavioural test in this file and then
-    reset the agent's state on the next scheduled run.
+    A dataclass would in fact break several tests here — `summarize(...)[...]`
+    is a subscript, so the partition tests would raise `TypeError`, and the
+    round-trip test would fail on load. This is not the only guard; it is the
+    one that says *why* in its name, so the next reader does not have to infer
+    the constraint from a `TypeError` in an unrelated test.
     """
     assert issubclass(HealthSummary, dict)

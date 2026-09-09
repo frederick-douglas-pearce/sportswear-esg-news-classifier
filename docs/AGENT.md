@@ -180,27 +180,40 @@ four spellings rather than inventing a fifth:
 is unresolved, so the run is FAILED by the same `_finalize()` path as any other step failure:
 
 ```python
+# Built once at module level, so the symbol stays importable by tests.
+fail_on_unknown_verdict = fail_on_unresolved_verdicts(
+    ("fp", "ep"),
+    describe=_unmonitored_message,
+)
+
 StepDefinition(
     name="fail_on_unknown_verdict",
     description="Fail the workflow if any check produced no verdict",
-    handler=fail_on_unresolved_verdicts(("fp", "ep"), describe=_unmonitored_message),
+    handler=fail_on_unknown_verdict,
     # Deliberately NOT skip_on_dry_run: a dry run should still surface that a
     # check could not tell us anything.
 )
 ```
 
-**Register it LAST.** `Workflow._execute_step` records a step's result only on the non-raising
-path, so a gate placed before the reporting step would discard that report from the run archive,
-and one placed before the alert step would skip the alert. Last means the summary is printed, the
-alert is sent, and only then does the run go red.
+**Register it after every step that writes a verdict** — in practice, last. The gate reads verdicts
+out of the context, so a subject whose check has not run yet reads as `unknown` and fails the run
+spuriously. That is the entire ordering constraint.
+
+It is **not** about losing the report from the archive. Returning `StepFailure` does not halt the
+loop (Step Failure Contract, property 3 above), so steps after the gate still run and are still
+recorded — measured, with the gate registered second of four: the alert still sent, the report step
+still `COMPLETED` with its result in the archive. The raising gate this replaced *did* have that
+property, and an earlier draft of this section carried its rationale over unchanged.
 
 **The signal→verdict mapping stays in the workflow, not in `health.py`.** Each scheduled check has
 its own contract — drift reads exit codes (`src/mlops/exit_codes.py`), labeling will read rates,
 the export will read a written file — and pushing those semantics into the shared module would make
 every workflow depend on drift's. `health.py` owns the vocabulary and the subject-agnostic
 operations (`verdict_of`, `summarize`, `unresolved`) and nothing else. It is also an **import
-leaf**: `workflows/base.py` imports it, never the reverse, or the cycle fires as soon as a second
-workflow adopts the vocabulary (D010).
+leaf**: `workflows/base.py` imports it, never the reverse. The reverse is a cycle **today**, not a
+future hazard — `workflows/__init__` eagerly imports every workflow module and `drift_monitoring`
+already imports `health`, so `health` importing `workflows.base` breaks `import src.agent.health`
+immediately (D010).
 
 ### Module Structure
 
@@ -300,8 +313,9 @@ LLM Analysis:
 | 6. `fail_on_unknown_verdict` | Fail the workflow if any verdict is not explicitly healthy/degraded/skipped |
 
 **Health verdicts**: see the [Health Verdict Contract](#health-verdict-contract) for the shared
-vocabulary and its rules. Drift owns only the mapping from `scripts/monitor_drift.py`'s exit codes
-to verdicts (`_VERDICT_BY_EXIT_CODE`). This is where the vocabulary was first needed — issue #71,
+vocabulary and its rules. What is drift-specific is how a verdict is *reached*: the
+`_VERDICT_BY_EXIT_CODE` table over `scripts/monitor_drift.py`'s exit codes, plus `unknown` for an
+exit code outside that contract or a summary with no evidence behind it, and `skipped` for EP. This is where the vocabulary was first needed — issue #71,
 where a failed check reported "all classifiers healthy" — and #74 generalized it.
 
 **Step 6 runs last on purpose**, for the reason the shared contract gives. It is no longer
