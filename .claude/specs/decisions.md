@@ -609,3 +609,88 @@ fail if one of them turned out to be unmigratable.
 same principle applied to the base runner means a step must be able to *say* it failed without
 throwing, and exactly one piece of code may turn step outcomes into a workflow verdict -- because a
 second copy of that logic is the next silent divergence.
+
+## D010: The Health Verdict Becomes a Shared Contract With Its Escalation Gate in the Base Runner (#74)
+
+**Date:** 2026-09-09
+**Code references:** by symbol and quoted construct, per [D007](#d007-decision-records-cite-symbols-and-quoted-constructs-not-line-numbers). Where "before" is meant, it is the state at base commit `0c94ff9`.
+
+**Context:** Issue #74, order 3 of the `silent-success` epic (#72). [D008](#d008-drift-monitoring-reports-an-indeterminate-verdict-instead-of-health-71) landed `HealthVerdict` in `src/agent/health.py` and wired it into `drift_monitoring` only; [D009](#d009-a-step-signals-failure-with-a-typed-stepfailure-return-and-one-_finalize-decides-workflow-status-73) landed the `StepFailure` return contract and one shared `_finalize()`.
+
+The vocabulary is shared in name and drift-only in fact: `health.py` is imported by `drift_monitoring` and its test, and by nothing else. `drift_monitoring.fail_on_unknown_verdict` says so in its own docstring -- "This is a bridge. Once #74 gives verdicts a first-class escalation path in the base runner, it should be deleted rather than left as dead code (D008)." So #74's deliverable was specified by D008 and deliberately left undone; this record settles how it lands.
+
+**Decision:**
+
+1. **`health.py` gains three subject-agnostic operations and stays an import leaf.** `verdict_of` (context key -> verdict, coercing absent/`None`/unrecognised to `UNKNOWN`), `summarize` (the non-vacuous aggregation), and `unresolved` (the not-explicitly-good test). **This revises D008.3's "enum only" wording, and the revision is deliberate:** the invariant D008.3 protected was that the *exit-code-to-verdict mapping* stays per-workflow so #77/#78/#79 do not inherit drift's semantics. That is preserved -- `_VERDICT_BY_EXIT_CODE` stays in `drift_monitoring`. What moves is only what carries no subject identity. `summarize` must not bake in drift's output keys (`any_drift_detected`, `classifiers_with_drift`) or the `fp`/`ep` identity.
+
+2. **The terminal escalation gate lives in `base.py`, not `health.py`.** `health.py` importing `workflows.base` creates a cycle **today** -- this was verified on the counterfactual tree rather than reasoned about, and an earlier draft of this record wrongly called it latent until #77. `workflows/__init__` eagerly imports every workflow module and `drift_monitoring` already imports `health`, so the existing adopter alone closes the loop: `import src.agent.health` fails with `ImportError: cannot import name 'HealthVerdict' from partially initialized module`. No second adopter is required. `base -> health` is acyclic in every import order because `health` has no outgoing edges into the package. `base.py` already owns `StepDefinition`/`StepFailure`, so the factory builds its return types locally and reaches sideways to a leaf for the vocabulary. An import-order regression test locks the direction.
+
+3. **The gate returns `StepFailure` rather than raising, making it the first production adopter of D009's contract.** Both paths reach FAILED through `_finalize`; `StepFailure` additionally carries the payload into `step.result`, which is per-step attribution #75/#76 will want, and drops a traceback that describes nothing. `WorkflowState.error` does not structurally move -- `_failure_summary` wraps step errors as `"Step '<name>' failed: <error>"` on both paths. Two conditions: the `StepFailure.error` wording stays equivalent to the current `RuntimeError` message, and **the registered step name `fail_on_unknown_verdict` is kept even though the handler becomes the shared factory** -- renaming the step is the one change that would actually move an archive key #75/#76 may match on, and it must not be coupled to this refactor.
+
+4. **A summary stored in `context` must be primitives -- a `TypedDict`, never a dataclass or `NamedTuple`.** This is the sharpest edge in the change and its failure mode is silent. `StateManager` writes with `yaml.dump` but reads with `yaml.safe_load`; a dataclass serializes on write and then fails to load, landing in the bare `except` in `StateManager._load` **that resets all workflow state to `{}`**. `HealthVerdict`'s own docstring already documents this hazard for enum members; the same asymmetry governs any richer object. A `TypedDict` is a real dict at runtime, so wave-3 still gets a typed contract to bind to. The test for this is a real `StateManager` save-then-load round trip. **A correction to an earlier draft of this record:** it justified that choice by claiming a `yaml.safe_dump` assertion would pass on the object that breaks. Measured, it does not -- `safe_dump` raises `RepresenterError` on a dataclass, a `NamedTuple` and an enum member, so it would have caught all three. The real argument for the round trip is narrower and is about fidelity, not detection: `safe_dump` is not the function production runs, so an assertion on it tests a path the agent never takes, and it does miss the one case that matters least here -- a bare `tuple`, which `safe_dump` accepts and `yaml.dump` writes as `!!python/tuple`.
+
+5. **The gate threads per-check reasons rather than only naming which checks are unresolved.** The current drift gate builds its message from the `<subject>_error` context convention; a factory signature carrying only verdict keys would silently thin the detail the archive records. The factory therefore takes subjects plus key templates (`verdict_key`, `reason_key`), so drift reproduces its present message exactly and the reasons also ride in `StepFailure.context`.
+
+6. **The contract is documented as a shared contract, enumerating the four canonical *string* values** (`healthy`/`degraded`/`unknown`/`skipped`), not only the Python enum, beside the existing Step Failure Contract in `docs/AGENT.md` -- and stating the mapping-stays-per-workflow rule. Publishing the strings is what keeps #93's shell-side "could not check" from becoming a fourth spelling of `unknown`.
+
+7. **#95's non-vacuity invariant is implemented here; #95 is NOT closed.** `summarize` computes "at least one check ran and every check that ran passed", never "no failures found". This is refactor-preservation, not scope leakage: the invariant already ships in `evaluate_drift_results`, so a vacuous `all()` in the shared helper would **regress** it -- #74 shipping the defect it exists to prevent. #95 is narrowed to generalizing the rule into wave-3 run-level reporting, recorded here so the two do not double-implement.
+
+**Correction and extension (code review, round 2).** Two review rounds found no defect in
+behaviour and a cluster in what the change asserted about itself; the architect was consulted again
+on the three with a design component. Three rulings, all applied:
+
+8. **`summarize`/`unresolved` normalize their input; they no longer identity-compare it.** This was
+   the blocking one, and it is a design defect rather than a prose defect. Verdicts are stored as
+   `.value` strings by the rule in 4, so the natural call -- read verdicts out of a context, hand
+   them to `summarize` -- passed strings, which matched no `is` branch: every subject counted as
+   *checked* and `summarize({"fp": "healthy", "ep": "skipped"})` returned `all_checked_healthy:
+   True` with the skipped check counted as a pass. The epic's own defect, reachable through the API
+   written to prevent it, with four adopters about to bind to it. The fix is one shared normalizer,
+   `as_verdict`, holding the coerce-unrecognised-to-`UNKNOWN` rule that `verdict_of` already owned;
+   `verdict_of`, `summarize` and `unresolved` all route through it. **Equality was rejected** as the
+   fix: `HealthVerdict` is a `str, Enum`, so `==` would classify recognised strings but leave an
+   unrecognised one matching no branch, landing in `checked`, and reading healthy -- trading a known
+   failure for a quieter one. **Raising was rejected** because `verdict_of` does not raise on the
+   same input, and because an exception leaves a workflow by a path a reporting step's own error
+   handling can swallow, bypassing the gate; `UNKNOWN` is the designed route for "we cannot tell".
+9. **The gate's payload is a `TypedDict` (`UnresolvedVerdictReport`), not a prose promise.** Same
+   reasoning as `HealthSummary` in 4, applied for consistency. An earlier docstring described its
+   three fields as "a `str` or a `bool`", which two of them are not -- prose in a Returns block is
+   the form that drifted, so the shape moves into a type. The runtime guarantee stays where it was,
+   as `str()` coercion at the boundary; a per-call round-trip assertion was rejected as
+   belt-and-suspenders over a payload built from parts already coerced. The bytes-like hole in the
+   bare-`str` guard is closed in the same place.
+10. **A load-bearing rationale gets one live home, chosen by who must act on it.** The justification
+   for testing a real save-then-load round trip is a justification for a *test's shape*, so it lives
+   in that test's docstring -- the only site where someone deciding to "simplify" the test needs the
+   reason. `decisions.md` and the changelog are dated snapshots that carry the argument as of their
+   date and are never edited to stay in sync; `docs/AGENT.md` carries the *rule*, not the test
+   design. This is the rule that was missing when the same claim, restated in three places, was
+   corrected in two of them.
+
+**Round 4 (review), amending 8 and 9 above.** Round 3 confirmed the normalizer works and found
+three claims stated more strongly than the code supported. Each was made true in code rather than
+reworded.
+
+- **`as_verdict` does not raise.** It was falsifiable at its own log line: `repr()` is not total.
+  The `except` is now broad and the repr bounded and guarded, so a value that cannot be read comes
+  back as `UNKNOWN`.
+- **Both gate paths return the whole `UnresolvedVerdictReport`.** The success path returned one of
+  three keys, so the type did not describe the path it annotated. The handler's declared return is
+  `dict[str, Any] | StepFailure`, matching `StepDefinition.handler`; the `TypedDict` constructs and
+  documents the shape. Annotating the callable as the `TypedDict` instead produced a new mypy error
+  at the factory's only call site, because a `TypedDict` is not assignable to `dict[str, Any]`. With
+  the current form the branch is mypy-neutral: 463 errors on `main`, 463 on the branch.
+- **`result_key` is removed.** With a non-default value neither path could satisfy the type, and no
+  caller passed one.
+- **Subjects are validated as `str` rather than coerced**, narrowing 9's "coercion at the boundary"
+  to reasons only. A subject comes from the workflow author, so a wrong one is refused at import; a
+  reason is whatever was in the context at runtime, which the gate cannot refuse and so coerces.
+
+**A note on this record's own reliability, which is the finding of the review.** Five consecutive
+commits on this change each shipped a new false claim while correcting an earlier one. The last
+round of fixes therefore deleted rationale prose rather than rewriting it, and kept only claims a
+test pins. Read the docstrings in `health.py` and `base.py` as descriptions of
+what the code does; read this record as a dated snapshot of why, not as a maintained document.
+
+**Status:** implemented and shipped in the same commit as this record (#74 / PR #108). The decisions above were taken at the plan gate, before implementation; the corrections marked in 2 and 4 were made during code review, when the claims were measured rather than reasoned about.

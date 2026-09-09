@@ -4,6 +4,74 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-09: The health verdict becomes a shared contract with a first-class escalation path
+
+#71 introduced `HealthVerdict` (`healthy | degraded | unknown | skipped`) and wired it into
+`drift_monitoring`. It was shared in name only: `src/agent/health.py` had exactly two importers —
+the drift workflow and its test — and the step that turns an unresolved verdict into a failed run
+was hand-rolled inside that workflow, which said so in its own docstring ("This is a bridge. Once
+#74 gives verdicts a first-class escalation path in the base runner, it should be deleted"). Each
+of the four remaining adopters (#77, #78, #79, and the shell-side #93) would otherwise have written
+its own third state.
+
+**What changed:**
+
+- **`health.py` gains the subject-agnostic operations** — `verdict_of` (absent/`None`/unrecognised
+  coerce to `unknown`), `summarize` (aggregate), `unresolved` (the gate's predicate). The
+  signal→verdict *mapping* stays per-workflow: drift keeps `_VERDICT_BY_EXIT_CODE`, because a
+  labeling or export check has nothing to do with drift's exit codes. D008 phrased this boundary as
+  "enum only"; D010 revises the phrasing and keeps the invariant it was protecting.
+- **`fail_on_unresolved_verdicts()` in `workflows/base.py`** builds the terminal gate any workflow
+  can register. It returns `StepFailure` rather than raising, making it the first production adopter
+  of #73's contract: the same FAILED outcome through the same `_finalize()`, plus the payload on
+  `StepState.result` that #75/#76 will read, minus a traceback that describes nothing.
+- **`drift_monitoring`'s bridge is retired** onto it. The step's registered **name** is unchanged,
+  and the failure wording is preserved verbatim, so nothing an archive reader might match on moves.
+- **`summarize` is non-vacuous by construction.** `all_checked_healthy` is "at least one check ran
+  and every check that ran passed", never `all(...)` over the non-skipped checks — `True` for an
+  empty sequence, which would report a run that checked nothing as healthy. That invariant already
+  shipped inside drift; putting it in the shared helper is what stops the next adopter writing the
+  vacuous form. #95 stays open for the run-level half.
+- **`HealthSummary` is a `TypedDict`, not a dataclass**, and everything the gate writes to the
+  context is a primitive. The state file is written with `yaml.dump` and read with
+  `yaml.safe_load`, so a richer object serializes cleanly and then fails to load on the *next* run,
+  landing in `StateManager._load`'s catch-all `except Exception` — which resets every workflow's
+  state. The test for this exercises a real `StateManager` save→load round trip, because that is
+  the path production actually takes; asserting on `yaml.safe_dump` instead would test a function
+  the agent never calls. (An earlier draft justified it by claiming `safe_dump` would have *passed*
+  on the object that breaks — measured, it raises `RepresenterError` on a dataclass, a `NamedTuple`
+  and an enum member, so it would have caught them.)
+- **The aggregate helpers normalize their input rather than comparing it by identity.** Verdicts
+  are stored as `.value` strings, so the natural call — read them out of a context and aggregate —
+  handed `summarize()` strings, which matched no `is` branch: every subject counted as *checked*,
+  and a run whose only other check was skipped reported healthy. One shared `as_verdict()` now
+  holds the coerce-unrecognised-to-`unknown` rule and `verdict_of`, `summarize` and `unresolved` all
+  route through it, so an unrecognised spelling — including a future one from a non-Python
+  consumer — fails safe instead of reading as a passing check.
+- **The gate's payload is a `TypedDict`** (`UnresolvedVerdictReport`), for the same reason
+  `HealthSummary` is one. Its shape had been described in prose, and the prose had drifted. Both
+  paths return the whole shape, so the archive carries the same keys whether a run passed or failed.
+- **Subjects are validated as `str` at construction; reason values are coerced at read time.** The
+  asymmetry is deliberate — a subject comes from the workflow author and a wrong one is worth
+  refusing outright, while a reason is whatever was in the context at runtime.
+
+- **The contract is documented as a contract** — `docs/AGENT.md` gains a Health Verdict Contract
+  section beside the Step Failure Contract, listing the four canonical *string* values so a
+  non-Python consumer (#93) binds to the same spellings, and `health.py` finally appears in the
+  module tree.
+
+**Also fixed:** an archived run written before the vocabulary existed had no test proving it still
+loads. It does, and it does not acquire a healthy reading it never earned — the free-text
+"all classifiers healthy" in an old archive still resolves to `unknown`.
+
+**Why `health.py` stays an import leaf:** `workflows/__init__` eagerly imports every workflow
+module **and `drift_monitoring` already imports `health`**, so had the gate lived in `health.py`
+(importing `workflows.base`), `import src.agent.health` would fail **today** — the existing adopter
+alone closes the loop, with no second one required. A test pins the direction by parsing `health.py`
+for any import out of the `agent` package, which catches a lazy in-function import too.
+
+See [D010](../.claude/specs/decisions.md) for the full decision record.
+
 ### 2026-09-08: A step that reports its own failure now marks the workflow FAILED
 
 `Workflow._execute_step()` marked a step FAILED only when its handler *raised*. A handler that

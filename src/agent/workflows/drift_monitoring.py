@@ -9,8 +9,11 @@ check that never ran set neither key, so the second expression evaluated
 `not False` -> True -> "all classifiers healthy". That ran 219 times.
 
 So the check steps produce an explicit `HealthVerdict`, the reporting steps
-read it rather than inferring one, and `fail_on_unknown_verdict` refuses to let
-the workflow finish green when any verdict is missing or `unknown`.
+read it rather than inferring one, and the terminal gate refuses to let the
+workflow finish green when any verdict is missing or `unknown`. That gate is no
+longer written here: #74 moved it into `base.fail_on_unresolved_verdicts`, and
+the aggregation into `health.summarize`, so every workflow adopting the
+vocabulary shares one implementation instead of re-deriving it (D010).
 """
 
 import logging
@@ -18,10 +21,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..config import agent_settings
-from ..health import HealthVerdict
+from ..health import HealthVerdict, summarize, verdict_of
 from ..notifications import send_check_failure_notification, send_drift_notification
 from ..runner import ScriptResult, run_monitor_drift, tail
-from .base import StepDefinition, Workflow, WorkflowRegistry
+from .base import (
+    StepDefinition,
+    Workflow,
+    WorkflowRegistry,
+    fail_on_unresolved_verdicts,
+)
 from src.mlops.exit_codes import (
     EXIT_DRIFT_DETECTED,
     EXIT_INDETERMINATE,
@@ -262,40 +270,35 @@ def check_ep_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
     return _run_drift_check("ep", context)
 
 
-def _verdict_of(context: dict[str, Any], classifier: str) -> HealthVerdict:
-    """Read a classifier's verdict, treating anything unrecognised as unknown.
+def _drift_verdict(context: dict[str, Any], classifier: str) -> HealthVerdict:
+    """Read one classifier's verdict off the drift key convention.
 
-    A step that returned no verdict key leaves this None. Mapping that to
-    UNKNOWN rather than to HEALTHY is the whole point of the module.
+    A thin binding of `health.verdict_of` to this workflow's `<c>_verdict` keys.
+    The coerce-absent-to-UNKNOWN rule it relies on lives in `health`, shared with
+    every other workflow, rather than being re-derived here (D010.1).
     """
-    raw = context.get(f"{classifier}_verdict")
-    try:
-        return HealthVerdict(raw)
-    except ValueError:
-        logger.error(
-            f"{classifier} verdict is missing or unrecognised ({raw!r}); "
-            f"treating as unknown"
-        )
-        return HealthVerdict.UNKNOWN
+    return verdict_of(context, f"{classifier}_verdict")
 
 
 def evaluate_drift_results(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     """Evaluate drift detection results and determine actions needed."""
-    verdicts = {c: _verdict_of(context, c) for c in ("fp", "ep")}
+    verdicts = {c: _drift_verdict(context, c) for c in ("fp", "ep")}
 
-    drifted = [c for c, v in verdicts.items() if v is HealthVerdict.DEGRADED]
-    unknown = [c for c, v in verdicts.items() if v is HealthVerdict.UNKNOWN]
-    skipped = [c for c, v in verdicts.items() if v is HealthVerdict.SKIPPED]
-    checked = [c for c, v in verdicts.items() if v is not HealthVerdict.SKIPPED]
+    summary = summarize(verdicts)
+    drifted = summary["degraded"]
+    unknown = summary["unknown"]
+    checked = summary["checked"]
 
     evaluation: dict[str, Any] = {
         "any_drift_detected": bool(drifted),
         "classifiers_with_drift": drifted,
         "classifiers_unknown": unknown,
-        "classifiers_skipped": skipped,
+        "classifiers_skipped": summary["skipped"],
         # "At least one check ran and every check that ran passed" -- not
-        # "no failures found", which is vacuously true when nothing ran.
-        "all_checked_healthy": bool(checked) and not drifted and not unknown,
+        # "no failures found", which is vacuously true when nothing ran. That
+        # rule now lives in `health.summarize`, shared, so a workflow adopting
+        # the vocabulary cannot re-introduce the vacuous form (D010.7, #95).
+        "all_checked_healthy": summary["all_checked_healthy"],
     }
 
     for classifier in drifted:
@@ -348,7 +351,7 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
     alerts_sent = []
 
     for classifier in ("fp", "ep"):
-        verdict = _verdict_of(context, classifier)
+        verdict = _drift_verdict(context, classifier)
 
         if verdict is HealthVerdict.DEGRADED:
             result = send_drift_notification(
@@ -425,7 +428,7 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
 
 def _classifier_report(context: dict[str, Any], classifier: str) -> dict[str, Any]:
     """Build one classifier's section of the report."""
-    verdict = _verdict_of(context, classifier)
+    verdict = _drift_verdict(context, classifier)
     return {
         "verdict": verdict.value,
         "drift_detected": context.get(f"{classifier}_drift_detected"),
@@ -522,38 +525,32 @@ def _log_drift_summary(report: dict[str, Any]) -> None:
     print("=" * 60 + "\n")
 
 
-def fail_on_unknown_verdict(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Fail the workflow when any check produced no verdict.
+def _unmonitored_message(classifiers: list[str], reasons: dict[str, str]) -> str:
+    """Drift's wording for the shared terminal gate.
 
-    This runs LAST on purpose. `Workflow._execute_step` calls `complete_step`
-    only on the non-raising path, so raising from `generate_drift_report` would
-    discard the report from the run archive, and raising from a check step would
-    skip the alert entirely. Running here means the summary is printed, the
-    alert is sent, and only then does the workflow go red -- which is all three
-    halves of "a failed check must not report success".
-
-    It passes only on an EXPLICIT healthy/degraded/skipped. A verdict that is
-    absent, None, or unrecognised fails too: `_verdict_of` maps those to
-    UNKNOWN, so a handler that returned a dict without its verdict key cannot
-    slip past the one gate placed to catch it.
-
-    This is a bridge. Once #74 gives verdicts a first-class escalation path in
-    the base runner, it should be deleted rather than left as dead code (D008).
+    Kept verbatim from the hand-rolled gate this replaced, so the text archived
+    on a failed run -- which #75/#76 will read -- does not move (D010.3).
     """
-    unknown = [c for c in ("fp", "ep") if _verdict_of(context, c) is HealthVerdict.UNKNOWN]
+    names = ", ".join(c.upper() for c in classifiers)
+    detail = "; ".join(f"{c}: {reasons[c]}" for c in classifiers)
+    return (
+        f"Drift check produced no verdict for {names} - these classifiers are "
+        f"unmonitored and this run must not be recorded as successful "
+        f"({detail})"
+    )
 
-    if unknown:
-        names = ", ".join(c.upper() for c in unknown)
-        reasons = "; ".join(
-            f"{c}: {context.get(f'{c}_error') or 'no reason recorded'}" for c in unknown
-        )
-        raise RuntimeError(
-            f"Drift check produced no verdict for {names} - these classifiers are "
-            f"unmonitored and this run must not be recorded as successful "
-            f"({reasons})"
-        )
 
-    return {"verdicts_confirmed": True}
+# The terminal gate. Built from the shared factory rather than hand-rolled here:
+# #74 moved the escalation path into `base.fail_on_unresolved_verdicts`, which is
+# exactly the retirement D008 asked for when it called the local version a bridge.
+#
+# The module-level NAME and the registered step name below are both deliberately
+# unchanged. Renaming the step is the one edit that would move an archive key
+# #75/#76 may match on, and it must not be coupled to this refactor (D010.3).
+fail_on_unknown_verdict = fail_on_unresolved_verdicts(
+    ("fp", "ep"),
+    describe=_unmonitored_message,
+)
 
 
 @WorkflowRegistry.register

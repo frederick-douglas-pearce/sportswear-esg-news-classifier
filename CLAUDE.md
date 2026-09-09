@@ -488,6 +488,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-09**: The health verdict becomes a shared contract - `verdict_of`/`summarize`/`unresolved` in `src/agent/health.py`, a reusable `fail_on_unresolved_verdicts()` gate in `base.py` returning `StepFailure`, drift's hand-rolled bridge retired onto it, and a non-vacuous "all healthy" (#74)
 - **2026-09-08**: A step that reports its own failure now marks the workflow FAILED - `StepFailure` return contract, one shared `_finalize()` for `run()`/`resume()`, a FAILED step beats a pause, and `WorkflowState.error` echoes the real step errors (#73)
 - **2026-09-07**: A failed drift check no longer reports "all classifiers healthy" - typed `DriftReport.indeterminate`, a 0/1/2 exit-code contract, `HealthVerdict` vocabulary, explicit EP skip, and a workflow that fails when a check produced no verdict (#71)
 - **2026-09-06**: A failed `pg_dump` no longer records a good backup - `set -eo pipefail` plus reachable failure branches in `scripts/backup_db.sh`, so a truncated archive is removed instead of rotated (#89)

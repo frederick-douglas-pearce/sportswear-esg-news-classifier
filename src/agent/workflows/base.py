@@ -2,11 +2,13 @@
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, TypedDict
 
 from ..config import agent_settings
+from ..health import unresolved, verdict_of
 from ..state import (
     StateManager,
     StepState,
@@ -73,6 +75,135 @@ class StepDefinition:
     handler: Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure | None]
     skip_on_dry_run: bool = False
     requires_approval: bool = False
+
+
+class UnresolvedVerdictReport(TypedDict):
+    """What the terminal verdict gate writes into the workflow context.
+
+    Both paths write this whole shape, so the archive carries the same keys
+    whether a run passed or failed.
+
+    A `TypedDict` because this reaches the run archive, which is written with
+    `yaml.dump` and read with `yaml.safe_load`: every field must be a plain
+    primitive. Subjects are validated as `str` at construction and reason values
+    are coerced at read time.
+    """
+
+    verdicts_confirmed: bool
+    """True when every verdict resolved, False when any did not."""
+
+    unresolved_verdicts: list[str]
+    """Subjects whose check produced no verdict; empty on the success path."""
+
+    unresolved_reasons: dict[str, str]
+    """Why each of those is unresolved, or "no reason recorded"; empty on success."""
+
+
+def _default_unresolved_message(subjects: list[str], reasons: dict[str, str]) -> str:
+    """Fallback wording for a gate whose workflow supplied none."""
+    names = ", ".join(subjects)
+    detail = "; ".join(f"{s}: {reasons[s]}" for s in subjects)
+    return (
+        f"No verdict was produced for {names} - this run must not be recorded "
+        f"as successful ({detail})"
+    )
+
+
+def fail_on_unresolved_verdicts(
+    subjects: Sequence[str],
+    *,
+    verdict_key: str = "{subject}_verdict",
+    reason_key: str = "{subject}_error",
+    describe: Callable[[list[str], dict[str, str]], str] | None = None,
+) -> Callable[["Workflow", dict[str, Any]], dict[str, Any] | StepFailure]:
+    """Build the terminal step that fails a run whose checks produced no verdict.
+
+    **Register the step it returns after every step that writes a verdict** --
+    in practice, last. The gate reads verdicts out of the context, so a subject
+    whose check has not run yet reads as ``unknown`` and fails the run
+    spuriously. That is the whole ordering constraint: returning ``StepFailure``
+    does not halt the loop, so steps after the gate still run and are still
+    recorded.
+
+    The gate passes only on an explicit healthy/degraded/skipped, because
+    ``verdict_of`` maps an absent, ``None`` or unrecognised value to ``UNKNOWN``.
+
+    Args:
+        subjects: What was checked -- classifiers, feeds, stages. Used to build
+            each context key and reported in the failure message.
+        verdict_key: Template for a subject's verdict key in the workflow
+            context. Formatted with ``subject=``.
+        reason_key: Template for a subject's failure-reason key.
+        describe: Builds the failure text from the unresolved subjects and their
+            reasons. Workflows with their own wording pass one; the default
+            covers the rest.
+
+    Returns:
+        A step handler. Its payload on both paths is an
+        ``UnresolvedVerdictReport``.
+
+    Raises:
+        TypeError: if ``subjects`` is a ``str``/``bytes``/``bytearray`` itself,
+            or if any element is not a ``str``.
+        ValueError: if ``subjects`` is empty. A gate over no subjects would
+            report success having confirmed nothing.
+    """
+    if isinstance(subjects, (str, bytes, bytearray)):
+        raise TypeError(
+            f"subjects must be a sequence of names, not {subjects!r} itself -- "
+            f"iterating it yields one subject per character or per byte"
+        )
+
+    subjects = tuple(subjects)
+    if not subjects:
+        raise ValueError(
+            "fail_on_unresolved_verdicts() needs at least one subject: a gate over "
+            "no subjects always passes, which is the vacuous truth this contract refuses"
+        )
+    # Validate rather than coerce: str() on a non-str subject manufactures a
+    # plausible-looking name out of whatever the sequence yields.
+    if not all(isinstance(subject, str) for subject in subjects):
+        raise TypeError(
+            f"every subject must be a str; got "
+            f"{[type(s).__name__ for s in subjects if not isinstance(s, str)]}"
+        )
+
+    def handler(
+        workflow: "Workflow", context: dict[str, Any]
+    ) -> dict[str, Any] | StepFailure:
+        verdicts = {
+            subject: verdict_of(context, verdict_key.format(subject=subject))
+            for subject in subjects
+        }
+        missing = unresolved(verdicts)
+
+        if not missing:
+            return dict(
+                UnresolvedVerdictReport(
+                    verdicts_confirmed=True, unresolved_verdicts=[], unresolved_reasons={}
+                )
+            )
+
+        reasons = {
+            # str() because the value is whatever the workflow stored, and a
+            # non-primitive here fails the next yaml.safe_load.
+            subject: str(context.get(reason_key.format(subject=subject)) or "no reason recorded")
+            for subject in missing
+        }
+        message = (describe or _default_unresolved_message)(missing, reasons)
+        logger.error(message)
+
+        report = UnresolvedVerdictReport(
+            verdicts_confirmed=False,
+            unresolved_verdicts=missing,
+            unresolved_reasons=reasons,
+        )
+        # dict() because a TypedDict is one at runtime but is not assignable to
+        # dict[str, Any]. Both paths build the report first, so both are pinned
+        # to the declared shape.
+        return StepFailure(error=message, context=dict(report))
+
+    return handler
 
 
 class Workflow(ABC):
