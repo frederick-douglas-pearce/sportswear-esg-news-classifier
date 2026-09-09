@@ -688,11 +688,9 @@ reworded.
   reason is whatever was in the context at runtime, which the gate cannot refuse and so coerces.
 
 **A note on this record's own reliability, which is the finding of the review.** Five consecutive
-commits on this change each shipped a new false claim while correcting an earlier one, every
-instance in *explanatory* prose rather than in code or tests. The code was verified sound at every
-round, most heavily by a 5,887-context differential against `main` that found zero behavioural
-differences. The last round of fixes therefore deleted rationale prose rather than rewriting it, and
-kept only claims a test pins. Read the docstrings in `health.py` and `base.py` as descriptions of
+commits on this change each shipped a new false claim while correcting an earlier one. The last
+round of fixes therefore deleted rationale prose rather than rewriting it, and kept only claims a
+test pins. Read the docstrings in `health.py` and `base.py` as descriptions of
 what the code does; read this record as a dated snapshot of why, not as a maintained document.
 
 **Status:** implemented and shipped in the same commit as this record (#74 / PR #108). The decisions above were taken at the plan gate, before implementation; the corrections marked in 2 and 4 were made during code review, when the claims were measured rather than reasoned about.
