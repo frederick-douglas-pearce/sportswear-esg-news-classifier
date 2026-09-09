@@ -209,7 +209,11 @@ class TestAnUnreadableVerdictIsVisibleBeforeTheGate:
         with caplog.at_level(logging.ERROR, logger="src.agent.health"):
             assert as_verdict("probably_fine", label="fp_verdict") is HealthVerdict.UNKNOWN
 
-        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        errors = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.ERROR and r.name == "src.agent.health"
+        ]
         assert errors, "coercing to UNKNOWN logged nothing at all"
         assert any("fp_verdict" in m for m in errors), (
             f"the label never reached the log line: {errors}"
@@ -217,12 +221,23 @@ class TestAnUnreadableVerdictIsVisibleBeforeTheGate:
         assert any("probably_fine" in m for m in errors)
 
     def test_summarize_logs_the_subject_whose_verdict_it_could_not_read(self, caplog):
-        """`label` is threaded through the aggregates too, so pin it there."""
+        """`label` is threaded through the aggregates too, so pin it there.
+
+        Asserts the formatted fragment `at '<subject>'`, not a bare substring:
+        a two-character name like "ep" occurs incidentally in ordinary English
+        ("repr", "step", "deprecated"), so a substring check could pass with the
+        label removed entirely, on nothing but a coincidence of wording.
+        """
         with caplog.at_level(logging.ERROR, logger="src.agent.health"):
             summarize({"ep": "nonsense"})
 
-        assert any(
-            "ep" in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR
+        errors = [
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.ERROR and r.name == "src.agent.health"
+        ]
+        assert any("at 'ep'" in m for m in errors), (
+            f"summarize did not pass the subject through as a label: {errors}"
         )
 
     def test_a_huge_value_is_truncated_in_the_log(self, caplog):
@@ -234,7 +249,11 @@ class TestAnUnreadableVerdictIsVisibleBeforeTheGate:
         with caplog.at_level(logging.ERROR, logger="src.agent.health"):
             as_verdict("x" * 10_000, label="fp_verdict")
 
-        message = next(r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
+        message = next(
+            r.getMessage()
+            for r in caplog.records
+            if r.levelno == logging.ERROR and r.name == "src.agent.health"
+        )
         assert "..." in message
         assert len(message) < 500, f"log line was {len(message)} chars — repr not bounded"
 
