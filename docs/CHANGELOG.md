@@ -48,8 +48,12 @@ its own third state.
   holds the coerce-unrecognised-to-`unknown` rule and `verdict_of`, `summarize` and `unresolved` all
   route through it, so an unrecognised spelling — including a future one from a non-Python
   consumer — fails safe instead of reading as a passing check.
-- **The gate's failure payload is a `TypedDict`** (`UnresolvedVerdictReport`), for the same reason
-  `HealthSummary` is one. Its shape had been described in prose, and the prose had drifted.
+- **The gate's payload is a `TypedDict`** (`UnresolvedVerdictReport`), for the same reason
+  `HealthSummary` is one. Its shape had been described in prose, and the prose had drifted. Both
+  paths return the whole shape, so the archive carries the same keys whether a run passed or failed.
+- **Subjects are validated as `str` at construction; reason values are coerced at read time.** The
+  asymmetry is deliberate — a subject comes from the workflow author and a wrong one is worth
+  refusing outright, while a reason is whatever was in the context at runtime.
 
 - **The contract is documented as a contract** — `docs/AGENT.md` gains a Health Verdict Contract
   section beside the Step Failure Contract, listing the four canonical *string* values so a

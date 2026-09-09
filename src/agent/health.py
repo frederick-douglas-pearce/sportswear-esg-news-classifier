@@ -13,8 +13,9 @@ workflow read `context.get("fp_drift_detected", False)`, and absence resolved
 to "no drift" and then to "all classifiers healthy" -- on 219 runs.
 
 This module holds the vocabulary and the subject-agnostic operations over it:
-`verdict_of` reads one, `summarize` aggregates a set, `unresolved` names the
-ones that never resolved. **The mapping from a given check's signals to these
+`as_verdict` coerces one value, `verdict_of` reads one out of a context,
+`summarize` aggregates a set, and `unresolved` names the ones that never
+resolved -- the last three all route through the first. **The mapping from a given check's signals to these
 verdicts stays beside that check** -- each scheduled script has its own contract
 (the drift monitor's exit codes live in `src/mlops/exit_codes.py` and are
 applied in `src/agent/workflows/drift_monitoring.py`), and keeping that mapping
@@ -128,6 +129,20 @@ class HealthSummary(TypedDict):
     """Subjects deliberately not checked."""
 
 
+def _describe(value: object, limit: int = 120) -> str:
+    """A repr that cannot itself raise, and cannot flood the log.
+
+    `repr()` is not total: it raises on an int over 4300 digits (CPython's
+    integer-to-string limit) and on any object whose `__repr__` raises. A log
+    line built to explain a bad value must not become a second bad value.
+    """
+    try:
+        shown = repr(value)
+    except Exception:
+        return f"<unreprable {type(value).__name__}>"
+    return shown if len(shown) <= limit else shown[: limit - 3] + "..."
+
+
 def as_verdict(value: object, *, label: str | None = None) -> HealthVerdict:
     """Coerce anything to a verdict, resolving what we cannot read to UNKNOWN.
 
@@ -138,17 +153,26 @@ def as_verdict(value: object, *, label: str | None = None) -> HealthVerdict:
     context stores `.value` strings by mandate (see `HealthVerdict`): reading a
     verdict back out of a run archive and handing it here has to work.
 
-    Never raises. `UNKNOWN` fails the run at the terminal gate, which is the
-    designed route for "we cannot tell"; an exception would take a different
-    path out of a workflow and could be swallowed by a reporting step's own
-    error handling, bypassing the gate entirely.
+    **Does not raise, and the broad `except` is the point rather than a
+    shortcut.** `UNKNOWN` is the designed route for "we cannot tell": it fails
+    the run at the terminal gate. An exception would leave a workflow by a
+    different path and could be swallowed by a reporting step's own error
+    handling, bypassing that gate -- so a value this cannot interpret must come
+    back as a verdict, whatever went wrong while trying to read it. That covers
+    the enum lookup (an unhashable value, an object whose `__hash__` raises) and
+    the log line itself (`repr()` raises on an int over 4300 digits, and an
+    object's `__repr__` can raise anything at all).
+
+    This is not `StateManager._load`'s catch-all, which discards every
+    workflow's state on any error. Here the fallback is the module's own
+    fail-safe value, and it is logged.
     """
     try:
         return HealthVerdict(value)
-    except ValueError:
+    except Exception:
         where = f" at {label!r}" if label else ""
         logger.error(
-            f"health verdict{where} is missing or unrecognised ({value!r}); "
+            f"health verdict{where} is missing or unrecognised ({_describe(value)}); "
             f"treating as unknown"
         )
         return HealthVerdict.UNKNOWN

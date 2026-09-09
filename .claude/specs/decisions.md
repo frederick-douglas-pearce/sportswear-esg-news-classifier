@@ -668,4 +668,38 @@ on the three with a design component. Three rulings, all applied:
    design. This is the rule that was missing when the same claim, restated in three places, was
    corrected in two of them.
 
+**Round 4 (review), amending 8 and 9 above.** Round 3 confirmed the normalizer works and found
+three more claims stated more strongly than the code supported. The response was to make each claim
+true rather than to reword it a fourth time -- this epic has now had four consecutive correcting
+commits each ship a new false claim, so restating was the option with the worst track record.
+
+- **"Never raises" is now true rather than qualified.** It was falsifiable at `as_verdict`'s own log
+  line: `repr()` is not total (it raises on an int over 4300 digits), and an object's `__repr__` or
+  `__hash__` can raise anything. The catch is now broad and the repr is bounded and guarded, so a
+  value that cannot be read -- for any reason, including while trying to describe it -- comes back
+  as `UNKNOWN`. The broad `except` is the contract, not a shortcut: the whole purpose is that
+  nothing escapes as an exception, because an exception leaves by a path that bypasses the gate.
+  Measured against a 4301-digit int and objects whose `__repr__`/`__hash__` raise.
+- **Both gate paths now return the whole `UnresolvedVerdictReport`.** The success path returned one
+  of its three keys, so the type introduced in 9 to stop prose drifting did not describe the path it
+  annotated. Measured: mypy reported `Incompatible return value type (got "dict[str, bool]",
+  expected "UnresolvedVerdictReport | StepFailure")` on that line before the change, and reports
+  nothing in `base.py` after it. The first attempt at the fix traded that error for a new one --
+  a `TypedDict` is not assignable to `StepFailure.context`'s `dict[str, Any]` -- which is why the
+  failure path builds the report and passes `dict(report)`. The archive now carries the same keys
+  whether a run passed or failed, which is also the better shape for #75/#76. (mypy is not
+  configured for this project and reports many pre-existing errors elsewhere; the statement here is
+  scoped to `base.py`.)
+- **`result_key` is removed.** With a non-default value neither path could satisfy the type, and
+  nothing passed one. A parameter that makes the payload untypeable, for a flexibility no caller
+  wanted, is not worth the hole.
+- **Subjects are validated as `str`, not coerced with `str()`** -- this narrows 9's "coercion at the
+  boundary" to reasons only, and the asymmetry is the point: a subject comes from the workflow
+  author, so a wrong one is a bug worth refusing at import; a reason is whatever was in the context
+  at runtime, which the gate cannot refuse and so must make safe. Validation also closed the hole 9
+  claimed to have closed and had not: `memoryview` and `array` still slipped a guard that
+  enumerated bytes-like types, and both yield ints that `str()` would have turned into subjects
+  named `'102'`, `'112'`. Requiring `str` is shorter than the enumeration and does not need to be
+  complete to be correct.
+
 **Status:** implemented and shipped in the same commit as this record (#74 / PR #108). The decisions above were taken at the plan gate, before implementation; the corrections marked in 2 and 4 were made during code review, when the claims were measured rather than reasoned about.

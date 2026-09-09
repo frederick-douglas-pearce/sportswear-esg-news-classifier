@@ -80,6 +80,12 @@ class StepDefinition:
 class UnresolvedVerdictReport(TypedDict):
     """What the terminal verdict gate writes into the workflow context.
 
+    **Both paths return this whole shape**, so the archive carries the same keys
+    whether the run passed or failed. The success path used to return only
+    `verdicts_confirmed`, which meant the type annotated onto it described a
+    payload it did not produce -- a type introduced to stop prose drifting,
+    drifting itself.
+
     A `TypedDict` for the same reason `HealthSummary` is one: this reaches the
     run archive, which is written with `yaml.dump` and read back with
     `yaml.safe_load`, so every field has to be a plain primitive or the next
@@ -93,13 +99,13 @@ class UnresolvedVerdictReport(TypedDict):
     """
 
     verdicts_confirmed: bool
-    """False on the failure path, True when every verdict resolved."""
+    """True when every verdict resolved, False when any did not."""
 
     unresolved_verdicts: list[str]
-    """Subjects whose check produced no verdict."""
+    """Subjects whose check produced no verdict; empty on the success path."""
 
     unresolved_reasons: dict[str, str]
-    """Why each of those is unresolved, or "no reason recorded"."""
+    """Why each of those is unresolved, or "no reason recorded"; empty on success."""
 
 
 def _default_unresolved_message(subjects: list[str], reasons: dict[str, str]) -> str:
@@ -118,7 +124,6 @@ def fail_on_unresolved_verdicts(
     verdict_key: str = "{subject}_verdict",
     reason_key: str = "{subject}_error",
     describe: Callable[[list[str], dict[str, str]], str] | None = None,
-    result_key: str = "verdicts_confirmed",
 ) -> Callable[["Workflow", dict[str, Any]], UnresolvedVerdictReport | StepFailure]:
     """Build the terminal step that fails a run whose checks produced no verdict.
 
@@ -164,37 +169,46 @@ def fail_on_unresolved_verdicts(
         describe: Builds the failure text from the unresolved subjects and their
             reasons. Workflows with their own wording pass one; the default
             covers the rest.
-        result_key: Context key set ``True`` when every verdict resolved, and
-            ``False`` when they did not.
 
     Returns:
         A step handler whose failure payload is an ``UnresolvedVerdictReport``
         -- see that type for the shape. It round-trips ``yaml.safe_load``
-        because this factory coerces both the subject names and the reason
-        values with ``str()`` on the way in: a reason is whatever a workflow
-        happened to store under ``reason_key``, and an exception object or a
-        ``Path`` reaches ``yaml.dump`` intact, failing only on the *next* run's
-        load.
+        because subjects are *validated* as ``str`` at construction and reason
+        values are coerced with ``str()`` at read time. The asymmetry is
+        deliberate: a subject is supplied by the workflow author, so a wrong one
+        is a bug worth refusing outright; a reason is whatever happened to be in
+        the context at runtime, which the gate cannot refuse and so must make
+        safe. An uncoerced reason -- an exception object, a ``Path`` -- reaches
+        ``yaml.dump`` intact and fails only on the *next* run's load.
 
     Raises:
-        TypeError: if ``subjects`` is a bare ``str`` or bytes-like. Both
-            satisfy ``Sequence[str]`` and iterate per character or per byte.
+        TypeError: if ``subjects`` is a ``str``/``bytes``/``bytearray`` itself,
+            or if any element is not a ``str``.
         ValueError: if ``subjects`` is empty. A gate over no subjects would
             report ``verdicts_confirmed`` having confirmed nothing -- the same
             vacuous truth ``summarize`` exists to refuse.
     """
     if isinstance(subjects, (str, bytes, bytearray)):
         raise TypeError(
-            f"subjects must be a sequence of names, not the bare string {subjects!r} "
-            f"-- a str is a Sequence[str] and would iterate one subject per character, "
-            f"and a bytes-like iterates as ints that str() turns into '102', '101', ..."
+            f"subjects must be a sequence of names, not {subjects!r} itself -- "
+            f"iterating it yields one subject per character or per byte"
         )
 
-    subjects = tuple(str(subject) for subject in subjects)
+    subjects = tuple(subjects)
     if not subjects:
         raise ValueError(
             "fail_on_unresolved_verdicts() needs at least one subject: a gate over "
             "no subjects always passes, which is the vacuous truth this contract refuses"
+        )
+    # Validate rather than coerce. str() on a non-str subject would manufacture a
+    # plausible-looking name -- a memoryview or an array of bytes yields ints, and
+    # str() turns those into subjects called '102', '101'. Requiring str is both
+    # stronger and shorter than enumerating the sequence types that misbehave,
+    # which the previous guard tried to do and got wrong.
+    if not all(isinstance(subject, str) for subject in subjects):
+        raise TypeError(
+            f"every subject must be a str; got "
+            f"{[type(s).__name__ for s in subjects if not isinstance(s, str)]}"
         )
 
     def handler(
@@ -207,7 +221,9 @@ def fail_on_unresolved_verdicts(
         missing = unresolved(verdicts)
 
         if not missing:
-            return {result_key: True}
+            return UnresolvedVerdictReport(
+                verdicts_confirmed=True, unresolved_verdicts=[], unresolved_reasons={}
+            )
 
         reasons = {
             # str() because the value is whatever the workflow stored: an
@@ -219,14 +235,15 @@ def fail_on_unresolved_verdicts(
         message = (describe or _default_unresolved_message)(missing, reasons)
         logger.error(message)
 
-        return StepFailure(
-            error=message,
-            context={
-                result_key: False,
-                "unresolved_verdicts": missing,
-                "unresolved_reasons": reasons,
-            },
+        report = UnresolvedVerdictReport(
+            verdicts_confirmed=False,
+            unresolved_verdicts=missing,
+            unresolved_reasons=reasons,
         )
+        # dict() because StepFailure.context is a plain dict[str, Any]; a
+        # TypedDict is one at runtime but is not assignable to it. Building the
+        # report first is what keeps both paths pinned to the same declared shape.
+        return StepFailure(error=message, context=dict(report))
 
     return handler
 

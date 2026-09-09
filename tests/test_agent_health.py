@@ -16,6 +16,7 @@ Three of these classes exist because of a specific way this can go wrong:
   cycle today, via the adopter that already exists (D010.2).
 """
 
+import array
 import ast
 import subprocess
 import sys
@@ -42,6 +43,20 @@ from src.agent.workflows.base import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class _BadRepr:
+    """Its `__repr__` raises — the log line must survive it."""
+
+    def __repr__(self):
+        raise RuntimeError("repr exploded")
+
+
+class _BadHash:
+    """Its `__hash__` raises, so the enum lookup raises something not ValueError."""
+
+    def __hash__(self):
+        raise RuntimeError("hash exploded")
 
 
 @pytest.fixture
@@ -200,13 +215,25 @@ class TestVerdictsAreNormalizedNotIdentityCompared:
         assert summary["all_checked_healthy"] is True
         assert unresolved({"fp": HealthVerdict.UNKNOWN}) == ["fp"]
 
-    @pytest.mark.parametrize("junk", [None, 42, {}, [], object(), b"healthy"])
+    @pytest.mark.parametrize(
+        "junk",
+        [None, 42, {}, [], object(), b"healthy", 10**4301, _BadRepr(), _BadHash()],
+        ids=[
+            "none", "int", "dict", "list", "object", "bytes",
+            "int-too-big-to-repr", "repr-raises", "hash-raises",
+        ],
+    )
     def test_anything_unreadable_becomes_unknown_and_never_raises(self, junk):
         """`as_verdict` never raises — UNKNOWN is the designed route.
 
         An exception would leave a workflow by a different path and could be
         swallowed by a reporting step's own error handling, bypassing the gate
         that exists to fail the run.
+
+        The last three parameters are the ones that made "never raises" false
+        before: `repr()` is not total — it raises on an int over 4300 digits —
+        and an object's `__repr__` or `__hash__` can raise anything at all. The
+        log line built to explain a bad value must not become a second one.
         """
         assert as_verdict(junk) is HealthVerdict.UNKNOWN
 
@@ -514,18 +541,21 @@ class TestGateReasons:
         """
         handler = fail_on_unresolved_verdicts(("feed",), verdict_key="{subject}_health")
 
-        assert handler(None, {"feed_health": HealthVerdict.HEALTHY.value}) == {
-            "verdicts_confirmed": True
-        }
+        assert handler(None, {"feed_health": HealthVerdict.HEALTHY.value})[
+            "verdicts_confirmed"
+        ] is True
 
     def test_a_non_string_reason_is_coerced_before_it_reaches_the_archive(self):
         """A reason is whatever the workflow stored, so the gate must coerce it.
 
         An exception object or a `Path` under `<subject>_error` serializes
         through `yaml.dump` and only fails on the NEXT run's `safe_load`, taking
-        all workflow state with it. Drift's reasons are mostly f-strings, but
-        one comes from parsed JSON (`drift_monitoring` reads it out of the
-        script's summary), so this guards a live path as well as #77/#78/#79.
+        all workflow state with it.
+
+        No claim here about whether any current caller can reach that state.
+        Two attempts at one were wrong in opposite directions, and the coercion
+        is worth having either way — what it guards is the factory's contract
+        with callers that do not exist yet.
         """
         result = fail_on_unresolved_verdicts(("fp",))(
             None, {"fp_error": RuntimeError("KeyError: 'novelty_score'")}
@@ -555,8 +585,25 @@ class TestGateConstructionRefusesVacuousConfigurations:
         this would be written, and it would fail every run with subjects named
         `f`, `e`, `e`, `d`.
         """
-        with pytest.raises(TypeError, match="bare string"):
+        with pytest.raises(TypeError, match="one subject per character"):
             fail_on_unresolved_verdicts("feed")
+
+    @pytest.mark.parametrize(
+        "sequence",
+        [memoryview(b"fp"), array.array("b", b"fp"), (1, 2), ("fp", 3)],
+        ids=["memoryview", "array", "ints", "mixed"],
+    )
+    def test_a_non_string_subject_is_refused(self, sequence):
+        """Validate subjects rather than `str()` them.
+
+        Coercion would manufacture plausible-looking names: a memoryview or an
+        array of bytes yields ints, and `str()` turns those into subjects called
+        `'102'`, `'112'`. Requiring `str` is both stronger and shorter than
+        enumerating the sequence types that misbehave — which an earlier guard
+        tried to do and got wrong, missing exactly these two.
+        """
+        with pytest.raises(TypeError):
+            fail_on_unresolved_verdicts(sequence)
 
     @pytest.mark.parametrize("blob", [b"feed", bytearray(b"feed")])
     def test_a_bytes_like_subject_is_refused(self, blob):
