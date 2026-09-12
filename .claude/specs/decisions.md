@@ -900,8 +900,39 @@ happens to exercise, so **fixture fidelity bounds the gate's reach**, and a clea
 says nothing about the cases the fixture cannot express. That is a sharper and more general lesson
 than the claim-authoring one #73 and #74 arrived at, and it is not the same lesson.
 
-Also in this round, and all deletions rather than corrections, per the two-correction cap: a finder
-count the amendment above gave twice and inconsistently; a `status` assertion in `docs/DATABASE.md`
-that a whole-file substring search satisfied via an unrelated environment-variable row; a changelog
-sentence and a test docstring bullet each broader than the code beneath them; and a pasted terminal
-transcript in the PR body carrying a line number that the next commit invalidated.
+This round also corrected the exit-code table assertion, which a whole-file substring search
+satisfied via an unrelated environment-variable row, and removed several sentences broader than the
+code beneath them.
+
+### D011 amendment 3 (2026-09-11) — the claim class is deleted, not corrected again
+
+Human-authorised. The fresh check of amendment 2's round found **no blocking defect and no
+behavioural defect** — it established the mechanical fixes counterfactually, and resolved the one
+question flagged as potentially blocking by sweeping `pg_size_pretty` exhaustively over `0..200000`
+plus twenty thousand random bigints against the shipped guard, with nothing non-conforming and the
+unit set closed at `PB`. Every finding it returned was prose, in the commit whose stated purpose was
+removing false prose. Two were of the exact class being removed: a docstring counting four items
+over three, and *this record's own* list of deletions describing a deletion that never happened.
+
+So the disposition here is the one `loop.config.md` §6 prescribes for a third occurrence:
+**delete the class, do not correct it a fourth time.**
+
+**What was deleted:** every comment and docstring clause that attributes a guard to the mutant it
+kills — "this pins", "without this assertion that mutant survives", "reverting X reddens rows Y and
+Z", "it is not redundant", and a parametrize field that carried a mutant name into an assertion
+message. **What was kept:** the tests, their names, their assertion messages, and short factual
+statements about what the code does. Nothing executable changed except the removal of that unused
+parametrize field, so the verification recorded in amendment 2 still stands.
+
+**Why this class in particular.** These claims are second-order — assertions about what the *test
+suite* would do under a hypothetical edit. They cannot be checked by reading the line they sit on,
+they are invalidated by any later edit to any other row, and they were wrong here about as often as
+they were right. The tests themselves are first-order and were sound at every round. Deleting the
+commentary costs nothing a reader needs and removes the only part of this change that kept being
+wrong.
+
+**The iteration's actual finding, for the ledger.** Across four commits, no behavioural defect
+survived any round; every round past the first was driven by the change's prose about itself. That
+reproduces #73's and #74's pattern. The new and more useful finding is amendment 2's: both genuinely
+dangerous defects here came from a **fixture that disagreed with what it stood in for**, which no
+mutation pass can detect, because a mutant lives or dies by what the fixture happens to exercise.

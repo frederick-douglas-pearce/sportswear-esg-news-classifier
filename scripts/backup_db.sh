@@ -83,20 +83,15 @@ usage() {
 # fatal `check_container` wrapper below; `status` calls this directly so a
 # read-only query can still report what it did learn.
 #
-# Three shapes here are load-bearing, and each is pinned by a named test:
+# Three shapes here are load-bearing rather than stylistic:
 #
 # 1. `listing=$(...)` declared on its own line. `local listing=$(...)` returns
 #    `local`'s status, not the command's, which would make the failure branch
 #    unreachable -- the rule issue #90 is about.
-#    (test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container
-#    reddens on that revert, as does the missing-binary test.)
 # 2. `|| status=$?` rather than reading `$?` inside an `if ! ...; then` body,
 #    where it is the negation's status and always 0.
-#    (test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container
-#    asserts the reported number.)
 # 3. `[[ ]]` with "$CONTAINER_NAME" quoted, which matches it literally.
-#    Unquoted it would glob. (test_container_name_is_matched_as_a_fixed_whole_line,
-#    test_a_hostile_container_name_is_not_matched.)
+#    Unquoted it would glob.
 #
 # On the replaced `docker ps ... | grep -q "^${CONTAINER_NAME}$"`: `grep` read
 # the name as a regex, so `esg.news_db` matched `esgxnews_db`. Capturing
@@ -423,10 +418,6 @@ show_status() {
     # `PB` is easy to omit and PostgreSQL does emit it. The optional decimal is
     # defensive: `pg_database_size` returns bigint, so this call site gets the
     # integer-only overload, but `pg_size_pretty(numeric)` exists.
-    #
-    # The list anchors the END of the string, which is what makes it a guard
-    # rather than a formality: a unit-agnostic `[A-Za-z]+$` would accept
-    # "42MBWARNING..." when a warning lands after the value.
     #
     # Non-emptiness alone is not enough because `2>&1`
     # folds psql's stderr into this capture: a server NOTICE, a psql startup

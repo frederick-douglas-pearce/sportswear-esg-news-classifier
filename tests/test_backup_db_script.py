@@ -90,11 +90,8 @@ case "$1" in
                             # through review once already.
                             # STREAM ORDER IS A PARAMETER, and it has to be:
                             # `2>&1` merges the two in write order, so emitting
-                            # stderr first exercises only a LEADING weld. A
-                            # trailing one is what the shape guard's `$` anchor
-                            # and its explicit unit list exist for, and with
-                            # stderr fixed first both of those could be removed
-                            # with the suite still green.
+                            # stderr first exercises only a LEADING weld, and a
+                            # trailing one is a distinct case.
                             #
                             # Leading spaces on the value as `psql -t` emits
                             # them, so the script's whitespace strip is
@@ -518,9 +515,9 @@ def test_the_script_declares_the_documented_exit_codes():
             "permission denied while trying to connect to the Docker daemon socket",
         ),
         # The gated `else` branch. Without this row, deleting the
-        # `if [ -n "$listing" ]` gate leaves the suite green -- the branch is
-        # never entered, so "a header followed by nothing renders absence as
-        # presence" would be a claim with no guard behind it.
+        # `if [ -n "$listing" ]` gate: without a row that reaches the `else`,
+        # "a header followed by nothing renders absence as presence" would be a
+        # claim with nothing behind it.
         ("docker said nothing", 1, ""),
     ],
 )
@@ -540,9 +537,9 @@ def test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container(
     * docker's own text is present -- delete the `printf "$listing"` and only this
       fails;
     * the stopped-container verdict is absent. Deleting the whole cannot-check
-      block fails several assertions here, the exit code first; the mutant this
-      one isolates is the narrower one where cannot-check reuses "is not
-      running" as its wording;
+      block fails several assertions here, the exit code first; this one covers
+      the narrower case where cannot-check reuses "is not running" as its
+      wording;
     * **no `[INFO]` line is emitted at all.** Naming one forbidden string would
       not enforce AC2: PR #92's draft printed "Is the Docker daemon running?",
       but any other guess at the cause is the same defect, and asserting the
@@ -550,11 +547,10 @@ def test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container(
       calls the check before it logs anything and the cannot-check branch
       reaches no `log_info`, so the absence of the prefix is the enforceable
       property;
-    * the reported exit number is docker's. This one pins a defect that was in
-      this change's own first draft: the failure branch read `$?` inside
-      `if ! listing=$(...); then`, where it is the status of the *negation* --
-      always 0 -- so every failure reported "exited 0". Without this assertion
-      that mutant survives, because the other three still hold.
+    * the reported exit number is docker's. `$?` read inside
+      `if ! listing=$(...); then` is the status of the *negation* -- always 0 --
+      so a failure would report "exited 0" while every other assertion here
+      still held.
     """
     harness.environ["FAKE_DOCKER_PS_EXIT"] = str(exit_code)
     harness.environ["FAKE_DOCKER_PS_STDERR"] = message
@@ -746,21 +742,21 @@ def test_container_name_is_matched_as_a_fixed_whole_line(harness: Harness):
 
 
 @pytest.mark.parametrize(
-    ("label", "container_name", "killed_mutant"),
+    ("label", "container_name"),
     [
-        ("a glob star", "*", "unquoting the substring in the [[ ]] test"),
-        ("a glob single-char", "esg_news_d?", "unquoting the substring"),
-        ("a glob class", "esg_news_d[b]", "unquoting the substring"),
+        ("a glob star", "*"),
+        ("a glob single-char", "esg_news_d?"),
+        ("a glob class", "esg_news_d[b]"),
         # `grep -qxF --` satisfies AC3 and was rejected for exactly this: `-F`
         # reads a newline in the PATTERN as a list of alternative patterns, so
         # this name matches the line `esg_news_db` and reports the container
         # present. The shipped `[[ ]]` requires the pattern's lines to appear
         # ADJACENTLY, which they do not here.
-        ("a newline, non-adjacent", "zzz_nonexistent\nesg_news_db", "swapping in grep -qxF"),
+        ("a newline, non-adjacent", "zzz_nonexistent\nesg_news_db"),
     ],
 )
 def test_a_hostile_container_name_is_not_matched(
-    harness: Harness, label: str, container_name: str, killed_mutant: str
+    harness: Harness, label: str, container_name: str
 ):
     """CONTAINER_NAME is operator-supplied, so its metacharacters are reachable.
 
@@ -781,8 +777,7 @@ def test_a_hostile_container_name_is_not_matched(
 
     assert result.returncode == EXIT_CONTAINER_ABSENT, (
         f"{label}: no container by this name is in the listing, so it must read "
-        f"as absent. Mutant this kills: {killed_mutant}.\n"
-        f"stdout:\n{result.stdout}"
+        f"as absent.\nstdout:\n{result.stdout}"
     )
     assert harness.daily_archives == []
 
@@ -821,11 +816,9 @@ def _populate_backups(harness: Harness) -> Path:
 # magnitude boundaries. Note "1 bytes" -- plural even at 1, so there is no
 # singular spelling to allow.
 #
-# This list is what pins the shape guard's unit list. Without it, dropping a
-# unit is invisible: the guard would reject a legitimate size and `status` would
-# report "could not be determined" forever for a database of that magnitude --
-# a false negative created by the guard. `PB` is the one that was in fact
-# omitted when the guard was first written.
+# A unit missing from the shape guard's list would make it reject a legitimate
+# size, so `status` would report "could not be determined" for a database of
+# that magnitude. `PB` was omitted when the guard was first written.
 PG_SIZE_PRETTY_UNITS = [
     ("1 bytes", "1bytes"),
     ("10 kB", "10kB"),
@@ -906,14 +899,11 @@ def test_status_reports_partial_results_rather_than_aborting(
 ):
     """AC7: keep the on-disk facts, name what could not be established, still fail.
 
-    Four things have to hold at once:
+    Three things have to hold at once:
 
-    * the on-disk facts survive. Note which mutant this pins: `show_status`
-      prints them *before* the check, so swapping `check_container_state` for the
-      fatal `check_container` still leaves them on stdout and is caught by the
-      `COULD_NOT_DETERMINE` assertion instead. The facts assertion is
-      load-bearing against a different mutant -- moving the check above the
-      fact-printing;
+    * the on-disk facts survive. `show_status` prints them *before* the check,
+      so a read-only query that aborts there loses the counts the operator came
+      for;
     * the exit code is the SPECIFIC one -- 2 when the query failed, 3 when Docker
       confirmed the container absent. Not 0: `ScriptResult.success` is
       `exit_code == 0`, so exiting 0 would make "Docker unreachable"
@@ -972,12 +962,9 @@ def test_status_reports_partial_results_rather_than_aborting(
             "WARNING: there is no transaction in progress",
             False,
         ),
-        # The same weld, the other way round, and it is not redundant: `2>&1`
-        # merges in write order, so this is the row that pins the shape guard's
-        # `$` anchor and its explicit unit list. With only the leading-weld row
-        # above, dropping the anchor -- or relaxing the units to `[A-Za-z]+` --
-        # left the suite green while `status` rendered
-        # "214MBWARNING:terminalisnotfullyfunctional" on exit 0.
+        # The same weld, the other way round. `2>&1` merges the two streams in
+        # write order, so a warning landing after the value is a distinct case
+        # from one landing before it.
         (
             "psql exits 0 with a warning after the size",
             "0",
@@ -985,12 +972,9 @@ def test_status_reports_partial_results_rather_than_aborting(
             "WARNING: terminal is not fully functional",
             True,
         ),
-        # A trailing tail of LETTERS ONLY, which is what isolates the unit list
-        # from the `$` anchor. The row above has a colon in it, and punctuation
-        # is rejected by any shape check at all -- including a relaxed
-        # `[A-Za-z]+$` -- so it pins the anchor but says nothing about the units.
-        # With no punctuation, only an explicit unit list rejects the weld:
-        # `^[0-9]+[A-Za-z]+$` happily matches "214MBextradataignored".
+        # A trailing tail of LETTERS ONLY. Punctuation is rejected by any shape
+        # check at all, so a tail without it is what exercises the unit list
+        # rather than the surrounding anchors.
         (
             "psql exits 0 with an unpunctuated tail after the size",
             "0",
@@ -1020,10 +1004,8 @@ def test_status_reports_when_the_database_size_cannot_be_determined(
       the empty string, so printing it asserts a fact that was never established.
       This row is what stops the fix from being "check the exit code" alone.
 
-    Each row isolates a different half of the fix, so none is redundant:
-    reverting the status capture reddens row 1 only, dropping the shape guard
-    reddens rows 2 and 3, and reverting `2>&1` to `2>/dev/null` reddens rows 1
-    and 3 -- the last only because the stub writes to the stream real psql uses.
+    The rows cover psql failing, psql succeeding with nothing to say, and a
+    warning welded onto a real value from either side.
     """
     _populate_backups(harness)
     harness.environ["FAKE_DB_SIZE_EXIT"] = size_exit
