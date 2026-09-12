@@ -823,9 +823,9 @@ published contract, not by reasoning about the code.
 
 ### D011 amendment (2026-09-11) — what code review changed
 
-Four parallel finders over the implementation returned three defects the plan did not anticipate,
-all of them the same shape as the ones the plan record above already catalogues: a value the script
-had not established, presented as a fact.
+Parallel finders over the implementation returned defects the plan did not anticipate, all of them
+the same shape as the ones the plan record above already catalogues: a value the script had not
+established, presented as a fact.
 
 1. **The `2>&1` capture in `show_status()` corrupted the value it renders.** Folding stderr into the
    captured size means a server `NOTICE`, a psql startup warning, or a docker-shim banner on an
@@ -841,7 +841,7 @@ had not established, presented as a fact.
 3. **`status` propagates `3` for a confirmed-absent container, and nothing pinned it.** Flattening
    that to `EXIT_CANNOT_CHECK` left the suite green, so the 2-vs-3 distinction — the point of the
    issue — was unpinned on the one path that reports rather than aborts. All three finders flagged
-   it; `docs/DATABASE.md` and the CHANGELOG had also both documented `status` as always exiting `2`.
+   it, and `docs/DATABASE.md` and the CHANGELOG had both documented `status` as always exiting `2`.
 
 Two further corrections worth recording because they are the epic's rule turned back on this change:
 
@@ -868,3 +868,40 @@ decision 5 above had already rejected, which survived in the CHANGELOG alone.
 Rather than correct each a second time, the rationale prose in the script, the CHANGELOG entry and
 the exit-code documentation were **cut back** to claims the code and its named tests carry. That is
 the remedy #73 and #74 both arrived at, applied on the first round here instead of the fifth.
+
+### D011 amendment 2 (2026-09-11) — round 3, human-authorised after the review cap
+
+The fresh re-check of the fixes above came back dirty, which spends the code-review gate's two
+rounds, so this round exists because the human directed it rather than because the loop chose it.
+Its finding is the one worth keeping:
+
+**The guard added to close the welded-warning hole was itself only half-guarded, and the reason is
+the fixture, not the guard.** The stub emitted psql's stderr *before* its stdout — the only order
+that hides a trailing weld — so dropping the shape check's `$` anchor, or relaxing its unit list,
+left the suite green while `status` rendered `214MBWARNING:terminalisnotfullyfunctional` on exit 0.
+Stream order is now a stub parameter, and a trailing-weld row pins the anchor. A second row with an
+*unpunctuated* tail was needed to pin the unit list separately: punctuation is rejected by any shape
+check at all, so a realistic warning containing a colon exercises the anchor and says nothing about
+the units.
+
+The unit list is now pinned positively as well, by a control parametrized over every value
+`pg_size_pretty` emits — measured off a live PostgreSQL 16.11 rather than recalled, which is how the
+omission of `PB` was found in the first place. Dropping any unit now reddens a row. That matters in
+the opposite direction from everything else here: a unit missing from the list makes the guard
+reject a legitimate size, so `status` would report "could not be determined" forever for a database
+of that magnitude — a false negative manufactured by a guard written to prevent a false positive.
+
+**The through-line of this iteration, and it is not the claim count.** Both of its genuinely
+dangerous defects came from a **fixture that disagreed with the thing it stood in for**: first a
+stub writing psql's error to stdout where real psql writes stderr, which left the `2>&1` capture
+unexercised; then a stub fixing the order of those two streams, which left half the shape guard
+unexercised. Neither is visible to a mutation pass — a mutant lives or dies by what the fixture
+happens to exercise, so **fixture fidelity bounds the gate's reach**, and a clean mutation result
+says nothing about the cases the fixture cannot express. That is a sharper and more general lesson
+than the claim-authoring one #73 and #74 arrived at, and it is not the same lesson.
+
+Also in this round, and all deletions rather than corrections, per the two-correction cap: a finder
+count the amendment above gave twice and inconsistently; a `status` assertion in `docs/DATABASE.md`
+that a whole-file substring search satisfied via an unrelated environment-variable row; a changelog
+sentence and a test docstring bullet each broader than the code beneath them; and a pasted terminal
+transcript in the PR body carrying a line number that the next commit invalidated.

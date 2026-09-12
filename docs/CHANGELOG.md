@@ -47,9 +47,8 @@ this construct as "stated, not fixed here" and deferred it to #93.
   determined, and exits the specific code. The size is validated by *shape* rather than
   non-emptiness, because folding stderr into the capture can otherwise weld a warning onto
   the number and render it as a fact.
-- **The failure branches now have tests**, asserting the rendered message and the specific
-  exit code. Before this the branch had none, so the one verdict the script got right was
-  the one nothing checked.
+- **The failure branches now have tests.** Before this the branch had none, so the one
+  verdict the script got right was the one nothing checked.
 
 ### 2026-09-09: The health verdict becomes a shared contract with a first-class escalation path
 

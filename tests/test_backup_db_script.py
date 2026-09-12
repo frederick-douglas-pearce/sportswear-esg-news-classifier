@@ -88,12 +88,26 @@ case "$1" in
                             # `2>&1` to `2>/dev/null` would keep the suite
                             # green, which is how the welded-warning defect got
                             # through review once already.
-                            printf '%s\\n' "${FAKE_DB_SIZE_STDERR-}" >&2
-                            # Leading spaces as `psql -t` emits them, so the
-                            # script's whitespace strip is exercised rather than
-                            # assumed. `-` again: set-but-empty is "psql exited
-                            # 0 and said nothing", a distinct state.
-                            printf '%s\\n' "${FAKE_DB_SIZE-   42 MB}"
+                            # STREAM ORDER IS A PARAMETER, and it has to be:
+                            # `2>&1` merges the two in write order, so emitting
+                            # stderr first exercises only a LEADING weld. A
+                            # trailing one is what the shape guard's `$` anchor
+                            # and its explicit unit list exist for, and with
+                            # stderr fixed first both of those could be removed
+                            # with the suite still green.
+                            #
+                            # Leading spaces on the value as `psql -t` emits
+                            # them, so the script's whitespace strip is
+                            # exercised rather than assumed. `-` again:
+                            # set-but-empty is "psql exited 0 and said nothing",
+                            # a distinct state.
+                            if [ "${FAKE_DB_SIZE_STDERR_AFTER:-}" = "1" ]; then
+                                printf '%s\\n' "${FAKE_DB_SIZE-   42 MB}"
+                                printf '%s\\n' "${FAKE_DB_SIZE_STDERR-}" >&2
+                            else
+                                printf '%s\\n' "${FAKE_DB_SIZE_STDERR-}" >&2
+                                printf '%s\\n' "${FAKE_DB_SIZE-   42 MB}"
+                            fi
                             exit "${FAKE_DB_SIZE_EXIT:-0}"
                             ;;
                     esac
@@ -473,12 +487,20 @@ def test_the_script_declares_the_documented_exit_codes():
     assert f"EXIT_CANNOT_CHECK={EXIT_CANNOT_CHECK}" in script
     assert f"EXIT_CONTAINER_ABSENT={EXIT_CONTAINER_ABSENT}" in script
 
+    # Scoped to the Exit Codes section, not the whole file: `| `2` |` also
+    # appears in the environment-variable table further down (as
+    # SCRAPE_DELAY_SECONDS' default), so a whole-file search is satisfied by a
+    # row that has nothing to do with this contract -- the assertion would pass
+    # with the exit-code row deleted.
     database_doc = (REPO_ROOT / "docs" / "DATABASE.md").read_text()
-    assert f"| `{EXIT_CANNOT_CHECK}` |" in database_doc, (
-        "docs/DATABASE.md's exit-code table is the contract a future consumer "
-        "reads; it must carry the same numbers as the script"
-    )
-    assert f"| `{EXIT_CONTAINER_ABSENT}` |" in database_doc
+    start = database_doc.index("### Exit Codes")
+    exit_code_section = database_doc[start : database_doc.index("###", start + 1)]
+    for code in (EXIT_CANNOT_CHECK, EXIT_CONTAINER_ABSENT):
+        assert f"| `{code}` |" in exit_code_section, (
+            f"docs/DATABASE.md's Exit Codes table is the contract a future "
+            f"consumer reads; it must carry the same numbers as the script, and "
+            f"`{code}` is missing from it"
+        )
 
 
 @pytest.mark.parametrize(
@@ -794,7 +816,30 @@ def _populate_backups(harness: Harness) -> Path:
     return archive
 
 
-def test_status_reports_the_database_size_when_docker_can_be_queried(harness: Harness):
+# Every unit `pg_size_pretty` emits, measured off a live server (PostgreSQL
+# 16.11) rather than recalled: `SELECT pg_size_pretty(x::bigint)` over the
+# magnitude boundaries. Note "1 bytes" -- plural even at 1, so there is no
+# singular spelling to allow.
+#
+# This list is what pins the shape guard's unit list. Without it, dropping a
+# unit is invisible: the guard would reject a legitimate size and `status` would
+# report "could not be determined" forever for a database of that magnitude --
+# a false negative created by the guard. `PB` is the one that was in fact
+# omitted when the guard was first written.
+PG_SIZE_PRETTY_UNITS = [
+    ("1 bytes", "1bytes"),
+    ("10 kB", "10kB"),
+    ("214 MB", "214MB"),
+    ("1024 GB", "1024GB"),
+    ("1024 TB", "1024TB"),
+    ("1024 PB", "1024PB"),
+]
+
+
+@pytest.mark.parametrize(("psql_output", "rendered"), PG_SIZE_PRETTY_UNITS)
+def test_status_reports_the_database_size_when_docker_can_be_queried(
+    harness: Harness, psql_output: str, rendered: str
+):
     """Control, and it asserts the RENDERED value rather than just exit 0.
 
     Asserting only `returncode == 0` would have passed against the defect this
@@ -803,22 +848,29 @@ def test_status_reports_the_database_size_when_docker_can_be_queried(harness: Ha
     invariant. The value is what distinguishes "the query worked" from "the query
     silently produced nothing".
 
-    It also pins the whitespace strip: `psql -t` pads its output, the stub emits
-    that padding, and `42MB` is what the script must render.
+    It pins two things beyond that: the whitespace strip, since `psql -t` pads
+    its output and the stub emits that padding; and the shape guard's unit list,
+    since a unit missing from it turns a legitimate size into a permanent
+    "could not be determined".
     """
     archive = _populate_backups(harness)
+    harness.environ["FAKE_DB_SIZE"] = f"   {psql_output}"
 
     result = harness.run("status")
 
     assert result.returncode == 0, (
-        f"a status query with Docker reachable must succeed.\n"
+        f"a status query with Docker reachable must succeed, and {psql_output!r} "
+        f"is a value pg_size_pretty really emits.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert "Current database size: 42MB" in result.stdout, (
+    assert f"Current database size: {rendered}" in result.stdout, (
         "the size must be rendered from psql's output, with psql -t's padding "
         f"stripped.\nstdout:\n{result.stdout}"
     )
-    assert COULD_NOT_DETERMINE not in result.stdout
+    assert COULD_NOT_DETERMINE not in result.stdout, (
+        f"{psql_output!r} is a legitimate size and must not be rejected by the "
+        f"shape guard.\nstdout:\n{result.stdout}"
+    )
     assert archive.name in result.stdout, "the on-disk facts must be reported too"
 
 
@@ -868,7 +920,6 @@ def test_status_reports_partial_results_rather_than_aborting(
       indistinguishable from a clean status to the only consumer that will read
       it. And not a single code for both, which would rebuild the collapse;
     * the missing value is named rather than rendered blank;
-    * no `[INFO]` guidance on the row where no cause is established.
     """
     archive = _populate_backups(harness)
     harness.environ.update(env)
@@ -900,14 +951,14 @@ def test_status_reports_partial_results_rather_than_aborting(
 
 
 @pytest.mark.parametrize(
-    ("label", "size_exit", "stdout_text", "stderr_text"),
+    ("label", "size_exit", "stdout_text", "stderr_text", "stderr_after"),
     [
         # `5`, not `2`: psql's own status is echoed into the message, and if it
         # equalled EXIT_CANNOT_CHECK then mutating the branch's
         # `exit "$EXIT_CANNOT_CHECK"` to `exit "$status"` would be
         # indistinguishable here and survive on this row.
-        ("psql exits non-zero", "5", "", "psql: error: connection to server failed"),
-        ("psql exits 0 saying nothing", "0", "", ""),
+        ("psql exits non-zero", "5", "", "psql: error: connection to server failed", False),
+        ("psql exits 0 saying nothing", "0", "", "", False),
         # The welded-warning case. psql exits 0 and DOES return the size, but a
         # warning on stderr is folded into the same capture by `2>&1`; with only
         # a non-emptiness guard the script printed
@@ -915,15 +966,47 @@ def test_status_reports_partial_results_rather_than_aborting(
         # unestablished value rendered as a fact, which is this change's own
         # defect class. The shape guard is what rejects it.
         (
-            "psql exits 0 with a warning welded to the size",
+            "psql exits 0 with a warning before the size",
             "0",
             "   42 MB",
             "WARNING: there is no transaction in progress",
+            False,
+        ),
+        # The same weld, the other way round, and it is not redundant: `2>&1`
+        # merges in write order, so this is the row that pins the shape guard's
+        # `$` anchor and its explicit unit list. With only the leading-weld row
+        # above, dropping the anchor -- or relaxing the units to `[A-Za-z]+` --
+        # left the suite green while `status` rendered
+        # "214MBWARNING:terminalisnotfullyfunctional" on exit 0.
+        (
+            "psql exits 0 with a warning after the size",
+            "0",
+            "   214 MB",
+            "WARNING: terminal is not fully functional",
+            True,
+        ),
+        # A trailing tail of LETTERS ONLY, which is what isolates the unit list
+        # from the `$` anchor. The row above has a colon in it, and punctuation
+        # is rejected by any shape check at all -- including a relaxed
+        # `[A-Za-z]+$` -- so it pins the anchor but says nothing about the units.
+        # With no punctuation, only an explicit unit list rejects the weld:
+        # `^[0-9]+[A-Za-z]+$` happily matches "214MBextradataignored".
+        (
+            "psql exits 0 with an unpunctuated tail after the size",
+            "0",
+            "   214 MB",
+            "extra data ignored",
+            True,
         ),
     ],
 )
 def test_status_reports_when_the_database_size_cannot_be_determined(
-    harness: Harness, label: str, size_exit: str, stdout_text: str, stderr_text: str
+    harness: Harness,
+    label: str,
+    size_exit: str,
+    stdout_text: str,
+    stderr_text: str,
+    stderr_after: bool,
 ):
     """The second Docker call in `show_status`, which had no test and failed silently.
 
@@ -946,6 +1029,8 @@ def test_status_reports_when_the_database_size_cannot_be_determined(
     harness.environ["FAKE_DB_SIZE_EXIT"] = size_exit
     harness.environ["FAKE_DB_SIZE"] = stdout_text
     harness.environ["FAKE_DB_SIZE_STDERR"] = stderr_text
+    if stderr_after:
+        harness.environ["FAKE_DB_SIZE_STDERR_AFTER"] = "1"
 
     result = harness.run("status")
 

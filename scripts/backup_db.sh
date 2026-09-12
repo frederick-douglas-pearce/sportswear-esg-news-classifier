@@ -88,6 +88,8 @@ usage() {
 # 1. `listing=$(...)` declared on its own line. `local listing=$(...)` returns
 #    `local`'s status, not the command's, which would make the failure branch
 #    unreachable -- the rule issue #90 is about.
+#    (test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container
+#    reddens on that revert, as does the missing-binary test.)
 # 2. `|| status=$?` rather than reading `$?` inside an `if ! ...; then` body,
 #    where it is the negation's status and always 0.
 #    (test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container
@@ -410,9 +412,23 @@ show_status() {
         "SELECT pg_size_pretty(pg_database_size('$DB_NAME'));" 2>&1) || status=$?
     db_size="${db_size_raw//[[:space:]]/}"
 
-    # Assert the SHAPE, not just non-emptiness. `pg_size_pretty` renders
-    # "8192 bytes", "42 MB", "1.5 GB", so after the strip a value is digits and
-    # a unit and nothing else. Non-emptiness alone is not enough because `2>&1`
+    # Assert the SHAPE, not just non-emptiness. `pg_size_pretty` renders digits
+    # then a unit, so after the strip a value is exactly that and nothing else.
+    #
+    # The unit list is taken from a live server (PostgreSQL 16.11) rather than
+    # from memory, because a missing unit turns a working size into a permanent
+    # "could not be determined" -- a false negative introduced by the guard:
+    #   1 -> "1 bytes"  (plural even at 1, so no singular spelling to allow)
+    #   10 kB / 10 MB / 1024 GB / 1024 TB / 1024 PB
+    # `PB` is easy to omit and PostgreSQL does emit it. The optional decimal is
+    # defensive: `pg_database_size` returns bigint, so this call site gets the
+    # integer-only overload, but `pg_size_pretty(numeric)` exists.
+    #
+    # The list anchors the END of the string, which is what makes it a guard
+    # rather than a formality: a unit-agnostic `[A-Za-z]+$` would accept
+    # "42MBWARNING..." when a warning lands after the value.
+    #
+    # Non-emptiness alone is not enough because `2>&1`
     # folds psql's stderr into this capture: a server NOTICE, a psql startup
     # warning, or a docker shim banner on an otherwise SUCCESSFUL query would
     # be welded onto the number and printed as the size, on exit 0 -- the same
@@ -422,7 +438,7 @@ show_status() {
     # the value rather than corrupting it. That is the safe direction -- the
     # script says it could not determine the size instead of reporting a
     # garbled one.
-    if [ "$status" -ne 0 ] || [[ ! $db_size =~ ^[0-9]+(\.[0-9]+)?(bytes|kB|MB|GB|TB)$ ]]; then
+    if [ "$status" -ne 0 ] || [[ ! $db_size =~ ^[0-9]+(\.[0-9]+)?(bytes|kB|MB|GB|TB|PB)$ ]]; then
         echo "Current database size: could not be determined"
         # Report psql's status only when psql is what failed. On the
         # shape/emptiness path psql exited 0, and naming an exit status as the
