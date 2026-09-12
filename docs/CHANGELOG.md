@@ -4,6 +4,50 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-11: `backup_db.sh` reports "could not check Docker" distinctly from "container is not running"
+
+`check_container()` ran `docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"` and
+printed *"Container '…' is not running"* plus `docker compose up -d postgres` for four different
+states: the daemon down, the caller outside the `docker` group, `docker` absent from `PATH`, and the
+container genuinely stopped. The remediation is correct only in the last, and docker's own message
+went into the pipe and was discarded — so the operator was given guidance that could not work and no
+way to see why. D006 recorded this construct as "stated, not fixed here" and deferred it to #93.
+
+**What changed:**
+
+- **The pipeline is gone**, replaced by `listing=$(docker ps --format '{{.Names}}' 2>&1) || status=$?`.
+  That is what lets docker's own output be surfaced, and it removes two further hazards in the same
+  construct: `grep` read the container name as a *regex*, so `esg.news_db` also matched
+  `esgxnews_db`; and under `pipefail` a `grep -q` that matched early could `SIGPIPE` `docker ps` and
+  report a **running** container as stopped — a hazard #89 introduced here and deferred.
+- **An exit-code contract**, documented in the script header and in
+  [docs/DATABASE.md](DATABASE.md#exit-codes): `2` = the query failed, so the state was never
+  established; `3` = Docker answered and the container is absent. `1` stays the script's generic
+  failure, deliberately: naming it for a specific cause would have made "backup file not found" and
+  "unknown command" report that cause — a new signal collapse inside the fix for one.
+- **`2` is `unknown`, not `degraded`.** Per the [Health Verdict Contract](AGENT.md#health-verdict-contract)
+  `degraded` means a check ran and found a real problem and does not fail a run, while `unknown`
+  means no verdict was produced and does. A failed Docker query is `unknown`. No Python-side mapping
+  ships here — `health.py` keeps each check's signal→verdict mapping beside that check, and there is
+  no backup workflow yet to host one.
+- **No remediation hint on the `2` path.** The script prints docker's text and asserts nothing about
+  the cause, because it cannot distinguish the three. An earlier draft of PR #92 printed "Is the
+  Docker daemon running?" for every non-zero status, reproducing the misattribution one level down.
+- **Whole-line matching is `[[ ]]` with the name quoted**, which makes it literal. Unquoted, a
+  `CONTAINER_NAME` of `*` would glob and match any listing; `grep -qxF` was rejected because `-F`
+  reads a newline in the pattern as a list of alternative patterns, and the name is
+  operator-supplied.
+- **`status` degrades instead of aborting, and covers both of its Docker calls.** It keeps the
+  on-disk facts it established, says `Current database size: could not be determined`, and exits `2`.
+  The second call was the quieter defect: `local db_size=$(docker exec … | tr -d ' ')` returned
+  `local`'s status rather than the pipeline's and `2>/dev/null` discarded psql's reason, so a
+  container that was up while Postgres refused connections printed an empty size **and exited 0**.
+- **The failure branches now have tests.** Every state — query failed, binary missing from `PATH`,
+  container absent, empty listing, regex/glob name, and both `status` paths — is asserted on the
+  *message*, because all of them exit non-zero and `assert returncode != 0` passes against the
+  unfixed script. Before this, the branch had no test at all, so the one verdict the script got
+  right was the one nothing checked.
+
 ### 2026-09-09: The health verdict becomes a shared contract with a first-class escalation path
 
 #71 introduced `HealthVerdict` (`healthy | degraded | unknown | skipped`) and wired it into

@@ -694,3 +694,124 @@ test pins. Read the docstrings in `health.py` and `base.py` as descriptions of
 what the code does; read this record as a dated snapshot of why, not as a maintained document.
 
 **Status:** implemented and shipped in the same commit as this record (#74 / PR #108). The decisions above were taken at the plan gate, before implementation; the corrections marked in 2 and 4 were made during code review, when the claims were measured rather than reasoned about.
+
+---
+
+## D011: `check_container()` Distinguishes "Could Not Check" From "Not Running", and Names It `unknown` (#93)
+
+**Date:** 2026-09-11
+**Context:** order 4 of epic #72. `check_container()` in `scripts/backup_db.sh` reported
+`"Container '$CONTAINER_NAME' is not running"` plus the remediation
+`docker compose up -d postgres` for four distinct states — daemon down, caller not in the `docker`
+group, `docker` absent from `PATH`, and the container genuinely stopped — and the remediation is
+correct in only the last. D006 recorded this same construct, the
+`docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"` pipeline, as **"Stated, not fixed
+here … deferred to #93"**, noted that `pipefail` made its SIGPIPE status inversion reachable in
+principle (a hazard #89 *introduced*, not inherited), and recorded the signal collapse as untested
+"because a test asserting the correct verdict would fail against the code as it stands."
+
+A plan-time falsifier run against the working tree narrowed the warrant and is recorded because it
+contradicts this issue's own framing: the backup cron job is **not installed**,
+`run_backup_status()` in `src/agent/runner.py` has **no caller**, `docker` resolves under cron's
+default `PATH` on this host, and the invoking user **is** in the `docker` group. So the issue's
+claim that "the agent's only backup health signal cannot distinguish could-not-check from
+checked-and-down" is true of the code and **dormant in this deployment**. What is live: an operator
+runs these subcommands by hand, D006's deferred hazard is still open, and the failure branch had no
+test at all.
+
+**Decisions** (taken at the plan gate, before implementation; architect consulted on four forks):
+
+1. **Capture the query; do not pipe it.** `check_container()` becomes
+   `listing=$(docker ps --format '{{.Names}}' 2>&1) || status=$?`. Only the non-pipeline form can
+   surface docker's own stderr, which the first acceptance criterion requires — mid-pipeline stderr
+   needs a temp file or process substitution. Removing the pipe also retires D006's deferred SIGPIPE
+   inversion rather than carrying it forward. **Rejected:** keeping the pipeline and reading
+   `PIPESTATUS`, which preserves the smaller diff and cannot satisfy that criterion.
+
+2. **`$?` is captured with `|| status=$?`, never inside an `if ! …; then` body.** The plan's first
+   draft read `$?` in the failure branch of `if ! listing=$(…); then`, where it is the status of the
+   **negation** — always `0` — so the message would have reported `exit 0` for every genuine
+   failure. Measured before implementation. This is the epic's own defect class appearing inside its
+   repair, and it is invisible to a test that asserts only that the branch was taken, so a test
+   asserts the **reported exit number** specifically. Note the asymmetry that makes this easy to get
+   wrong in the other direction: `local status=$?` is *correct* (the right-hand side expands before
+   `local` runs) while `local status; status=$?` is broken (`local` succeeds and resets `$?`) — the
+   inverse of the `local var=$(cmd)` hazard #90 guards. The two cases need opposite shapes.
+
+3. **Whole-line matching uses `[[ ]]` with the substring quoted**, as
+   `[[ $'\n'"$listing"$'\n' != *$'\n'"$CONTAINER_NAME"$'\n'* ]]`. `CONTAINER_NAME` is
+   operator-supplied, so three hazards were measured against a listing holding the real container
+   plus one other: the **before** form `grep -q "^${CONTAINER_NAME}$"` matches `esgxnews_db` for
+   `CONTAINER_NAME=esg.news_db` (regex); `grep -qxF --` is immune to that but **matches** when the
+   pattern itself holds a newline, since `-F` reads it as alternative patterns; and an **unquoted**
+   substring in either `[[ ]]` or `case` matches `*` as a glob. Quoted, `[[ ]]` and `case` are
+   immune to all three. `[[ ]]` was taken over `case` for readability and over `grep -qxF` because
+   it spawns no subprocess — which matters on an error path that may have lost `grep` along with
+   `docker`. **Recorded because both the plan and the architect got the mechanism wrong in opposite
+   directions and measurement settled it:** the plan held `case` immune without saying why, the
+   architect held `case` unsafe because a `case` pattern is glob-interpreted, and the actual
+   discriminator is **whether the substring is quoted**, not which construct is used.
+
+4. **A fresh exit code for the absent container; `1` stays generic.** `EXIT_CANNOT_CHECK=2` and
+   `EXIT_CONTAINER_ABSENT=3`, with the whole space and its retryability documented in the script
+   header. The first draft numbered the absent container `1`, which this script already exits with
+   from `restore_backup()` (no file given, file not found, restore failed), from `create_backup()`'s
+   failure return, from the pre-restore abort, and from the unknown-command default. Mapping any of
+   those onto "container absent" would be a **new** signal collapse created by the contract written
+   to remove one. Free to change now because nothing reads this script's exit code.
+   **Rejected:** a third code separating daemon-down from permission-denied — docker exits `1` for
+   both, so distinguishing them would require the script to attribute a cause it has not
+   established, which the second acceptance criterion forbids and which is what PR #92 was rejected
+   for. Operator-facing distinguishability is served by printing docker's verbatim text.
+
+5. **The state is `unknown`, not `degraded`.** The first draft wrote "`status` degrades". Per the
+   Health Verdict Contract in `docs/AGENT.md` that #74 published, `degraded` means "the check ran
+   and found a real problem" and does **not** fail a run, while `unknown` means "produced no
+   verdict" and **does**. A failed Docker query is `unknown`. `degraded` here would not be a fourth
+   spelling of `unknown` but a **collision with a different published term** — in the one iteration
+   whose architect trigger is the vocabulary itself. This also resolves why a read-only command may
+   report partial results and still exit non-zero: `unknown` fails the run by design, and
+   `ScriptResult.success` is `exit_code == 0`, so exiting `0` would make "Docker unreachable"
+   indistinguishable from a clean status to the only consumer that would ever read it.
+
+6. **`status` reports what it could determine and covers *both* of its Docker calls.**
+   `show_status()` calls `check_container` after every on-disk fact is printed, gating only the
+   database-size line, and then makes a second unguarded call:
+   `local db_size=$(docker exec … psql … 2>/dev/null | tr -d ' ')`. That is the `local var=$(cmd)`
+   hazard — `local`'s status is returned, `pipefail` cannot reach it — with psql's reason discarded,
+   so a container that is up while Postgres refuses connections prints an empty size and **exits
+   `0`**. Fixing only the `docker ps` path would satisfy the seventh acceptance criterion's letter
+   and invert its point, so both are covered. `backup` and `restore` keep exiting through a fatal
+   wrapper, since both mutate and neither can proceed without the container.
+
+7. **The shell side ships alone, and the Python mapping is recorded as UNOWNED.** `src/agent/health.py`
+   keeps each check's signals-to-verdict mapping beside that check (D008, D010), and there is no
+   backup workflow to host one, so this change adds no Python and imports nothing;
+   `docs/AGENT.md` already sanctions a non-Python consumer binding to the four published spellings.
+   The plan asserted three times that #80 would give `run_backup_status()` a caller and inherit the
+   exit-2-to-`unknown` mapping. **That is unsupported:** #80 is scoped to the `backup` subcommand's
+   artifact and to `collect_news.py`, and mentions neither `status` nor `run_backup_status`; #75 and
+   #76 read the run archive rather than this script's exit codes. So no open issue owns that
+   mapping. It is recorded as unowned rather than attributed, and the sequencing argument for
+   landing the contract early shrinks to one future retrofit site rather than three.
+
+**Conscious exclusions**, each for its own reason:
+- `show_status()`'s early `return` when the backup directory is absent — a
+  reported-success-having-checked-nothing path in its own right, but about the *backup artifact*
+  rather than the container check; left for #76/#80.
+- The `DROP DATABASE` / `CREATE DATABASE` sequence in `restore_backup()` (#91) — adjacent to the
+  edited code, not a pipeline, and already aborting loudly.
+- `log_info`/`log_warn`/`log_error` emit ANSI colour unconditionally, tty or not, so this text will
+  carry escape sequences verbatim into the first email or webhook that quotes it. Pre-existing.
+- `2>&1` folds docker's stderr into the captured listing on the **success** path too, so a docker
+  warning that previously reached the operator now goes into a variable unread. Whole-line matching
+  means it cannot cause a false positive, so this is observability rather than correctness;
+  separating the streams needs a temp file and a trap and was judged not worth it.
+
+**Rationale:** the epic's thesis is that distinct signals must not collapse into one verdict, and
+this entry records three separate ways that same collapse tried to reappear inside the fix for it —
+a status number that always read `0`, an exit code shared with every unrelated failure, and a
+verdict word that already meant something else. Each was caught by measuring or by reading the
+published contract, not by reasoning about the code.
+
+**Status:** decided at the plan gate; implementation follows in the same PR as this record.

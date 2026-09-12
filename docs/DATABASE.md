@@ -211,6 +211,34 @@ The project includes automated backup infrastructure to protect collected and la
 ./scripts/backup_db.sh rotate
 ```
 
+### Exit Codes
+
+`backup_db.sh` distinguishes *could not check* from *checked, and it is down*. This is the contract
+for cron and for `src/agent/runner.py`; see D011.
+
+| Code | Meaning | Retry? |
+|------|---------|--------|
+| `0` | The command did what it says | — |
+| `1` | The command failed; the reason is on stdout. Generic: bad arguments, missing archive, `pg_dump`/`gunzip` failure | depends on the reason |
+| `2` | The Docker query itself failed, so the container's state was **never established**. `unknown` in the [Health Verdict Contract](AGENT.md#health-verdict-contract) — never `healthy`, and never `degraded` | yes, may heal |
+| `3` | Docker answered, and the container is not running | no — the container must be started |
+
+Why `2` and `3` are separate: the same message (*"Container is not running"*, plus
+`docker compose up -d postgres`) used to be printed whether the daemon was down, the caller was
+outside the `docker` group, `docker` was missing from `PATH`, or the container was genuinely
+stopped — and the remediation is correct only in the last case.
+
+On code `2` the script prints **docker's own output** rather than guessing a cause, because it
+cannot tell those three apart; the operator diagnoses from that text. Nothing in the script asserts
+why the query failed.
+
+`status` is read-only, so it behaves differently from `backup` and `restore`: it still reports the
+backup counts, disk usage and most recent archive it established, prints
+`Current database size: could not be determined`, and then exits `2`. It does **not** exit `0` — a
+check that could not check must not read as clean, since `ScriptResult.success` is `exit_code == 0`.
+`backup` and `restore` exit at the check, because both mutate and neither can proceed without the
+container.
+
 ### Retention Policy
 
 | Type | Retention | Created |

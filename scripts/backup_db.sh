@@ -20,6 +20,25 @@ KEEP_DAILY=7      # Keep daily backups for 7 days
 KEEP_WEEKLY=4     # Keep weekly backups for 4 weeks
 KEEP_MONTHLY=3    # Keep monthly backups for 3 months
 
+# Exit codes -- the contract between this script, cron, and src/agent/runner.py.
+#
+#   0  the command did what it says
+#   1  the command failed; the reason is on stdout. Pre-existing and unchanged:
+#      bad arguments, missing archive, pg_dump/gunzip failure. Deliberately NOT
+#      reused below: `1` is this script's generic failure, so mapping it to a
+#      specific cause would collapse unrelated signals into one verdict -- the
+#      defect this change exists to remove. See issue #93 and decision D011.
+#   2  the Docker query itself failed, so the container's state was never
+#      established. This is `unknown` in the Health Verdict Contract
+#      (docs/AGENT.md), never `degraded` and never `healthy`. No cause is
+#      asserted here -- docker's own output is printed instead, because the
+#      script cannot tell a stopped daemon from a permissions problem from a
+#      missing binary. Retrying may heal this.
+#   3  Docker answered, and the container is not running. Retrying will not heal
+#      this; the container has to be started.
+EXIT_CANNOT_CHECK=2
+EXIT_CONTAINER_ABSENT=3
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -51,12 +70,75 @@ usage() {
     echo "  $0 rotate                           # Clean old backups"
 }
 
-check_container() {
-    if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+# Report what is known about the container, WITHOUT exiting.
+#
+# Returns 0 (present), $EXIT_CANNOT_CHECK (the query failed, so the state was
+# never established) or $EXIT_CONTAINER_ABSENT (Docker answered; it is not
+# there). Callers that mutate use the `check_container` wrapper below; `status`
+# calls this directly so a read-only query can still report what it did learn.
+#
+# Two shapes here are load-bearing rather than stylistic:
+#
+# `listing=$(...)` on its own line, NOT `local listing=$(...)`: the latter
+# returns `local`'s status rather than the command's, which would make the
+# failure branch unreachable (issue #90). `$?` is then captured with
+# `|| status=$?` and NOT read inside an `if ! ...; then` body, where it is the
+# status of the *negation* -- always 0 -- so a real failure would report
+# "exited 0". Note the asymmetry: `local status=$?` would be correct (the
+# right-hand side expands before `local` runs) while `local status; status=$?`
+# would be broken, so "always declare separately" is not the rule.
+#
+# The pipeline this replaced was `docker ps ... | grep -q "^${CONTAINER_NAME}$"`.
+# It is gone rather than repaired, for three reasons: mid-pipeline stderr cannot
+# be captured without a temp file, so docker's own message was discarded; `grep`
+# read the name as a *regex*, so `esg.news_db` also matched `esgxnews_db`; and
+# under `pipefail` a `grep -q` that matched early could SIGPIPE `docker ps` and
+# report a *running* container as stopped (D006 recorded that hazard here,
+# introduced by #89, and deferred it to #93).
+#
+# The match is `[[ ]]` with "$CONTAINER_NAME" QUOTED, which makes it literal.
+# Unquoted, `*` would glob and match any listing. `grep -qxF --` was the other
+# candidate and is rejected: `-F` reads a newline in the *pattern* as a list of
+# alternative patterns, and CONTAINER_NAME is operator-supplied. `[[ ]]` also
+# needs no subprocess, which matters on a path that may have lost `grep` for
+# the same reason it lost `docker`.
+check_container_state() {
+    local listing status=0
+    # 2>&1 folds docker's stderr into the capture so the failure branch can show
+    # it; on the success path it also swallows any docker warning, which
+    # whole-line matching makes harmless but which is a real loss of
+    # observability. Separating the streams needs a temp file and a trap.
+    listing=$(docker ps --format '{{.Names}}' 2>&1) || status=$?
+
+    if [ "$status" -ne 0 ]; then
+        log_error "Could not query Docker, so container '$CONTAINER_NAME' was never checked (docker exited $status)"
+        # Gated: "Docker reported:" followed by nothing renders absence as
+        # presence, which is this issue's own defect at its smallest scale.
+        if [ -n "$listing" ]; then
+            log_error "Docker reported:"
+            printf '%s\n' "$listing"
+        else
+            log_error "Docker produced no output."
+        fi
+        return "$EXIT_CANNOT_CHECK"
+    fi
+
+    if [[ $'\n'"$listing"$'\n' != *$'\n'"$CONTAINER_NAME"$'\n'* ]]; then
         log_error "Container '$CONTAINER_NAME' is not running"
         log_info "Start it with: docker compose up -d postgres"
-        exit 1
+        return "$EXIT_CONTAINER_ABSENT"
     fi
+
+    return 0
+}
+
+# Fatal wrapper for the commands that mutate: neither `backup` nor `restore` can
+# proceed without the container. It propagates the SPECIFIC code rather than a
+# hardcoded 1, or the contract above would be defeated at the call site.
+check_container() {
+    local status=0
+    check_container_state || status=$?
+    [ "$status" -eq 0 ] || exit "$status"
 }
 
 create_backup() {
@@ -286,11 +368,52 @@ show_status() {
         echo "  Created: $latest_time"
     fi
 
-    # Show current database size
+    # Show current database size.
+    #
+    # `status` is read-only, so a Docker problem must not discard the on-disk
+    # facts printed above -- but it must not exit 0 either. `ScriptResult.success`
+    # (src/agent/runner.py) is `exit_code == 0`, so exiting 0 here would make
+    # "Docker unreachable" indistinguishable from a clean status to the only
+    # consumer that would ever read it. So: report what was learned, say plainly
+    # what was not, and exit with the specific code.
     echo ""
-    check_container
-    local db_size=$(docker exec "$CONTAINER_NAME" psql -U "$DB_USER" -d "$DB_NAME" -t -c \
-        "SELECT pg_size_pretty(pg_database_size('$DB_NAME'));" 2>/dev/null | tr -d ' ')
+    local status=0
+    check_container_state || status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "Current database size: could not be determined"
+        exit "$status"
+    fi
+
+    # Both hazards from the previous form are fixed here, not just the outer one:
+    # `local db_size=$(... | tr -d ' ')` returned `local`'s status rather than the
+    # pipeline's -- so a psql that refused the connection was indistinguishable
+    # from a successful query -- and `2>/dev/null` discarded the reason. The
+    # result was an empty size printed as though it were a fact, with exit 0.
+    # Two variables, because the strip below is lossy and the failure path needs
+    # the original. `psql -t` pads its output, so the value is stripped for
+    # display -- but stripping an *error message* the same way turns
+    # "psql: error: connection to server failed" into an unreadable run-together
+    # string, destroying the evidence this branch exists to surface.
+    local db_size_raw db_size
+    db_size_raw=$(docker exec "$CONTAINER_NAME" psql -U "$DB_USER" -d "$DB_NAME" -t -c \
+        "SELECT pg_size_pretty(pg_database_size('$DB_NAME'));" 2>&1) || status=$?
+    db_size="${db_size_raw//[[:space:]]/}"
+
+    # An empty value is a failure even when psql exited 0: there is no database
+    # whose size renders as the empty string, so printing it would assert a fact
+    # that was never established.
+    if [ "$status" -ne 0 ] || [ -z "$db_size" ]; then
+        echo "Current database size: could not be determined"
+        log_error "Could not read the database size from container '$CONTAINER_NAME' (psql exited $status)"
+        if [ -n "$db_size_raw" ]; then
+            log_error "psql reported:"
+            printf '%s\n' "$db_size_raw"
+        else
+            log_error "psql produced no output."
+        fi
+        exit "$EXIT_CANNOT_CHECK"
+    fi
+
     echo "Current database size: $db_size"
 }
 
