@@ -881,11 +881,9 @@ def test_status_reports_the_database_size_when_docker_can_be_queried(
             EXIT_CANNOT_CHECK,
             "Cannot connect to the Docker daemon",
         ),
-        # The other half of the 2-vs-3 distinction, on the `status` path. Without
-        # this row, flattening `show_status`'s `exit "$status"` to
-        # `exit "$EXIT_CANNOT_CHECK"` leaves the suite green -- so `status` could
-        # report a confirmed-stopped container as "never established" and
-        # nothing would notice. That collapse is the defect this issue is about.
+        # The other half of the 2-vs-3 distinction, on the `status` path:
+        # reporting a confirmed-stopped container as "never established" is the
+        # collapse this issue is about.
         (
             "the container is absent",
             {"FAKE_DOCKER_PS_NAMES": "other_db"},
