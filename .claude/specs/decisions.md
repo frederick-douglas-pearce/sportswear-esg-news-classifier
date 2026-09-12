@@ -700,6 +700,8 @@ what the code does; read this record as a dated snapshot of why, not as a mainta
 ## D011: `check_container()` Distinguishes "Could Not Check" From "Not Running", and Names It `unknown` (#93)
 
 **Date:** 2026-09-11
+**Code references:** by symbol and quoted construct, per D007. Where "before" is meant, it is
+the state at base commit `a8ca32c`.
 **Context:** order 4 of epic #72. `check_container()` in `scripts/backup_db.sh` reported
 `"Container '$CONTAINER_NAME' is not running"` plus the remediation
 `docker compose up -d postgres` for four distinct states — daemon down, caller not in the `docker`
@@ -736,7 +738,7 @@ test at all.
    asserts the **reported exit number** specifically. Note the asymmetry that makes this easy to get
    wrong in the other direction: `local status=$?` is *correct* (the right-hand side expands before
    `local` runs) while `local status; status=$?` is broken (`local` succeeds and resets `$?`) — the
-   inverse of the `local var=$(cmd)` hazard #90 guards. The two cases need opposite shapes.
+   inverse of the `local var=$(cmd)` hazard #90 is about. The two cases need opposite shapes.
 
 3. **Whole-line matching uses `[[ ]]` with the substring quoted**, as
    `[[ $'\n'"$listing"$'\n' != *$'\n'"$CONTAINER_NAME"$'\n'* ]]`. `CONTAINER_NAME` is
@@ -745,7 +747,10 @@ test at all.
    `CONTAINER_NAME=esg.news_db` (regex); `grep -qxF --` is immune to that but **matches** when the
    pattern itself holds a newline, since `-F` reads it as alternative patterns; and an **unquoted**
    substring in either `[[ ]]` or `case` matches `*` as a glob. Quoted, `[[ ]]` and `case` are
-   immune to all three. `[[ ]]` was taken over `case` for readability and over `grep -qxF` because
+   immune to the regex and glob hazards, and **narrower rather than immune** on the newline one:
+   a name whose lines appear *adjacently* in the listing still matches, where `grep -F` matches on
+   any single line. Unreachable through Docker, whose names cannot contain a newline.
+   `[[ ]]` was taken over `case` for readability and over `grep -qxF` because
    it spawns no subprocess — which matters on an error path that may have lost `grep` along with
    `docker`. **Recorded because both the plan and the architect got the mechanism wrong in opposite
    directions and measurement settled it:** the plan held `case` immune without saying why, the
@@ -775,8 +780,8 @@ test at all.
    indistinguishable from a clean status to the only consumer that would ever read it.
 
 6. **`status` reports what it could determine and covers *both* of its Docker calls.**
-   `show_status()` calls `check_container` after every on-disk fact is printed, gating only the
-   database-size line, and then makes a second unguarded call:
+   Before this change, `show_status()` called `check_container` after every on-disk fact was
+   printed, gating only the database-size line, and then made a second unguarded call:
    `local db_size=$(docker exec … psql … 2>/dev/null | tr -d ' ')`. That is the `local var=$(cmd)`
    hazard — `local`'s status is returned, `pipefail` cannot reach it — with psql's reason discarded,
    so a container that is up while Postgres refuses connections prints an empty size and **exits
@@ -815,3 +820,51 @@ verdict word that already meant something else. Each was caught by measuring or 
 published contract, not by reasoning about the code.
 
 **Status:** decided at the plan gate; implementation follows in the same PR as this record.
+
+### D011 amendment (2026-09-11) — what code review changed
+
+Four parallel finders over the implementation returned three defects the plan did not anticipate,
+all of them the same shape as the ones the plan record above already catalogues: a value the script
+had not established, presented as a fact.
+
+1. **The `2>&1` capture in `show_status()` corrupted the value it renders.** Folding stderr into the
+   captured size means a server `NOTICE`, a psql startup warning, or a docker-shim banner on an
+   otherwise **successful** query is welded onto the number and printed as the database size, on
+   exit `0`. Two finders reproduced it independently. The non-emptiness guard could not catch it, so
+   the size is now validated by **shape** — digits then a `pg_size_pretty` unit and nothing else.
+   The accepted cost is stated in the code: a benign warning now costs the value rather than
+   corrupting it, which is the safe direction.
+2. **The stub wrote psql's error to stdout, so the `2>&1` it was supposed to exercise was
+   unguarded** — reverting that redirection to `2>/dev/null` left the suite green. Real psql writes
+   errors and notices to stderr and the stub now does too. This is why (1) survived authoring and
+   the first mutation pass: the fixture disagreed with the thing it stood in for.
+3. **`status` propagates `3` for a confirmed-absent container, and nothing pinned it.** Flattening
+   that to `EXIT_CANNOT_CHECK` left the suite green, so the 2-vs-3 distinction — the point of the
+   issue — was unpinned on the one path that reports rather than aborts. All three finders flagged
+   it; `docs/DATABASE.md` and the CHANGELOG had also both documented `status` as always exiting `2`.
+
+Two further corrections worth recording because they are the epic's rule turned back on this change:
+
+- **The `3` branch discarded the listing it already held**, and offered an unhedged
+  `docker compose up -d postgres`. "Not in the running list" is equally what a misconfigured
+  `CONTAINER_NAME` or a different compose prefix looks like — states where starting the container
+  changes nothing and the operator loops. It now prints the listing and hedges the hint.
+- **AC2 was not actually enforced.** The test asserted the absence of one specific forbidden
+  string, so inserting any *other* guess at the cause passed. The `backup` path reaches no
+  `log_info` before the check, so the guard is now the absence of **any** `[INFO]` line — a
+  property rather than a blocklist.
+
+**On the prose, and this is the part worth carrying forward.** Behaviour findings were few; claim
+findings were many, and the ratio matches #74 exactly. Corrected in the shipped surfaces: that
+docker's message "went into the pipe and was discarded" (only its *stdout* did — the error text
+reached stderr unredirected, so the real defect is the verdict, the remediation, and the message
+being unlabelled and unattributable); that "all three" failure states exit `1` from docker (two do;
+a missing binary is the shell's `127`); that every new test asserts the message (two assert only the
+exit code, legitimately, because 2-vs-3 now distinguishes them); that `[[ ]]` is immune to all three
+matching hazards (narrower, not immune, on the newline axis); that #80 would inherit the Python
+mapping (it owns neither `status` nor `run_backup_status`); and `status` "degrades", the word
+decision 5 above had already rejected, which survived in the CHANGELOG alone.
+
+Rather than correct each a second time, the rationale prose in the script, the CHANGELOG entry and
+the exit-code documentation were **cut back** to claims the code and its named tests carry. That is
+the remedy #73 and #74 both arrived at, applied on the first round here instead of the fifth.

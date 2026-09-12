@@ -11,9 +11,13 @@ masked by ``gzip`` exiting 0.
 reported "Container is not running", and offered ``docker compose up -d
 postgres``, whether the daemon was down, the caller was outside the ``docker``
 group, ``docker`` was absent from ``PATH``, or the container was genuinely
-stopped -- and that remediation is right only in the last case. The tests for it
-begin at ``test_the_script_declares_the_documented_exit_codes`` and assert the
-*message* rather than the exit code, because all four states exit non-zero.
+stopped -- and that remediation is right only in the last case.
+
+The tests for it start below the ``issue #93`` banner. They assert the rendered
+*message* as well as the specific exit code, because on the unfixed script all
+four states exit non-zero: ``assert returncode != 0`` passes against the defect.
+The 2-vs-3 split this change introduces is what makes an exit-code assertion
+meaningful, so two of the name-matching tests legitimately assert only that.
 
 The ``if [ $? -eq 0 ]`` handler that would have removed it was unreachable two
 different ways, and only the second is a ``set -e`` abort: when ``pg_dump`` died
@@ -76,6 +80,15 @@ case "$1" in
                     # asserting exit 0 would bless the blank.
                     case "$*" in
                         *pg_size_pretty*)
+                            # STDERR first, and it matters which stream each
+                            # goes to: real psql writes errors and NOTICEs to
+                            # stderr, and the script captures with `2>&1`. A
+                            # stub that put its error on stdout would leave that
+                            # capture unexercised -- reverting the script's
+                            # `2>&1` to `2>/dev/null` would keep the suite
+                            # green, which is how the welded-warning defect got
+                            # through review once already.
+                            printf '%s\\n' "${FAKE_DB_SIZE_STDERR-}" >&2
                             # Leading spaces as `psql -t` emits them, so the
                             # script's whitespace strip is exercised rather than
                             # assumed. `-` again: set-but-empty is "psql exited
@@ -404,21 +417,26 @@ def test_backup_survives_a_du_failure_after_the_archive_is_written(harness: Harn
 # reported "Container is not running" whether the daemon was down, the caller was
 # outside the `docker` group, `docker` was absent from PATH, or the container was
 # genuinely stopped -- and the remediation it printed
-# (`docker compose up -d postgres`) is correct only in the last case. docker's own
-# message went into the pipe and was discarded.
+# (`docker compose up -d postgres`) is correct only in the last case. Only
+# docker's STDOUT entered the pipe, so its error text still reached the terminal
+# on stderr -- unlabelled, on another stream, and not attributable to this
+# check, which is what capturing it fixes.
 #
-# What the exit code CANNOT do, which is why every test below asserts the
-# message: all four states exit non-zero, so `assert returncode != 0` passes
-# against the unfixed script.
+# What the exit code CANNOT do on the UNFIXED script, which is why these tests
+# assert the rendered message: all four states exited non-zero there, so
+# `assert returncode != 0` passes against the defect. This change splits them
+# into 2 and 3, which is what makes an exit-code assertion meaningful -- so the
+# two name-matching tests assert the code alone, and that is sufficient.
 #
 # The script's own failure branch had no test at all before this: every existing
 # test above reaches `check_container` on the success path, because the `ps` stub
 # echoed the container name unconditionally.
 # --------------------------------------------------------------------------- #
 
-# The contract #80 will consume. Hardcoded rather than parsed out of the script,
-# so that changing the script's constants is a test failure rather than something
-# the tests silently follow; `test_the_script_declares_the_documented_exit_codes`
+# The contract as the script declares it. No open issue owns the Python side of
+# it (see D011), so these are hardcoded rather than parsed out of the script:
+# changing the script's constants should be a test failure, not something the
+# tests silently follow. `test_the_script_declares_the_documented_exit_codes`
 # pins the other direction.
 EXIT_CANNOT_CHECK = 2
 EXIT_CONTAINER_ABSENT = 3
@@ -428,22 +446,39 @@ EXIT_CONTAINER_ABSENT = 3
 STOPPED_HINT = "docker compose up -d postgres"
 STOPPED_VERDICT = "is not running"
 
+# AC2 forbids asserting a cause the script has not established, and naming one
+# specific forbidden string would not enforce it -- PR #92's draft printed "Is
+# the Docker daemon running?", but any other guess would be the same defect. The
+# cannot-check branch reaches no `log_info` at all, and `create_backup` calls the
+# check before it logs anything, so on that path the ABSENCE OF ANY `[INFO]`
+# line is the enforceable property. Asserting that is what makes the guard
+# resistant to a hint nobody thought to forbid.
+INFO_PREFIX = "[INFO]"
+
 
 def test_the_script_declares_the_documented_exit_codes():
-    """The two integers are a cross-language contract, so pin them in both places.
+    """The two integers cross a language boundary, so pin them in both places.
 
-    `src/agent/runner.py` will eventually map these to health verdicts, and bash
-    cannot import a Python constant. The assertions above use the literals; this
-    one asserts the script agrees, so a rename or a renumber cannot pass by
-    changing only one side.
+    Bash cannot import a Python constant, and no open issue owns the Python side
+    of this contract (D011 records it as unowned), so the numbers exist in the
+    script and in `docs/DATABASE.md`. The other tests in this block use the
+    module constants above; this one asserts the script agrees with them, so a
+    renumber cannot pass by changing only one side.
+
+    It also pins the doc, which nothing else does: renumbering the script AND
+    these constants together would otherwise leave `docs/DATABASE.md` stale, and
+    that table is what a future consumer reads.
     """
     script = BACKUP_SCRIPT.read_text()
     assert f"EXIT_CANNOT_CHECK={EXIT_CANNOT_CHECK}" in script
     assert f"EXIT_CONTAINER_ABSENT={EXIT_CONTAINER_ABSENT}" in script
-    # 1 stays the generic failure code. If a future edit names it for a specific
-    # cause, "backup file not found" and "unknown command" start reporting that
-    # cause -- a new signal collapse inside the fix for one.
-    assert "EXIT_CONTAINER_ABSENT=1" not in script
+
+    database_doc = (REPO_ROOT / "docs" / "DATABASE.md").read_text()
+    assert f"| `{EXIT_CANNOT_CHECK}` |" in database_doc, (
+        "docs/DATABASE.md's exit-code table is the contract a future consumer "
+        "reads; it must carry the same numbers as the script"
+    )
+    assert f"| `{EXIT_CONTAINER_ABSENT}` |" in database_doc
 
 
 @pytest.mark.parametrize(
@@ -460,6 +495,11 @@ def test_the_script_declares_the_documented_exit_codes():
             1,
             "permission denied while trying to connect to the Docker daemon socket",
         ),
+        # The gated `else` branch. Without this row, deleting the
+        # `if [ -n "$listing" ]` gate leaves the suite green -- the branch is
+        # never entered, so "a header followed by nothing renders absence as
+        # presence" would be a claim with no guard behind it.
+        ("docker said nothing", 1, ""),
     ],
 )
 def test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container(
@@ -477,11 +517,17 @@ def test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container(
 
     * docker's own text is present -- delete the `printf "$listing"` and only this
       fails;
-    * the stopped-container verdict is absent -- revert to the old single branch
-      and only this fails;
-    * the remediation hint is absent -- this is the one PR #92's draft failed, by
-      printing "Is the Docker daemon running?" for every non-zero status and
-      reproducing the misattribution one level down;
+    * the stopped-container verdict is absent. Deleting the whole cannot-check
+      block fails several assertions here, the exit code first; the mutant this
+      one isolates is the narrower one where cannot-check reuses "is not
+      running" as its wording;
+    * **no `[INFO]` line is emitted at all.** Naming one forbidden string would
+      not enforce AC2: PR #92's draft printed "Is the Docker daemon running?",
+      but any other guess at the cause is the same defect, and asserting the
+      absence of that one phrase leaves every other guess green. `create_backup`
+      calls the check before it logs anything and the cannot-check branch
+      reaches no `log_info`, so the absence of the prefix is the enforceable
+      property;
     * the reported exit number is docker's. This one pins a defect that was in
       this change's own first draft: the failure branch read `$?` inside
       `if ! listing=$(...); then`, where it is the status of the *negation* --
@@ -493,15 +539,28 @@ def test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container(
 
     result = harness.run("backup")
 
+    if message:
+        # The header is asserted separately from the text: deleting
+        # `log_error "Docker reported:"` leaves the text in place, and deleting
+        # the `printf` leaves the header in place.
+        assert "Docker reported:" in result.stdout, result.stdout
+    else:
+        assert "Docker produced no output." in result.stdout, (
+            "with no output to show, the script must say so rather than print a "
+            f"header over nothing.\nstdout:\n{result.stdout}"
+        )
+        assert "Docker reported:" not in result.stdout, result.stdout
+
     assert result.returncode == EXIT_CANNOT_CHECK, (
         f"a failed Docker query must exit {EXIT_CANNOT_CHECK} (could not check), "
         f"not {EXIT_CONTAINER_ABSENT} (checked, absent) and not 1 (generic); "
         f"got {result.returncode}.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert message in result.stdout, (
-        f"docker's own message is the only thing that makes {label} diagnosable, "
-        f"so it must reach the operator.\nstdout:\n{result.stdout}"
-    )
+    if message:
+        assert message in result.stdout, (
+            f"docker's own message is the only thing that makes {label} "
+            f"diagnosable, so it must reach the operator.\nstdout:\n{result.stdout}"
+        )
     assert STOPPED_VERDICT not in result.stdout, (
         f"{label} must not be reported as a stopped container.\nstdout:\n{result.stdout}"
     )
@@ -514,12 +573,11 @@ def test_a_failed_docker_query_is_reported_distinctly_from_a_stopped_container(
         "`if ! ...; then` body yields the negation's status (0), which would "
         f"print 'docker exited 0' for a real failure.\nstdout:\n{result.stdout}"
     )
-    # The header and its evidence must land on ONE stream. `log_error` is a bare
-    # `echo`, i.e. stdout; writing docker's text to stderr would split the two
-    # across ScriptResult.stdout/.stderr, and a test concatenating both would
-    # never notice.
-    assert "Docker reported:" in result.stdout and message in result.stdout, (
-        "the evidence must be on the same stream as the header that introduces it"
+    # AC2, enforced as a property rather than as a blocklist. See INFO_PREFIX.
+    assert INFO_PREFIX not in result.stdout, (
+        "the cannot-check branch must offer no guidance at all, because it has "
+        "established no cause. Any `[INFO]` line here is a guess -- PR #92's "
+        f"draft guessed the daemon.\nstdout:\n{result.stdout}"
     )
 
 
@@ -538,8 +596,8 @@ def test_a_missing_docker_binary_surfaces_the_shell_s_own_diagnostic(
 
     So induce it for real: a PATH with no `docker` on it anywhere. `create_backup`
     calls `check_container` before anything else, and the only external the script
-    needs before that point is `dirname` in its own header, so a one-symlink PATH
-    is enough to reach the branch.
+    needs before that point is `dirname` in its own header, so a PATH carrying
+    only `bash` and `dirname` is enough to reach the branch.
 
     Note what this also rules out: a *non-executable* `docker` first on PATH does
     NOT produce this. Bash skips it and keeps searching, so the real binary
@@ -574,7 +632,7 @@ def test_a_missing_docker_binary_surfaces_the_shell_s_own_diagnostic(
     assert "docker exited 127" in result.stdout, (
         f"command-not-found is 127 and the script must report it.\nstdout:\n{result.stdout}"
     )
-    assert "command not found" in result.stdout, (
+    assert "docker: command not found" in result.stdout, (
         "the shell's own diagnostic is the evidence here, and capturing it is the "
         "whole reason the query is a command substitution with 2>&1 rather than a "
         f"pipeline.\nstdout:\n{result.stdout}"
@@ -614,13 +672,31 @@ def test_a_stopped_container_is_reported_as_stopped(
         f"state was never established).\nstdout:\n{result.stdout}"
     )
     assert STOPPED_VERDICT in result.stdout, result.stdout
-    # Here -- and only here -- the hint is correct, because the cause IS
-    # established. Asserting its presence is what keeps AC2's absence assertions
-    # above from being satisfiable by deleting the hint outright.
+    # The hint is offered here and nowhere else. Asserting its presence is what
+    # keeps AC2's absence assertions above from being satisfiable by deleting the
+    # hint outright.
     assert STOPPED_HINT in result.stdout, (
-        f"the remediation is correct for a genuinely stopped container and must "
-        f"still be offered.\nstdout:\n{result.stdout}"
+        f"the remediation belongs on the one path where the container is "
+        f"confirmed absent.\nstdout:\n{result.stdout}"
     )
+    # But it is hedged, and the listing is shown, because "not in the running
+    # list" is ALSO what a misconfigured CONTAINER_NAME or a different compose
+    # prefix looks like -- states where starting the container changes nothing
+    # and the operator would otherwise loop. The listing is what lets them tell
+    # which state they are in.
+    assert "If it is stopped" in result.stdout, (
+        "the hint must not assert that the container is stopped, which is only "
+        f"one of the states this branch covers.\nstdout:\n{result.stdout}"
+    )
+    if listing:
+        assert "Running containers:" in result.stdout, result.stdout
+        for name in listing.splitlines():
+            assert name in result.stdout, (
+                "the running containers must be shown, or a name mismatch is "
+                f"indistinguishable from a stopped container.\nstdout:\n{result.stdout}"
+            )
+    else:
+        assert "No containers are running." in result.stdout, result.stdout
     assert harness.daily_archives == []
 
 
@@ -647,29 +723,44 @@ def test_container_name_is_matched_as_a_fixed_whole_line(harness: Harness):
     )
 
 
-def test_a_container_name_holding_a_glob_metacharacter_does_not_match(harness: Harness):
-    """The mutant that `grep -qxF` would have killed and an unquoted match does not.
+@pytest.mark.parametrize(
+    ("label", "container_name", "killed_mutant"),
+    [
+        ("a glob star", "*", "unquoting the substring in the [[ ]] test"),
+        ("a glob single-char", "esg_news_d?", "unquoting the substring"),
+        ("a glob class", "esg_news_d[b]", "unquoting the substring"),
+        # `grep -qxF --` satisfies AC3 and was rejected for exactly this: `-F`
+        # reads a newline in the PATTERN as a list of alternative patterns, so
+        # this name matches the line `esg_news_db` and reports the container
+        # present. The shipped `[[ ]]` requires the pattern's lines to appear
+        # ADJACENTLY, which they do not here.
+        ("a newline, non-adjacent", "zzz_nonexistent\nesg_news_db", "swapping in grep -qxF"),
+    ],
+)
+def test_a_hostile_container_name_is_not_matched(
+    harness: Harness, label: str, container_name: str, killed_mutant: str
+):
+    """CONTAINER_NAME is operator-supplied, so its metacharacters are reachable.
 
-    The match is `[[ $'\\n'"$listing"$'\\n' != *$'\\n'"$CONTAINER_NAME"$'\\n'* ]]`,
-    and the quoting around `$CONTAINER_NAME` is what makes it literal. Unquoted,
-    the `*` below is a glob that matches any listing at all, so the script would
-    report *every* container present -- including when none is.
+    The match is `[[ $'\\n'"$listing"$'\\n' != *$'\\n'"$CONTAINER_NAME"$'\\n'* ]]`
+    and the quoting around `$CONTAINER_NAME` is what makes it literal. None of
+    these names is in the listing, so every row must read as absent.
 
-    CONTAINER_NAME is operator-supplied (`${CONTAINER_NAME:-esg_news_db}`), so
-    this is reachable by configuration rather than theoretical. It is also why
-    `grep -qxF --` was not used instead: `-F` reads a newline in the pattern as a
-    list of alternative patterns, which is the same false-positive class in a
-    different alphabet.
+    What this does NOT claim: that the construct is immune to every hazard.
+    Measured, it is narrower than `grep -qxF` on the newline case rather than
+    immune to it -- a name whose lines appear *adjacently* in the listing still
+    matches. That is unreachable through Docker, whose names cannot contain a
+    newline, and needs a deliberately hostile CONTAINER_NAME.
     """
-    harness.environ["CONTAINER_NAME"] = "*"
+    harness.environ["CONTAINER_NAME"] = container_name
     harness.environ["FAKE_DOCKER_PS_NAMES"] = "esg_news_db\nother_db"
 
     result = harness.run("backup")
 
     assert result.returncode == EXIT_CONTAINER_ABSENT, (
-        "a container literally named '*' is not in the listing, so it must read "
-        "as absent. An unquoted pattern would glob-match the whole listing and "
-        f"report it present.\nstdout:\n{result.stdout}"
+        f"{label}: no container by this name is in the listing, so it must read "
+        f"as absent. Mutant this kills: {killed_mutant}.\n"
+        f"stdout:\n{result.stdout}"
     )
     assert harness.daily_archives == []
 
@@ -731,52 +822,108 @@ def test_status_reports_the_database_size_when_docker_can_be_queried(harness: Ha
     assert archive.name in result.stdout, "the on-disk facts must be reported too"
 
 
-def test_status_reports_partial_results_when_docker_cannot_be_queried(harness: Harness):
+@pytest.mark.parametrize(
+    ("label", "env", "expected_exit", "evidence"),
+    [
+        (
+            "the query failed",
+            {
+                "FAKE_DOCKER_PS_EXIT": "1",
+                "FAKE_DOCKER_PS_STDERR": (
+                    "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
+                ),
+            },
+            EXIT_CANNOT_CHECK,
+            "Cannot connect to the Docker daemon",
+        ),
+        # The other half of the 2-vs-3 distinction, on the `status` path. Without
+        # this row, flattening `show_status`'s `exit "$status"` to
+        # `exit "$EXIT_CANNOT_CHECK"` leaves the suite green -- so `status` could
+        # report a confirmed-stopped container as "never established" and
+        # nothing would notice. That collapse is the defect this issue is about.
+        (
+            "the container is absent",
+            {"FAKE_DOCKER_PS_NAMES": "other_db"},
+            EXIT_CONTAINER_ABSENT,
+            "other_db",
+        ),
+    ],
+)
+def test_status_reports_partial_results_rather_than_aborting(
+    harness: Harness, label: str, env: dict, expected_exit: int, evidence: str
+):
     """AC7: keep the on-disk facts, name what could not be established, still fail.
 
-    Three things have to hold at once, and each is a separate mutant:
+    Four things have to hold at once:
 
-    * the on-disk facts survive -- exiting at the container check, as `backup`
-      does, would discard the counts the operator came for;
-    * the exit code is `EXIT_CANNOT_CHECK`, not 0. `ScriptResult.success` is
+    * the on-disk facts survive. Note which mutant this pins: `show_status`
+      prints them *before* the check, so swapping `check_container_state` for the
+      fatal `check_container` still leaves them on stdout and is caught by the
+      `COULD_NOT_DETERMINE` assertion instead. The facts assertion is
+      load-bearing against a different mutant -- moving the check above the
+      fact-printing;
+    * the exit code is the SPECIFIC one -- 2 when the query failed, 3 when Docker
+      confirmed the container absent. Not 0: `ScriptResult.success` is
       `exit_code == 0`, so exiting 0 would make "Docker unreachable"
       indistinguishable from a clean status to the only consumer that will read
-      it -- this epic's defect, reintroduced at the boundary it is being removed
-      from;
-    * no remediation hint, because the cause is not established.
+      it. And not a single code for both, which would rebuild the collapse;
+    * the missing value is named rather than rendered blank;
+    * no `[INFO]` guidance on the row where no cause is established.
     """
     archive = _populate_backups(harness)
-    harness.environ["FAKE_DOCKER_PS_EXIT"] = "1"
-    harness.environ["FAKE_DOCKER_PS_STDERR"] = (
-        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock."
-    )
+    harness.environ.update(env)
 
     result = harness.run("status")
 
     assert archive.name in result.stdout, (
-        "a read-only query must still report the on-disk facts it established.\n"
-        f"stdout:\n{result.stdout}"
+        f"{label}: a read-only query must still report the on-disk facts it "
+        f"established.\nstdout:\n{result.stdout}"
     )
-    assert result.returncode == EXIT_CANNOT_CHECK, (
-        f"reporting partial results must not mean exiting 0; got "
-        f"{result.returncode}.\nstdout:\n{result.stdout}"
+    assert result.returncode == expected_exit, (
+        f"{label}: expected exit {expected_exit}; got {result.returncode}. "
+        f"Reporting partial results must not mean exiting 0, and the two states "
+        f"must not share a code.\nstdout:\n{result.stdout}"
     )
     assert COULD_NOT_DETERMINE in result.stdout, (
-        f"the missing value must be named, not left blank.\nstdout:\n{result.stdout}"
+        f"{label}: the missing value must be named, not left blank.\n"
+        f"stdout:\n{result.stdout}"
     )
-    assert "Cannot connect to the Docker daemon" in result.stdout, result.stdout
-    assert STOPPED_HINT not in result.stdout, result.stdout
+    assert evidence in result.stdout, (
+        f"{label}: the evidence for the verdict must be shown.\nstdout:\n{result.stdout}"
+    )
+    if expected_exit == EXIT_CANNOT_CHECK:
+        # Only the hint is asserted absent here, not `INFO_PREFIX`: `show_status`
+        # legitimately logs "[INFO] Backup Status" before either check, so the
+        # absence-of-any-INFO property used on the `backup` path does not
+        # transfer to this one.
+        assert STOPPED_HINT not in result.stdout, result.stdout
 
 
 @pytest.mark.parametrize(
-    ("label", "size_exit", "size_output"),
+    ("label", "size_exit", "stdout_text", "stderr_text"),
     [
-        ("psql exits non-zero", "2", "psql: error: connection to server failed"),
-        ("psql exits 0 saying nothing", "0", ""),
+        # `5`, not `2`: psql's own status is echoed into the message, and if it
+        # equalled EXIT_CANNOT_CHECK then mutating the branch's
+        # `exit "$EXIT_CANNOT_CHECK"` to `exit "$status"` would be
+        # indistinguishable here and survive on this row.
+        ("psql exits non-zero", "5", "", "psql: error: connection to server failed"),
+        ("psql exits 0 saying nothing", "0", "", ""),
+        # The welded-warning case. psql exits 0 and DOES return the size, but a
+        # warning on stderr is folded into the same capture by `2>&1`; with only
+        # a non-emptiness guard the script printed
+        # "Current database size: WARNING:...42MB" and exited 0 -- an
+        # unestablished value rendered as a fact, which is this change's own
+        # defect class. The shape guard is what rejects it.
+        (
+            "psql exits 0 with a warning welded to the size",
+            "0",
+            "   42 MB",
+            "WARNING: there is no transaction in progress",
+        ),
     ],
 )
 def test_status_reports_when_the_database_size_cannot_be_determined(
-    harness: Harness, label: str, size_exit: str, size_output: str
+    harness: Harness, label: str, size_exit: str, stdout_text: str, stderr_text: str
 ):
     """The second Docker call in `show_status`, which had no test and failed silently.
 
@@ -790,12 +937,15 @@ def test_status_reports_when_the_database_size_cannot_be_determined(
       the empty string, so printing it asserts a fact that was never established.
       This row is what stops the fix from being "check the exit code" alone.
 
-    Reverting either half -- the status capture or the `-z` guard -- leaves one of
-    these two rows green and the other red, so neither is redundant.
+    Each row isolates a different half of the fix, so none is redundant:
+    reverting the status capture reddens row 1 only, dropping the shape guard
+    reddens rows 2 and 3, and reverting `2>&1` to `2>/dev/null` reddens rows 1
+    and 3 -- the last only because the stub writes to the stream real psql uses.
     """
     _populate_backups(harness)
     harness.environ["FAKE_DB_SIZE_EXIT"] = size_exit
-    harness.environ["FAKE_DB_SIZE"] = size_output
+    harness.environ["FAKE_DB_SIZE"] = stdout_text
+    harness.environ["FAKE_DB_SIZE_STDERR"] = stderr_text
 
     result = harness.run("status")
 
@@ -813,8 +963,35 @@ def test_status_reports_when_the_database_size_cannot_be_determined(
         f"{label}: an empty size must never be printed as though it were a "
         f"value.\nstdout:\n{result.stdout}"
     )
-    if size_output:
-        assert size_output in result.stdout, (
-            f"{label}: psql's own reason is the evidence and must be surfaced.\n"
-            f"stdout:\n{result.stdout}"
+    # Nor may any OTHER unvalidated string be rendered as the size. This is what
+    # catches the welded-warning row specifically: the only size line permitted
+    # is the "could not be determined" one.
+    rendered = re.findall(r"^Current database size: (.+)$", result.stdout, re.MULTILINE)
+    assert rendered == ["could not be determined"], (
+        f"{label}: the only size line may be the could-not-determine one; "
+        f"found {rendered!r}.\nstdout:\n{result.stdout}"
+    )
+    if stderr_text:
+        assert stderr_text in result.stdout, (
+            f"{label}: psql's own text is the evidence and must be surfaced, "
+            f"unmangled by the whitespace strip.\nstdout:\n{result.stdout}"
+        )
+        assert "psql reported:" in result.stdout, result.stdout
+    else:
+        assert "psql produced no output." in result.stdout, (
+            f"{label}: with nothing to show, the script must say so rather than "
+            f"print a header over nothing.\nstdout:\n{result.stdout}"
+        )
+    if size_exit != "0":
+        # Pins the reported number, the way the docker side does. Without it, a
+        # message naming the wrong status survives.
+        assert f"(psql exited {size_exit})" in result.stdout, (
+            f"{label}: the reported status must be psql's own.\nstdout:\n{result.stdout}"
+        )
+    else:
+        # psql exited 0 here, so naming an exit status as the reason would assert
+        # a cause that did not fire.
+        assert "psql exited 0 but returned no usable size" in result.stdout, (
+            f"{label}: a shape/emptiness failure must not be reported as an "
+            f"exit-status failure.\nstdout:\n{result.stdout}"
         )
