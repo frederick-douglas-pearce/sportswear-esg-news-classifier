@@ -83,3 +83,11 @@ data/evaluation/migration/
 # dev-loop ledger: local working state, never committed.
 # `.claude/loop.config.md` (the binding seam) IS committed -- do not widen this to `.claude/loop*`.
 .claude/loop/
+
+# Isolated worktrees the host creates for subagents. Never committed, and the
+# failure mode if one is staged is quiet: `git add -A` records a gitlink (mode
+# 160000, a bare SHA) rather than the files, so review sees one `Subproject
+# commit` line, and the SHA lives on a local `worktree-agent-*` branch no remote
+# has. Scoped deliberately -- `.claude/specs/`, the skills and `loop.config.md`
+# are committed on purpose, so do not widen this to `.claude/*`.
+.claude/worktrees/
