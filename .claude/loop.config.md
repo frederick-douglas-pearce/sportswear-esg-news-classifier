@@ -18,7 +18,7 @@ See `${CLAUDE_PLUGIN_ROOT}/skills/dev-loop/loop-engine.md` for the operating pro
 |-----------|-------|-------|
 | `BACKLOG_SOURCE` | GitHub milestone **`silent-success`** | `gh issue list --milestone silent-success --state open`. Ten rows: #71 (live instance), #72 (epic tracker — see §3), #73–#80. |
 | `SCOPE_AGENT` | the **`pm`** subagent | user-global; scope/priority/requirements. |
-| `DESIGN_AGENT` | the **`architect`** subagent | user-global; reviews plans pre-implementation. **Records its outcome in `.claude/specs/decisions.md`** as the next `## D0NN:` entry — that file, not issue comments, is this project's decision surface (the engine's Resume step asks which surface a project uses). |
+| `DESIGN_AGENT` | the **`architect`** subagent | user-global. **Two uses.** (1) Reviews plans pre-implementation — the architect gate in §2 — and **records that outcome in `.claude/specs/decisions.md`** as the next `## D0NN:` entry — that file, not issue comments, is this project's decision surface (the engine's Resume step asks which surface a project uses). (2) **Rules on scope when a BLOCKING code-review finding raises a design question, and stops for you with that ruling attached** (dev-loop 0.3.0, #114). Use (2) is a second gate the engine makes due, **not this file**: `ARCHITECT_TRIGGERS` does not bound it, it fires on every route at whatever round the finding arises, and no value here switches it off — absent, `—` or `TODO`, the stop still fires with no ruling attached. ⚠ **The `D0NN:` rule above is scoped to use (1).** A scope ruling stops for you rather than deciding, so whether it becomes a D-entry is yours to say — the loop should not write one unprompted. The engine's Gate table is the authoritative list of every gate this binding staffs. **Never delete this row.** |
 | `CODE_REVIEW` | parallel finder subagents over `git diff main...HEAD` **+ the issue's acceptance criteria**, angles chosen per the diff's risk surface, then a pass confirming each finding | The orchestrator runs this itself. `/code-review <effort>` is model-invocable and could be bound instead; the fan-out is preferred here because this repo's risk surface is unusually heterogeneous (workflow control flow, cron boundaries, LLM output parsing, SQL) and per-lens attribution is worth more than a flat finding list. |
 | `SECURITY_REVIEW` | the **`/security-review`** skill (local, model-invocable), scoped per §4 | No labeled security workflow exists; `.github/workflows/` holds `ci.yml`, `deploy.yml`, `monitoring.yml`. Local path only. |
 | `VERIFY` | the affected entry point's **dry-run**, where it has one — e.g. `uv run python scripts/collect_news.py --dry-run --max-calls 5`, `uv run python scripts/label_articles.py --dry-run --batch-size 5`. Where the change is a scheduled workflow, run that workflow and **read its recorded status**, not its exit code | ⚠ **This repo's whole epic is that exit codes lie** (#72). A `VERIFY` that accepts a zero exit reproduces the defect under review. Verify the *output* — rows written, status recorded, feed non-empty. |
@@ -42,6 +42,11 @@ See `${CLAUDE_PLUGIN_ROOT}/skills/dev-loop/loop-engine.md` for the operating pro
 ---
 
 ## 2. `ARCHITECT_TRIGGERS`
+
+**These triggers govern the plan-informing use only, and the list below does not bound
+`DESIGN_AGENT`.** The engine consults that agent for a scope ruling whenever a BLOCKING code-review
+finding raises a design question — on every route, at whatever round it arises, and stopping with
+that ruling. Nothing in this file turns that off.
 
 Fire `DESIGN_AGENT` (the `architect` subagent) when a plan hits any of these, **or** when the
 orchestrator is unsure. Skip for pure `docs/` and `README` edits.
