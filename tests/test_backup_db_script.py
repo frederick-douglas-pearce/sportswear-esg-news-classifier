@@ -718,22 +718,40 @@ def test_a_stopped_container_is_reported_as_stopped(
     assert harness.daily_archives == []
 
 
-def test_container_name_is_matched_as_a_fixed_whole_line(harness: Harness):
-    """AC6: the name was interpolated into a regex, so `.` matched any character.
+@pytest.mark.parametrize(
+    ("label", "container_name", "listing"),
+    [
+        # FIXED-STRING: the name was interpolated into a regex, so `.` matched
+        # any character and `esg.news_db` matched the line `esgxnews_db`.
+        ("a regex metacharacter", "esg.news_db", "esgxnews_db"),
+        # WHOLE-LINE, both directions. These are the ordinary near misses, not
+        # hostile input: Docker Compose derives container names by prefixing the
+        # project and suffixing an index, so a substring match reports the
+        # container PRESENT when a differently-named one is running, and the
+        # backup then proceeds against a container that is not there.
+        ("the name is a suffix of a running container", "esg_news_db", "project_esg_news_db"),
+        ("the name is a prefix of a running container", "esg_news_db", "esg_news_db_old"),
+        ("the name is embedded in a running container", "esg_news_db", "x_esg_news_db_1"),
+    ],
+)
+def test_container_name_is_matched_as_a_fixed_whole_line(
+    harness: Harness, label: str, container_name: str, listing: str
+):
+    """AC3/AC6: the match must be fixed-string AND whole-line.
 
-    Reverting the match to `grep -q "^${CONTAINER_NAME}$"` makes this fail and
-    nothing else: `esg.news_db` matches the line `esgxnews_db`, the script decides
-    the container is present, and the backup proceeds against a container that is
-    not there -- failing later with a worse message. Unasserted before this.
+    The two halves fail independently. A regex match treats `.` as a wildcard; a
+    substring match -- one missing either `$'\\n'` anchor -- accepts a name that is
+    merely contained in a running container's name. Both report a container
+    present that is not, and the backup then fails at `docker exec` with a worse
+    message than the check would have given.
     """
-    harness.environ["CONTAINER_NAME"] = "esg.news_db"
-    harness.environ["FAKE_DOCKER_PS_NAMES"] = "esgxnews_db"
+    harness.environ["CONTAINER_NAME"] = container_name
+    harness.environ["FAKE_DOCKER_PS_NAMES"] = listing
 
     result = harness.run("backup")
 
     assert result.returncode == EXIT_CONTAINER_ABSENT, (
-        "'esg.news_db' must not match the line 'esgxnews_db'; a regex match "
-        f"would treat '.' as a wildcard and report the container present.\n"
+        f"{label}: {container_name!r} must not match the line {listing!r}.\n"
         f"stdout:\n{result.stdout}"
     )
     assert harness.daily_archives == [], (

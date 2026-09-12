@@ -936,3 +936,33 @@ survived any round; every round past the first was driven by the change's prose 
 reproduces #73's and #74's pattern. The new and more useful finding is amendment 2's: both genuinely
 dangerous defects here came from a **fixture that disagreed with what it stood in for**, which no
 mutation pass can detect, because a mutant lives or dies by what the fixture happens to exercise.
+
+### D011 amendment 4 (2026-09-11) — what the Class B mutation pass found
+
+The acceptance gate's mutation pass returned **exit 1: survivors**. Of 26 real mutations, 22 were
+killed and both controls survived as declared, so the pipeline proved it could report a survivor.
+Grouped by shape, the survivors are one real finding and one equivalent mutant.
+
+**The finding: the match was pinned as fixed-string but never as whole-line.** Three mutations —
+replacing the match with a plain substring test, and dropping either `$'\n'` anchor — all survived.
+The tests covered the fixed-string half thoroughly (a regex metacharacter, three glob forms, an
+embedded newline) and never covered the other half of the same criterion. The consequence is not
+academic: Docker Compose derives container names by prefixing the project and suffixing an index,
+so a substring match reports `esg_news_db` **present** when what is actually running is
+`project_esg_news_db_1`, and the backup then proceeds against a container that is not there. That
+is the same false-positive class as the regex defect this issue exists to remove, arriving through
+the door the tests did not watch. Fixed by parametrizing the whole-line test over both near-miss
+directions plus the embedded case.
+
+**The equivalent mutant: dropping `(\.[0-9]+)?` from the size guard.** It cannot be killed, because
+`pg_database_size` returns bigint and `pg_size_pretty(bigint)` never emits a decimal — confirmed
+against the live server and independently by the round-3 checker. The optional group is defensive
+against the `numeric` overload, which this call site does not use. Recorded as an acknowledged
+unpinned branch rather than a finding.
+
+**Why this pass was worth its cost, stated precisely.** Every mutant it killed had already been
+killed by a mutation I ran myself before opening the PR, and by the round-3 checker. The one thing
+it found is the one I could not have found that way: I chose my mutations from the same
+understanding that wrote the tests, so I probed the property I was thinking about — fixed-string —
+and not the one I had merely assumed. A spec written by someone who had not written the tests
+probed both. That is the argument for the actor split, and it is now evidenced rather than asserted.
