@@ -694,3 +694,275 @@ test pins. Read the docstrings in `health.py` and `base.py` as descriptions of
 what the code does; read this record as a dated snapshot of why, not as a maintained document.
 
 **Status:** implemented and shipped in the same commit as this record (#74 / PR #108). The decisions above were taken at the plan gate, before implementation; the corrections marked in 2 and 4 were made during code review, when the claims were measured rather than reasoned about.
+
+---
+
+## D011: `check_container()` Distinguishes "Could Not Check" From "Not Running", and Names It `unknown` (#93)
+
+**Date:** 2026-09-11
+**Code references:** by symbol and quoted construct, per D007. Where "before" is meant, it is
+the state at base commit `a8ca32c`.
+**Context:** order 4 of epic #72. `check_container()` in `scripts/backup_db.sh` reported
+`"Container '$CONTAINER_NAME' is not running"` plus the remediation
+`docker compose up -d postgres` for four distinct states — daemon down, caller not in the `docker`
+group, `docker` absent from `PATH`, and the container genuinely stopped — and the remediation is
+correct in only the last. D006 recorded this same construct, the
+`docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"` pipeline, as **"Stated, not fixed
+here … deferred to #93"**, noted that `pipefail` made its SIGPIPE status inversion reachable in
+principle (a hazard #89 *introduced*, not inherited), and recorded the signal collapse as untested
+"because a test asserting the correct verdict would fail against the code as it stands."
+
+A plan-time falsifier run against the working tree narrowed the warrant and is recorded because it
+contradicts this issue's own framing: the backup cron job is **not installed**,
+`run_backup_status()` in `src/agent/runner.py` has **no caller**, `docker` resolves under cron's
+default `PATH` on this host, and the invoking user **is** in the `docker` group. So the issue's
+claim that "the agent's only backup health signal cannot distinguish could-not-check from
+checked-and-down" is true of the code and **dormant in this deployment**. What is live: an operator
+runs these subcommands by hand, D006's deferred hazard is still open, and the failure branch had no
+test at all.
+
+**Decisions** (taken at the plan gate, before implementation; architect consulted on four forks):
+
+1. **Capture the query; do not pipe it.** `check_container()` becomes
+   `listing=$(docker ps --format '{{.Names}}' 2>&1) || status=$?`. Only the non-pipeline form can
+   surface docker's own stderr, which the first acceptance criterion requires — mid-pipeline stderr
+   needs a temp file or process substitution. Removing the pipe also retires D006's deferred SIGPIPE
+   inversion rather than carrying it forward. **Rejected:** keeping the pipeline and reading
+   `PIPESTATUS`, which preserves the smaller diff and cannot satisfy that criterion.
+
+2. **`$?` is captured with `|| status=$?`, never inside an `if ! …; then` body.** The plan's first
+   draft read `$?` in the failure branch of `if ! listing=$(…); then`, where it is the status of the
+   **negation** — always `0` — so the message would have reported `exit 0` for every genuine
+   failure. Measured before implementation. This is the epic's own defect class appearing inside its
+   repair, and it is invisible to a test that asserts only that the branch was taken, so a test
+   asserts the **reported exit number** specifically. Note the asymmetry that makes this easy to get
+   wrong in the other direction: `local status=$?` is *correct* (the right-hand side expands before
+   `local` runs) while `local status; status=$?` is broken (`local` succeeds and resets `$?`) — the
+   inverse of the `local var=$(cmd)` hazard #90 is about. The two cases need opposite shapes.
+
+3. **Whole-line matching uses `[[ ]]` with the substring quoted**, as
+   `[[ $'\n'"$listing"$'\n' != *$'\n'"$CONTAINER_NAME"$'\n'* ]]`. `CONTAINER_NAME` is
+   operator-supplied, so three hazards were measured against a listing holding the real container
+   plus one other: the **before** form `grep -q "^${CONTAINER_NAME}$"` matches `esgxnews_db` for
+   `CONTAINER_NAME=esg.news_db` (regex); `grep -qxF --` is immune to that but **matches** when the
+   pattern itself holds a newline, since `-F` reads it as alternative patterns; and an **unquoted**
+   substring in either `[[ ]]` or `case` matches `*` as a glob. Quoted, `[[ ]]` and `case` are
+   immune to the regex and glob hazards, and **narrower rather than immune** on the newline one:
+   a name whose lines appear *adjacently* in the listing still matches, where `grep -F` matches on
+   any single line. Unreachable through Docker, whose names cannot contain a newline.
+   `[[ ]]` was taken over `case` for readability and over `grep -qxF` because
+   it spawns no subprocess — which matters on an error path that may have lost `grep` along with
+   `docker`. **Recorded because both the plan and the architect got the mechanism wrong in opposite
+   directions and measurement settled it:** the plan held `case` immune without saying why, the
+   architect held `case` unsafe because a `case` pattern is glob-interpreted, and the actual
+   discriminator is **whether the substring is quoted**, not which construct is used.
+
+4. **A fresh exit code for the absent container; `1` stays generic.** `EXIT_CANNOT_CHECK=2` and
+   `EXIT_CONTAINER_ABSENT=3`, with the whole space and its retryability documented in the script
+   header. The first draft numbered the absent container `1`, which this script already exits with
+   from `restore_backup()` (no file given, file not found, restore failed), from `create_backup()`'s
+   failure return, from the pre-restore abort, and from the unknown-command default. Mapping any of
+   those onto "container absent" would be a **new** signal collapse created by the contract written
+   to remove one. Free to change now because nothing reads this script's exit code.
+   **Rejected:** a third code separating daemon-down from permission-denied — docker exits `1` for
+   both, so distinguishing them would require the script to attribute a cause it has not
+   established, which the second acceptance criterion forbids and which is what PR #92 was rejected
+   for. Operator-facing distinguishability is served by printing docker's verbatim text.
+
+5. **The state is `unknown`, not `degraded`.** The first draft wrote "`status` degrades". Per the
+   Health Verdict Contract in `docs/AGENT.md` that #74 published, `degraded` means "the check ran
+   and found a real problem" and does **not** fail a run, while `unknown` means "produced no
+   verdict" and **does**. A failed Docker query is `unknown`. `degraded` here would not be a fourth
+   spelling of `unknown` but a **collision with a different published term** — in the one iteration
+   whose architect trigger is the vocabulary itself. This also resolves why a read-only command may
+   report partial results and still exit non-zero: `unknown` fails the run by design, and
+   `ScriptResult.success` is `exit_code == 0`, so exiting `0` would make "Docker unreachable"
+   indistinguishable from a clean status to the only consumer that would ever read it.
+
+6. **`status` reports what it could determine and covers *both* of its Docker calls.**
+   Before this change, `show_status()` called `check_container` after every on-disk fact was
+   printed, gating only the database-size line, and then made a second unguarded call:
+   `local db_size=$(docker exec … psql … 2>/dev/null | tr -d ' ')`. That is the `local var=$(cmd)`
+   hazard — `local`'s status is returned, `pipefail` cannot reach it — with psql's reason discarded,
+   so a container that is up while Postgres refuses connections prints an empty size and **exits
+   `0`**. Fixing only the `docker ps` path would satisfy the seventh acceptance criterion's letter
+   and invert its point, so both are covered. `backup` and `restore` keep exiting through a fatal
+   wrapper, since both mutate and neither can proceed without the container.
+
+7. **The shell side ships alone, and the Python mapping is recorded as UNOWNED.** `src/agent/health.py`
+   keeps each check's signals-to-verdict mapping beside that check (D008, D010), and there is no
+   backup workflow to host one, so this change adds no Python and imports nothing;
+   `docs/AGENT.md` already sanctions a non-Python consumer binding to the four published spellings.
+   The plan asserted three times that #80 would give `run_backup_status()` a caller and inherit the
+   exit-2-to-`unknown` mapping. **That is unsupported:** #80 is scoped to the `backup` subcommand's
+   artifact and to `collect_news.py`, and mentions neither `status` nor `run_backup_status`; #75 and
+   #76 read the run archive rather than this script's exit codes. So no open issue owns that
+   mapping. It is recorded as unowned rather than attributed, and the sequencing argument for
+   landing the contract early shrinks to one future retrofit site rather than three.
+
+**Conscious exclusions**, each for its own reason:
+- `show_status()`'s early `return` when the backup directory is absent — a
+  reported-success-having-checked-nothing path in its own right, but about the *backup artifact*
+  rather than the container check; left for #76/#80.
+- The `DROP DATABASE` / `CREATE DATABASE` sequence in `restore_backup()` (#91) — adjacent to the
+  edited code, not a pipeline, and already aborting loudly.
+- `log_info`/`log_warn`/`log_error` emit ANSI colour unconditionally, tty or not, so this text will
+  carry escape sequences verbatim into the first email or webhook that quotes it. Pre-existing.
+- `2>&1` folds docker's stderr into the captured listing on the **success** path too, so a docker
+  warning that previously reached the operator now goes into a variable unread. Whole-line matching
+  means it cannot cause a false positive, so this is observability rather than correctness;
+  separating the streams needs a temp file and a trap and was judged not worth it.
+
+**Rationale:** the epic's thesis is that distinct signals must not collapse into one verdict, and
+this entry records three separate ways that same collapse tried to reappear inside the fix for it —
+a status number that always read `0`, an exit code shared with every unrelated failure, and a
+verdict word that already meant something else. Each was caught by measuring or by reading the
+published contract, not by reasoning about the code.
+
+**Status:** decided at the plan gate; implementation follows in the same PR as this record.
+
+### D011 amendment (2026-09-11) — what code review changed
+
+Parallel finders over the implementation returned defects the plan did not anticipate, all of them
+the same shape as the ones the plan record above already catalogues: a value the script had not
+established, presented as a fact.
+
+1. **The `2>&1` capture in `show_status()` corrupted the value it renders.** Folding stderr into the
+   captured size means a server `NOTICE`, a psql startup warning, or a docker-shim banner on an
+   otherwise **successful** query is welded onto the number and printed as the database size, on
+   exit `0`. Two finders reproduced it independently. The non-emptiness guard could not catch it, so
+   the size is now validated by **shape** — digits then a `pg_size_pretty` unit and nothing else.
+   The accepted cost is stated in the code: a benign warning now costs the value rather than
+   corrupting it, which is the safe direction.
+2. **The stub wrote psql's error to stdout, so the `2>&1` it was supposed to exercise was
+   unguarded** — reverting that redirection to `2>/dev/null` left the suite green. Real psql writes
+   errors and notices to stderr and the stub now does too. This is why (1) survived authoring and
+   the first mutation pass: the fixture disagreed with the thing it stood in for.
+3. **`status` propagates `3` for a confirmed-absent container, and nothing pinned it.** Flattening
+   that to `EXIT_CANNOT_CHECK` left the suite green, so the 2-vs-3 distinction — the point of the
+   issue — was unpinned on the one path that reports rather than aborts. All three finders flagged
+   it, and `docs/DATABASE.md` and the CHANGELOG had both documented `status` as always exiting `2`.
+
+Two further corrections worth recording because they are the epic's rule turned back on this change:
+
+- **The `3` branch discarded the listing it already held**, and offered an unhedged
+  `docker compose up -d postgres`. "Not in the running list" is equally what a misconfigured
+  `CONTAINER_NAME` or a different compose prefix looks like — states where starting the container
+  changes nothing and the operator loops. It now prints the listing and hedges the hint.
+- **AC2 was not actually enforced.** The test asserted the absence of one specific forbidden
+  string, so inserting any *other* guess at the cause passed. The `backup` path reaches no
+  `log_info` before the check, so the guard is now the absence of **any** `[INFO]` line — a
+  property rather than a blocklist.
+
+**On the prose, and this is the part worth carrying forward.** Behaviour findings were few; claim
+findings were many, and the ratio matches #74 exactly. Corrected in the shipped surfaces: that
+docker's message "went into the pipe and was discarded" (only its *stdout* did — the error text
+reached stderr unredirected, so the real defect is the verdict, the remediation, and the message
+being unlabelled and unattributable); that "all three" failure states exit `1` from docker (two do;
+a missing binary is the shell's `127`); that every new test asserts the message (two assert only the
+exit code, legitimately, because 2-vs-3 now distinguishes them); that `[[ ]]` is immune to all three
+matching hazards (narrower, not immune, on the newline axis); that #80 would inherit the Python
+mapping (it owns neither `status` nor `run_backup_status`); and `status` "degrades", the word
+decision 5 above had already rejected, which survived in the CHANGELOG alone.
+
+Rather than correct each a second time, the rationale prose in the script, the CHANGELOG entry and
+the exit-code documentation were **cut back** to claims the code and its named tests carry. That is
+the remedy #73 and #74 both arrived at, applied on the first round here instead of the fifth.
+
+### D011 amendment 2 (2026-09-11) — round 3, human-authorised after the review cap
+
+The fresh re-check of the fixes above came back dirty, which spends the code-review gate's two
+rounds, so this round exists because the human directed it rather than because the loop chose it.
+Its finding is the one worth keeping:
+
+**The guard added to close the welded-warning hole was itself only half-guarded, and the reason is
+the fixture, not the guard.** The stub emitted psql's stderr *before* its stdout — the only order
+that hides a trailing weld — so dropping the shape check's `$` anchor, or relaxing its unit list,
+left the suite green while `status` rendered `214MBWARNING:terminalisnotfullyfunctional` on exit 0.
+Stream order is now a stub parameter, and a trailing-weld row pins the anchor. A second row with an
+*unpunctuated* tail was needed to pin the unit list separately: punctuation is rejected by any shape
+check at all, so a realistic warning containing a colon exercises the anchor and says nothing about
+the units.
+
+The unit list is now pinned positively as well, by a control parametrized over every value
+`pg_size_pretty` emits — measured off a live PostgreSQL 16.11 rather than recalled, which is how the
+omission of `PB` was found in the first place. Dropping any unit now reddens a row. That matters in
+the opposite direction from everything else here: a unit missing from the list makes the guard
+reject a legitimate size, so `status` would report "could not be determined" forever for a database
+of that magnitude — a false negative manufactured by a guard written to prevent a false positive.
+
+**The through-line of this iteration, and it is not the claim count.** Both of its genuinely
+dangerous defects came from a **fixture that disagreed with the thing it stood in for**: first a
+stub writing psql's error to stdout where real psql writes stderr, which left the `2>&1` capture
+unexercised; then a stub fixing the order of those two streams, which left half the shape guard
+unexercised. Neither is visible to a mutation pass — a mutant lives or dies by what the fixture
+happens to exercise, so **fixture fidelity bounds the gate's reach**, and a clean mutation result
+says nothing about the cases the fixture cannot express. That is a sharper and more general lesson
+than the claim-authoring one #73 and #74 arrived at, and it is not the same lesson.
+
+This round also corrected the exit-code table assertion, which a whole-file substring search
+satisfied via an unrelated environment-variable row, and removed several sentences broader than the
+code beneath them.
+
+### D011 amendment 3 (2026-09-11) — the claim class is deleted, not corrected again
+
+Human-authorised. The fresh check of amendment 2's round found **no blocking defect and no
+behavioural defect** — it established the mechanical fixes counterfactually, and resolved the one
+question flagged as potentially blocking by sweeping `pg_size_pretty` exhaustively over `0..200000`
+plus twenty thousand random bigints against the shipped guard, with nothing non-conforming and the
+unit set closed at `PB`. Every finding it returned was prose, in the commit whose stated purpose was
+removing false prose. Two were of the exact class being removed: a docstring counting four items
+over three, and *this record's own* list of deletions describing a deletion that never happened.
+
+So the disposition here is the one `loop.config.md` §6 prescribes for a third occurrence:
+**delete the class, do not correct it a fourth time.**
+
+**What was deleted:** every comment and docstring clause that attributes a guard to the mutant it
+kills — "this pins", "without this assertion that mutant survives", "reverting X reddens rows Y and
+Z", "it is not redundant", and a parametrize field that carried a mutant name into an assertion
+message. **What was kept:** the tests, their names, their assertion messages, and short factual
+statements about what the code does. Nothing executable changed except the removal of that unused
+parametrize field, so the verification recorded in amendment 2 still stands.
+
+**Why this class in particular.** These claims are second-order — assertions about what the *test
+suite* would do under a hypothetical edit. They cannot be checked by reading the line they sit on,
+they are invalidated by any later edit to any other row, and they were wrong here about as often as
+they were right. The tests themselves are first-order and were sound at every round. Deleting the
+commentary costs nothing a reader needs and removes the only part of this change that kept being
+wrong.
+
+**The iteration's actual finding, for the ledger.** Across four commits, no behavioural defect
+survived any round; every round past the first was driven by the change's prose about itself. That
+reproduces #73's and #74's pattern. The new and more useful finding is amendment 2's: both genuinely
+dangerous defects here came from a **fixture that disagreed with what it stood in for**, which no
+mutation pass can detect, because a mutant lives or dies by what the fixture happens to exercise.
+
+### D011 amendment 4 (2026-09-11) — what the Class B mutation pass found
+
+The acceptance gate's mutation pass returned **exit 1: survivors**. Of 26 real mutations, 22 were
+killed and both controls survived as declared, so the pipeline proved it could report a survivor.
+Grouped by shape, the survivors are one real finding and one equivalent mutant.
+
+**The finding: the match was pinned as fixed-string but never as whole-line.** Three mutations —
+replacing the match with a plain substring test, and dropping either `$'\n'` anchor — all survived.
+The tests covered the fixed-string half thoroughly (a regex metacharacter, three glob forms, an
+embedded newline) and never covered the other half of the same criterion. The consequence is not
+academic: Docker Compose derives container names by prefixing the project and suffixing an index,
+so a substring match reports `esg_news_db` **present** when what is actually running is
+`project_esg_news_db_1`, and the backup then proceeds against a container that is not there. That
+is the same false-positive class as the regex defect this issue exists to remove, arriving through
+the door the tests did not watch. Fixed by parametrizing the whole-line test over both near-miss
+directions plus the embedded case.
+
+**The equivalent mutant: dropping `(\.[0-9]+)?` from the size guard.** It cannot be killed, because
+`pg_database_size` returns bigint and `pg_size_pretty(bigint)` never emits a decimal — confirmed
+against the live server and independently by the round-3 checker. The optional group is defensive
+against the `numeric` overload, which this call site does not use. Recorded as an acknowledged
+unpinned branch rather than a finding.
+
+**Why this pass was worth its cost, stated precisely.** Every mutant it killed had already been
+killed by a mutation I ran myself before opening the PR, and by the round-3 checker. The one thing
+it found is the one I could not have found that way: I chose my mutations from the same
+understanding that wrote the tests, so I probed the property I was thinking about — fixed-string —
+and not the one I had merely assumed. A spec written by someone who had not written the tests
+probed both. That is the argument for the actor split, and it is now evidenced rather than asserted.

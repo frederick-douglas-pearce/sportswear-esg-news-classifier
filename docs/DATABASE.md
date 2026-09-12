@@ -211,6 +211,54 @@ The project includes automated backup infrastructure to protect collected and la
 ./scripts/backup_db.sh rotate
 ```
 
+### Exit Codes
+
+`backup_db.sh` distinguishes *could not check* from *checked, and it is down*.
+Intended as the contract for cron and for `src/agent/runner.py`; nothing consumes it
+yet, so read it as the definition a future consumer binds to. See
+`.claude/specs/decisions.md` (D011) for why the numbers are what they are.
+
+| Code | Meaning | Retry? |
+|------|---------|--------|
+| `0` | The command did what it says | — |
+| `1` | The command failed. Generic: bad arguments, missing archive, `pg_dump`/`gunzip` failure. Where an external command failed, its own reason is on **stderr** | depends on the reason |
+| `2` | A query the command needed failed, so a fact it depends on was **never established**. Two paths reach it: the `docker ps` check, and `status`'s database-size query. `unknown` in the [Health Verdict Contract](AGENT.md#health-verdict-contract) — never `healthy` | yes, may heal |
+| `3` | Docker answered, and the container is not in its running list. `degraded` in that contract — a check that ran and found a real problem | no — the container must be started |
+
+Two caveats on that table, both load-bearing:
+
+- **The "Retry?" column is guidance, not implemented behaviour.** `run_backup_status()`
+  passes `retries=0` and no non-retryable set, and cron does not retry, so nothing acts
+  on it today.
+- **`src/agent/runner.py` synthesizes `-1`** for a timeout or an exception, so a consumer
+  needs a default branch as well as these four.
+
+Why `2` and `3` are separate: the same message (*"Container is not running"*, plus
+`docker compose up -d postgres`) used to be printed whether the daemon was down, the
+caller was outside the `docker` group, `docker` was missing from `PATH`, or the container
+was genuinely stopped — and the remediation is correct only in the last case.
+
+On code `2` the script prints **the failing command's own output** rather than guessing a
+cause. `docker` exits `1` for both a stopped daemon and a permissions problem, so those
+two are not separable by status at all; a missing binary is the shell's `127`. The
+operator diagnoses from the text.
+
+On code `3` the script prints the **running-container listing** and hedges the hint
+("if it is stopped"), because "not in the running list" is also what a misconfigured
+`CONTAINER_NAME` or a different compose prefix looks like — states where starting the
+container changes nothing.
+
+`status` is read-only, so it differs from `backup` and `restore`: it still reports the
+backup counts, disk usage and most recent archive it established, prints
+`Current database size: could not be determined`, and then exits with the **specific**
+code — `2` if a query failed, `3` if Docker confirmed the container absent. It does not
+collapse those to one code, and it does not exit `0`, since `ScriptResult.success` is
+`exit_code == 0`. `backup` and `restore` exit at the check, because both mutate.
+
+One gap worth knowing, pre-existing and deferred (D011): `status` returns early and exits
+`0` when the backup directory does not exist, before either Docker call. So exit `0` from
+`status` does not on its own mean Docker was reachable.
+
 ### Retention Policy
 
 | Type | Retention | Created |

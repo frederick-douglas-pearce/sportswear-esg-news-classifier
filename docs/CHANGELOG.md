@@ -4,6 +4,52 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-11: `backup_db.sh` reports "could not check Docker" distinctly from "container is not running"
+
+`check_container()` ran `docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"`
+and printed *"Container '…' is not running"* plus `docker compose up -d postgres` for four
+different states: the daemon down, the caller outside the `docker` group, `docker` absent
+from `PATH`, and the container genuinely stopped. The remediation is correct only in the
+last. Docker's error text still reached the terminal on stderr, but unlabelled and not
+attributable to this check — capturing it is what the pipeline prevented. D006 recorded
+this construct as "stated, not fixed here" and deferred it to #93.
+
+**What changed:**
+
+- **The pipeline is gone**, replaced by a captured query
+  (`listing=$(docker ps --format '{{.Names}}' 2>&1) || status=$?`). That is what allows the
+  failing command's own output to be shown under a label, and it removes two further
+  hazards in the same construct: `grep` read the container name as a *regex*, so
+  `esg.news_db` matched `esgxnews_db`; and under `pipefail` a `grep -q` that matched early
+  could `SIGPIPE` `docker ps` and invert the verdict — a hazard #89 introduced here, which
+  D006 measured as real but unreachable at this scale.
+- **An exit-code contract**, in the script header and in
+  [docs/DATABASE.md](DATABASE.md#exit-codes): `2` = a needed query failed, so the state was
+  never established (`unknown`); `3` = Docker answered and the container is absent
+  (`degraded`). `1` stays generic — naming it for a specific cause would make "backup file
+  not found" and "unknown command" report that cause.
+- **No guess at the cause on the `2` path.** The script shows the failing command's output
+  and offers no remediation, because `docker` exits `1` for both a stopped daemon and a
+  permissions problem. An earlier draft of PR #92 printed "Is the Docker daemon running?"
+  for every non-zero status, reproducing the misattribution one level down.
+- **The `3` path shows the running-container listing** and hedges its hint, because "not in
+  the running list" is also what a misconfigured `CONTAINER_NAME` or a different compose
+  prefix looks like.
+- **Whole-line matching is `[[ ]]` with the name quoted**, which matches it literally.
+  Unquoted, a `CONTAINER_NAME` of `*` would glob and match any listing. `grep -qxF` was
+  rejected because `-F` reads a newline in the *pattern* as alternative patterns; the
+  chosen form is narrower there rather than immune.
+- **`status` reports partial results instead of aborting, and covers both of its Docker
+  calls.** The second was the quieter defect: `local db_size=$(docker exec … | tr -d ' ')`
+  returned `local`'s status rather than the pipeline's and `2>/dev/null` discarded psql's
+  reason, so a container that was up while Postgres refused connections printed an empty
+  size **and exited 0**. `status` now keeps the on-disk facts, says the size could not be
+  determined, and exits the specific code. The size is validated by *shape* rather than
+  non-emptiness, because folding stderr into the capture can otherwise weld a warning onto
+  the number and render it as a fact.
+- **The failure branches now have tests.** Before this the branch had none, so the one
+  verdict the script got right was the one nothing checked.
+
 ### 2026-09-09: The health verdict becomes a shared contract with a first-class escalation path
 
 #71 introduced `HealthVerdict` (`healthy | degraded | unknown | skipped`) and wired it into
