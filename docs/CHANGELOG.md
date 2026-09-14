@@ -4,6 +4,59 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-14: The run archive is read — a workflow that stops running is now detected
+
+`StateManager._archive_workflow` has always written each terminal run's full state to
+`~/.esg-agent/history/`. Nothing read it back. Two failure modes were sitting in data that
+was already on disk: a run archived as `completed` while its own record carried a failure
+signal, and — the one with no detector anywhere in the system — a workflow that stopped
+producing runs at all. #73, #74 and #75 all read a run that *happened*; a job that never
+runs writes nothing for them to read, so its silence is indistinguishable from success.
+
+**What changed:**
+
+- **`src/agent/archive.py`** — a reader over the archive, writing nothing and holding no
+  state. `iter_runs()` yields runs oldest-first (ordering is contract: #75 needs a
+  time-ordered per-workflow sequence), tolerating a malformed record rather than letting one
+  bad file blind it, and raising rather than returning empty when the directory itself
+  cannot be read. `run_succeeded()` is the shared classifier #75 imports.
+- **Extraction is separated from policy.** `failure_signals()` returns *kinded* evidence and
+  is deliberately broad, because the one-shot sweep that consumes it is read by a human.
+  `run_succeeded()` is a narrow policy over the disqualifying kinds, because it drives #75's
+  automatic alerting: it must not read ordinary non-failure context — `alerts_sent: false`,
+  `alerts_skipped: true`, `reason: nothing_to_report` — as failure, and it keys on the
+  current contract (a failed run, a failed step, a step error, an unresolved verdict) rather
+  than on the pre-#73/#74 `<name>_success: false` form, which belongs to archaeology.
+- **`src/agent/workflows/run_audit.py`** — the scheduled liveness check, installed by
+  `./scripts/setup_cron.sh install-agent` and running after the jobs it audits. It reuses
+  #74's `HealthVerdict` rather than inventing a third spelling of "could not tell".
+- **A stalled workflow is `degraded`, not `unknown`** (D012). Mapping it to `unknown` would
+  trip `fail_on_unresolved_verdicts` and fail the auditor's own run at the moment it
+  *succeeded* at detecting a dead job — making a correct detection indistinguishable from
+  the auditor malfunctioning, and leaving a failed status where an alert naming the workflow
+  should be. `unknown` is reserved for the case where the archive cannot be read at all.
+- **`scripts/audit_archive.py`** — the one-shot retroactive sweep for runs that reported
+  success over an embedded failure. Deliberately a script with no schedule: its value is a
+  single pass over existing history, and once failures propagate correctly at the source a
+  recurring version would mostly re-report the same records. **It lists instances and never
+  a rate** — the archive holds runs written by past test failures under production workflow
+  names, so any proportion computed over the directory is wrong in a way that is hard to
+  see, while a list has no denominator and a spurious line is one a reader can dismiss.
+- **Two guards turn silent drift into a red check.** A round-trip test builds real
+  `WorkflowState` objects, serializes them through `to_dict`, and asserts the reader's
+  classification, so a field renamed in `state.py` cannot quietly degrade the reader to
+  "sees no signal". And a test asserts every workflow `setup_cron.sh` schedules is either in
+  the cadence config or in an explicit skip set, so a newly scheduled job cannot end up with
+  no detector.
+
+**What it does not cover, because "liveness check" invites the wrong assumption.** The
+auditor is itself a cron job on the same host as the workflows it audits. It detects one
+workflow stopping while its siblings keep running — the case it exists for — but during a
+total host or cron outage it is down too, and reports the gap on recovery rather than at the
+time. A process cannot observe its own absence; closing that gap needs an off-host
+dead-man's-switch, which is out of scope. For the same reason the auditor is in its own skip
+set. The limitation is stated in the module docstring rather than engineered around.
+
 ### 2026-09-11: `backup_db.sh` reports "could not check Docker" distinctly from "container is not running"
 
 `check_container()` ran `docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"`

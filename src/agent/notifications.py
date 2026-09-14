@@ -730,3 +730,61 @@ def send_check_failure_notification(
 
     manager = NotificationManager()
     return manager.send(notification)
+
+
+def delivered(result: dict[str, bool]) -> bool:
+    """Did a notification reach a real channel?
+
+    `NotificationManager.send()` returns `{"console": True}` when NO channel is
+    enabled, which is the documented default. Counting that as delivery records
+    an alert as sent when it reached nobody but the agent log -- which is
+    exactly where #71 says nobody was looking. "console" is a fallback, not a
+    channel.
+
+    `drift_monitoring` carries its own private copy of this predicate, added in
+    #71 before there was a shared home for it. This is the shared home; that
+    copy is left alone deliberately rather than refactored under an unrelated
+    issue.
+    """
+    return any(value for channel, value in result.items() if channel != "console")
+
+
+def send_stale_workflow_notification(
+    workflow_name: str,
+    reason: str,
+    details: dict[str, Any] | None = None,
+) -> dict[str, bool]:
+    """Send notification that a scheduled workflow has stopped producing runs.
+
+    Distinct from `send_check_failure_notification`, which reports that a check
+    ran and could not reach a verdict. This one reports a verdict that *was*
+    reached: the workflow is not running. Nothing else in the system detects
+    this -- a job that never runs writes no archive for a counter to read
+    (#76).
+
+    Args:
+        workflow_name: The workflow that has gone quiet.
+        reason: Why it is considered stale, in terms the operator can act on.
+        details: Additional details.
+
+    Returns:
+        Dict of channel results.
+    """
+    notification = Notification(
+        notification_type=NotificationType.CHECK_FAILED,
+        subject=f"Workflow Stalled: {workflow_name}",
+        message=(
+            f"The {workflow_name} workflow has not produced a run when one was "
+            f"expected: {reason}. Its work is not being done, and nothing else "
+            f"reports on it."
+        ),
+        details={
+            "workflow": workflow_name,
+            "reason": reason,
+            **(details or {}),
+        },
+        severity="error",
+    )
+
+    manager = NotificationManager()
+    return manager.send(notification)

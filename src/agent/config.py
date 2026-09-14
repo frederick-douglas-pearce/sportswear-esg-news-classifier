@@ -98,6 +98,48 @@ class AgentSettings:
         )
     )
 
+    # Run-archive audit (#76)
+    #
+    # What the auditor expects to see in the run archive. Deliberately NOT
+    # env-overridable and deliberately not derived from crontab: this is a
+    # governance decision about which scheduled jobs are watched, and parsing
+    # the live crontab would couple the audit to the host it happens to run on.
+    #
+    # The direction that matters is ADDING a workflow: a job that gains a cron
+    # entry and no entry here is a scheduled job with no detector, which is this
+    # epic's own defect reproduced in the auditor's configuration. A test in
+    # tests/test_agent_archive.py asserts every workflow scheduled through
+    # cron_agent.sh appears in one of the two dicts below, so that drift breaks
+    # CI instead of going quiet. The other directions -- a cron entry removed or
+    # lengthened -- surface as a noisy stale alert, which is the safe way to be
+    # wrong and needs no guard.
+    audit_expected_interval_hours: dict[str, float] = field(
+        default_factory=lambda: {
+            "daily_labeling": 24.0,
+            "website_export": 24.0,
+            "drift_monitoring": 24.0,
+        }
+    )
+    # Added to a workflow's interval before it is called stale, so that ordinary
+    # jitter in start time is not an alert. A run is stale when its age exceeds
+    # interval + grace.
+    audit_grace_hours: float = 6.0
+    # Workflows deliberately not audited, each with the reason stated. A skip is
+    # a decision someone made; HealthVerdict.SKIPPED requires it be recorded.
+    audit_skipped_workflows: dict[str, str] = field(
+        default_factory=lambda: {
+            "model_training": (
+                "Not scheduled -- run by hand and pauses for notebooks, so it has "
+                "no cadence to be late against."
+            ),
+            "run_audit": (
+                "The auditor cannot audit itself: a process cannot observe its "
+                "own absence. Detecting a stalled auditor needs an off-host "
+                "dead-man's-switch, which is out of scope."
+            ),
+        }
+    )
+
     # Project paths
     project_root: Path = field(
         default_factory=lambda: Path(

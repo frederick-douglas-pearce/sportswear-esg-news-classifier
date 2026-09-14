@@ -141,6 +141,8 @@ uv run python -m src.agent list                    # List available workflows
 uv run python -m src.agent run daily_labeling      # Run daily labeling workflow
 uv run python -m src.agent run drift_monitoring    # Run drift monitoring workflow
 uv run python -m src.agent run website_export      # Run website export workflow
+uv run python -m src.agent run run_audit           # Audit the run archive for stalled workflows
+uv run python scripts/audit_archive.py             # One-shot sweep: runs that reported success over a failure
 uv run python -m src.agent run model_training      # Run model training workflow (pauses for notebooks)
 uv run python -m src.agent run daily_labeling --dry-run  # Dry run (no side effects)
 uv run python -m src.agent continue model_training # Resume paused workflow after notebooks
@@ -230,7 +232,8 @@ prompts/labeling/
 - `alerts.py` - Webhook notifications for Slack/Discord
 
 ### Agent Orchestrator (`src/agent/`)
-- `config.py` - Agent settings (state dir, email, retries, LLM)
+- `config.py` - Agent settings (state dir, email, retries, LLM, run-audit cadence)
+- `archive.py` - Reader over the run archive; `run_succeeded()` is the shared run classifier
 - `state.py` - YAML-based state management with checkpointing
 - `runner.py` - Script execution wrapper with retry logic
 - `notifications.py` - Unified notifications (Resend email + webhooks)
@@ -240,6 +243,7 @@ prompts/labeling/
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
   - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
   - `website_export.py` - JSON/Atom feed generation + scorecard history storage
+  - `run_audit.py` - Liveness: detects a scheduled workflow that stopped producing runs
   - `model_training.py` - Data export → quality check → pause → comparison → promotion → deploy → experiment finalization
 - `__main__.py` - CLI entry point (run, continue, status, list, history)
 
