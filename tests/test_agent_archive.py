@@ -6,7 +6,9 @@ test runs polluted under production workflow names, so a test that wrote into it
 would be manufacturing the very artifact under discussion.
 """
 
+import importlib.util
 import re
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +17,7 @@ import pytest
 import yaml
 
 from src.agent.archive import (
+    SIGNAL_KINDS,
     ArchivedRun,
     failure_signals,
     iter_runs,
@@ -24,6 +27,7 @@ from src.agent.archive import (
 )
 from src.agent.config import AgentSettings, agent_settings
 from src.agent.health import HealthVerdict
+from src.agent.notifications import delivered
 from src.agent.state import StepState, WorkflowState, WorkflowStatus
 from src.agent.workflows.base import StepFailure
 from src.agent.workflows.run_audit import (
@@ -34,6 +38,24 @@ from src.agent.workflows.run_audit import (
 )
 
 NOW = datetime(2026, 9, 14, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _load_sweep():
+    """Load `scripts/audit_archive.py`, which is a script and not a package."""
+    path = Path(__file__).parent.parent / "scripts" / "audit_archive.py"
+    spec = importlib.util.spec_from_file_location("audit_archive", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+sweep = _load_sweep()
+
+
+def run_sweep(*argv: str) -> int:
+    """Invoke the Class-A sweep's real entry point and return its exit code."""
+    with patch.object(sys, "argv", ["audit_archive.py", *argv]):
+        return sweep.main()
 
 
 @pytest.fixture
@@ -275,6 +297,33 @@ def test_round_trip_completed_run_with_a_failed_step_reads_as_failed(history):
     }
 
 
+def test_round_trip_couples_the_context_the_verdict_signals_live_in(history):
+    """`context` is the field #73/#74 write their signals into, so pin it too.
+
+    The other round-trip tests couple `status`, `steps` and `error`. Without
+    this one, `context` could be renamed in `state.py` and the reader would
+    quietly stop seeing every unresolved verdict and every collected error --
+    degrading to "sees no signal" with a green suite, which is the exact defect
+    the round-trip was added to make impossible.
+    """
+    state = WorkflowState(
+        name="drift_monitoring",
+        status=WorkflowStatus.COMPLETED,
+        run_id=NOW.strftime("%Y%m%d_%H%M%S"),
+        context={"fp_verdict": "unknown", "errors": ["reference data missing"]},
+    )
+    _archive_state(history, state)
+
+    (run,) = iter_runs(history, workflows={"drift_monitoring"})
+
+    assert run.context == state.context
+    assert {s.kind for s in failure_signals(run)} == {
+        "verdict_unknown",
+        "context_errors",
+    }
+    assert run_succeeded(run) is False
+
+
 def test_round_trip_failed_run_reads_as_failed(history):
     state = WorkflowState(
         name="daily_labeling",
@@ -328,6 +377,67 @@ def test_stale_workflow_is_degraded(audited):
 
     assert result["daily_labeling_verdict"] == HealthVerdict.DEGRADED.value
     assert result["stale_workflows"] == ["daily_labeling"]
+
+
+class _FrozenDatetime(datetime):
+    """`datetime` whose `now()` is NOW, so a boundary can be hit exactly."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return NOW
+
+
+@pytest.fixture
+def frozen_now():
+    with patch("src.agent.workflows.run_audit.datetime", _FrozenDatetime):
+        yield NOW
+
+
+def test_a_run_exactly_at_the_grace_boundary_is_still_healthy(audited, frozen_now):
+    """The comparison is `age > threshold`, so the boundary itself passes.
+
+    Pinned because the off-by-one goes both ways and neither direction is
+    visible from a test that writes "40 hours ago": `>=` here would alert on a
+    workflow that ran precisely on time, and a wrong threshold expression would
+    not be caught by any other test in this file.
+    """
+    write_archive(audited, "daily_labeling", NOW - timedelta(hours=30))
+
+    result = check_liveness(None, {})
+
+    assert result["daily_labeling_age_hours"] == 30.0
+    assert result["daily_labeling_verdict"] == HealthVerdict.HEALTHY.value
+
+
+def test_a_run_one_second_past_the_grace_boundary_is_degraded(audited, frozen_now):
+    """The other side of the same boundary: interval 24h + grace 6h."""
+    write_archive(audited, "daily_labeling", NOW - timedelta(hours=30, seconds=1))
+
+    result = check_liveness(None, {})
+
+    assert result["daily_labeling_verdict"] == HealthVerdict.DEGRADED.value
+    assert result["stale_workflows"] == ["daily_labeling"]
+
+
+def test_a_future_dated_run_is_degraded_rather_than_permanently_fresh(
+    audited, frozen_now
+):
+    """A negative age passes every freshness test, silencing the workflow.
+
+    This is the epic's own failure mode inside the detector: a clock that moved
+    or a planted record makes the newest archive future-dated, the age goes
+    negative, `age > threshold` is false forever, and the auditor never reports
+    that workflow again. It has to be its own branch -- clamping the age to
+    zero would produce the same permanent silence.
+    """
+    write_archive(audited, "daily_labeling", NOW + timedelta(days=1))
+
+    result = check_liveness(None, {})
+
+    assert result["daily_labeling_age_hours"] < 0
+    assert result["daily_labeling_verdict"] == HealthVerdict.DEGRADED.value
+    assert result["stale_workflows"] == ["daily_labeling"]
+    assert "future" in result["daily_labeling_error"]
 
 
 def test_a_workflow_that_never_ran_is_degraded_not_unknown(audited):
@@ -391,14 +501,64 @@ def test_the_gate_fails_an_audit_configured_to_check_nothing():
     assert isinstance(outcome, StepFailure)
 
 
-def test_the_report_does_not_call_an_all_skipped_audit_healthy(audited):
-    """`summarize` refuses vacuous truth; the report must not reintroduce it."""
-    with patch.object(agent_settings, "audit_expected_interval_hours", {}):
-        context = check_liveness(None, {})
+def test_an_all_skipped_cadence_config_fails_instead_of_auditing_nothing(audited):
+    """An auditor that checks nothing and archives `completed` is the epic's bug.
 
-    report = generate_audit_report(None, context)
+    Caught at the check step rather than only at the terminal gate, so the
+    recorded error names the cause instead of reporting an absent verdict.
+    """
+    with patch.object(agent_settings, "audit_expected_interval_hours", {}):
+        outcome = check_liveness(None, {})
+
+    assert isinstance(outcome, StepFailure)
+    assert "check nothing" in outcome.error
+
+
+def test_a_workflow_in_both_cadence_dicts_fails_instead_of_being_guessed_at(audited):
+    """Audited and skipped at once: alerted on while recorded as never looked at.
+
+    Which dict wins is an artifact of loop order, so there is no precedence to
+    pick. The configuration is the defect and the run says so.
+    """
+    with patch.object(
+        agent_settings, "audit_skipped_workflows", {"daily_labeling": "on hold"}
+    ):
+        outcome = check_liveness(None, {})
+
+    assert isinstance(outcome, StepFailure)
+    assert "daily_labeling" in outcome.error
+
+
+def test_the_report_does_not_call_an_audit_of_nothing_healthy(audited):
+    """`summarize` refuses vacuous truth; the report must not reintroduce it.
+
+    The step loop keeps running after a `StepFailure`, so the report step still
+    executes against the rejected config's context and must not render either
+    "no action needed" or an empty list of unreachable workflows.
+    """
+    with patch.object(agent_settings, "audit_expected_interval_hours", {}):
+        failure = check_liveness(None, {})
+
+    report = generate_audit_report(None, dict(failure.context))
 
     assert report["audit_summary"]["all_checked_healthy"] is False
+    assert "established nothing" in report["recommendation"]
+
+
+def test_a_misconfigured_audit_alerts_rather_than_only_failing_its_own_run(audited):
+    """A FAILED status nobody reads is what #71 found; page the operator."""
+    with patch.object(agent_settings, "audit_expected_interval_hours", {}):
+        failure = check_liveness(None, {})
+
+    with patch(
+        "src.agent.workflows.run_audit.send_check_failure_notification",
+        return_value={"email": True},
+    ) as notify:
+        result = send_stale_alerts(None, dict(failure.context))
+
+    assert notify.called
+    assert result["reason"] == "audit_misconfigured"
+    assert result["alerts_delivered"] is True
 
 
 def test_alerts_are_not_counted_as_delivered_when_they_reach_only_the_console(
@@ -415,6 +575,116 @@ def test_alerts_are_not_counted_as_delivered_when_they_reach_only_the_console(
 
     assert result["alerts_sent"][0]["subject"] == "daily_labeling"
     assert result["alerts_delivered"] is False
+
+
+def test_an_alert_that_reached_a_real_channel_is_counted_as_delivered(audited):
+    """The positive half of `delivered()`, which nothing else asserts.
+
+    Without it `def delivered(result): return False` passes the whole suite --
+    every alert would be recorded as having reached nobody, and #75's future
+    escalation logic would read that. A predicate needs both of its answers
+    pinned or only one of them is tested.
+    """
+    context = check_liveness(None, {})
+
+    with patch(
+        "src.agent.workflows.run_audit.send_stale_workflow_notification",
+        return_value={"console": True, "email": True},
+    ):
+        result = send_stale_alerts(None, context)
+
+    assert result["alerts_delivered"] is True
+    assert delivered({"email": True}) is True
+    assert delivered({"webhook": False, "console": True}) is False
+
+
+# --------------------------------------------------------------------------
+# The Class-A sweep's exit-code contract
+#
+# The script is read by a human once, so its exit code is the only part a
+# caller can act on mechanically -- and 0 is the answer an operator will
+# believe. Each of the three codes is pinned through the real entry point.
+# --------------------------------------------------------------------------
+
+
+def test_sweep_exits_0_when_no_run_reported_success_over_a_failure(history, capsys):
+    write_archive(history, "daily_labeling", NOW)
+
+    assert run_sweep("--history-dir", str(history)) == 0
+    assert "No archived run reported success" in capsys.readouterr().out
+
+
+def test_sweep_exits_1_and_names_the_run_when_one_did(history, capsys):
+    write_archive(
+        history,
+        "daily_labeling",
+        NOW,
+        status="completed",
+        steps={"label": {"status": "failed", "error": "labeling died"}},
+    )
+
+    assert run_sweep("--history-dir", str(history)) == 1
+    assert "daily_labeling 20260914_120000" in capsys.readouterr().out
+
+
+def test_sweep_exits_2_when_the_archive_cannot_be_read(tmp_path, capsys):
+    """Separated from 0 deliberately: "cannot look" is not "nothing found"."""
+    assert run_sweep("--history-dir", str(tmp_path / "gone")) == 2
+    assert "could not read the run archive" in capsys.readouterr().err
+
+
+def test_sweep_rejects_an_unrecognised_kind_instead_of_matching_nothing(history):
+    """A typo must not filter everything out and then report a clean archive.
+
+    Without `choices`, `--kind sucess_flag_false` matches no signal, prints "no
+    archived run reported success over a failure signal" and exits 0: a clean
+    bill of health manufactured by a filter that could never match.
+    """
+    write_archive(
+        history,
+        "daily_labeling",
+        NOW,
+        context={"fp_drift_check_success": False},
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        run_sweep("--history-dir", str(history), "--kind", "sucess_flag_false")
+
+    assert exit_info.value.code == 2
+
+
+def test_sweep_kind_filter_accepts_every_kind_the_extractor_can_emit(history):
+    """`choices` is built from the emitter, so the two cannot drift apart."""
+    for kind in SIGNAL_KINDS:
+        assert run_sweep("--history-dir", str(history), "--kind", kind) == 0
+
+
+def test_sweep_all_signals_shows_honest_failures_without_changing_the_verdict(
+    history, capsys
+):
+    """The control group. A run that reported its failure is not a finding."""
+    write_archive(
+        history,
+        "daily_labeling",
+        NOW,
+        status="failed",
+        error="the run failed",
+    )
+
+    assert run_sweep("--history-dir", str(history), "--all-signals") == 0
+
+    output = capsys.readouterr().out
+    assert "reported failure - not a finding" in output
+    assert "No archived run reported success" in output
+
+
+def test_sweep_without_all_signals_stays_silent_about_honest_failures(history, capsys):
+    write_archive(
+        history, "daily_labeling", NOW, status="failed", error="the run failed"
+    )
+
+    assert run_sweep("--history-dir", str(history)) == 0
+    assert "daily_labeling" not in capsys.readouterr().out
 
 
 # --------------------------------------------------------------------------

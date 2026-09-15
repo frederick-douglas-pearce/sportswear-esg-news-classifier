@@ -19,17 +19,31 @@ runs writes nothing for them to read, so its silence is indistinguishable from s
   state. `iter_runs()` yields runs oldest-first (ordering is contract: #75 needs a
   time-ordered per-workflow sequence), tolerating a malformed record rather than letting one
   bad file blind it, and raising rather than returning empty when the directory itself
-  cannot be read. `run_succeeded()` is the shared classifier #75 imports.
+  cannot be read. `run_succeeded()` is the shared classifier #75 is to be built on.
 - **Extraction is separated from policy.** `failure_signals()` returns *kinded* evidence and
   is deliberately broad, because the one-shot sweep that consumes it is read by a human.
-  `run_succeeded()` is a narrow policy over the disqualifying kinds, because it drives #75's
-  automatic alerting: it must not read ordinary non-failure context — `alerts_sent: false`,
+  `run_succeeded()` is a narrow policy over the disqualifying kinds, because #75's automatic
+  alerting is to be built on it: it must not read ordinary non-failure context — `alerts_sent: false`,
   `alerts_skipped: true`, `reason: nothing_to_report` — as failure, and it keys on the
   current contract (a failed run, a failed step, a step error, an unresolved verdict) rather
   than on the pre-#73/#74 `<name>_success: false` form, which belongs to archaeology.
 - **`src/agent/workflows/run_audit.py`** — the scheduled liveness check, installed by
-  `./scripts/setup_cron.sh install-agent` and running after the jobs it audits. It reuses
-  #74's `HealthVerdict` rather than inventing a third spelling of "could not tell".
+  `./scripts/setup_cron.sh install-agent`. It reuses #74's `HealthVerdict` rather than
+  inventing a third spelling of "could not tell". It runs several times a day, not once:
+  the auditor can only report a stall at the moments cron runs it, so its own period is the
+  resolution of every alert it raises, and the worst-case bound is
+  `interval + audit_grace_hours + audit period`. Grace covers start-time jitter only —
+  shrinking it under a once-daily audit buys nothing, because detection still lands on the
+  next tick.
+- **A future-dated archive no longer silences a workflow permanently.** A newest run dated
+  ahead of now — a clock that moved, a record that did not come from a run — gives a
+  negative age, which passes every freshness comparison there is. Left alone, that workflow
+  could never be reported stale again: this epic's own failure mode inside the detector
+  written for it. It gets its own branch and reports `degraded`, because clamping the age to
+  zero would produce the same silence.
+- **The auditor refuses a cadence config it cannot audit honestly.** A config where no
+  workflow has an expected interval, or where a workflow is both audited and skipped, fails
+  the run and alerts instead of archiving `completed` having established nothing.
 - **A stalled workflow is `degraded`, not `unknown`** (D012). Mapping it to `unknown` would
   trip `fail_on_unresolved_verdicts` and fail the auditor's own run at the moment it
   *succeeded* at detecting a dead job — making a correct detection indistinguishable from
@@ -39,15 +53,26 @@ runs writes nothing for them to read, so its silence is indistinguishable from s
   success over an embedded failure. Deliberately a script with no schedule: its value is a
   single pass over existing history, and once failures propagate correctly at the source a
   recurring version would mostly re-report the same records. **It lists instances and never
-  a rate** — the archive holds runs written by past test failures under production workflow
-  names, so any proportion computed over the directory is wrong in a way that is hard to
-  see, while a list has no denominator and a spurious line is one a reader can dismiss.
-- **Two guards turn silent drift into a red check.** A round-trip test builds real
-  `WorkflowState` objects, serializes them through `to_dict`, and asserts the reader's
-  classification, so a field renamed in `state.py` cannot quietly degrade the reader to
-  "sees no signal". And a test asserts every workflow `setup_cron.sh` schedules is either in
-  the cadence config or in an explicit skip set, so a newly scheduled job cannot end up with
-  no detector.
+  a rate** — the archive can hold runs written by the test suite as well as by cron, so a
+  proportion computed over the directory counts a population nobody defined, while a list
+  has no denominator and a spurious line is one a reader can dismiss. `--kind` validates
+  against the extractor's own signal kinds, so a typo cannot filter everything out and then
+  report a clean archive.
+- **Two guards turn silent drift into a red check.** Round-trip tests build real
+  `WorkflowState` objects, serialize them through `to_dict`, and assert the reader's
+  classification — covering `context` as well as `status`, `steps` and `error`, since
+  `context` is where #73's and #74's signals live — so a field renamed in `state.py` cannot
+  quietly degrade the reader to "sees no signal". And a test asserts every workflow
+  `setup_cron.sh` schedules is either in the cadence config or in an explicit skip set, so a
+  newly scheduled job cannot end up with no detector.
+
+**Known limits, filed rather than claimed closed.** Test modules that do not rebind
+`AgentSettings.history_dir` write into the real archive; the reader's allowlist filters those
+records out because they use names that are not real workflows, which holds by convention
+rather than by construction (#124). And `history_dir` calls `mkdir(exist_ok=True)` on read, so
+a deleted archive directory reads as an empty one — every workflow is reported stalled rather
+than the archive reported unreadable, which alerts either way but misattributes the cause
+(#125).
 
 **What it does not cover, because "liveness check" invites the wrong assumption.** The
 auditor is itself a cron job on the same host as the workflows it audits. It detects one

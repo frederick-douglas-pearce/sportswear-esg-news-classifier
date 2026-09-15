@@ -1,9 +1,9 @@
 """Read the run archive that scheduled workflows leave behind.
 
 ``StateManager._archive_workflow`` writes each terminal run's full
-``WorkflowState.to_dict()`` to ``agent_settings.history_dir``. Nothing has ever
-read it back. This module is that reader, and it is the piece #75 imports
-rather than re-deriving.
+``WorkflowState.to_dict()`` to ``agent_settings.history_dir``. Nothing else
+reads it back. This module is that reader, and it is the piece #75 is meant to
+import rather than re-derive.
 
 **This module writes nothing and holds no state.** It is not a persistence
 layer, a store, or a framework -- epic #72 and ``CLAUDE.md`` both name
@@ -11,7 +11,7 @@ layer, a store, or a framework -- epic #72 and ``CLAUDE.md`` both name
 that the signal is already on disk.
 
 **Import position.** This is a leaf below the workflow layer: it imports
-``.config`` and stdlib only. It deliberately does not import ``.state``, even
+``.config``, PyYAML and stdlib. It deliberately does not import ``.state``, even
 though ``WorkflowState.to_dict`` defines the shape it parses -- see *Two readers
 of one shape* below. ``workflows/run_audit`` imports *this*; the reverse
 direction would be the cycle ``health.py`` documents for itself.
@@ -36,9 +36,10 @@ merging them would break one of them:
 
 * the Class-A sweep (``scripts/audit_archive.py``) is read by a human, once, and
   can afford to be broad -- it reports what it found and lets the reader judge;
-* ``run_succeeded`` drives #75's *automatic* consecutive-failure alerting, so an
-  over-broad predicate becomes alert noise. It must not read ordinary
-  non-failure context as failure: workflows legitimately archive keys like
+* ``run_succeeded`` is the predicate #75's *automatic* consecutive-failure
+  alerting is to be built on, so over-broadening it would turn into alert noise
+  there. It must not read ordinary non-failure context as failure: workflows
+  legitimately archive keys like
   ``alerts_sent: false``, ``alerts_skipped: true`` and
   ``reason: nothing_to_report``.
 
@@ -136,6 +137,18 @@ DISQUALIFYING_KINDS = frozenset(
         "step_failed",
         "step_error",
         "verdict_unknown",
+    }
+)
+
+#: Every kind ``failure_signals`` can emit. Exported so a CLI filtering on kind
+#: can validate its argument against the emitter rather than against a second
+#: hand-maintained list: an unrecognised ``--kind`` that silently matches
+#: nothing prints "no findings" and exits clean, which is this epic's failure
+#: mode wearing the sweep's own output.
+SIGNAL_KINDS = DISQUALIFYING_KINDS | frozenset(
+    {
+        "success_flag_false",
+        "context_errors",
     }
 )
 

@@ -14,20 +14,23 @@ question.
 
 **It reports a list of instances and never a rate.** That is not a presentation
 choice, it is what makes the output trustworthy without defining a corpus. The
-archive contains runs written by the test suite under production workflow names,
-so any denominator computed over the directory is wrong in a way that is hard to
-see; a list has no denominator, and a spurious line is one a reader can dismiss.
-Percentages measured over this directory have been wrong before, repeatedly.
+archive can hold runs written by the test suite as well as by cron (#124), so a
+denominator computed over the directory counts a population nobody defined. A
+list has no denominator, and a spurious line is one a reader can dismiss.
 
 Usage:
     uv run python scripts/audit_archive.py
     uv run python scripts/audit_archive.py --workflow drift_monitoring
     uv run python scripts/audit_archive.py --kind success_flag_false
+    uv run python scripts/audit_archive.py --all-signals
 
 Exit codes:
     0  no run reported success over a failure signal
     1  at least one did (they are listed on stdout)
     2  the archive could not be read at all
+
+``--all-signals`` does not affect the exit code: a run that reported its own
+failure is not a finding, it is the control the findings are read against.
 """
 
 import argparse
@@ -38,7 +41,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.agent.archive import (  # noqa: E402
+    SIGNAL_KINDS,
+    failure_signals,
     iter_runs,
+    reported_success,
     vacuous_success_signals,
 )
 from src.agent.config import agent_settings  # noqa: E402
@@ -72,6 +78,12 @@ def main() -> int:
     parser.add_argument(
         "--kind",
         action="append",
+        # Validated against the emitter's own kinds, not a second hand-kept
+        # list. Without `choices`, a typo matches nothing, the sweep prints "no
+        # run reported success over a failure signal" and exits 0 -- a clean
+        # bill of health produced by a filter that could never match, which is
+        # the exact shape of failure this script was written to find.
+        choices=sorted(SIGNAL_KINDS),
         help="Only report these signal kinds (repeatable)",
     )
     parser.add_argument(
@@ -92,20 +104,44 @@ def main() -> int:
         print(f"could not read the run archive at {history_dir}: {exc}", file=sys.stderr)
         return 2
 
+    kinds = set(args.kind) if args.kind else None
+
+    def matching(signals):
+        return signals if kinds is None else [s for s in signals if s.kind in kinds]
+
     findings = 0
+    honest = 0
     for run in runs:
-        signals = vacuous_success_signals(run)
-        if args.kind:
-            signals = [s for s in signals if s.kind in set(args.kind)]
-        if not signals:
+        signals = matching(vacuous_success_signals(run))
+        if signals:
+            findings += 1
+            print(f"{run.workflow_name} {run.run_id}  ({run.path.name})")
+            for signal in signals:
+                print(f"    [{signal.kind}] {signal}")
             continue
 
-        findings += 1
-        print(f"{run.workflow_name} {run.run_id}  ({run.path.name})")
-        for signal in signals:
+        if not args.all_signals or reported_success(run):
+            continue
+
+        # The control group: a run that carried failure evidence AND said so.
+        # Printed only under --all-signals, and deliberately not counted as a
+        # finding -- reporting a failure is the correct behaviour, and folding
+        # it into the exit code would make an honest archive look guilty.
+        others = matching(failure_signals(run))
+        if not others:
+            continue
+        honest += 1
+        print(
+            f"{run.workflow_name} {run.run_id}  ({run.path.name})"
+            "  [reported failure - not a finding]"
+        )
+        for signal in others:
             print(f"    [{signal.kind}] {signal}")
 
     print()
+    if args.all_signals:
+        print(f"{honest} archived run(s) carried failure evidence and reported it.")
+
     if findings:
         print(
             f"{findings} archived run(s) reported success while carrying a failure "

@@ -756,11 +756,17 @@ def send_stale_workflow_notification(
 ) -> dict[str, bool]:
     """Send notification that a scheduled workflow has stopped producing runs.
 
-    Distinct from `send_check_failure_notification`, which reports that a check
-    ran and could not reach a verdict. This one reports a verdict that *was*
-    reached: the workflow is not running. Nothing else in the system detects
-    this -- a job that never runs writes no archive for a counter to read
-    (#76).
+    Nothing else in the system detects this -- a job that never runs writes no
+    archive for a counter to read (#76).
+
+    **It carries `NotificationType.CHECK_FAILED`, the same member
+    `send_check_failure_notification` uses**, and the two differ only in subject
+    and message text. They report genuinely different things: that one is a
+    check which ran and reached no verdict, this one is a verdict that *was*
+    reached -- the workflow is not running. That difference is currently
+    readable by a human and not by a program. No `WORKFLOW_STALLED` member is
+    added because nothing dispatches on the type; add one when something needs
+    to tell them apart programmatically, and not before.
 
     Args:
         workflow_name: The workflow that has gone quiet.

@@ -28,17 +28,36 @@ second piece of infrastructure and out of scope here. **The same reasoning
 applies to this workflow auditing itself** -- it is in its own skip set for the
 liveness check, because a stalled auditor cannot report that it has stalled.
 
+How late an alert can be
+------------------------
+A stall is reported no earlier than ``interval + audit_grace_hours`` after the
+workflow's last run, and no later than one audit period after that: the auditor
+can only answer the question at the moments cron runs it. The bound is
+``interval + grace + audit period``, re-derivable from ``AgentSettings`` and
+``scripts/setup_cron.sh`` rather than restated as a figure here.
+
+Which half of that to tune is not obvious and is worth stating. Grace covers
+start-time jitter only, so it wants to be small; it is the **audit period** that
+sets the resolution, and shrinking grace under a once-daily audit buys nothing
+because detection still lands on the next tick. That is why the auditor is
+scheduled several times a day rather than alongside the jobs it watches.
+
 Why no test-archive filter
 --------------------------
-The archive contains runs written by the test suite under production workflow
-names, from before the fixtures were isolated. This module deliberately builds
-no heuristic to tell them apart: a misclassifying filter is worse than none, and
-the liveness question is asked of the *newest* run per workflow, where a
-surplus of old records cannot change the answer. The residual risk is a test run
-on the same host writing a fresh production-named archive while a real job is
-dead, which would mask that job. The structural fix is session-scoped archive
-isolation in the test harness, which is filed separately -- it changes every
-agent test module and does not belong to this issue.
+The archive can hold runs written by the test suite, because
+``AgentSettings.history_dir`` resolves to the real archive unless a test rebinds
+it and only some agent test modules do. This module builds no heuristic to tell
+records from real ones -- a misclassifying filter is worse than none. Exclusion
+is by explicit allowlist instead: ``latest_run_per_workflow`` is called with the
+configured cadence set, so a record under a name that is not a real workflow is
+never read. That is a fact about the name and cannot misfire.
+
+What it leaves open is a test writing a *production*-named archive while that
+job is actually dead, which would mask it. Nothing here prevents that; what
+prevents it today is that the test modules which write into the real archive
+use synthetic names, which is a convention rather than a mechanism. Making the
+isolation structural -- one session-scoped fixture in ``tests/conftest.py`` --
+is #124.
 """
 
 import logging
@@ -72,7 +91,36 @@ def _hours_since(moment: datetime, now: datetime) -> float:
     return (now - moment).total_seconds() / 3600.0
 
 
-def check_liveness(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+def _cadence_config_error(
+    intervals: dict[str, float], skipped: dict[str, str]
+) -> str | None:
+    """Reject a cadence configuration that cannot produce an honest audit.
+
+    Both shapes rejected here are this epic's defect relocated into the
+    auditor's own configuration, and both are silent without this check -- the
+    run archives ``completed`` having established nothing about anything.
+    """
+    overlap = sorted(set(intervals) & set(skipped))
+    if overlap:
+        # Paged as expected and reported as skipped in the same run: the audit
+        # alerts on the workflow while its recorded verdict says it was never
+        # looked at. Which of the two dicts wins is an artifact of loop order,
+        # so there is no correct precedence to pick -- the config is the bug.
+        return (
+            "these workflows are configured as both audited and skipped, so the "
+            "audit's own verdict for them is ambiguous: " + ", ".join(overlap)
+        )
+    if not intervals:
+        return (
+            "no workflow has an expected interval, so this audit would check "
+            "nothing and report success; an empty audit is not a healthy one"
+        )
+    return None
+
+
+def check_liveness(
+    workflow: Workflow, context: dict[str, Any]
+) -> dict[str, Any] | StepFailure:
     """Compare each expected workflow's newest run against its cadence.
 
     The verdict mapping is the load-bearing decision here (D012), and it splits
@@ -92,6 +140,14 @@ def check_liveness(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
     intervals = dict(settings.audit_expected_interval_hours)
     skipped = dict(settings.audit_skipped_workflows)
     now = datetime.now(timezone.utc)
+
+    config_error = _cadence_config_error(intervals, skipped)
+    if config_error is not None:
+        logger.error(f"run audit cadence config is unusable: {config_error}")
+        return StepFailure(
+            error=config_error,
+            context={AUDITED_KEY: [], "audit_config_error": config_error},
+        )
 
     subjects = sorted(set(intervals) | set(skipped))
     result: dict[str, Any] = {
@@ -140,6 +196,28 @@ def check_liveness(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
         result[f"{name}_last_run"] = run.run_at.isoformat()
         result[f"{name}_age_hours"] = round(age, 2)
 
+        if age < 0:
+            # A newest run dated in the future -- a clock that moved, or a
+            # record that did not come from a run. Left alone it is a negative
+            # age, which passes every freshness test there is: this workflow
+            # would be reported healthy forever, and the auditor would go
+            # permanently quiet about it. That is the exact silence this epic
+            # exists to remove, so the case gets its own branch rather than
+            # falling through to the comparison below.
+            #
+            # DEGRADED and not UNKNOWN, per D012: the archive was read fine, so
+            # this is not the can't-tell case. It is a real, actionable problem
+            # attached to a named subject, which means it belongs in an alert
+            # naming that subject rather than in a failed auditor run.
+            result[f"{name}_verdict"] = HealthVerdict.DEGRADED.value
+            result[f"{name}_error"] = (
+                "the newest archived run is dated in the future "
+                f"({run.run_at.isoformat()}); its freshness cannot be judged, "
+                "and left unreported it would never be called stale again"
+            )
+            stale.append(name)
+            continue
+
         if age > threshold:
             result[f"{name}_verdict"] = HealthVerdict.DEGRADED.value
             result[f"{name}_error"] = (
@@ -169,6 +247,29 @@ def send_stale_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
     records that it was sent.
     """
     sent: list[dict[str, Any]] = []
+
+    # Reached because `StepFailure` does not halt the step loop (see `base`), so
+    # this step still runs after `check_liveness` rejected the config. A
+    # misconfigured auditor is worth paging about: nothing is being watched, and
+    # the FAILED status alone is the kind of signal #71 found nobody reads.
+    config_error = context.get("audit_config_error")
+    if config_error:
+        result = send_check_failure_notification(
+            check_name="run archive audit",
+            reason=str(config_error),
+        )
+        sent.append(
+            {
+                "subject": "run archive audit",
+                "channels": result,
+                "delivered": delivered(result),
+            }
+        )
+        return {
+            "alerts_sent": sent,
+            "alerts_delivered": any(alert["delivered"] for alert in sent),
+            "reason": "audit_misconfigured",
+        }
 
     if not context.get("archive_readable", True):
         result = send_check_failure_notification(
@@ -210,7 +311,17 @@ def generate_audit_report(workflow: Workflow, context: dict[str, Any]) -> dict[s
     subjects = context.get(AUDITED_KEY, [])
     summary = summarize({name: context.get(f"{name}_verdict") for name in subjects})
 
-    if summary["all_checked_healthy"]:
+    if not subjects:
+        # No subjects means `check_liveness` rejected the cadence config; the
+        # summary is already non-healthy (`summarize` refuses vacuous truth),
+        # but the recommendation has to say what to do rather than render an
+        # empty list of workflows that could not be reached.
+        recommendation = (
+            "The audit established nothing: it ran with no workflow to check. "
+            "Fix the cadence configuration in src/agent/config.py - until then "
+            "no workflow has a liveness detector."
+        )
+    elif summary["all_checked_healthy"]:
         recommendation = "No action needed - every audited workflow is running."
     elif summary["degraded"]:
         recommendation = (
@@ -239,8 +350,11 @@ def fail_on_unknown_verdict(
     """
     subjects = context.get(AUDITED_KEY) or []
     if not subjects:
-        # A cadence config naming nothing is an auditor that checks nothing and
-        # reports success: this epic's defect, in the instrument built for it.
+        # Defence in depth. `check_liveness` already refuses to run against a
+        # cadence config that names nothing, so reaching here means the check
+        # step did not write the key at all -- but an auditor that checks
+        # nothing and reports success is this epic's defect inside the
+        # instrument built for it, and it gets two chances to be caught.
         return StepFailure(
             error=(
                 "the run audit was configured with no workflows to audit, so it "
@@ -258,7 +372,7 @@ class RunAuditWorkflow(Workflow):
 
     Steps:
     1. Compare each expected workflow's newest run against its cadence
-    2. Alert on anything stalled, or on an unreadable archive
+    2. Alert on anything stalled, an unreadable archive, or an unusable config
     3. Generate a summary report
     4. Fail the workflow if any audited subject produced no verdict
     """
@@ -274,7 +388,7 @@ class RunAuditWorkflow(Workflow):
         ),
         StepDefinition(
             name="send_stale_alerts",
-            description="Notify about stalled workflows and unreadable archives",
+            description="Notify about stalls, unreadable archives, bad config",
             handler=send_stale_alerts,
             skip_on_dry_run=True,
         ),

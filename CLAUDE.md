@@ -492,6 +492,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-14**: The run archive is read, so a workflow that stops running is detected - `src/agent/archive.py` as the shared reader, a `run_audit` liveness workflow on its own sub-daily cadence, a one-shot `scripts/audit_archive.py` sweep for runs that reported success over a failure, and a stalled job mapped to `degraded` rather than `unknown` (#76)
 - **2026-09-11**: `backup_db.sh` distinguishes "could not check Docker" from "container is not running" - the `docker ps | grep -q` pipeline replaced by a captured query, so the failing command's own output is shown under a label instead of reaching stderr unattributed; an exit-code contract (`2` = never established / `unknown`, `3` = checked and absent, `1` stays generic); whole-line literal name matching; and `status` reporting partial results instead of aborting (#93)
 - **2026-09-09**: The health verdict becomes a shared contract - `verdict_of`/`summarize`/`unresolved` in `src/agent/health.py`, a reusable `fail_on_unresolved_verdicts()` gate in `base.py` returning `StepFailure`, drift's hand-rolled bridge retired onto it, and a non-vacuous "all healthy" (#74)
 - **2026-09-08**: A step that reports its own failure now marks the workflow FAILED - `StepFailure` return contract, one shared `_finalize()` for `run()`/`resume()`, a FAILED step beats a pause, and `WorkflowState.error` echoes the real step errors (#73)
