@@ -34,8 +34,8 @@ A stall is reported no earlier than ``interval + audit_grace_hours`` after the
 workflow's last run, and no later than one audit period after that, because the
 auditor can only answer at the moments cron runs it. The bound is
 ``interval + grace + audit period``: the first two are in ``AgentSettings``,
-the third in ``scripts/setup_cron.sh``. Both terms matter, so tuning one
-without the other will not give the latency you asked for.
+the third in ``scripts/setup_cron.sh``. All three terms matter, so tuning one
+alone will not give the latency you asked for.
 
 Why no test-archive filter
 --------------------------

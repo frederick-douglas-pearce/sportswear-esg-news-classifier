@@ -227,7 +227,14 @@ def iter_runs(
 
         try:
             data = yaml.safe_load(path.read_text())
-        except (OSError, yaml.YAMLError) as exc:
+        except (OSError, yaml.YAMLError, UnicodeDecodeError) as exc:
+            # ``UnicodeDecodeError`` is a ``ValueError``, not an ``OSError``, so
+            # it is not covered by the other two and is easy to leave out: a
+            # single non-UTF-8 byte in one record would then propagate out of
+            # this loop, past ``check_liveness``' ``except OSError``, and blind
+            # the reader to every other record -- the opposite of what the
+            # paragraph above promises, and the failure this module exists to
+            # be robust against.
             logger.warning(f"archive {path.name} could not be read; skipping ({exc})")
             continue
 

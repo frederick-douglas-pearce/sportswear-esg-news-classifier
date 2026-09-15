@@ -436,8 +436,10 @@ deliberately a script with no schedule: its value is a single retroactive pass.
 It exits `0` (nothing found), `1` (findings listed on stdout), or `2` (the sweep did not run).
 `2` covers both an unreadable archive and an invalid command line, because argparse uses `2`
 for usage errors and this script does not reclaim it. What the code guarantees is the
-distinction that matters to a caller: `0` always means *checked and clean*, never *could not
-check*. Splitting `2` into distinct causes is a repo-wide convention question — `src/mlops/`
+distinction that matters to a caller: `0` means *checked every record it could read, and found
+nothing*, never *could not look at the archive at all*. An individual record that cannot be read
+or parsed is logged and skipped rather than raised — one bad file must not blind the reader to
+the rest — so a `WARNING` on stderr is the only trace of it. Splitting `2` into distinct causes is a repo-wide convention question — `src/mlops/`
 carries its own `0/1/2` contract — filed as #127 to settle alongside #80, which consumes exit
 codes at cron boundaries.
 

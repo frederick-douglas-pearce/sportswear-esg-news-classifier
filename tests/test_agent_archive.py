@@ -137,6 +137,23 @@ def test_iter_runs_skips_unparseable_archive_without_losing_the_rest(history):
     assert runs[0].run_id == NOW.strftime("%Y%m%d_%H%M%S")
 
 
+def test_iter_runs_skips_a_record_that_is_not_utf8(history):
+    """A non-UTF-8 byte is a bad record, not a reason to stop reading.
+
+    `Path.read_text` raises `UnicodeDecodeError`, which is a `ValueError` and
+    so is covered by neither `OSError` nor `yaml.YAMLError`. Left out of the
+    except clause it escapes `iter_runs` entirely, sails past
+    `check_liveness`' `except OSError`, and takes the whole audit down over one
+    corrupt file -- while the module's own docstring promises the opposite.
+    """
+    write_archive(history, "daily_labeling", NOW)
+    (history / "daily_labeling_20260101_000000.yaml").write_bytes(b"name: \xff\xfe\x00")
+
+    runs = list(iter_runs(history))
+
+    assert [run.run_id for run in runs] == [NOW.strftime("%Y%m%d_%H%M%S")]
+
+
 def test_iter_runs_allowlist_excludes_synthetic_test_names(history):
     """Synthetic archives are excluded by name, never by a content heuristic."""
     write_archive(history, "drift_monitoring", NOW)
