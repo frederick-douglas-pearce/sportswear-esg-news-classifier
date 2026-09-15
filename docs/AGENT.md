@@ -417,11 +417,10 @@ auditor's own configuration.
 
 **How late an alert can be.** A stall is reported no earlier than `interval + grace` after the
 last run, and no later than one audit period after that; the bound is
-`interval + grace + audit period`. Grace covers start-time jitter only — `run_id` is stamped
-when a run starts, so a long job does not age its own archive. It is the audit *period* that
-sets the resolution, which is why the auditor runs several times a day rather than once
-alongside the jobs it watches. The cost of that cadence is repetition: a job that stays dead
-is re-alerted each window.
+`interval + grace + audit period`. Grace is sized for start-time jitter — `run_id` is stamped
+when a run starts, so a long job does not age its own archive. All three terms matter, so
+tuning one alone will not give you a particular latency. The cost of a sub-daily cadence is
+repetition: a job that stays dead is re-alerted each window.
 
 **What it does not cover.** The auditor is a cron job on the same host as the workflows it
 audits. One workflow dying while its siblings keep running is the case it exists for and is

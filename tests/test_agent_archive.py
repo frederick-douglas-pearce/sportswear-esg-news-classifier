@@ -7,6 +7,7 @@ would be manufacturing the very artifact under discussion.
 """
 
 import importlib.util
+import os
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -151,6 +152,31 @@ def test_iter_runs_raises_when_the_directory_is_absent(tmp_path):
     """'No archive directory' must not read the same as 'an empty archive'."""
     with pytest.raises(OSError):
         list(iter_runs(tmp_path / "nope"))
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root can list a 000 directory, so the guard cannot fire"
+)
+def test_iter_runs_raises_when_the_directory_cannot_be_listed(tmp_path):
+    """Unreadable must not read the same as empty either.
+
+    `Path.glob` swallows `PermissionError` on the directory and yields nothing,
+    so a reader built on it answers "no runs" for an archive it was not allowed
+    to open -- the sweep then exits 0 "no run reported success over a failure
+    signal", and the auditor reports every workflow stalled with
+    `archive_readable: True`. A clean answer from an instrument that could not
+    look is the defect this epic exists to remove, so it is pinned here rather
+    than left to the listing call's incidental behaviour.
+    """
+    directory = tmp_path / "history"
+    directory.mkdir()
+    write_archive(directory, "daily_labeling", NOW)
+    directory.chmod(0o000)
+    try:
+        with pytest.raises(OSError):
+            list(iter_runs(directory))
+    finally:
+        directory.chmod(0o755)
 
 
 def test_latest_run_per_workflow_returns_the_newest(history):
@@ -514,6 +540,31 @@ def test_a_workflow_that_never_ran_is_degraded_not_unknown(audited):
     assert result["stale_workflows"] == ["daily_labeling"]
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root can list a 000 directory, so the guard cannot fire"
+)
+def test_a_really_unreadable_archive_is_unknown_for_every_subject(audited):
+    """The `unknown` arm against a real unreadable directory, not a mock.
+
+    The mocked version below pins what `check_liveness` does with an `OSError`;
+    it cannot show that one ever arrives. It did not: the reader listed with
+    `Path.glob`, which swallows `PermissionError`, so a real unreadable archive
+    took the *healthy-looking* path -- `archive_readable: True` and every
+    workflow reported stalled, naming the wrong cause with no `unknown` in
+    sight. Asserting a verdict is reachable is not the same as reaching it.
+    """
+    write_archive(audited, "daily_labeling", datetime.now(timezone.utc))
+    audited.chmod(0o000)
+    try:
+        result = check_liveness(None, {})
+    finally:
+        audited.chmod(0o755)
+
+    assert result["daily_labeling_verdict"] == HealthVerdict.UNKNOWN.value
+    assert result["archive_readable"] is False
+    assert isinstance(fail_on_unknown_verdict(None, result), StepFailure)
+
+
 def test_an_unreadable_archive_is_unknown_for_every_subject(audited):
     """The genuine can't-tell case, and the only one that is `unknown`."""
     with patch(
@@ -687,13 +738,43 @@ def test_sweep_exits_1_and_names_the_run_when_one_did(history, capsys):
     assert "daily_labeling 20260914_120000" in capsys.readouterr().out
 
 
-def test_sweep_does_not_exit_0_when_the_archive_cannot_be_read(tmp_path, capsys):
+def test_sweep_does_not_exit_0_when_the_archive_is_absent(tmp_path, capsys):
     """"Cannot look" must never share an answer with "looked, found nothing".
 
     The code is 2, which argparse also uses for a usage error; the cause is on
     stderr. What must hold is that it is not 0.
     """
     assert run_sweep("--history-dir", str(tmp_path / "gone")) != 0
+    assert "could not read the run archive" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="root can list a 000 directory, so the guard cannot fire"
+)
+def test_sweep_does_not_exit_0_when_the_archive_cannot_be_listed(tmp_path, capsys):
+    """The same contract for a directory that exists but cannot be opened.
+
+    This is the arm that reported a clean archive: a permission error on the
+    listing used to be swallowed, so the sweep printed "No archived run
+    reported success over a failure signal" and exited 0 over records it never
+    read. An instrument that cannot look must not return the answer it gives
+    when it looked and found nothing.
+    """
+    directory = tmp_path / "history"
+    directory.mkdir()
+    write_archive(
+        directory,
+        "daily_labeling",
+        NOW,
+        status="completed",
+        context={"labeling_success": False},
+    )
+    directory.chmod(0o000)
+    try:
+        assert run_sweep("--history-dir", str(directory)) != 0
+    finally:
+        directory.chmod(0o755)
+
     assert "could not read the run archive" in capsys.readouterr().err
 
 

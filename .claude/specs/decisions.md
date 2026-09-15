@@ -1049,9 +1049,9 @@ here, because it touches every agent test file.
 
 ## D013: D012 Overstated the Cost of Structural Test Isolation (#76)
 
-**Status:** decided at #76's step-8 scope ruling, from the round-1 code review. D012 is not
-withdrawn; one claim inside it is. This file is append-only, so the correction is recorded here
-rather than edited into D012.
+**Status:** decided at #76's step-8 scope rulings — the withdrawal below at the round-1 ruling,
+the §6 disposition at the round-2 one. D012 is not withdrawn; one claim inside it is. This file is
+append-only, so the correction is recorded here rather than edited into D012.
 
 ### The claim withdrawn
 
@@ -1074,11 +1074,12 @@ removes the possibility rather than filtering its result.
 
 D012 relies on `iter_runs` raising when the archive directory is absent. `AgentSettings.history_dir`
 calls `mkdir(exist_ok=True)` on read, so a caller asking whether the directory exists has created
-it, and that branch cannot fire on the production path. The `unknown` verdict is still reachable and
-tested — a permission error takes that path — but a deleted directory reads as an empty archive, and
-the auditor reports every workflow stalled rather than the archive unreadable. Both alert; the cause
-named is wrong. Filed as #125, deliberately not fixed in #76, because `history_dir` is read from
-`state.py`, the CLI and every workflow.
+it, and the *absent-directory* branch cannot fire on the production path. A directory that exists
+but cannot be listed does reach `unknown`, and is tested against a real unreadable directory rather
+than a mocked one. What #125 leaves open is narrower than D012 assumed: a deleted directory reads as
+an empty archive, so the auditor reports every workflow stalled rather than the archive unreadable.
+Both alert; the cause named is wrong. Deliberately not fixed in #76, because `history_dir` is read
+from `state.py`, the CLI and every workflow.
 
 ### Why this is a decision record
 

@@ -153,9 +153,9 @@ DISQUALIFYING_KINDS = frozenset(
 #: Every kind ``failure_signals`` emits, for a CLI that filters on kind. A
 #: listing, not a derivation: ``test_signal_kinds_matches_what_the_extractor_emits``
 #: asserts the two agree over a record carrying every kind named here, which
-#: catches one pruned from this list or renamed on one side. It cannot catch a
-#: kind added to ``failure_signals`` behind a branch no test record reaches --
-#: making that structural is #126.
+#: catches one pruned from this list. It cannot catch a kind added to
+#: ``failure_signals`` behind a branch no test record reaches -- making that
+#: structural is #126.
 SIGNAL_KINDS = DISQUALIFYING_KINDS | frozenset(
     {
         KIND_SUCCESS_FLAG_FALSE,
@@ -185,9 +185,9 @@ def iter_runs(
 
     A file that does not parse is logged and skipped, never raised: one bad
     record must not blind the reader to every other one. Raises ``OSError`` if
-    the directory itself cannot be listed -- that is not a bad record, it is the
-    reader being unable to tell anything at all, and the caller must be able to
-    distinguish those.
+    the directory itself cannot be listed -- whether it is absent or unreadable.
+    That is not a bad record, it is the reader being unable to tell anything at
+    all, and the caller must be able to distinguish those.
     """
     directory = history_dir if history_dir is not None else agent_settings.history_dir
     allowed = set(workflows) if workflows is not None else None
@@ -199,8 +199,15 @@ def iter_runs(
     if not directory.is_dir():
         raise FileNotFoundError(f"run archive directory not found: {directory}")
 
+    # ``iterdir`` and not ``glob``: pathlib's glob swallows ``PermissionError``
+    # on the directory and yields nothing, so an archive the reader is not
+    # allowed to list would read as an archive with no runs in it -- the sweep
+    # exits 0 "no run reported success over a failure signal" and the auditor
+    # reports every workflow stalled. A clean answer from an instrument that
+    # could not look is the failure this whole epic is about, so the listing has
+    # to be the operation that raises.
     runs: list[ArchivedRun] = []
-    for path in sorted(directory.glob("*.yaml")):
+    for path in sorted(p for p in directory.iterdir() if p.suffix == ".yaml"):
         match = _ARCHIVE_NAME.match(path.name)
         if not match:
             continue
