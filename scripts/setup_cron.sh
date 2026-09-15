@@ -50,6 +50,18 @@ AGENT_DRIFT_SCHEDULE="30 5 * * *"
 AGENT_DRIFT_ENTRY="$AGENT_DRIFT_SCHEDULE $AGENT_SCRIPT drift_monitoring"
 AGENT_DRIFT_COMMENT="# ESG Agent - drift monitoring workflow"
 
+# Agent run audit: every 6 hours. It reads what the other agent jobs archived,
+# so one of its windows has to fall after theirs (00:00 does, since the latest
+# is website_export at 07:00 the previous day) -- but the cadence is NOT about
+# ordering. The auditor can only report a stall at the moments cron runs it, so
+# this period is part of the detection bound alongside the interval and grace in
+# AgentSettings: worst-case is interval + audit_grace_hours + this period. Set
+# sub-daily so a missed run is reported the same day. The price is repetition --
+# a job that stays dead is re-alerted each window.
+AGENT_AUDIT_SCHEDULE="0 */6 * * *"
+AGENT_AUDIT_ENTRY="$AGENT_AUDIT_SCHEDULE $AGENT_SCRIPT run_audit"
+AGENT_AUDIT_COMMENT="# ESG Agent - run archive audit (liveness)"
+
 install_collect() {
     if crontab -l 2>/dev/null | grep -q "$COLLECT_SCRIPT"; then
         echo "Collection job already installed."
@@ -176,6 +188,24 @@ remove_agent_drift() {
     fi
 }
 
+install_agent_audit() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT run_audit"; then
+        echo "Agent run audit job already installed."
+    else
+        (crontab -l 2>/dev/null || true; echo "$AGENT_AUDIT_COMMENT"; echo "$AGENT_AUDIT_ENTRY") | crontab -
+        echo "✓ Agent run audit job installed (every 6 hours)"
+    fi
+}
+
+remove_agent_audit() {
+    if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT run_audit"; then
+        crontab -l | grep -v "$AGENT_SCRIPT run_audit" | grep -v "ESG Agent - run archive audit" | crontab -
+        echo "✓ Agent run audit job removed."
+    else
+        echo "No agent run audit job found."
+    fi
+}
+
 case "$1" in
     install)
         install_collect
@@ -206,10 +236,14 @@ case "$1" in
     install-agent-drift)
         install_agent_drift
         ;;
+    install-agent-audit)
+        install_agent_audit
+        ;;
     install-agent)
         install_agent_drift
         install_agent_labeling
         install_agent_export
+        install_agent_audit
         echo ""
         echo "Agent logs: logs/agent/cron_<workflow>_YYYYMMDD.log"
         ;;
@@ -221,6 +255,7 @@ case "$1" in
         remove_agent_labeling
         remove_agent_export
         remove_agent_drift
+        remove_agent_audit
         ;;
     remove-collect)
         remove_collect
@@ -243,10 +278,14 @@ case "$1" in
     remove-agent-drift)
         remove_agent_drift
         ;;
+    remove-agent-audit)
+        remove_agent_audit
+        ;;
     remove-agent)
         remove_agent_labeling
         remove_agent_export
         remove_agent_drift
+        remove_agent_audit
         ;;
     status)
         echo "ESG News Cron Jobs Status"
@@ -286,6 +325,11 @@ case "$1" in
             echo "Agent Drf:  ACTIVE (daily at 5:30am)"
         else
             echo "Agent Drf:  NOT INSTALLED"
+        fi
+        if crontab -l 2>/dev/null | grep -q "$AGENT_SCRIPT run_audit"; then
+            echo "Agent Aud:  ACTIVE (every 6 hours)"
+        else
+            echo "Agent Aud:  NOT INSTALLED"
         fi
         echo ""
         echo "Current crontab:"

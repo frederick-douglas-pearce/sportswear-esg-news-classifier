@@ -12,6 +12,7 @@ The ESG News Classifier includes a custom-built agent orchestrator that automate
   - [Daily Labeling](#daily-labeling)
   - [Drift Monitoring](#drift-monitoring)
   - [Website Export](#website-export)
+  - [Run Audit](#run-audit)
   - [Model Training](#model-training)
 - [CLI Usage](#cli-usage)
 - [Scheduling with Cron](#scheduling-with-cron)
@@ -233,6 +234,7 @@ src/agent/
 ├── __main__.py          # CLI entry point
 ├── config.py            # Configuration from environment
 ├── state.py             # YAML-based state management
+├── archive.py           # Reader over the run archive (import leaf, writes nothing)
 ├── health.py            # HealthVerdict vocabulary + summarize/verdict_of (import leaf)
 ├── runner.py            # Script execution with retries
 ├── notifications.py     # Email (Resend) + webhook notifications
@@ -243,6 +245,7 @@ src/agent/
     ├── daily_labeling.py    # Daily labeling workflow
     ├── drift_monitoring.py  # Classifier drift detection
     ├── website_export.py    # Jekyll feed export
+    ├── run_audit.py         # Liveness: a scheduled workflow that stopped running
     └── model_training.py    # Model training with notebook pause + heuristic updates
 
 src/experiment_log/
@@ -372,6 +375,74 @@ partial check is not currently distinguishable from a whole one there. Tracked a
 - `_data/esg_news.json` - JSON feed for Jekyll data files
 - `assets/feeds/esg_news.atom` - Atom/RSS feed
 
+### Run Audit
+
+**Schedule**: Every 6 hours
+**Purpose**: Detect a scheduled workflow that has stopped producing runs at all.
+
+This is the only liveness net in the system, and it covers a gap none of the other
+mechanisms can. #73 makes a failed step fail its run, #74 makes an unresolved check fail its
+run, #75 counts consecutive failures — all three read a run that *happened*. A job that
+never runs writes no archive for any of them to read, so its silence is indistinguishable
+from success. This workflow is the external observer that compares expected against actual.
+
+**Steps**:
+
+| Step | Description |
+|------|-------------|
+| 1. `check_liveness` | Compare each expected workflow's newest archived run against its cadence |
+| 2. `send_stale_alerts` | Notify on stalls, an unreadable archive, or an unusable config |
+| 3. `generate_audit_report` | Summarize from recorded verdicts rather than inferred health |
+| 4. `fail_on_unknown_verdict` | Fail the run if any audited subject produced no verdict |
+
+**Verdict mapping** (D012). A workflow with no run inside its interval — including one that
+has never run at all — is `degraded`, not `unknown`. `unknown` is reserved for *the archive
+could not be read*, because that is the only case where the auditor genuinely cannot tell.
+Mapping a stall to `unknown` would trip the terminal gate and fail the auditor's own run at
+the exact moment it succeeded at detecting a dead job, leaving a FAILED status where an alert
+naming the workflow should be.
+
+**Configuration** lives in `AgentSettings` and is deliberately not env-overridable: which
+scheduled jobs are watched is a governance decision, not a deployment knob.
+
+| Setting | Meaning |
+|---------|---------|
+| `audit_expected_interval_hours` | Workflow → how often it is expected to run |
+| `audit_grace_hours` | Added to the interval before a run is called stale |
+| `audit_skipped_workflows` | Workflow → why it is deliberately not audited |
+
+A test asserts every workflow `setup_cron.sh` schedules appears in one of the two dicts, so a
+newly scheduled job cannot end up with no detector — this epic's defect reproduced inside the
+auditor's own configuration.
+
+**How late an alert can be.** A stall is reported no earlier than `interval + grace` after the
+last run, and no later than one audit period after that; the bound is
+`interval + grace + audit period`. Grace is sized for start-time jitter — `run_id` is stamped
+when a run starts, so a long job does not age its own archive. All three terms matter, so
+tuning one alone will not give you a particular latency. The cost of a sub-daily cadence is
+repetition: a job that stays dead is re-alerted each window.
+
+**What it does not cover.** The auditor is a cron job on the same host as the workflows it
+audits. One workflow dying while its siblings keep running is the case it exists for and is
+detected while it is happening. A total host or cron outage takes the auditor down too, so
+the gap is reported on recovery rather than at the time. A process cannot observe its own
+absence; closing that needs an off-host dead-man's-switch, which is out of scope. For the
+same reason the auditor is in its own skip set.
+
+**Related one-shot sweep.** `uv run python scripts/audit_archive.py` answers a different
+question — which archived runs reported `completed` while carrying a failure signal. It is
+deliberately a script with no schedule: its value is a single retroactive pass.
+
+It exits `0` (nothing found), `1` (findings listed on stdout), or `2` (the sweep did not run).
+`2` covers both an unreadable archive and an invalid command line, because argparse uses `2`
+for usage errors and this script does not reclaim it. What the code guarantees is the
+distinction that matters to a caller: `0` means *checked every record it could read, and found
+nothing*, never *could not look at the archive at all*. An individual record that cannot be read
+or parsed is logged and skipped rather than raised — one bad file must not blind the reader to
+the rest — so a `WARNING` on stderr is the only trace of it. Splitting `2` into distinct causes is a repo-wide convention question — `src/mlops/`
+carries its own `0/1/2` contract — filed as #127 to settle alongside #80, which consumes exit
+codes at cron boundaries.
+
 ### Model Training
 
 **Schedule**: Manual (triggered when new training data is available)
@@ -457,6 +528,7 @@ uv run python -m src.agent history daily_labeling
 | 5:30 AM | `drift_monitoring` | Check classifier health before labeling |
 | 6:30 AM | `daily_labeling` | Process new articles |
 | 7:00 AM | `website_export` | Update live feed |
+| Every 6 hours | `run_audit` | Detect a workflow that stopped running |
 
 ### Cron Configuration
 

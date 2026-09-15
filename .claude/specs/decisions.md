@@ -966,3 +966,125 @@ it found is the one I could not have found that way: I chose my mutations from t
 understanding that wrote the tests, so I probed the property I was thinking about — fixed-string —
 and not the one I had merely assumed. A spec written by someone who had not written the tests
 probed both. That is the argument for the actor split, and it is now evidenced rather than asserted.
+
+---
+
+## D012: The Run-Archive Auditor Reports a Stalled Job as `degraded`, Not `unknown` (#76)
+
+**Status:** decided at the design gate, before implementation. Recorded from the `architect` review
+of `.claude/loop/silent-success/issue-76.plan.md`.
+
+### Context
+
+#76 adds a reader over the agent run archive with two consumers: a scheduled liveness check
+(Class B — a workflow stopped emitting runs) and a one-shot sweep (Class A — runs that archived
+`status: completed` while carrying an internal failure signal). It lands `run_succeeded()`, which
+#75 imports.
+
+### The decision, and the defect it avoids
+
+**A workflow that is expected but has no run within its interval — including one that has never run
+at all — is `degraded`, not `unknown`.** `unknown` is reserved for *the auditor could not read the
+archive directory*.
+
+The plan as written before the gate mapped "no archives at all" to `unknown`. Because the workflow
+terminates on `fail_on_unresolved_verdicts`, that mapping fails the auditor's own run at exactly the
+moment it **succeeds** at detecting a never-run job: a correct detection becomes indistinguishable
+from the auditor malfunctioning, and the operator plausibly receives no alert — only a FAILED status
+that nothing watches. That is this epic's own defect class recursing inside the instrument built to
+detect it.
+
+`HealthVerdict.DEGRADED` is defined as "the check ran and found a problem -- a real result, and
+actionable", which is what a stalled job is. `UNKNOWN` is "the check did not produce a verdict".
+A stalled job produces a verdict. The split follows the vocabulary already settled in D010.
+
+**No new vocabulary term is introduced.** `ARCHITECT_TRIGGERS`' "a new health/status vocabulary
+term" entry is therefore not fired by this change.
+
+### Three supporting decisions taken at the same gate
+
+**The alert routes through `src/agent/notifications.py`, not `src/mlops/alerts.py`.** The issue text
+names "#75 / `alerts.py`", but `AlertSender` is webhook-only and returns false when disabled, while
+this project's configured operator channel is email; `AlertType` carries no stalled or check-failed
+member; and the reference workflow `drift_monitoring` does not use that module at all. It uses
+`send_check_failure_notification`, built in #71 for a scheduled check that produced no verdict, with
+`NotificationType.CHECK_FAILED` already defined — and it guards delivery with `_delivered()`, which
+distinguishes real delivery from the console fallback that reaches nobody. Routing an
+operator-facing liveness alert through the lower-level sender would have discarded that guard and
+could have delivered the alert nowhere the operator reads.
+
+**Signal extraction is separated from signal policy.** `failure_signals()` returns kinded signals;
+`run_succeeded()` is a policy over the disqualifying kinds. The two consumers need different
+breadth: the Class-A sweep is read by a human once and can afford to be broad, while
+`run_succeeded()` drives #75's automatic alerting and must not treat legitimate non-failure context
+written by the drift workflow — `alerts_sent: false`, `alerts_skipped: true`,
+`reason: nothing_to_report` — as failure. `run_succeeded()` reads the post-D010 archive shape;
+the Class-A sweep reads the historical `*_success` form as archaeology.
+
+**Two guards convert silent drift into a red check.** A round-trip test builds real `WorkflowState`
+objects, serializes them through `to_dict`, and asserts the reader's classification — so a later
+field rename in `state.py` cannot silently degrade the reader to "sees no signal". And a test
+asserts that every workflow `scripts/setup_cron.sh` schedules through `cron_agent.sh` is either in
+the cadence config or in an explicit skip set — so a newly scheduled job cannot end up with no
+detector, which is this epic's defect reintroduced inside the auditor's own configuration.
+
+### What was reconsidered and left alone
+
+**The same-host blind spot is documented, not engineered around.** An auditor sharing a host and a
+cron with the jobs it audits cannot alert while that host is down; it reports the gap on recovery.
+The story's headline value — one workflow dying while its siblings keep running — is fully delivered
+by a same-host auditor, and an off-host watchdog is disproportionate here. The module docstring
+states the limitation in shape only.
+
+**No test-archive classifier is built.** The archive holds runs written by the test suite under a
+production workflow name. For the Class-A sweep the problem dissolves: it reports a list of
+instances and never a rate, and a rate is what would need a corpus defined. For Class B the residual
+is stated rather than filtered — a heuristic classifier carries its own misclassification risk, which
+is what the correction on #76's own 2026-09-08 comment is about. Making test isolation structural
+with a session-scoped fixture is the root-cause fix and is filed separately rather than ridden in
+here, because it touches every agent test file.
+
+
+---
+
+## D013: D012 Overstated the Cost of Structural Test Isolation (#76)
+
+**Status:** decided at #76's step-8 scope rulings — the withdrawal below at the round-1 ruling,
+the §6 disposition at the round-2 one. D012 is not withdrawn; one claim inside it is. This file is
+append-only, so the correction is recorded here rather than edited into D012.
+
+### The claim withdrawn
+
+D012's closing paragraph says structural test isolation "touches every agent test file", and gives
+that as the reason for deferring it. It does not: one session-scoped autouse fixture in
+`tests/conftest.py` binding `AgentSettings.state_dir` covers every module at once. The deferral was
+argued from a cost that is not there. Filed as #124, and it is a small change.
+
+### What does not change
+
+The decision D012 records still stands, for its stated reason: no test-archive classifier is built,
+because a heuristic over record contents carries its own misclassification risk, while exclusion by
+an allowlist of real workflow names is a fact about the name and cannot misfire.
+
+What #124 changes is not the exposure but its guarantee. An allowlist cannot exclude a record
+written under a real workflow name by something that is not that workflow; a session-scoped fixture
+removes the possibility rather than filtering its result.
+
+### A second claim corrected at the same time
+
+D012 relies on `iter_runs` raising when the archive directory is absent. `AgentSettings.history_dir`
+calls `mkdir(exist_ok=True)` on read, so a caller asking whether the directory exists has created
+it, and the *absent-directory* branch cannot fire on the production path. A directory that exists
+but cannot be listed does reach `unknown`, and is tested against a real unreadable directory rather
+than a mocked one. What #125 leaves open is narrower than D012 assumed: a deleted directory reads as
+an empty archive, so the auditor reports every workflow stalled rather than the archive unreadable.
+Both alert; the cause named is wrong. Deliberately not fixed in #76, because `history_dir` is read
+from `state.py`, the CLI and every workflow.
+
+### Why this is a decision record
+
+D008, D009, D010 and D012 each record correct code shipped with a false claim attached to it, and
+#76 added more of them in the commit written to remove them. `loop.config.md` §6 governs this class,
+and its two-correction cap is now spent for it: the next disposition is deletion of the claim, not a
+third correction. Several of #76's explanatory sentences were deleted on that basis rather than
+reworded, including from this entry.
