@@ -432,8 +432,15 @@ same reason the auditor is in its own skip set.
 
 **Related one-shot sweep.** `uv run python scripts/audit_archive.py` answers a different
 question — which archived runs reported `completed` while carrying a failure signal. It is
-deliberately a script with no schedule: its value is a single retroactive pass, and it exits
-`0` (nothing found), `1` (findings listed on stdout) or `2` (the archive could not be read).
+deliberately a script with no schedule: its value is a single retroactive pass.
+
+It exits `0` (nothing found), `1` (findings listed on stdout), or `2` (the sweep did not run).
+`2` covers both an unreadable archive and an invalid command line, because argparse uses `2`
+for usage errors and this script does not reclaim it. What the code guarantees is the
+distinction that matters to a caller: `0` always means *checked and clean*, never *could not
+check*. Splitting `2` into distinct causes is a repo-wide convention question — `src/mlops/`
+carries its own `0/1/2` contract — filed as #127 to settle alongside #80, which consumes exit
+codes at cron boundaries.
 
 ### Model Training
 

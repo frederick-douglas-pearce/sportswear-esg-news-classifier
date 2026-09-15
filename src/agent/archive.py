@@ -1,9 +1,9 @@
 """Read the run archive that scheduled workflows leave behind.
 
 ``StateManager._archive_workflow`` writes each terminal run's full
-``WorkflowState.to_dict()`` to ``agent_settings.history_dir``. Nothing else
-reads it back. This module is that reader, and it is the piece #75 is meant to
-import rather than re-derive.
+``WorkflowState.to_dict()`` to ``agent_settings.history_dir``. This module
+deserializes those records, and is the piece #75 is meant to import rather than
+re-derive.
 
 **This module writes nothing and holds no state.** It is not a persistence
 layer, a store, or a framework -- epic #72 and ``CLAUDE.md`` both name
@@ -127,28 +127,39 @@ class FailureSignal:
         return f"{self.where}: {self.detail}"
 
 
+#: The kind of each signal, named once and read by both the extractor below and
+#: the sets built from them, so a kind cannot be spelled two ways.
+KIND_STATUS_FAILED = "status_failed"
+KIND_RUN_ERROR = "run_error"
+KIND_STEP_FAILED = "step_failed"
+KIND_STEP_ERROR = "step_error"
+KIND_VERDICT_UNKNOWN = "verdict_unknown"
+KIND_SUCCESS_FLAG_FALSE = "success_flag_false"
+KIND_CONTEXT_ERRORS = "context_errors"
+
 #: Signal kinds that mean the run did not succeed, under the contract that
 #: #73 and #74 established. Deliberately excludes ``success_flag_false`` and
 #: ``context_errors`` -- see the module docstring.
 DISQUALIFYING_KINDS = frozenset(
     {
-        "status_failed",
-        "run_error",
-        "step_failed",
-        "step_error",
-        "verdict_unknown",
+        KIND_STATUS_FAILED,
+        KIND_RUN_ERROR,
+        KIND_STEP_FAILED,
+        KIND_STEP_ERROR,
+        KIND_VERDICT_UNKNOWN,
     }
 )
 
-#: Every kind ``failure_signals`` can emit. Exported so a CLI filtering on kind
-#: can validate its argument against the emitter rather than against a second
-#: hand-maintained list: an unrecognised ``--kind`` that silently matches
-#: nothing prints "no findings" and exits clean, which is this epic's failure
-#: mode wearing the sweep's own output.
+#: Every kind ``failure_signals`` emits, for a CLI that filters on kind. A
+#: listing, not a derivation: ``test_signal_kinds_matches_what_the_extractor_emits``
+#: asserts the two agree over a record carrying every kind named here, which
+#: catches one pruned from this list or renamed on one side. It cannot catch a
+#: kind added to ``failure_signals`` behind a branch no test record reaches --
+#: making that structural is #126.
 SIGNAL_KINDS = DISQUALIFYING_KINDS | frozenset(
     {
-        "success_flag_false",
-        "context_errors",
+        KIND_SUCCESS_FLAG_FALSE,
+        KIND_CONTEXT_ERRORS,
     }
 )
 
@@ -259,12 +270,12 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
 
     if run.status == "failed":
         signals.append(
-            FailureSignal("status_failed", "status", "the run archived as failed")
+            FailureSignal(KIND_STATUS_FAILED, "status", "the run archived as failed")
         )
 
     run_error = run.data.get("error")
     if run_error:
-        signals.append(FailureSignal("run_error", "error", str(run_error)))
+        signals.append(FailureSignal(KIND_RUN_ERROR, "error", str(run_error)))
 
     for step_name, step in sorted(run.steps.items()):
         if not isinstance(step, dict):
@@ -272,20 +283,22 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
         if step.get("status") == "failed":
             signals.append(
                 FailureSignal(
-                    "step_failed", f"steps.{step_name}.status", "the step failed"
+                    KIND_STEP_FAILED, f"steps.{step_name}.status", "the step failed"
                 )
             )
         step_error = step.get("error")
         if step_error:
             signals.append(
-                FailureSignal("step_error", f"steps.{step_name}.error", str(step_error))
+                FailureSignal(
+                    KIND_STEP_ERROR, f"steps.{step_name}.error", str(step_error)
+                )
             )
 
     for key, value in sorted(run.context.items()):
         if key.endswith("_verdict") and value == "unknown":
             signals.append(
                 FailureSignal(
-                    "verdict_unknown",
+                    KIND_VERDICT_UNKNOWN,
                     f"context.{key}",
                     "the check produced no verdict",
                 )
@@ -294,7 +307,7 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
         if key.endswith("_success") and value is False:
             signals.append(
                 FailureSignal(
-                    "success_flag_false",
+                    KIND_SUCCESS_FLAG_FALSE,
                     f"context.{key}",
                     "an embedded failure flag the run reported success over",
                 )
@@ -304,7 +317,7 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
     if isinstance(errors, (list, tuple)) and errors:
         signals.append(
             FailureSignal(
-                "context_errors",
+                KIND_CONTEXT_ERRORS,
                 "context.errors",
                 "; ".join(str(item) for item in errors),
             )

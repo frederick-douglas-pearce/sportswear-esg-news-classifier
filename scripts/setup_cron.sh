@@ -54,11 +54,10 @@ AGENT_DRIFT_COMMENT="# ESG Agent - drift monitoring workflow"
 # so one of its windows has to fall after theirs (00:00 does, since the latest
 # is website_export at 07:00 the previous day) -- but the cadence is NOT about
 # ordering. The auditor can only report a stall at the moments cron runs it, so
-# its period is the resolution of every alert it raises: worst-case detection is
-# interval + audit_grace_hours + this period. Once a day would quantize that to
-# whole days and make audit_grace_hours a no-op; four times a day costs a
-# directory listing and gets the alert out the same day the run was missed.
-# The price is repetition -- a job that stays dead is re-alerted each window.
+# this period is part of the detection bound alongside the interval and grace in
+# AgentSettings: worst-case is interval + audit_grace_hours + this period. Set
+# sub-daily so a missed run is reported the same day. The price is repetition --
+# a job that stays dead is re-alerted each window.
 AGENT_AUDIT_SCHEDULE="0 */6 * * *"
 AGENT_AUDIT_ENTRY="$AGENT_AUDIT_SCHEDULE $AGENT_SCRIPT run_audit"
 AGENT_AUDIT_COMMENT="# ESG Agent - run archive audit (liveness)"

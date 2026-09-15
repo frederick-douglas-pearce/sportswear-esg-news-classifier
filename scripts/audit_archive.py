@@ -13,10 +13,9 @@ the recurring liveness check is ``run_audit``, which answers a different
 question.
 
 **It reports a list of instances and never a rate.** That is not a presentation
-choice, it is what makes the output trustworthy without defining a corpus. The
-archive can hold runs written by the test suite as well as by cron (#124), so a
-denominator computed over the directory counts a population nobody defined. A
-list has no denominator, and a spurious line is one a reader can dismiss.
+choice, it is what makes the output trustworthy without defining a corpus. A
+rate needs a denominator and this directory is not one; a list has no
+denominator, and a spurious line is one a reader can dismiss.
 
 Usage:
     uv run python scripts/audit_archive.py
@@ -27,7 +26,12 @@ Usage:
 Exit codes:
     0  no run reported success over a failure signal
     1  at least one did (they are listed on stdout)
-    2  the archive could not be read at all
+    2  the sweep did not run -- either the archive could not be read, or the
+       command line was invalid (argparse's own usage-error code, which this
+       script does not reclaim). Both mean "no answer", never "a clean answer",
+       which is the distinction a caller must not lose. A caller that needs to
+       tell the two apart reads stderr; giving the archive case its own code is
+       a repo-wide convention question, filed as #127 to settle with #80.
 
 ``--all-signals`` does not affect the exit code: a run that reported its own
 failure is not a finding, it is the control the findings are read against.
@@ -44,7 +48,6 @@ from src.agent.archive import (  # noqa: E402
     SIGNAL_KINDS,
     failure_signals,
     iter_runs,
-    reported_success,
     vacuous_success_signals,
 )
 from src.agent.config import agent_settings  # noqa: E402
@@ -78,11 +81,12 @@ def main() -> int:
     parser.add_argument(
         "--kind",
         action="append",
-        # Validated against the emitter's own kinds, not a second hand-kept
-        # list. Without `choices`, a typo matches nothing, the sweep prints "no
-        # run reported success over a failure signal" and exits 0 -- a clean
-        # bill of health produced by a filter that could never match, which is
-        # the exact shape of failure this script was written to find.
+        # Without `choices`, a typo matches nothing, the sweep prints "no run
+        # reported success over a failure signal" and exits 0 -- a clean bill of
+        # health produced by a filter that could never match, which is the exact
+        # shape of failure this script was written to find. `SIGNAL_KINDS` is
+        # kept level with what `failure_signals` emits by a test, not by
+        # construction; see its definition.
         choices=sorted(SIGNAL_KINDS),
         help="Only report these signal kinds (repeatable)",
     )
@@ -120,7 +124,7 @@ def main() -> int:
                 print(f"    [{signal.kind}] {signal}")
             continue
 
-        if not args.all_signals or reported_success(run):
+        if not args.all_signals:
             continue
 
         # The control group: a run that carried failure evidence AND said so.

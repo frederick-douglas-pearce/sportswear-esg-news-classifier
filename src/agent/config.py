@@ -124,13 +124,11 @@ class AgentSettings:
     # jitter in start time is not an alert. A run is stale when its age exceeds
     # interval + grace.
     #
-    # Grace covers jitter and nothing else, which is why it is small: `run_id`
-    # is stamped when a run *starts*, so a long-running job does not age its own
-    # archive, and cron does not drift. Detection latency is not tuned here --
-    # the auditor can only answer at the moments cron runs it, so the bound is
-    # interval + grace + the audit's own period, and it is that period (in
-    # scripts/setup_cron.sh) that sets the resolution. Shrinking grace under a
-    # once-daily audit buys nothing: detection still lands on the next tick.
+    # Sized for start-time jitter, not for detection latency: `run_id` is
+    # stamped when a run starts (state.py), so a long run does not age its own
+    # archive. Latency also depends on how often the audit itself runs -- the
+    # bound is interval + grace + the audit's period, set in
+    # scripts/setup_cron.sh.
     audit_grace_hours: float = 3.0
     # Workflows deliberately not audited, each with the reason stated. A skip is
     # a decision someone made; HealthVerdict.SKIPPED requires it be recorded.

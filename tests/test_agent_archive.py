@@ -187,6 +187,29 @@ def test_vacuous_success_is_empty_for_a_run_that_reported_failure():
     assert vacuous_success_signals(run) == []
 
 
+def test_signal_kinds_matches_what_the_extractor_emits():
+    """`SIGNAL_KINDS` is a listing, not a derivation, so pin it to the emitter.
+
+    `--kind` validates against `SIGNAL_KINDS`. A kind emitted but not listed
+    makes `--kind <it>` an argparse error; a kind listed but never emitted makes
+    it a filter that matches nothing and exits 0. Neither shows up anywhere
+    else: every other test in this file picks its kinds from the same constant,
+    so it agrees with itself no matter what either side says.
+    """
+    everything = make_run(
+        status="failed",
+        error="the run failed",
+        steps={"label": {"status": "failed", "error": "labeling died"}},
+        context={
+            "fp_verdict": "unknown",
+            "fp_drift_check_success": False,
+            "errors": ["export failed"],
+        },
+    )
+
+    assert {s.kind for s in failure_signals(everything)} == SIGNAL_KINDS
+
+
 def test_failure_signals_names_its_evidence():
     """A finding names where it was found, so it can be checked not believed."""
     run = make_run(
@@ -419,6 +442,43 @@ def test_a_run_one_second_past_the_grace_boundary_is_degraded(audited, frozen_no
     assert result["stale_workflows"] == ["daily_labeling"]
 
 
+def test_a_few_seconds_of_backwards_clock_skew_is_not_a_page(audited, frozen_now):
+    """A time daemon stepping the clock at boot must not alert on a live job.
+
+    The future-dated branch below exists for a record that cannot have come
+    from a run. Without a tolerance it also fires on a run archived seconds
+    before a backwards step -- paging an operator about a healthy workflow,
+    with text saying its run is dated in the future. A false page is the one
+    thing an epic about honest alerting should not ship.
+    """
+    write_archive(audited, "daily_labeling", NOW + timedelta(seconds=30))
+
+    result = check_liveness(None, {})
+
+    assert result["daily_labeling_age_hours"] < 0
+    assert result["daily_labeling_verdict"] == HealthVerdict.HEALTHY.value
+    assert result["stale_workflows"] == []
+
+
+def test_the_skew_tolerance_is_not_wide_enough_to_swallow_a_real_anomaly(
+    audited, frozen_now
+):
+    """The tolerance covers clock noise, not a future-dated record.
+
+    Pinned separately because the obvious wrong fix is to reuse
+    `audit_grace_hours` (hours) as the tolerance. A run dated two hours ahead
+    is the case the branch exists to catch, so an hours-wide tolerance would
+    report it healthy -- the silence the branch was added to remove, restored
+    by the guard meant to soften it.
+    """
+    write_archive(audited, "daily_labeling", NOW + timedelta(hours=2))
+
+    result = check_liveness(None, {})
+
+    assert result["daily_labeling_verdict"] == HealthVerdict.DEGRADED.value
+    assert result["stale_workflows"] == ["daily_labeling"]
+
+
 def test_a_future_dated_run_is_degraded_rather_than_permanently_fresh(
     audited, frozen_now
 ):
@@ -627,9 +687,13 @@ def test_sweep_exits_1_and_names_the_run_when_one_did(history, capsys):
     assert "daily_labeling 20260914_120000" in capsys.readouterr().out
 
 
-def test_sweep_exits_2_when_the_archive_cannot_be_read(tmp_path, capsys):
-    """Separated from 0 deliberately: "cannot look" is not "nothing found"."""
-    assert run_sweep("--history-dir", str(tmp_path / "gone")) == 2
+def test_sweep_does_not_exit_0_when_the_archive_cannot_be_read(tmp_path, capsys):
+    """"Cannot look" must never share an answer with "looked, found nothing".
+
+    The code is 2, which argparse also uses for a usage error; the cause is on
+    stderr. What must hold is that it is not 0.
+    """
+    assert run_sweep("--history-dir", str(tmp_path / "gone")) != 0
     assert "could not read the run archive" in capsys.readouterr().err
 
 
@@ -639,6 +703,11 @@ def test_sweep_rejects_an_unrecognised_kind_instead_of_matching_nothing(history)
     Without `choices`, `--kind sucess_flag_false` matches no signal, prints "no
     archived run reported success over a failure signal" and exits 0: a clean
     bill of health manufactured by a filter that could never match.
+
+    The assertion is that this is NOT 0, not that 2 identifies the cause. 2 is
+    argparse's usage-error code and this script does not reclaim it, so 2 also
+    means an unreadable archive; what the contract guarantees is that 0 always
+    means checked-and-clean. See the script docstring.
     """
     write_archive(
         history,
@@ -653,8 +722,33 @@ def test_sweep_rejects_an_unrecognised_kind_instead_of_matching_nothing(history)
     assert exit_info.value.code == 2
 
 
-def test_sweep_kind_filter_accepts_every_kind_the_extractor_can_emit(history):
-    """`choices` is built from the emitter, so the two cannot drift apart."""
+def test_sweep_kind_filter_reports_only_the_requested_kind(history, capsys):
+    """The filter itself, against a record carrying more than one kind.
+
+    Accepting every valid `--kind` proves only that argparse let it through.
+    Without this, a filter that dropped nothing -- or everything -- passes:
+    one over-reports findings the operator asked to exclude, the other exits 0
+    on an archive that has them.
+    """
+    write_archive(
+        history,
+        "daily_labeling",
+        NOW,
+        status="completed",
+        steps={"label": {"status": "failed", "error": "labeling died"}},
+        context={"labeling_success": False},
+    )
+
+    assert run_sweep("--history-dir", str(history), "--kind", "success_flag_false") == 1
+
+    output = capsys.readouterr().out
+    assert "[success_flag_false]" in output
+    assert "[step_failed]" not in output
+    assert "[step_error]" not in output
+
+
+def test_sweep_kind_filter_accepts_every_listed_kind(history):
+    """Each `SIGNAL_KINDS` entry is a valid `--kind`, so `choices` stays usable."""
     for kind in SIGNAL_KINDS:
         assert run_sweep("--history-dir", str(history), "--kind", kind) == 0
 

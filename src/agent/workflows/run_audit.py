@@ -31,33 +31,22 @@ liveness check, because a stalled auditor cannot report that it has stalled.
 How late an alert can be
 ------------------------
 A stall is reported no earlier than ``interval + audit_grace_hours`` after the
-workflow's last run, and no later than one audit period after that: the auditor
-can only answer the question at the moments cron runs it. The bound is
-``interval + grace + audit period``, re-derivable from ``AgentSettings`` and
-``scripts/setup_cron.sh`` rather than restated as a figure here.
-
-Which half of that to tune is not obvious and is worth stating. Grace covers
-start-time jitter only, so it wants to be small; it is the **audit period** that
-sets the resolution, and shrinking grace under a once-daily audit buys nothing
-because detection still lands on the next tick. That is why the auditor is
-scheduled several times a day rather than alongside the jobs it watches.
+workflow's last run, and no later than one audit period after that, because the
+auditor can only answer at the moments cron runs it. The bound is
+``interval + grace + audit period``: the first two are in ``AgentSettings``,
+the third in ``scripts/setup_cron.sh``. Both terms matter, so tuning one
+without the other will not give the latency you asked for.
 
 Why no test-archive filter
 --------------------------
-The archive can hold runs written by the test suite, because
-``AgentSettings.history_dir`` resolves to the real archive unless a test rebinds
-it and only some agent test modules do. This module builds no heuristic to tell
-records from real ones -- a misclassifying filter is worse than none. Exclusion
-is by explicit allowlist instead: ``latest_run_per_workflow`` is called with the
-configured cadence set, so a record under a name that is not a real workflow is
-never read. That is a fact about the name and cannot misfire.
+This module builds no heuristic to tell a test-written record from a real one:
+a misclassifying filter is worse than none. Exclusion is by explicit allowlist
+instead -- ``latest_run_per_workflow`` is called with the configured cadence
+set, so a record under a name that is not a real workflow is never read. That is
+a fact about the name and cannot misfire.
 
-What it leaves open is a test writing a *production*-named archive while that
-job is actually dead, which would mask it. Nothing here prevents that; what
-prevents it today is that the test modules which write into the real archive
-use synthetic names, which is a convention rather than a mechanism. Making the
-isolation structural -- one session-scoped fixture in ``tests/conftest.py`` --
-is #124.
+What an allowlist cannot exclude is a record written under a *real* workflow
+name by something other than that workflow. Test-harness isolation is #124.
 """
 
 import logging
@@ -85,6 +74,15 @@ logger = logging.getLogger(__name__)
 #: Context key holding every subject this run audited, so that the terminal
 #: gate can build itself over the same set the check step actually used.
 AUDITED_KEY = "audited_workflows"
+
+#: How far into the future a run's start time may sit before the auditor treats
+#: it as a broken record rather than as clock noise. A time daemon stepping the
+#: clock backwards at boot can date a run seconds ahead of now, and paging an
+#: operator about a healthy workflow is the false alarm this epic is the wrong
+#: place to introduce. Deliberately NOT `audit_grace_hours`: grace is measured
+#: in hours and a run genuinely hours into the future is the case the branch
+#: exists to catch, so reusing it would swallow exactly what it should report.
+CLOCK_SKEW_TOLERANCE_HOURS = 300 / 3600  # five minutes
 
 
 def _hours_since(moment: datetime, now: datetime) -> float:
@@ -196,14 +194,15 @@ def check_liveness(
         result[f"{name}_last_run"] = run.run_at.isoformat()
         result[f"{name}_age_hours"] = round(age, 2)
 
-        if age < 0:
-            # A newest run dated in the future -- a clock that moved, or a
-            # record that did not come from a run. Left alone it is a negative
+        if age < -CLOCK_SKEW_TOLERANCE_HOURS:
+            # A newest run dated well into the future -- a clock that moved, or
+            # a record that did not come from a run. Left alone it is a negative
             # age, which passes every freshness test there is: this workflow
             # would be reported healthy forever, and the auditor would go
             # permanently quiet about it. That is the exact silence this epic
             # exists to remove, so the case gets its own branch rather than
-            # falling through to the comparison below.
+            # falling through to the comparison below. A few seconds of skew is
+            # tolerated above rather than paged about.
             #
             # DEGRADED and not UNKNOWN, per D012: the archive was read fine, so
             # this is not the can't-tell case. It is a real, actionable problem

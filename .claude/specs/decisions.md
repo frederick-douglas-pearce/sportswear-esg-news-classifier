@@ -1047,56 +1047,43 @@ here, because it touches every agent test file.
 
 ---
 
-## D013: Correction to D012 — the Test-Archive Leak Is Live, and Its Fix Is One Fixture (#76)
+## D013: D012 Overstated the Cost of Structural Test Isolation (#76)
 
 **Status:** decided at #76's step-8 scope ruling, from the round-1 code review. D012 is not
-withdrawn; two factual claims inside it are, and this file is append-only, so the correction is
-recorded here rather than edited into place.
+withdrawn; one claim inside it is. This file is append-only, so the correction is recorded here
+rather than edited into D012.
 
-### What D012 got wrong
+### The claim withdrawn
 
-D012's closing paragraph describes the test-archive residual as bounded to records written
-*before* the fixtures were isolated, and says the structural fix "touches every agent test file".
-The round-1 review reproduced both as false:
-
-- **The leak is live, not historical.** `AgentSettings.history_dir` resolves to the real archive
-  unless a test rebinds it. Some agent test modules bind their own isolated directory; others bind
-  only the state file. A test run today under a module in the second group still deposits archive
-  records in the developer's real archive. Calling the residual historical made it sound closed by
-  a past change; it is open and structural.
-- **The fix is one fixture, not a sweep of the suite.** A session-scoped autouse fixture in
-  `tests/conftest.py` binding `state_dir` covers every module at once. D012's "touches every agent
-  test file" was the stated reason for deferring it, so the deferral was argued from a cost that
-  does not exist.
+D012's closing paragraph says structural test isolation "touches every agent test file", and gives
+that as the reason for deferring it. It does not: one session-scoped autouse fixture in
+`tests/conftest.py` binding `AgentSettings.state_dir` covers every module at once. The deferral was
+argued from a cost that is not there. Filed as #124, and it is a small change.
 
 ### What does not change
 
-**The decision D012 records still stands, and for its stated reason.** No test-archive classifier
-is built: a heuristic over record contents carries its own misclassification risk, and exclusion by
-explicit allowlist of real workflow names is a fact about the name that cannot misfire.
+The decision D012 records still stands, for its stated reason: no test-archive classifier is built,
+because a heuristic over record contents carries its own misclassification risk, while exclusion by
+an allowlist of real workflow names is a fact about the name and cannot misfire.
 
-The *current* exposure is also smaller than the round-1 summary claimed. The modules that leak
-write synthetic workflow names, and the reader is called with the configured cadence set, so those
-records are filtered out before anything reads them. What is wrong is that this holds by
-convention — nobody has to remember the fixture for the allowlist to save them — rather than by
-construction. That is what #124 fixes.
+What #124 changes is not the exposure but its guarantee. An allowlist cannot exclude a record
+written under a real workflow name by something that is not that workflow; a session-scoped fixture
+removes the possibility rather than filtering its result.
 
 ### A second claim corrected at the same time
 
-D012 relies on `iter_runs` raising when the archive directory is absent. On the production path
-that branch cannot fire: `AgentSettings.history_dir` calls `mkdir(exist_ok=True)` on read, so a
-caller asking whether the directory exists has already created it. The `unknown` verdict is still
-reachable and tested — a permission error takes that path — but the deleted-directory case is
-converted into "an empty archive", which the auditor reports as every workflow stalled rather than
-as an unreadable archive. Both raise an alert, so nothing goes undetected; the defect is a
-misattributed cause. Filed as #125 and deliberately not fixed in #76, because `history_dir` is read
-from `state.py`, the CLI and every workflow.
+D012 relies on `iter_runs` raising when the archive directory is absent. `AgentSettings.history_dir`
+calls `mkdir(exist_ok=True)` on read, so a caller asking whether the directory exists has created
+it, and that branch cannot fire on the production path. The `unknown` verdict is still reachable and
+tested — a permission error takes that path — but a deleted directory reads as an empty archive, and
+the auditor reports every workflow stalled rather than the archive unreadable. Both alert; the cause
+named is wrong. Filed as #125, deliberately not fixed in #76, because `history_dir` is read from
+`state.py`, the CLI and every workflow.
 
-### Why this is a decision record and not a changelog line
+### Why this is a decision record
 
-The pattern is the point. D008, D009 and D010 each record correct code shipped with a false claim
-attached to it, and D012 did it again — inside the change built to detect work that reports
-something other than what it did. The claims in these records are not decoration; they are what a
-later reader uses instead of re-deriving. A design record that is wrong about its own residual risk
-spends that trust. `loop.config.md` §6 exists for this, and §6's two-correction cap applies: a
-third disposition of this class deletes the claim rather than correcting it again.
+D008, D009, D010 and D012 each record correct code shipped with a false claim attached to it, and
+#76 added more of them in the commit written to remove them. `loop.config.md` §6 governs this class,
+and its two-correction cap is now spent for it: the next disposition is deletion of the claim, not a
+third correction. Several of #76's explanatory sentences were deleted on that basis rather than
+reworded, including from this entry.
