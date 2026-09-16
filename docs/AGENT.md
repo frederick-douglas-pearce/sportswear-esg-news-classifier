@@ -378,13 +378,18 @@ partial check is not currently distinguishable from a whole one there. Tracked a
 ### Run Audit
 
 **Schedule**: Every 6 hours
-**Purpose**: Detect a scheduled workflow that has stopped producing runs at all.
+**Purpose**: Two questions over one data source — has a scheduled workflow *stopped running*,
+and is one *running and failing every time*.
 
-This is the only liveness net in the system, and it covers a gap none of the other
-mechanisms can. #73 makes a failed step fail its run, #74 makes an unresolved check fail its
-run, #75 counts consecutive failures — all three read a run that *happened*. A job that
-never runs writes no archive for any of them to read, so its silence is indistinguishable
-from success. This workflow is the external observer that compares expected against actual.
+Liveness is the only such net in the system, and it covers a gap none of the other mechanisms
+can. #73 makes a failed step fail its run and #74 makes an unresolved check fail its run — both
+read a run that *happened*. A job that never runs writes no archive for either of them to read,
+so its silence is indistinguishable from success. This workflow is the external observer that
+compares expected against actual.
+
+The failure-streak check (#75) closes the other half: a job that keeps running and keeps
+failing archives every run correctly as failed, and nothing reads archives, so it hides behind
+a green light just the same.
 
 **Steps**:
 
@@ -392,8 +397,20 @@ from success. This workflow is the external observer that compares expected agai
 |------|-------------|
 | 1. `check_liveness` | Compare each expected workflow's newest archived run against its cadence |
 | 2. `send_stale_alerts` | Notify on stalls, an unreadable archive, or an unusable config |
-| 3. `generate_audit_report` | Summarize from recorded verdicts rather than inferred health |
-| 4. `fail_on_unknown_verdict` | Fail the run if any audited subject produced no verdict |
+| 3. `check_failure_streaks` | Count each watched workflow's trailing failed runs (#75) |
+| 4. `send_failure_escalations` | Escalate a workflow that has failed N runs in a row |
+| 5. `generate_audit_report` | Summarize from recorded verdicts rather than inferred health |
+| 6. `fail_on_unknown_verdict` | Fail the run if any audited subject produced no verdict |
+
+**Alerting exactly once** (D014, corrected by D015). Each pass records a per-workflow
+high-water mark — the newest run id it has alerted for — in this workflow's own archived
+context, so no new store is introduced. A pass that *suppresses* a repeat must carry that mark
+forward, or the ledger forgets and the next pass re-alerts. The mark advances only when the
+alert reached a configured channel or when no channel is configured at all; a configured
+channel that was attempted and failed leaves the mark alone so the next pass retries.
+
+A workflow that is both stalled and failing is escalated once, by the stall alert — its streak
+is still recorded, but the second page is suppressed.
 
 **Verdict mapping** (D012). A workflow with no run inside its interval — including one that
 has never run at all — is `degraded`, not `unknown`. `unknown` is reserved for *the archive
@@ -402,14 +419,30 @@ Mapping a stall to `unknown` would trip the terminal gate and fail the auditor's
 the exact moment it succeeded at detecting a dead job, leaving a FAILED status where an alert
 naming the workflow should be.
 
-**Configuration** lives in `AgentSettings` and is deliberately not env-overridable: which
-scheduled jobs are watched is a governance decision, not a deployment knob.
+**Configuration** lives in `AgentSettings`. *Which* jobs are watched is deliberately not
+env-overridable — that is a governance decision, not a deployment knob. The escalation
+threshold is, because it is an operator's sensitivity knob rather than a statement about
+which work is watched.
 
-| Setting | Meaning |
-|---------|---------|
-| `audit_expected_interval_hours` | Workflow → how often it is expected to run |
-| `audit_grace_hours` | Added to the interval before a run is called stale |
-| `audit_skipped_workflows` | Workflow → why it is deliberately not audited |
+| Setting | Env | Meaning |
+|---------|-----|---------|
+| `audit_expected_interval_hours` | — | Workflow → how often it is expected to run |
+| `audit_grace_hours` | — | Added to the interval before a run is called stale |
+| `audit_skipped_workflows` | — | Workflow → why it is deliberately not audited |
+| `consecutive_failure_threshold_raw` | `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` | Failed runs in a row before escalating (default `2`) |
+
+The threshold is held as a raw string and parsed by `config.parse_failure_threshold` at the
+point of use, so a value below 1 or a non-number fails `check_failure_streaks` with a
+`StepFailure` naming the variable. It is deliberately **not** validated in `__post_init__`:
+`agent_settings` is built at module scope, so raising there took down every agent workflow over
+a knob one step reads (D015.1). Nothing guards the other direction — a large N is a detector
+that never fires and says nothing about it.
+
+The failure-streak check watches `audit_expected_interval_hours` only. `model_training` is
+excluded because it *pauses* for notebooks and a paused run is not `completed`, so watching it
+would fire on every ordinary train-then-pause cycle; whether `run_audit` should count its own
+past failures is an open question, deliberately not answered by reusing the cadence skip list
+(D015.3).
 
 A test asserts every workflow `setup_cron.sh` schedules appears in one of the two dicts, so a
 newly scheduled job cannot end up with no detector — this epic's defect reproduced inside the
@@ -528,7 +561,7 @@ uv run python -m src.agent history daily_labeling
 | 5:30 AM | `drift_monitoring` | Check classifier health before labeling |
 | 6:30 AM | `daily_labeling` | Process new articles |
 | 7:00 AM | `website_export` | Update live feed |
-| Every 6 hours | `run_audit` | Detect a workflow that stopped running |
+| Every 6 hours | `run_audit` | Detect a workflow that stopped running, or that keeps failing |
 
 ### Cron Configuration
 
@@ -559,6 +592,7 @@ All agent settings are configured via environment variables:
 | `AGENT_MAX_RETRIES` | Max retries for failed steps | `3` |
 | `AGENT_RETRY_DELAY` | Delay between retries (seconds) | `5` |
 | `AGENT_DEFAULT_TIMEOUT` | Script timeout (seconds) | `600` |
+| `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` | Failed runs in a row before `run_audit` escalates | `2` |
 
 ### LLM Analysis Settings
 

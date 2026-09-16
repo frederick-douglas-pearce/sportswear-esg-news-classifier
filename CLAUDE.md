@@ -232,7 +232,7 @@ prompts/labeling/
 - `alerts.py` - Webhook notifications for Slack/Discord
 
 ### Agent Orchestrator (`src/agent/`)
-- `config.py` - Agent settings (state dir, email, retries, LLM, run-audit cadence)
+- `config.py` - Agent settings (state dir, email, retries, LLM, run-audit cadence, failure-streak threshold)
 - `archive.py` - Reader over the run archive; `run_succeeded()` is the shared run classifier
 - `state.py` - YAML-based state management with checkpointing
 - `runner.py` - Script execution wrapper with retry logic
@@ -243,7 +243,7 @@ prompts/labeling/
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
   - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
   - `website_export.py` - JSON/Atom feed generation + scorecard history storage
-  - `run_audit.py` - Liveness: detects a scheduled workflow that stopped producing runs
+  - `run_audit.py` - Liveness (a workflow that stopped running) and failure streaks (one that runs and fails every time)
   - `model_training.py` - Data export → quality check → pause → comparison → promotion → deploy → experiment finalization
 - `__main__.py` - CLI entry point (run, continue, status, list, history)
 
@@ -368,10 +368,7 @@ RESEND_API_KEY=  # Recommended for email (resend.com, 3000/month free)
 AGENT_LLM_ANALYSIS=true  # Enable Claude analysis of labeling results
 AGENT_LLM_ERROR_THRESHOLD=0.0  # 0.0 = always run, >0 = only if error_rate exceeds
 AGENT_LLM_MODEL=claude-haiku-4-5-20251001  # Model for LLM analysis
-AGENT_CONSECUTIVE_FAILURE_THRESHOLD=2  # Escalate after N consecutive failed runs of a watched workflow.
-  # Lives here rather than beside the ALERT_* vars: it is an AGENT_* setting read by the run_audit
-  # workflow. Must be >= 1 -- AgentSettings raises otherwise, because a threshold too high to reach
-  # is a detector that never fires and says nothing about it.
+AGENT_CONSECUTIVE_FAILURE_THRESHOLD=2  # Escalate after N consecutive failed runs; N<1 fails the check
 
 # Workflow Learning
 SCREENPIPE_API_URL=http://localhost:3030  # Screenpipe REST API
@@ -496,6 +493,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-16**: A workflow that runs and fails every time is escalated - `archive.consecutive_failures()`, two new `run_audit` steps carrying a high-water mark in the auditor's own archived context, delivery-gated so a failed send retries, and `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` parsed at the point of use rather than at import (#75)
 - **2026-09-14**: The run archive is read, so a workflow that stops running is detected - `src/agent/archive.py` as the shared reader, a `run_audit` liveness workflow on its own sub-daily cadence, a one-shot `scripts/audit_archive.py` sweep for runs that reported success over a failure, and a stalled job mapped to `degraded` rather than `unknown` (#76)
 - **2026-09-11**: `backup_db.sh` distinguishes "could not check Docker" from "container is not running" - the `docker ps | grep -q` pipeline replaced by a captured query, so the failing command's own output is shown under a label instead of reaching stderr unattributed; an exit-code contract (`2` = never established / `unknown`, `3` = checked and absent, `1` stays generic); whole-line literal name matching; and `status` reporting partial results instead of aborting (#93)
 - **2026-09-09**: The health verdict becomes a shared contract - `verdict_of`/`summarize`/`unresolved` in `src/agent/health.py`, a reusable `fail_on_unresolved_verdicts()` gate in `base.py` returning `StepFailure`, drift's hand-rolled bridge retired onto it, and a non-vacuous "all healthy" (#74)

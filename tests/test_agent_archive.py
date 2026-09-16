@@ -12,7 +12,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -27,12 +27,17 @@ from src.agent.archive import (
     run_succeeded,
     vacuous_success_signals,
 )
-from src.agent.config import AgentSettings, agent_settings
+from src.agent.config import (
+    AgentSettings,
+    agent_settings,
+    parse_failure_threshold,
+)
 from src.agent.health import HealthVerdict
 from src.agent.notifications import delivered
 from src.agent.state import StepState, WorkflowState, WorkflowStatus
 from src.agent.workflows.base import StepFailure
 from src.agent.workflows.run_audit import (
+    RunAuditWorkflow,
     check_failure_streaks,
     check_liveness,
     fail_on_unknown_verdict,
@@ -1022,232 +1027,3 @@ def test_the_historical_success_flag_resets_a_streak_rather_than_extending_it(hi
     assert consecutive_failures(history) == {"drift_monitoring": 1}
 
 
-def test_a_threshold_below_one_is_refused_at_construction():
-    """N = 0 would escalate a workflow that has not failed at all.
-
-    Loud at construction rather than clamped: a clamp would run the escalator
-    at a threshold nobody configured and report nothing wrong.
-    """
-    with patch.dict(os.environ, {"AGENT_CONSECUTIVE_FAILURE_THRESHOLD": "0"}):
-        with pytest.raises(ValueError, match="at least 1"):
-            AgentSettings()
-
-
-# --------------------------------------------------------------------------
-# The escalator (#75)
-#
-# `_audit_pass` models one real run of the workflow: the steps run in their
-# registered order, each result merges into the shared context, and the whole
-# context is archived under `run_audit` at finalize -- which is what the
-# dedupe reads on the next pass.
-# --------------------------------------------------------------------------
-
-
-def _audit_pass(directory: Path, run_at: datetime, channels=None) -> dict:
-    """Run one audit pass and archive it, returning its context.
-
-    Returns the merged context, so a test can read `failure_escalations_sent`
-    off it exactly as the report step does.
-    """
-    context: dict = {}
-    context.update(check_liveness(None, context))
-    streaks = check_failure_streaks(None, context)
-    assert not isinstance(streaks, StepFailure), streaks
-    context.update(streaks)
-
-    with patch(
-        "src.agent.workflows.run_audit.send_consecutive_failure_notification",
-        return_value=channels if channels is not None else {"email": True},
-    ):
-        context.update(send_failure_escalations(None, context))
-
-    write_archive(directory, "run_audit", run_at, context=dict(context))
-    return context
-
-
-def _escalated(context: dict) -> list[str]:
-    return [alert["subject"] for alert in context.get("failure_escalations_sent", [])]
-
-
-def test_one_failure_does_not_escalate(audited):
-    """AC-1's lower half: the first failure warns nobody."""
-    _failed(audited, "daily_labeling", NOW)
-
-    context = _audit_pass(audited, NOW + timedelta(minutes=5))
-
-    assert context["daily_labeling_consecutive_failures"] == 1
-    assert _escalated(context) == []
-
-
-def test_two_consecutive_failures_escalate(audited):
-    """AC-1's upper half: the second consecutive failure fires."""
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    _failed(audited, "daily_labeling", NOW)
-
-    context = _audit_pass(audited, NOW + timedelta(minutes=5))
-
-    assert context["daily_labeling_consecutive_failures"] == 2
-    assert _escalated(context) == ["daily_labeling"]
-    assert context["failure_escalations_delivered"] is True
-
-
-def test_an_isolated_failure_between_successes_does_not_escalate(audited):
-    """AC-2, end to end through the steps rather than only the counter."""
-    write_archive(audited, "daily_labeling", NOW - timedelta(hours=48))
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    write_archive(audited, "daily_labeling", NOW)
-
-    context = _audit_pass(audited, NOW + timedelta(minutes=5))
-
-    assert context["daily_labeling_consecutive_failures"] == 0
-    assert _escalated(context) == []
-
-
-def test_an_escalation_is_not_repeated_across_three_audit_passes(audited):
-    """AC-1's "exactly once", and it takes THREE passes to test.
-
-    The high-water mark must be carried forward by a pass that suppresses. An
-    implementation that records only what it escalated *this* pass passes a
-    two-pass test and fails here: pass 1 escalates and records, pass 2
-    suppresses and records nothing, pass 3 reads an empty ledger and
-    re-escalates. Two passes cannot tell the two implementations apart.
-    """
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    _failed(audited, "daily_labeling", NOW)
-
-    first = _audit_pass(audited, NOW + timedelta(minutes=5))
-    second = _audit_pass(audited, NOW + timedelta(minutes=10))
-    third = _audit_pass(audited, NOW + timedelta(minutes=15))
-
-    assert _escalated(first) == ["daily_labeling"]
-    assert _escalated(second) == [], "the mark was written but not read"
-    assert _escalated(third) == [], "the mark was read but not carried forward"
-
-
-def test_a_further_failed_run_escalates_again(audited):
-    """The semantics the human chose at the plan gate: one alert per failed run.
-
-    A job failing daily nags daily rather than going quiet after the first
-    alert. The alternative reading of AC-1 -- once per streak episode -- is
-    what this test would fail, which is the point of pinning it.
-    """
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    _failed(audited, "daily_labeling", NOW)
-
-    first = _audit_pass(audited, NOW + timedelta(minutes=5))
-    quiet = _audit_pass(audited, NOW + timedelta(minutes=10))
-
-    _failed(audited, "daily_labeling", NOW + timedelta(hours=20))
-    after = _audit_pass(audited, NOW + timedelta(hours=20, minutes=5))
-
-    assert _escalated(first) == ["daily_labeling"]
-    assert _escalated(quiet) == []
-    assert _escalated(after) == ["daily_labeling"]
-    assert after["daily_labeling_consecutive_failures"] == 3
-
-
-def test_an_unreadable_prior_context_escalates_rather_than_suppressing(audited):
-    """D014: when the escalator cannot tell whether it already alerted, it alerts.
-
-    Suppressing on "I cannot tell" is silent success reproduced inside the
-    escalator, so a corrupt record of its own prior run must cost a duplicate
-    alert and never a missed one.
-    """
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    _failed(audited, "daily_labeling", NOW)
-
-    first = _audit_pass(audited, NOW + timedelta(minutes=5))
-
-    # Corrupt the auditor's own newest record, the way a truncated write would.
-    own = audited / f"run_audit_{(NOW + timedelta(minutes=5)).strftime('%Y%m%d_%H%M%S')}.yaml"
-    own.write_text("{ this is not: valid: yaml")
-
-    second = _audit_pass(audited, NOW + timedelta(minutes=10))
-
-    assert _escalated(first) == ["daily_labeling"]
-    assert _escalated(second) == ["daily_labeling"]
-
-
-def test_the_streak_check_writes_no_verdict_key(audited):
-    """D014: a second writer of `{name}_verdict` would clobber liveness by order.
-
-    Step results merge into one flat context, so the streak check keeps its own
-    namespace and leaves the verdict vocabulary to `check_liveness`.
-    """
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    _failed(audited, "daily_labeling", NOW)
-
-    result = check_failure_streaks(None, check_liveness(None, {}))
-
-    assert not any(key.endswith("_verdict") for key in result)
-    assert result["daily_labeling_consecutive_failures"] == 2
-
-
-def test_a_detected_streak_still_lets_the_audit_run_complete(audited):
-    """D012's rule, applied to this detector: a detection is never `unknown`.
-
-    Failing the auditor's own run at the moment it correctly detected something
-    would make a working detector indistinguishable from a broken one.
-    """
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    _failed(audited, "daily_labeling", NOW)
-
-    context = _audit_pass(audited, NOW + timedelta(minutes=5))
-    gate = fail_on_unknown_verdict(None, context)
-
-    assert not isinstance(gate, StepFailure)
-
-
-def test_the_streak_check_stands_down_when_the_archive_is_unreadable(audited):
-    """It delegates its only can't-tell case rather than giving a second opinion.
-
-    `check_liveness` already turns an unreadable archive into `unknown` over the
-    same subjects and already fails the run at the terminal gate.
-    """
-    result = check_failure_streaks(
-        None, {"archive_readable": False, "audit_error": "permission denied"}
-    )
-
-    assert result["failure_streaks_checked"] is False
-    assert result["failure_streak_skip_reason"] == "archive_unreadable"
-    assert result.get("failure_escalations_due") is None
-
-
-def test_the_streak_check_stands_down_on_a_config_the_audit_already_rejected(audited):
-    """A config `check_liveness` refused does not get a second, different opinion."""
-    result = check_failure_streaks(None, {"audit_config_error": "names nothing"})
-
-    assert result["failure_streaks_checked"] is False
-    assert result["failure_streak_skip_reason"] == "audit_misconfigured"
-
-
-def test_the_report_does_not_say_no_action_needed_while_a_workflow_keeps_failing(
-    audited,
-):
-    """The epic's own defect, committed by the report.
-
-    A workflow can be perfectly live -- on schedule, archiving every run -- and
-    fail every one of those runs. The liveness verdict is HEALTHY, so without
-    this the summary reads "No action needed" beside an escalation that just
-    fired.
-    """
-    _failed(audited, "daily_labeling", NOW - timedelta(hours=24))
-    _failed(audited, "daily_labeling", datetime.now(timezone.utc))
-
-    context = _audit_pass(audited, datetime.now(timezone.utc))
-    report = generate_audit_report(None, context)
-
-    assert context["daily_labeling_verdict"] == HealthVerdict.HEALTHY.value
-    assert "No action needed" not in report["recommendation"]
-    assert "daily_labeling" in report["recommendation"]
-    assert report["workflows_failing_repeatedly"] == ["daily_labeling"]
-
-
-def test_the_report_says_so_when_the_streak_check_did_not_run(audited):
-    """An absent streak check must not read as a clean streak check."""
-    context = check_liveness(None, {})
-    context.update(check_failure_streaks(None, {"archive_readable": False}))
-
-    report = generate_audit_report(None, context)
-
-    assert "did not run" in report["recommendation"]

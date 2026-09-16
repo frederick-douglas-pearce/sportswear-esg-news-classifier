@@ -152,18 +152,22 @@ class AgentSettings:
     # escalates. Env-overridable, unlike the cadence dicts above: which jobs are
     # watched is a governance decision, while N is an operator's sensitivity
     # knob. The inconsistency with `audit_grace_hours` -- also a sensitivity
-    # knob, also code-only -- is deliberate, and was put to the human at #75's plan
-    # gate (D014).
+    # knob, also code-only -- is deliberate and was ratified at #75's plan gate.
     #
-    # The dangerous direction is UP, and it is silent: a large enough N means
-    # the detector never fires, which is this epic's own defect reaching the
-    # escalator through its configuration. `__post_init__` refuses N < 1 for the
-    # same reason, since N = 0 would escalate on a workflow that has not failed
-    # at all. A knob with a silent direction is pinned in CI rather than trusted.
-    consecutive_failure_threshold: int = field(
-        default_factory=lambda: int(
-            os.getenv("AGENT_CONSECUTIVE_FAILURE_THRESHOLD", "2")
-        )
+    # Held as the RAW string and parsed by `parse_failure_threshold` at the point
+    # of use, so a bad value fails the one step that reads it rather than the
+    # import. Validating in `__post_init__` raised from module scope, where
+    # `agent_settings` is constructed: one mistyped knob then stopped every agent
+    # workflow, including the auditor that exists to notice things going dark.
+    # That is this epic's own defect class recursing through its configuration,
+    # and D014.7 (which asked for the `__post_init__` raise) was reversed at
+    # #75's code-review scope ruling. `_cadence_config_error` is the precedent --
+    # loud, and scoped to the check it disables.
+    #
+    # Nothing guards the UP direction: a large N is a detector that never fires
+    # and says nothing about it.
+    consecutive_failure_threshold_raw: str = field(
+        default_factory=lambda: os.getenv("AGENT_CONSECUTIVE_FAILURE_THRESHOLD", "2")
     )
 
     # Project paths
@@ -190,15 +194,7 @@ class AgentSettings:
     )
 
     def __post_init__(self) -> None:
-        """Ensure directories exist, and refuse a threshold that cannot fire."""
-        if self.consecutive_failure_threshold < 1:
-            # Loud, at construction, rather than a clamp: a clamp would run the
-            # escalator at a threshold nobody configured and report nothing
-            # wrong, which is the failure mode #75 exists to remove.
-            raise ValueError(
-                "AGENT_CONSECUTIVE_FAILURE_THRESHOLD must be at least 1; got "
-                f"{self.consecutive_failure_threshold}"
-            )
+        """Ensure directories exist."""
         self.state_dir.mkdir(parents=True, exist_ok=True)
         (self.project_root / self.logs_dir).mkdir(parents=True, exist_ok=True)
 
@@ -219,6 +215,31 @@ class AgentSettings:
         log_dir = self.project_root / self.logs_dir
         log_dir.mkdir(parents=True, exist_ok=True)
         return log_dir / f"{workflow_name}.log"
+
+
+def parse_failure_threshold(raw: str) -> tuple[int | None, str | None]:
+    """Parse the consecutive-failure threshold, returning (value, error).
+
+    Returns exactly one of the two: a usable threshold, or a message naming the
+    variable and quoting what was found. Never raises, and never clamps -- a
+    clamp would run the escalator at a threshold nobody configured and report
+    nothing wrong, which is the failure mode #75 exists to remove.
+
+    N = 0 is refused because it would escalate a workflow that has not failed at
+    all. That is the DOWN direction; nothing here guards the UP direction, where
+    a large N is a detector that never fires.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None, (
+            f"AGENT_CONSECUTIVE_FAILURE_THRESHOLD is not a number: {raw!r}"
+        )
+    if value < 1:
+        return None, (
+            f"AGENT_CONSECUTIVE_FAILURE_THRESHOLD must be at least 1; got {value}"
+        )
+    return value, None
 
 
 agent_settings = AgentSettings()

@@ -1168,3 +1168,98 @@ Per `loop.config.md` §6 this entry asserts no quantity and no causal history ov
 `KIND_SUCCESS_FLAG_FALSE` is not in `DISQUALIFYING_KINDS`, so a historical vacuous-success run
 resets the streak, and a live firing requires two genuinely-failing post-contract runs. Acceptance
 therefore rests on synthesized runs in CI, not on the live archive.
+
+---
+
+## D015: Four Corrections to D014, From #75's Code-Review Scope Ruling (#75)
+
+**Status:** decided at the code-review scope ruling, after implementation and before the fixes were
+applied. `.claude/specs/decisions.md` is append-only, so D014 is corrected here rather than edited —
+the D012 → D013 precedent. **Read D014 with this entry.**
+
+Round 1 of code review returned findings from four lenses. Four of them landed on D014 itself rather
+than on the code: the decision either under-specified a path, gave a reason that does not hold, or
+ruled something whose blast radius the finders measured and I had not.
+
+### 1. D014.7 is REVERSED: the threshold is validated at the point of use, not in `__post_init__`
+
+D014.7 asked for `AgentSettings` to raise on `N < 1`. `agent_settings` is constructed at module
+scope, so the raise fired at **import**: one mistyped `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` stopped
+`daily_labeling`, `website_export`, `drift_monitoring` and `run_audit` alike. A knob read by one step
+of one workflow disabled every liveness detector in the system, and the auditor cannot audit itself.
+That is this epic's own defect class recursing through its configuration.
+
+The setting now holds the **raw string**; `config.parse_failure_threshold` returns `(value, error)`
+and `check_failure_streaks` turns an error into a `StepFailure`. `_cadence_config_error` is the
+precedent this should have followed from the start: loud, and **scoped to the check it disables**.
+Clamping stays rejected for D014.7's original reason — it would run the escalator at a threshold
+nobody configured and report nothing wrong.
+
+### 2. D014.3 over-states: the marks come from the newest READABLE run, not the newest run
+
+D014.3 said "a prior context that is missing, corrupt or absent yields an escalation". False:
+`iter_runs` logs and skips a record that does not parse, so a corrupt newest `run_audit` record falls
+back to the one before it and returns **its** marks.
+
+The **behaviour is right and is kept**. Those marks are at most one pass stale, and staleness here
+resolves toward a duplicate alert for the one workflow the corrupt pass had just advanced — never
+toward suppression. Reading only the single newest file would turn one corrupt record into an empty
+ledger and re-escalate every current streak at once. Only the claim was wrong, and it was wrong in
+the code docstring, in D014.3, and in the test docstring, where the test passed because its fixture
+held exactly one prior record. The test now holds two, with the newest corrupt.
+
+D014.3's rule stands where it is true: with **no readable record at all**, the escalator alerts.
+
+### 3. D014's reason for the streak allowlist is a category error; the allowlist is unchanged
+
+The plan and D014 justified reusing `audit_expected_interval_hours` with cadence arguments —
+`model_training` has no cadence, `run_audit` cannot observe its own absence. **A failure streak needs
+no cadence**, only a sequence of archived runs, and both of those workflows produce one. The reasons
+did not support the conclusion.
+
+The conclusion survives on different grounds, recorded now so the next reader does not re-derive the
+wrong ones:
+
+- **`model_training` stays out because it PAUSES for notebooks.** `run_succeeded` is false for any
+  non-`completed` status, so a paused run counts as a failure and watching it would fire on every
+  ordinary train-then-pause cycle.
+- **`run_audit` watching its own failures is a real gap, deferred deliberately.** Unlike the liveness
+  self-skip, past failure *is* observable from prior archived runs — `_prior_escalation_marks`
+  already reads them. But an auditor escalating about its own failing runs, from inside a possibly
+  failing run, is a feedback loop that deserves its own decision rather than a one-line allowlist
+  change.
+
+### 4. The "pinned in CI" claim is withdrawn, and the claim class is cut rather than reworded
+
+D014.7 and the `config.py` comment both said a knob with a silent direction "is pinned in CI". The
+only test pinned the **downward** direction — the loud one. The dangerous direction is UP: a large N
+is a detector that never fires and says nothing about it, and nothing guards it.
+
+Per `loop.config.md` §6 the disposition is deletion, not a third wording: the comment now says
+plainly that the up direction is unguarded. The default value is pinned by a test instead of being
+asserted in prose.
+
+### What this entry does not change
+
+D014.1 (placement), D014.2 (the carry-forward high-water mark), D014.4 (no `{name}_verdict` key from
+the streak step), D014.5 (a detection is never `unknown`) and D014.6 (`consecutive_failures` belongs
+in `archive.py`) all stand and were confirmed by the review.
+
+### Resolved at the plan gate, recorded here because D014 still reads them as open
+
+D014's "What this decision does not settle" left two questions to the human. Both were answered on
+2026-09-15 before implementation, and `config.py` cites D014 as the record of that resolution:
+
+- **AC-1 semantics: nag per new failed run** while the streak holds — a job failing daily alerts
+  daily, rather than going quiet after the first alert.
+- **N is an env var**, with the guard now at the point of use per correction 1 above.
+
+### Deferrals from this round, to be filed
+
+- Archive scan efficiency, retention, and the non-atomic pair of reads, as **one** issue: the scan
+  cost grows with the archive, the concern is agent-wide rather than #75-local, and the single-scan
+  refactor also closes the race where a streak read and a newest read straddle a run being archived.
+- `archive.py` reader robustness to a **non-string key** in `failure_signals`/`sorted(items())`: a
+  pre-existing #76 surface that #75 merely newly routes the unattended auditor through. The
+  `_prior_escalation_marks` half is fixed here; the reader half is not.
+- #125 is already filed. This change names it in code and adds no independent clean exit.
