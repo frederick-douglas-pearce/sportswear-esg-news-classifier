@@ -255,6 +255,7 @@ def test_signal_kinds_matches_what_the_extractor_emits():
             "fp_verdict": "unknown",
             "fp_drift_check_success": False,
             "errors": ["export failed"],
+            7: "a key this reader cannot interpret",
         },
     )
 

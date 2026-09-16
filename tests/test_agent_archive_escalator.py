@@ -541,17 +541,22 @@ def test_the_escalator_passes_the_allowlist_to_both_archive_reads(audited):
     what actually pins it.
     """
     _live_failing_twice(audited)
+    # OUTSIDE the patch block. `check_liveness` calls `latest_run_per_workflow`
+    # with the same allowlist, so recording it here would satisfy the streak
+    # assertion below no matter what `check_failure_streaks` passed -- which is
+    # how the previous version of this test passed under the mutation it names.
+    liveness = check_liveness(None, {})
 
     with patch.object(
         run_audit_module, "consecutive_failures", wraps=consecutive_failures
     ) as streaks, patch.object(
         run_audit_module, "latest_run_per_workflow", wraps=latest_run_per_workflow
     ) as latest:
-        check_failure_streaks(None, check_liveness(None, {}))
+        check_failure_streaks(None, liveness)
 
     assert streaks.call_args.kwargs["workflows"] == {WATCHED}
     seen = [call.kwargs.get("workflows") for call in latest.call_args_list]
-    assert {WATCHED} in seen, "the streak read dropped its allowlist"
+    assert seen.count({WATCHED}) == 1, "the streak read dropped its allowlist"
     assert {"run_audit"} in seen, "the ledger read dropped its allowlist"
 
 
@@ -571,8 +576,7 @@ def test_records_under_names_outside_the_cadence_config_are_not_escalated(audite
 
 
 def test_a_stalled_and_failing_workflow_is_not_paged_twice(audited):
-    """`send_stale_alerts` has already reported it; a second page would say
-    "still running on schedule", which is false on both halves."""
+    """`send_stale_alerts` has already reported it; one workflow, one page."""
     _failed(audited, WATCHED, _now() - timedelta(days=6))
     _failed(audited, WATCHED, _now() - timedelta(days=5))
 
@@ -701,31 +705,57 @@ def test_a_disabled_streak_check_is_never_reported_as_no_action_needed(audited):
     assert report["audit_summary"]["all_checked_healthy"] is False
 
 
-def test_a_non_string_key_anywhere_in_a_record_does_not_abort_the_audit(audited):
-    """The reader half, pulled back in from the deferral at round 2.
+def test_a_malformed_key_reads_as_a_failure_and_never_as_a_success(audited):
+    """Both halves of the round-3 finding, in one record.
 
-    `sorted()` raises `TypeError` comparing a non-string key to a string, and
-    neither that nor `AttributeError` is an `OSError`, so no caller's guard
-    catches them. Since the escalator exists, an abort here also means the step
-    never returns and the mark ledger is never written — so the next pass
-    re-alerts everything, which is the defect the ledger was built to prevent.
+    Keys are partitioned rather than filtered, so a record this reader cannot
+    fully parse is evidence something is wrong and never evidence that nothing
+    is. Dropping the unreadable part was tried and was wrong: a run archived
+    `completed` whose failed step sat under a non-string key read as a SUCCESS
+    and reset the streak.
+
+    The record carries a non-string key **beside** a string one in each mapping,
+    so `sorted()` actually has two keys to compare — the `TypeError` path a
+    single-key record never reaches.
+    """
+    write_archive(
+        audited,
+        WATCHED,
+        _now() - timedelta(minutes=30),
+        status="completed",
+        steps={
+            "label": {"status": "completed"},
+            7: {"status": "failed", "error": "the real failure"},
+        },
+        context={"ok": True, 9: "a key this reader cannot interpret"},
+    )
+
+    assert consecutive_failures(audited, workflows={WATCHED}) == {WATCHED: 1}
+
+    context = _audit_pass(audited)
+    assert context["failure_streaks_checked"] is True
+    assert context[f"{WATCHED}_consecutive_failures"] == 1
+
+
+def test_a_malformed_record_does_not_abort_the_audit_or_erase_the_ledger(audited):
+    """`TypeError`/`AttributeError` are not `OSError`, so no guard catches them.
+
+    An abort would mean the step never returns, so the carried marks never reach
+    the context and the next pass re-alerts everything — the defect the ledger
+    exists to prevent.
     """
     _live_failing_twice(audited)
     first = _audit_pass(audited)
     assert _escalated(first) == [WATCHED]
 
-    # A COMPLETED run of the watched workflow, carrying a non-string key. The
-    # streak read walks this record; `_prior_escalation_marks` never sees it.
     write_archive(
         audited,
-        WATCHED,
-        _now() - timedelta(minutes=10),
-        context={1: "an int key"},
-        steps={2: {"status": "completed"}},
+        "run_audit",
+        _now() - timedelta(minutes=5),
+        context={"ok": True, 1: "an int key"},
     )
 
     second = _audit_pass(audited)
 
     assert second["failure_streaks_checked"] is True
     assert second.get(f"{WATCHED}{ESCALATED_SUFFIX}"), "the ledger was erased"
-    assert _escalated(second) == []

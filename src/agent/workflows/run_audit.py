@@ -456,9 +456,7 @@ def check_failure_streaks(
     # paused run is never archived at all, so the counter cannot see one). Under
     # `loop.config.md` section 6 the disposition after a second wrong reason is
     # to delete the claim rather than write a third, so the question of which
-    # workflows SHOULD be watched is recorded as open in D016 and left to be
-    # settled deliberately. `test_the_escalator_reads_only_the_allowlisted_names`
-    # pins the set that is actually read.
+    # workflows SHOULD be watched is recorded as open in D016.
     #
     # Never every name on disk: that would read the synthetic records a test
     # harness can leave behind (#124), which is a fact about the name rather
@@ -485,9 +483,8 @@ def check_failure_streaks(
         )
 
     # A workflow that has stopped running is already being paged by
-    # `send_stale_alerts`. Escalating it again here pages the operator twice for
-    # one workflow, and the streak alert's "still running on schedule" would be
-    # false. Its streak is still recorded; only the second page is suppressed.
+    # `send_stale_alerts`. Escalating it again pages the operator twice for one
+    # workflow. Its streak is still recorded; only the second page is suppressed.
     stale = set(context.get("stale_workflows") or [])
 
     due: list[str] = []

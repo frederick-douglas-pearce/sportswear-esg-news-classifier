@@ -136,10 +136,17 @@ KIND_STEP_ERROR = "step_error"
 KIND_VERDICT_UNKNOWN = "verdict_unknown"
 KIND_SUCCESS_FLAG_FALSE = "success_flag_false"
 KIND_CONTEXT_ERRORS = "context_errors"
+KIND_MALFORMED_RECORD = "malformed_record"
 
 #: Signal kinds that mean the run did not succeed, under the contract that
 #: #73 and #74 established. Deliberately excludes ``success_flag_false`` and
 #: ``context_errors`` -- see the module docstring.
+#:
+#: ``malformed_record`` is here because a record this reader cannot fully parse
+#: is evidence that something is wrong, never evidence that nothing is. Dropping
+#: the unreadable part and returning the rest would let a run carrying a failed
+#: step read as a success, which is the reasoning ``run_succeeded`` below
+#: forbids in as many words.
 DISQUALIFYING_KINDS = frozenset(
     {
         KIND_STATUS_FAILED,
@@ -147,6 +154,7 @@ DISQUALIFYING_KINDS = frozenset(
         KIND_STEP_FAILED,
         KIND_STEP_ERROR,
         KIND_VERDICT_UNKNOWN,
+        KIND_MALFORMED_RECORD,
     }
 )
 
@@ -328,6 +336,25 @@ def consecutive_failures(
     return streaks
 
 
+def _partition_string_keys(
+    mapping: dict[str, Any],
+) -> tuple[list[tuple[str, Any]], list[str]]:
+    """Split a mapping into string-keyed items and a list of the other keys.
+
+    Returned as a list of pairs rather than a dict so the caller can ``sorted()``
+    it without re-checking, and the rejected keys are returned rather than
+    discarded so their presence can be reported.
+    """
+    readable: list[tuple[str, Any]] = []
+    rejected: list[str] = []
+    for key, value in mapping.items():
+        if isinstance(key, str):
+            readable.append((key, value))
+        else:
+            rejected.append(repr(key))
+    return readable, sorted(rejected)
+
+
 def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
     """Every piece of failure evidence carried by this run's record.
 
@@ -345,17 +372,29 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
     if run_error:
         signals.append(FailureSignal(KIND_RUN_ERROR, "error", str(run_error)))
 
-    # `run.steps` and `run.context` are type-guarded as mappings, but not on
-    # their KEYS: a record can parse as YAML and still carry a non-string key,
-    # where `sorted()` raises `TypeError` comparing it to a string and
-    # `key.endswith` raises `AttributeError`. Neither is an `OSError`, so no
-    # caller's guard catches them and the whole unattended audit aborts -- which
-    # since #75 also means the escalation ledger is never written, so the next
-    # pass re-alerts everything. Skipping such a key keeps the per-record
-    # tolerance this module's docstring promises.
-    for step_name, step in sorted(
-        (k, v) for k, v in run.steps.items() if isinstance(k, str)
-    ):
+    # A record can parse as YAML and still carry a non-string key, where
+    # `sorted()` raises `TypeError` comparing it to a string and `key.endswith`
+    # raises `AttributeError`. Neither is an `OSError`, so no caller's guard
+    # catches them and the whole unattended audit aborts.
+    #
+    # The keys are therefore partitioned rather than filtered, and the
+    # unreadable ones become a DISQUALIFYING signal. Silently dropping them was
+    # tried and was wrong: a run archived `completed` whose failed step sat
+    # under a non-string key then read as a success and reset the streak.
+    readable_steps, unreadable = _partition_string_keys(run.steps)
+    readable_context, unreadable_context = _partition_string_keys(run.context)
+    unreadable += unreadable_context
+    if unreadable:
+        signals.append(
+            FailureSignal(
+                KIND_MALFORMED_RECORD,
+                "record",
+                "the record carries keys this reader cannot interpret "
+                f"({', '.join(unreadable)}), so it cannot be read as a success",
+            )
+        )
+
+    for step_name, step in sorted(readable_steps):
         if not isinstance(step, dict):
             continue
         if step.get("status") == "failed":
@@ -372,9 +411,7 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
                 )
             )
 
-    for key, value in sorted(
-        (k, v) for k, v in run.context.items() if isinstance(k, str)
-    ):
+    for key, value in sorted(readable_context):
         if key.endswith("_verdict") and value == "unknown":
             signals.append(
                 FailureSignal(

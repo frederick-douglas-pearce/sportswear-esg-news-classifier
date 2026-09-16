@@ -442,7 +442,7 @@ The failure-streak check watches `audit_expected_interval_hours` only, which is 
 than the workflows that archive runs. **Which workflows should be watched is an open question**
 (D016): two reasons have been given for excluding `model_training` and both were false, so the
 reason is recorded as unsettled rather than restated a third time. Whether `run_audit` should
-count its own past failures is open for the same reason.
+count its own past failures is also unsettled.
 
 A test asserts every workflow `setup_cron.sh` schedules appears in one of the two dicts, so a
 newly scheduled job cannot end up with no detector — this epic's defect reproduced inside the
