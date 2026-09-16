@@ -1263,3 +1263,54 @@ D014's "What this decision does not settle" left two questions to the human. Bot
   pre-existing #76 surface that #75 merely newly routes the unattended auditor through. The
   `_prior_escalation_marks` half is fixed here; the reader half is not.
 - #125 is already filed. This change names it in code and adds no independent clean exit.
+
+---
+
+## D016: The Streak Watch List Keeps Its Membership and Loses Its Rationale (#75)
+
+**Status:** decided at round 2 of code review, directed by the human. Corrects **D015 §3**, which
+corrected D014 on the same point. `.claude/specs/decisions.md` is append-only, so this is an entry
+rather than an edit. **Read D014 and D015 with it.**
+
+### What happened
+
+Which workflows the failure-streak check watches has now been justified **twice, wrongly**.
+
+1. **At the plan gate**, by cadence: `model_training` has no cadence and `run_audit` cannot observe
+   its own absence. False as a reason — a failure streak needs no cadence, only a sequence of
+   archived runs, and both workflows produce one. D015 §3 recorded that.
+2. **At the scope ruling**, by pause semantics: `model_training` pauses for notebooks and
+   `run_succeeded` is false for any non-`completed` status, so watching it would fire on every
+   train-then-pause cycle. Also false, and checkable: **a paused run is never archived at all.**
+   `_archive_workflow` has exactly two callers, `complete_workflow` and `fail_workflow`;
+   `pause_workflow` writes only `state.yaml`, and `Workflow._finalize` returns early without
+   archiving when the run is PAUSED with no failed step. The counter reads archived records, so it
+   cannot see a paused run. One record is written per run, at resume, and it counts as a success.
+
+### The decision
+
+`loop.config.md` §6 caps a class of claim at two corrections; the third disposition is **deletion of
+the class, not a third correction**. So:
+
+- **The membership stands unchanged.** The streak check watches
+  `audit_expected_interval_hours`, and `test_the_escalator_passes_the_allowlist_to_both_archive_reads`
+  pins the set that is actually read.
+- **The rationale is deleted**, from the code comment in `check_failure_streaks` and from
+  `docs/AGENT.md`. Neither now says *why* a workflow is or is not watched.
+- **Which workflows SHOULD be watched is recorded as OPEN.** That is a real question — two of the
+  three excluded workflows archive runs that could be counted — and it deserves to be settled
+  deliberately rather than inherited from a list built for a different purpose. It is not settled
+  here and nothing in #75 depends on settling it.
+
+**Why deletion rather than a third attempt.** The two wrong reasons were not careless; each was
+plausible, each survived a review gate, and the second was produced by the gate convened to correct
+the first. A third reason written under the same conditions carries the same risk, and a wrong
+*reason* attached to a correct *membership* is worse than no reason: it is the kind of claim a later
+reader stops looking behind. The membership is a fact a test can pin. The rationale was not.
+
+### One thing this does not license
+
+Deleting a rationale is not deleting a constraint. **Never every name on disk** — the archive can
+hold records written under names a test harness invented (#124), and excluding those is a fact about
+the name rather than a judgement about a workflow. That clause stays in the code and keeps its
+reason.

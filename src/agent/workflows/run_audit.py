@@ -447,16 +447,22 @@ def check_failure_streaks(
             },
         )
 
-    # Exactly the liveness allowlist, and the same variable. NOT because the
-    # excluded workflows lack a cadence -- a failure streak needs no cadence,
-    # only a sequence of archived runs, so that reasoning (given at the plan
-    # gate) was a category error, corrected at the scope ruling. The real bars:
-    # `model_training` PAUSES for notebooks and `run_succeeded` is false for any
-    # non-`completed` status, so watching it would fire on every ordinary
-    # train-then-pause cycle; and an auditor escalating about its own failing
-    # runs, from inside a possibly-failing run, is a feedback loop that needs its
-    # own decision rather than a one-line allowlist change. Never every name on
-    # disk, which would read the synthetic records a test harness leaves (#124).
+    # Exactly the liveness allowlist, and the same variable -- which is a
+    # narrower set than the workflows that archive runs.
+    #
+    # WHY each excluded workflow is excluded is NOT stated here. Two different
+    # reasons have been given for `model_training` and both were false: the
+    # cadence argument (a streak needs no cadence) and the pause argument (a
+    # paused run is never archived at all, so the counter cannot see one). Under
+    # `loop.config.md` section 6 the disposition after a second wrong reason is
+    # to delete the claim rather than write a third, so the question of which
+    # workflows SHOULD be watched is recorded as open in D016 and left to be
+    # settled deliberately. `test_the_escalator_reads_only_the_allowlisted_names`
+    # pins the set that is actually read.
+    #
+    # Never every name on disk: that would read the synthetic records a test
+    # harness can leave behind (#124), which is a fact about the name rather
+    # than a judgement about the workflow.
     watched = set(settings.audit_expected_interval_hours)
 
     try:
@@ -649,10 +655,19 @@ def generate_audit_report(workflow: Workflow, context: dict[str, Any]) -> dict[s
     else:
         streak_clause = ""
 
-    # The typed surface has to agree with the prose. A streak at or past the
-    # threshold is a check that ran and found a real problem, so a summary
-    # claiming every check passed is false whatever the liveness verdicts say.
-    if failing:
+    # The typed surface has to agree with the prose, and BOTH ways it can
+    # disagree are covered here. A streak at or past the threshold is a check
+    # that ran and found a real problem; a streak check that did not run at all
+    # is a check whose subject is unwatched. Either way a summary claiming every
+    # check passed is false, whatever the liveness verdicts say.
+    #
+    # The second half is not hypothetical: it was shipped and caught at round 2
+    # of review. An earlier fix deleted a guard on this branch as "redundant",
+    # and the report then rendered "No action needed - every audited workflow is
+    # running" in the same breath as "the failure-streak check did not run".
+    # Setting the flag here is what keeps the two surfaces in step, since the
+    # recommendation below is chosen from it.
+    if failing or context.get("failure_streaks_checked") is not True:
         summary["all_checked_healthy"] = False
     summary["failing_repeatedly"] = failing
 

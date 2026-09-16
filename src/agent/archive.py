@@ -345,7 +345,17 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
     if run_error:
         signals.append(FailureSignal(KIND_RUN_ERROR, "error", str(run_error)))
 
-    for step_name, step in sorted(run.steps.items()):
+    # `run.steps` and `run.context` are type-guarded as mappings, but not on
+    # their KEYS: a record can parse as YAML and still carry a non-string key,
+    # where `sorted()` raises `TypeError` comparing it to a string and
+    # `key.endswith` raises `AttributeError`. Neither is an `OSError`, so no
+    # caller's guard catches them and the whole unattended audit aborts -- which
+    # since #75 also means the escalation ledger is never written, so the next
+    # pass re-alerts everything. Skipping such a key keeps the per-record
+    # tolerance this module's docstring promises.
+    for step_name, step in sorted(
+        (k, v) for k, v in run.steps.items() if isinstance(k, str)
+    ):
         if not isinstance(step, dict):
             continue
         if step.get("status") == "failed":
@@ -362,7 +372,9 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
                 )
             )
 
-    for key, value in sorted(run.context.items()):
+    for key, value in sorted(
+        (k, v) for k, v in run.context.items() if isinstance(k, str)
+    ):
         if key.endswith("_verdict") and value == "unknown":
             signals.append(
                 FailureSignal(

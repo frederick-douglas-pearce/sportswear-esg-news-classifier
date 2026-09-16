@@ -832,8 +832,7 @@ def send_consecutive_failure_notification(
         message=(
             f"The {workflow_name} workflow has failed its last "
             f"{consecutive_failures} runs in a row (escalation threshold: "
-            f"{threshold}). It is still running on schedule, so nothing else "
-            f"reports on it -- its work has not been done since the streak began."
+            f"{threshold}). Its work has not been done since the streak began."
         ),
         details={
             "workflow": workflow_name,

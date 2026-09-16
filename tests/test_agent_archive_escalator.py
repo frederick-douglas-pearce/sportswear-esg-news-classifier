@@ -22,7 +22,10 @@ import pytest
 from src.agent.config import AgentSettings, agent_settings, parse_failure_threshold
 from src.agent.health import HealthVerdict
 from src.agent.notifications import send_consecutive_failure_notification
+from src.agent import workflows as _agent_workflows  # noqa: F401
+from src.agent.archive import consecutive_failures, latest_run_per_workflow
 from src.agent.state import StateManager
+from src.agent.workflows import run_audit as run_audit_module
 from src.agent.workflows.base import StepFailure
 from src.agent.workflows.run_audit import (
     ESCALATED_SUFFIX,
@@ -526,12 +529,34 @@ def test_an_unusable_threshold_fails_the_step_and_keeps_the_ledger(audited):
 # --------------------------------------------------------------------------
 
 
-def test_the_escalator_reads_only_the_allowlisted_names(audited):
-    """Dropping `workflows=watched` must not pass.
+def test_the_escalator_passes_the_allowlist_to_both_archive_reads(audited):
+    """Asserted on the CALLS, because the output cannot see this.
 
-    The archive can hold records under names a test harness invented (#124) and
-    under workflows deliberately outside the cadence config.
+    `check_failure_streaks` iterates `watched` and looks each name up, so extra
+    entries in the returned dicts are never consulted and removing `workflows=`
+    changes no observable context. The round-2 re-check found the previous
+    version of this test — which asserted only on the context — passed under the
+    exact mutation its docstring said must fail. The allowlist is defence in
+    depth against a record written under an invented name (#124), and this is
+    what actually pins it.
     """
+    _live_failing_twice(audited)
+
+    with patch.object(
+        run_audit_module, "consecutive_failures", wraps=consecutive_failures
+    ) as streaks, patch.object(
+        run_audit_module, "latest_run_per_workflow", wraps=latest_run_per_workflow
+    ) as latest:
+        check_failure_streaks(None, check_liveness(None, {}))
+
+    assert streaks.call_args.kwargs["workflows"] == {WATCHED}
+    seen = [call.kwargs.get("workflows") for call in latest.call_args_list]
+    assert {WATCHED} in seen, "the streak read dropped its allowlist"
+    assert {"run_audit"} in seen, "the ledger read dropped its allowlist"
+
+
+def test_records_under_names_outside_the_cadence_config_are_not_escalated(audited):
+    """The behavioural half: a synthetic name and an unwatched workflow."""
     _live_failing_twice(audited)
     _failed(audited, "failing", _now() - timedelta(hours=20))
     _failed(audited, "failing", _now() - timedelta(minutes=30))
@@ -649,3 +674,58 @@ def test_the_escalation_notification_carries_its_type_and_severity(manager_cls):
     assert "3" in sent.message and "2" in sent.message
     assert sent.details["consecutive_failures"] == 3
     assert sent.details["threshold"] == 2
+
+
+def test_a_disabled_streak_check_is_never_reported_as_no_action_needed(audited):
+    """Both surfaces, on the path an earlier fix opened and then mis-reported.
+
+    A healthy, succeeding workflow with an unusable threshold: liveness is clean,
+    so the summary would read healthy and the recommendation would read "No
+    action needed" — beside a clause saying the streak check did not run. An
+    earlier fix deleted the guard on this branch as redundant and shipped
+    exactly that self-contradiction; round 2 of review caught it.
+
+    Note the assertion the previous test lacked: that the all-clear is ABSENT,
+    not merely that the warning is present.
+    """
+    write_archive(audited, WATCHED, _now() - timedelta(minutes=30))
+
+    with patch.object(agent_settings, "consecutive_failure_threshold_raw", "0"):
+        context = _audit_pass(audited)
+        report = generate_audit_report(None, context)
+
+    assert context["failure_streaks_checked"] is False
+    assert context[f"{WATCHED}_verdict"] == HealthVerdict.HEALTHY.value
+    assert "No action needed" not in report["recommendation"]
+    assert "did not run" in report["recommendation"]
+    assert report["audit_summary"]["all_checked_healthy"] is False
+
+
+def test_a_non_string_key_anywhere_in_a_record_does_not_abort_the_audit(audited):
+    """The reader half, pulled back in from the deferral at round 2.
+
+    `sorted()` raises `TypeError` comparing a non-string key to a string, and
+    neither that nor `AttributeError` is an `OSError`, so no caller's guard
+    catches them. Since the escalator exists, an abort here also means the step
+    never returns and the mark ledger is never written — so the next pass
+    re-alerts everything, which is the defect the ledger was built to prevent.
+    """
+    _live_failing_twice(audited)
+    first = _audit_pass(audited)
+    assert _escalated(first) == [WATCHED]
+
+    # A COMPLETED run of the watched workflow, carrying a non-string key. The
+    # streak read walks this record; `_prior_escalation_marks` never sees it.
+    write_archive(
+        audited,
+        WATCHED,
+        _now() - timedelta(minutes=10),
+        context={1: "an int key"},
+        steps={2: {"status": "completed"}},
+    )
+
+    second = _audit_pass(audited)
+
+    assert second["failure_streaks_checked"] is True
+    assert second.get(f"{WATCHED}{ESCALATED_SUFFIX}"), "the ledger was erased"
+    assert _escalated(second) == []

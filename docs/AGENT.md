@@ -438,11 +438,11 @@ point of use, so a value below 1 or a non-number fails `check_failure_streaks` w
 a knob one step reads (D015.1). Nothing guards the other direction — a large N is a detector
 that never fires and says nothing about it.
 
-The failure-streak check watches `audit_expected_interval_hours` only. `model_training` is
-excluded because it *pauses* for notebooks and a paused run is not `completed`, so watching it
-would fire on every ordinary train-then-pause cycle; whether `run_audit` should count its own
-past failures is an open question, deliberately not answered by reusing the cadence skip list
-(D015.3).
+The failure-streak check watches `audit_expected_interval_hours` only, which is a narrower set
+than the workflows that archive runs. **Which workflows should be watched is an open question**
+(D016): two reasons have been given for excluding `model_training` and both were false, so the
+reason is recorded as unsettled rather than restated a third time. Whether `run_audit` should
+count its own past failures is open for the same reason.
 
 A test asserts every workflow `setup_cron.sh` schedules appears in one of the two dicts, so a
 newly scheduled job cannot end up with no detector — this epic's defect reproduced inside the
