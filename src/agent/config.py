@@ -146,6 +146,26 @@ class AgentSettings:
         }
     )
 
+    # Consecutive-failure escalation (#75)
+    #
+    # How many runs of a watched workflow must fail in a row before the auditor
+    # escalates. Env-overridable, unlike the cadence dicts above: which jobs are
+    # watched is a governance decision, while N is an operator's sensitivity
+    # knob. The inconsistency with `audit_grace_hours` -- also a sensitivity
+    # knob, also code-only -- is deliberate, and was put to the human at #75's plan
+    # gate (D014).
+    #
+    # The dangerous direction is UP, and it is silent: a large enough N means
+    # the detector never fires, which is this epic's own defect reaching the
+    # escalator through its configuration. `__post_init__` refuses N < 1 for the
+    # same reason, since N = 0 would escalate on a workflow that has not failed
+    # at all. A knob with a silent direction is pinned in CI rather than trusted.
+    consecutive_failure_threshold: int = field(
+        default_factory=lambda: int(
+            os.getenv("AGENT_CONSECUTIVE_FAILURE_THRESHOLD", "2")
+        )
+    )
+
     # Project paths
     project_root: Path = field(
         default_factory=lambda: Path(
@@ -170,7 +190,15 @@ class AgentSettings:
     )
 
     def __post_init__(self) -> None:
-        """Ensure directories exist."""
+        """Ensure directories exist, and refuse a threshold that cannot fire."""
+        if self.consecutive_failure_threshold < 1:
+            # Loud, at construction, rather than a clamp: a clamp would run the
+            # escalator at a threshold nobody configured and report nothing
+            # wrong, which is the failure mode #75 exists to remove.
+            raise ValueError(
+                "AGENT_CONSECUTIVE_FAILURE_THRESHOLD must be at least 1; got "
+                f"{self.consecutive_failure_threshold}"
+            )
         self.state_dir.mkdir(parents=True, exist_ok=True)
         (self.project_root / self.logs_dir).mkdir(parents=True, exist_ok=True)
 

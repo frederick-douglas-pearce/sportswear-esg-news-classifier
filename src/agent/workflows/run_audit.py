@@ -51,14 +51,16 @@ name by something other than that workflow. Test-harness isolation is #124.
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from ..archive import latest_run_per_workflow
+from ..archive import consecutive_failures, latest_run_per_workflow
 from ..config import agent_settings
 from ..health import HealthVerdict, summarize
 from ..notifications import (
     delivered,
     send_check_failure_notification,
+    send_consecutive_failure_notification,
     send_stale_workflow_notification,
 )
 from .base import (
@@ -74,6 +76,17 @@ logger = logging.getLogger(__name__)
 #: Context key holding every subject this run audited, so that the terminal
 #: gate can build itself over the same set the check step actually used.
 AUDITED_KEY = "audited_workflows"
+
+#: This workflow's own name, bound once. The escalation dedupe below reads this
+#: workflow's *previous* archived run, so the name is used as data and not only
+#: as an identity -- `RunAuditWorkflow.name` is set from this constant so the
+#: two cannot drift.
+AUDIT_WORKFLOW_NAME = "run_audit"
+
+#: Suffix of the per-workflow high-water mark the escalator carries forward. One
+#: spelling, read by `_prior_escalation_marks` and written by
+#: `send_failure_escalations`.
+ESCALATED_SUFFIX = "_escalated_run_id"
 
 #: How far into the future a run's start time may sit before the auditor treats
 #: it as a broken record rather than as clock noise. A time daemon stepping the
@@ -305,10 +318,242 @@ def send_stale_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
     }
 
 
+def _prior_escalation_marks(history_dir: Path | None = None) -> dict[str, str]:
+    """The high-water marks this auditor's previous run carried.
+
+    Reads *this* workflow's own newest archived record. The current run is not in
+    the archive yet -- `_archive_workflow` is written by
+    `complete_workflow`/`fail_workflow` at finalize (D009) -- so from inside a
+    step this cleanly yields the previous run.
+
+    Reading its own prior context is a different operation from the liveness
+    self-audit skip, which stands: the auditor still does not check its own
+    cadence, because a process cannot observe its own absence.
+
+    **Absence yields NO marks, and the caller escalates on no mark.** A missing,
+    unreadable or first-ever record all land here. Returning marks the caller
+    would read as "already escalated" is the one failure this must not have:
+    suppressing because you cannot tell whether you already alerted is silent
+    success reproduced inside the escalator (D014).
+    """
+    try:
+        previous = latest_run_per_workflow(
+            history_dir, workflows={AUDIT_WORKFLOW_NAME}
+        )
+    except OSError as exc:
+        logger.warning(
+            f"could not read this auditor's own prior run ({exc}); "
+            "escalating without dedupe rather than suppressing"
+        )
+        return {}
+
+    run = previous.get(AUDIT_WORKFLOW_NAME)
+    if run is None:
+        return {}
+
+    marks: dict[str, str] = {}
+    for key, value in run.context.items():
+        if key.endswith(ESCALATED_SUFFIX) and isinstance(value, str):
+            marks[key[: -len(ESCALATED_SUFFIX)]] = value
+    return marks
+
+
+def check_failure_streaks(
+    workflow: Workflow, context: dict[str, Any]
+) -> dict[str, Any] | StepFailure:
+    """Count each watched workflow's trailing failures and decide what is due.
+
+    The compute half of #75. Split from the alerting half for the reason
+    `check_liveness`/`send_stale_alerts` are split: the alert step is
+    `skip_on_dry_run`, and a dry run should still compute and report what it
+    found.
+
+    **It writes no `{name}_verdict` key** (D014). `check_liveness` writes one per
+    subject and step results merge into a flat context, so a second writer would
+    clobber the liveness verdict by loop order. Its own namespace is
+    `{name}_consecutive_failures` / `{name}_newest_run_id` / `{name}` +
+    `ESCALATED_SUFFIX`.
+
+    **A detection is never `unknown`.** "Failed N times" is real and actionable,
+    the same shape D012 ruled `degraded` for a stalled job, so it alerts and lets
+    this run complete. The only genuine can't-tell case is an unreadable archive,
+    and `check_liveness` already converts that into `unknown` over the same
+    subject set and already fails the run at the terminal gate -- so this step
+    guards on its flags and delegates rather than contributing a second opinion.
+    """
+    settings = agent_settings
+
+    # A config `check_liveness` already rejected does not get a second,
+    # differently-shaped opinion here, exactly as `send_stale_alerts` short-
+    # circuits on it.
+    config_error = context.get("audit_config_error")
+    if config_error:
+        return {
+            "failure_streaks_checked": False,
+            "failure_streak_skip_reason": "audit_misconfigured",
+        }
+
+    if not context.get("archive_readable", True):
+        return {
+            "failure_streaks_checked": False,
+            "failure_streak_skip_reason": "archive_unreadable",
+        }
+
+    # Exactly the liveness allowlist, and the same variable. Not
+    # `intervals | skipped` -- `model_training` has no cadence and `run_audit`
+    # is this workflow -- and never every name on disk, which would read the
+    # synthetic records a test harness can leave behind (#124).
+    watched = set(settings.audit_expected_interval_hours)
+    threshold = settings.consecutive_failure_threshold
+
+    try:
+        streaks = consecutive_failures(settings.history_dir, workflows=watched)
+        latest = latest_run_per_workflow(settings.history_dir, workflows=watched)
+    except OSError as exc:
+        # Not caught into an empty result: "no consecutive failures anywhere" is
+        # exactly the silent all-clear this issue exists to remove. Reaching
+        # here means the archive became unreadable between `check_liveness` and
+        # now, so the run fails rather than reporting nothing to escalate.
+        return StepFailure(
+            error=f"could not read the run archive for failure streaks: {exc}",
+            context={
+                "failure_streaks_checked": False,
+                "failure_streak_skip_reason": "archive_unreadable",
+            },
+        )
+
+    prior = _prior_escalation_marks(settings.history_dir)
+
+    due: list[str] = []
+    result: dict[str, Any] = {
+        "failure_streaks_checked": True,
+        "consecutive_failure_threshold": threshold,
+    }
+
+    for name in sorted(watched):
+        # A workflow with no archived run is ABSENT from `streaks`, and 0 is the
+        # right reading here: never-ran is a liveness finding (`degraded`), not a
+        # failure streak, and `check_liveness` already owns its alert. What must
+        # not happen is the absence being re-read as healthy -- it is not, it is
+        # reported by the other step.
+        streak = streaks.get(name, 0)
+        run = latest.get(name)
+        newest = run.run_id if run is not None else None
+
+        result[f"{name}_consecutive_failures"] = streak
+        if newest is not None:
+            result[f"{name}_newest_run_id"] = newest
+
+        mark = prior.get(name)
+        if mark is not None:
+            # CARRY THE MARK FORWARD UNCONDITIONALLY. Writing it only when this
+            # pass escalates makes the ledger forget the moment a pass
+            # suppresses: pass 1 escalates and records, pass 2 suppresses and
+            # records nothing, pass 3 reads an empty ledger and re-escalates.
+            # That bug is invisible to a two-pass test (D014).
+            result[f"{name}{ESCALATED_SUFFIX}"] = mark
+
+        if streak >= threshold and newest is not None and newest != mark:
+            due.append(name)
+
+    result["failure_escalations_due"] = due
+    return result
+
+
+def send_failure_escalations(
+    workflow: Workflow, context: dict[str, Any]
+) -> dict[str, Any]:
+    """Escalate every workflow whose failure streak has crossed the threshold.
+
+    Routed through `notifications` for the reason `send_stale_alerts` is, and
+    `delivered()` is what keeps the record honest: the notifier falls back to the
+    console when no channel is enabled, and counting that as delivery is how an
+    alert reaches nobody while the archive records that it was sent.
+
+    Advances the high-water mark only for what it actually alerted on. Marks for
+    everything else were already carried forward by the compute step, so a
+    suppressing pass does not erase them.
+    """
+    due = context.get("failure_escalations_due") or []
+    threshold = context.get("consecutive_failure_threshold")
+
+    sent: list[dict[str, Any]] = []
+    result: dict[str, Any] = {}
+
+    for name in due:
+        streak = context.get(f"{name}_consecutive_failures")
+        channels = send_consecutive_failure_notification(
+            workflow_name=name,
+            consecutive_failures=streak,
+            threshold=threshold,
+            details={"last_run": context.get(f"{name}_last_run")},
+        )
+        sent.append(
+            {
+                "subject": name,
+                "consecutive_failures": streak,
+                "channels": channels,
+                "delivered": delivered(channels),
+            }
+        )
+        newest = context.get(f"{name}_newest_run_id")
+        if newest:
+            result[f"{name}{ESCALATED_SUFFIX}"] = newest
+
+    result["failure_escalations_sent"] = sent
+    result["failure_escalations_delivered"] = any(
+        alert["delivered"] for alert in sent
+    )
+    return result
+
+
+def _repeatedly_failing(context: dict[str, Any], subjects: list[str]) -> list[str]:
+    """Audited subjects whose trailing failure streak has reached the threshold.
+
+    Read back off the compute step's own namespace rather than recomputed, so the
+    report cannot disagree with what was escalated.
+    """
+    threshold = context.get("consecutive_failure_threshold")
+    if not isinstance(threshold, int):
+        return []
+    failing = []
+    for name in subjects:
+        streak = context.get(f"{name}_consecutive_failures")
+        if isinstance(streak, int) and streak >= threshold:
+            failing.append(name)
+    return sorted(failing)
+
+
 def generate_audit_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Summarize the audit, reading verdicts rather than inferring health."""
+    """Summarize the audit, reading verdicts rather than inferring health.
+
+    **The liveness verdict alone is not the whole answer, and saying so is the
+    point.** A workflow can be perfectly live -- running on schedule, archiving
+    every run -- and still fail every one of those runs, which is precisely what
+    the streak check detects. Rendering "no action needed - every audited
+    workflow is running" beside an escalation that just fired would be this
+    epic's own defect committed by the report, so the streak result is carried
+    into every branch rather than only the healthy one (#75).
+    """
     subjects = context.get(AUDITED_KEY, [])
     summary = summarize({name: context.get(f"{name}_verdict") for name in subjects})
+    failing = _repeatedly_failing(context, subjects)
+
+    if context.get("failure_streaks_checked") is False:
+        streak_clause = (
+            " The failure-streak check did not run ("
+            + str(context.get("failure_streak_skip_reason") or "reason not recorded")
+            + "), so nothing is watching for a workflow that runs and fails."
+        )
+    elif failing:
+        streak_clause = (
+            " Running but failing every run: "
+            + ", ".join(failing)
+            + " - live, so the liveness check above is clean, and their work is "
+            "still not being done."
+        )
+    else:
+        streak_clause = ""
 
     if not subjects:
         # No subjects means `check_liveness` rejected the cadence config; the
@@ -321,7 +566,11 @@ def generate_audit_report(workflow: Workflow, context: dict[str, Any]) -> dict[s
             "no workflow has a liveness detector."
         )
     elif summary["all_checked_healthy"]:
-        recommendation = "No action needed - every audited workflow is running."
+        recommendation = (
+            "No action needed - every audited workflow is running."
+            if not (failing or streak_clause)
+            else "Every audited workflow is running on schedule."
+        )
     elif summary["degraded"]:
         recommendation = (
             "Stalled: " + ", ".join(summary["degraded"]) + ". Check cron and the "
@@ -334,7 +583,11 @@ def generate_audit_report(workflow: Workflow, context: dict[str, Any]) -> dict[s
             + ". These workflows are currently unmonitored."
         )
 
-    return {"audit_summary": dict(summary), "recommendation": recommendation}
+    return {
+        "audit_summary": dict(summary),
+        "recommendation": recommendation + streak_clause,
+        "workflows_failing_repeatedly": failing,
+    }
 
 
 def fail_on_unknown_verdict(
@@ -372,11 +625,17 @@ class RunAuditWorkflow(Workflow):
     Steps:
     1. Compare each expected workflow's newest run against its cadence
     2. Alert on anything stalled, an unreadable archive, or an unusable config
-    3. Generate a summary report
-    4. Fail the workflow if any audited subject produced no verdict
+    3. Count each watched workflow's trailing failures (#75)
+    4. Escalate any workflow whose streak has crossed the threshold (#75)
+    5. Generate a summary report
+    6. Fail the workflow if any audited subject produced no verdict
+
+    Liveness and the failure streak are two checks over one data source serving
+    one purpose -- surfacing scheduled work that is silently not being done. One
+    asks *did it run*, the other *did it keep succeeding* (D014).
     """
 
-    name = "run_audit"
+    name = AUDIT_WORKFLOW_NAME
     description = "Detect scheduled workflows that have stopped producing runs"
 
     steps = [
@@ -389,6 +648,19 @@ class RunAuditWorkflow(Workflow):
             name="send_stale_alerts",
             description="Notify about stalls, unreadable archives, bad config",
             handler=send_stale_alerts,
+            skip_on_dry_run=True,
+        ),
+        StepDefinition(
+            name="check_failure_streaks",
+            description="Count each watched workflow's trailing failed runs",
+            handler=check_failure_streaks,
+            # Deliberately NOT skip_on_dry_run: a dry run should still compute
+            # and report what it found, exactly as check_liveness does.
+        ),
+        StepDefinition(
+            name="send_failure_escalations",
+            description="Escalate workflows failing N runs in a row",
+            handler=send_failure_escalations,
             skip_on_dry_run=True,
         ),
         StepDefinition(

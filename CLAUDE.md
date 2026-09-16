@@ -368,6 +368,10 @@ RESEND_API_KEY=  # Recommended for email (resend.com, 3000/month free)
 AGENT_LLM_ANALYSIS=true  # Enable Claude analysis of labeling results
 AGENT_LLM_ERROR_THRESHOLD=0.0  # 0.0 = always run, >0 = only if error_rate exceeds
 AGENT_LLM_MODEL=claude-haiku-4-5-20251001  # Model for LLM analysis
+AGENT_CONSECUTIVE_FAILURE_THRESHOLD=2  # Escalate after N consecutive failed runs of a watched workflow.
+  # Lives here rather than beside the ALERT_* vars: it is an AGENT_* setting read by the run_audit
+  # workflow. Must be >= 1 -- AgentSettings raises otherwise, because a threshold too high to reach
+  # is a detector that never fires and says nothing about it.
 
 # Workflow Learning
 SCREENPIPE_API_URL=http://localhost:3030  # Screenpipe REST API

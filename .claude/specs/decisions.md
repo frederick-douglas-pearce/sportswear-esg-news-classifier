@@ -1088,3 +1088,83 @@ D008, D009, D010 and D012 each record correct code shipped with a false claim at
 and its two-correction cap is now spent for it: the next disposition is deletion of the claim, not a
 third correction. Several of #76's explanatory sentences were deleted on that basis rather than
 reworded, including from this entry.
+
+---
+
+## D014: The Consecutive-Failure Escalator Carries a High-Water Mark and Stays Out of the Verdict Vocabulary (#75)
+
+**Status:** decided at the design gate, before implementation. Recorded from the `architect` review
+of `.claude/loop/silent-success/issue-75.plan.md`.
+
+### Context
+
+#75 adds the forward detector this epic still lacks. #73 makes a failed step fail its run, #74
+makes an unresolved check fail its run, and #76 detects a job that has **stopped running** —
+nothing yet watches a job that **runs and fails every time**. `archive.run_succeeded` shipped in
+#76 with no production caller; #75 is its first consumer.
+
+### Decisions
+
+**1. The escalator is two new steps inside `run_audit`, not a hook in `_finalize()` and not a new
+workflow.** Liveness and failure-streak are two checks over one data source serving one purpose;
+they stay in one workflow. A `_finalize()` hook would put an outbound network call inside the
+single function that turns step outcomes into workflow status, where a notifier exception would
+change the archived status. It would additionally see an archive that does not yet contain the run
+it is counting, because `complete_workflow`/`fail_workflow` write the record from inside that path
+(D009) — true, but the weakest of the three reasons and recorded as such. The same timing fact
+works the other way for decision 2: a step reading `run_audit`'s own archive cleanly gets the
+*previous* run.
+
+**2. "Exactly once" is a carried-forward high-water mark, not a record of what this pass did.**
+Each pass stores `{workflow}_escalated_run_id` in `run_audit`'s own archived context, escalates
+only when the streak is at or above N **and** the newest run id differs from the stored one, and
+**carries the stored value forward unchanged when it suppresses**. Omitting that carry-forward is
+a defect whose signature is invisible to a two-pass test: pass 1 escalates and records, pass 2
+suppresses and records nothing, pass 3 reads an empty ledger and re-escalates. The guard is
+therefore a test spanning **three or more** passes over the same newest run.
+
+This is reuse of the existing archive, not a new store: it rides a write that already happens, and
+adds no file, table or persistence lifecycle. Reading `run_audit`'s own prior context is a
+different operation from the liveness self-audit skip, which stands.
+
+**3. When the escalator cannot tell, it escalates — it never suppresses.** A prior context that is
+missing, corrupt or absent (the first-ever run) yields an escalation and a possibly-duplicate
+alert. Suppressing on "I cannot tell whether I already alerted" is this epic's own defect
+reproduced inside the escalator.
+
+**4. The streak step contributes no `{name}_verdict` key.** `check_liveness` writes one per
+subject and step results merge into a flat context, so a second writer would clobber the liveness
+verdict by loop order (D009). The streak step uses a disjoint namespace and guards on
+`context["archive_readable"]`, delegating its only genuine can't-tell case to the liveness path
+that already converts it to `unknown` and already fails the run at the existing gate.
+
+**5. A detection is never `unknown`.** "Failed N times" is real and actionable — the same shape
+D012 ruled `degraded` for a stalled job — so it alerts and lets `run_audit` complete. Mapping a
+successful detection to `unknown` would fail the auditor's own run at the moment it worked, which
+is the trap D012 exists to name.
+
+**6. `consecutive_failures()` belongs in `archive.py`.** It is the peer of
+`latest_run_per_workflow` — the same group-by-workflow-and-reduce shape with a different
+reduction — and stays pure, preserving the module's no-state property. The threshold comparison,
+the dedupe and the alerting stay in `run_audit`; a threshold in `archive.py` would be the boundary
+violation the module's "extraction is not policy" line guards.
+
+**7. `N` is env-overridable with a fail-loud lower bound.** `AGENT_CONSECUTIVE_FAILURE_THRESHOLD`
+defaults to 2 and `AgentSettings` raises on `N < 1`. N's dangerous direction is *too high → the
+detector never fires*, a silent direction, and a config knob with a silent direction is pinned in
+CI rather than trusted. Whether N should be an env var at all — its nearest sibling
+`audit_grace_hours` is deliberately code-only — is put to the human at the plan gate.
+
+### What this decision does not settle
+
+Two readings of AC-1 remain, and the human chooses: one alert per new failed run while the streak
+holds (a daily job failing daily nags daily), or one alert per streak episode. The plan proposes
+the first.
+
+### Claim discipline
+
+Per `loop.config.md` §6 this entry asserts no quantity and no causal history over
+`~/.esg-agent/history/`. One consequence is recorded as a shape rather than a measurement:
+`KIND_SUCCESS_FLAG_FALSE` is not in `DISQUALIFYING_KINDS`, so a historical vacuous-success run
+resets the streak, and a live firing requires two genuinely-failing post-contract runs. Acceptance
+therefore rests on synthesized runs in CI, not on the live archive.
