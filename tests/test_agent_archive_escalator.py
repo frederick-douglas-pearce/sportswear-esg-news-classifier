@@ -737,25 +737,53 @@ def test_a_malformed_key_reads_as_a_failure_and_never_as_a_success(audited):
     assert context[f"{WATCHED}_consecutive_failures"] == 1
 
 
-def test_a_malformed_record_does_not_abort_the_audit_or_erase_the_ledger(audited):
-    """`TypeError`/`AttributeError` are not `OSError`, so no guard catches them.
+def test_a_malformed_record_inside_the_streak_read_extends_it_and_keeps_the_ledger(
+    audited,
+):
+    """The malformed record must sit where the audit actually reads it.
 
-    An abort would mean the step never returns, so the carried marks never reach
-    the context and the next pass re-alerts everything — the defect the ledger
-    exists to prevent.
+    An earlier version of this test wrote it under `run_audit` and passed with
+    every non-string-key guard removed: `_prior_escalation_marks` reads only the
+    newest `run_audit` record, and `_audit_pass` had already archived a newer
+    one, so nothing ever iterated the key. It was moved there because under
+    malformed-is-a-failure the record extends the streak, which made the old
+    "no re-escalation" assertion go red -- and the assertion was deleted rather
+    than updated. This is the updated assertion.
+
+    Under `WATCHED` the record is inside the streak read, so it pins three
+    things at once: the audit does not abort (`TypeError`/`AttributeError` are
+    not `OSError`, so no guard catches them and the step would never return),
+    the malformed record counts as a FAILURE rather than resetting the streak,
+    and the mark ledger survives and advances.
     """
     _live_failing_twice(audited)
     first = _audit_pass(audited)
     assert _escalated(first) == [WATCHED]
+    assert first[f"{WATCHED}_consecutive_failures"] == 2
+    first_mark = first[f"{WATCHED}{ESCALATED_SUFFIX}"]
 
+    malformed_at = _now() - timedelta(minutes=5)
     write_archive(
         audited,
-        "run_audit",
-        _now() - timedelta(minutes=5),
-        context={"ok": True, 1: "an int key"},
+        WATCHED,
+        malformed_at,
+        status="completed",
+        steps={
+            "label": {"status": "completed"},
+            7: {"status": "failed", "error": "the real failure"},
+        },
+        context={"ok": True, 9: "a key this reader cannot interpret"},
     )
 
     second = _audit_pass(audited)
 
-    assert second["failure_streaks_checked"] is True
-    assert second.get(f"{WATCHED}{ESCALATED_SUFFIX}"), "the ledger was erased"
+    assert second["failure_streaks_checked"] is True, "the audit aborted"
+    assert second[f"{WATCHED}_consecutive_failures"] == 3, (
+        "the malformed record reset the streak instead of extending it"
+    )
+    # A newer failed run, so it escalates again -- the ratified semantics, one
+    # alert per new failed run while the streak holds.
+    assert _escalated(second) == [WATCHED]
+    advanced = second[f"{WATCHED}{ESCALATED_SUFFIX}"]
+    assert advanced == malformed_at.strftime("%Y%m%d_%H%M%S")
+    assert advanced != first_mark, "the ledger did not advance"
