@@ -28,6 +28,7 @@ from src.agent.workflows import run_audit as run_audit_module
 from src.agent.workflows.base import StepFailure
 from src.agent.workflows.run_audit import (
     ESCALATED_SUFFIX,
+    send_failure_escalations,
     RunAuditWorkflow,
     check_failure_streaks,
     check_liveness,
@@ -821,3 +822,102 @@ def test_a_malformed_own_record_does_not_erase_the_ledger(audited):
 
     assert second[f"{WATCHED}_consecutive_failures"] == 2, "the streak changed"
     assert _escalated(second) == [], "the mark was lost, so it re-alerted"
+
+
+# --------------------------------------------------------------------------
+# Guards the Class B mutation pass found unpinned. Each of these was a
+# surviving mutant: the code was right, nothing would have noticed if it
+# stopped being right.
+# --------------------------------------------------------------------------
+
+
+def test_the_archive_unreadable_exit_also_carries_the_ledger(audited):
+    """The fourth exit of `check_failure_streaks`, and the one no test reached.
+
+    Three exits were pinned — a rejected config, an unusable threshold, and the
+    mid-pass `OSError` `StepFailure`. This one takes the `archive_readable`
+    flag `check_liveness` sets, and the test that reads like it covers this
+    asserts `archive_readable is True` and then patches the streak read to
+    raise, which is the OTHER path. Dropping the carried marks here erases the
+    ledger, and the next pass re-escalates every live streak.
+    """
+    _live_failing_twice(audited)
+    first = _audit_pass(audited)
+    assert _escalated(first) == [WATCHED]
+    mark = first[f"{WATCHED}{ESCALATED_SUFFIX}"]
+
+    result = check_failure_streaks(
+        None, {"archive_readable": False, "audit_error": "permission denied"}
+    )
+
+    assert result["failure_streaks_checked"] is False
+    assert result["failure_streak_skip_reason"] == "archive_unreadable"
+    assert result.get(f"{WATCHED}{ESCALATED_SUFFIX}") == mark, "the ledger was dropped"
+
+
+def test_nothing_escalated_is_not_recorded_as_delivered(audited):
+    """`all([])` is True, so `any` -> `all` archives `delivered: True` on a pass
+    that sent nothing.
+
+    Every other assertion on this key runs with exactly one alert in flight,
+    where the two are indistinguishable. An empty pass is the one shape that
+    tells them apart.
+    """
+    result = send_failure_escalations(None, {"failure_escalations_due": []})
+
+    assert result["failure_escalations_sent"] == []
+    assert result["failure_escalations_delivered"] is False
+
+
+def test_the_report_does_not_call_a_stalled_workflow_live(audited):
+    """The stalled-vs-live split in the report, which only the escalation
+    decision was pinning.
+
+    The one test that arranges a stalled AND failing workflow asserts the
+    escalation decision and never the recommendation, and both report tests use
+    a LIVE failing workflow, where the split is a no-op. Delete the split and
+    every failing workflow renders as "on schedule, so the liveness check above
+    is clean" — false, and said about a job the stall alert just paged for.
+    """
+    _failed(audited, WATCHED, _now() - timedelta(days=6))
+    _failed(audited, WATCHED, _now() - timedelta(days=5))
+
+    context = _audit_pass(audited)
+    report = generate_audit_report(None, context)
+
+    assert context[f"{WATCHED}_verdict"] == HealthVerdict.DEGRADED.value
+    assert "Stalled AND failing" in report["recommendation"]
+    assert "on schedule, so the liveness check above is clean" not in (
+        report["recommendation"]
+    )
+
+
+def test_an_unreadable_own_archive_escalates_rather_than_raising(audited):
+    """`_prior_escalation_marks`' `except OSError` branch, documented and untested.
+
+    The documented behaviour is to escalate without dedupe rather than suppress
+    — losing the ledger costs a duplicate alert, never a missed one. Nothing
+    pinned it: the empty-archive case takes the `run is None` branch instead,
+    and `history_dir` mkdirs on read (D013), so the `OSError` is unreachable
+    without an explicit patch.
+    """
+    _live_failing_twice(audited)
+    first = _audit_pass(audited)
+    assert _escalated(first) == [WATCHED]
+
+    real = run_audit_module.latest_run_per_workflow
+
+    def only_the_ledger_read_fails(*args, **kwargs):
+        # The streak read must keep working, or this would exercise the
+        # `StepFailure` path instead of the one under test.
+        if kwargs.get("workflows") == {"run_audit"}:
+            raise OSError("cannot list the archive")
+        return real(*args, **kwargs)
+
+    with patch.object(
+        run_audit_module, "latest_run_per_workflow", side_effect=only_the_ledger_read_fails
+    ):
+        second = _audit_pass(audited)
+
+    assert second["failure_streaks_checked"] is True, "it raised instead of escalating"
+    assert _escalated(second) == [WATCHED], "it suppressed when it could not tell"

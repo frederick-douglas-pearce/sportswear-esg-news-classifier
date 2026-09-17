@@ -211,6 +211,25 @@ def test_latest_run_per_workflow_returns_the_newest(history):
 # --------------------------------------------------------------------------
 
 
+def test_latest_run_per_workflow_honours_its_allowlist(history):
+    """The callee must OBEY the allowlist, not merely be handed one.
+
+    `test_latest_run_per_workflow_returns_the_newest` passes an allowlist but
+    writes only allowlisted records, so the filter has nothing to exclude and
+    the outcome is identical with or without it. The escalator's own test
+    asserts the allowlist was *passed*. Neither sees the callee honour it, and
+    `_prior_escalation_marks` depends on exactly that: unfiltered, the newest
+    record of ANY workflow becomes the ledger, it carries no mark keys, and
+    every live streak re-escalates on every pass.
+    """
+    write_archive(history, "daily_labeling", NOW - timedelta(hours=1))
+    write_archive(history, "website_export", NOW)
+
+    latest = latest_run_per_workflow(history, workflows={"daily_labeling"})
+
+    assert set(latest) == {"daily_labeling"}, "the allowlist was not applied"
+
+
 def test_vacuous_success_flags_a_completed_run_carrying_a_failure(history):
     """AC-1: status completed, embedded failure signal -> flagged."""
     run = make_run(
