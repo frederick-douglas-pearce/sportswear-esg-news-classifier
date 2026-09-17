@@ -142,7 +142,8 @@ KIND_MALFORMED_RECORD = "malformed_record"
 #: #73 and #74 established. Deliberately excludes ``success_flag_false`` and
 #: ``context_errors`` -- see the module docstring.
 #:
-#: ``malformed_record`` covers **non-string keys, and only those**. Dropping such
+#: ``malformed_record`` covers **non-string keys of ``steps`` and ``context``,
+#: at their top level, and only those**. Dropping such
 #: a key silently let a run carrying a failed step under one read as a success.
 #: It is not a general "unparseable means failed" rule, and the difference
 #: matters: ``ArchivedRun.steps``/``.context`` still return ``{}`` for a

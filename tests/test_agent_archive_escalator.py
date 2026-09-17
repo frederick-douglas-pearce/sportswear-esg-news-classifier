@@ -737,7 +737,7 @@ def test_a_malformed_key_reads_as_a_failure_and_never_as_a_success(audited):
     assert context[f"{WATCHED}_consecutive_failures"] == 1
 
 
-def test_a_malformed_record_inside_the_streak_read_extends_it_and_keeps_the_ledger(
+def test_a_malformed_record_inside_the_streak_read_extends_it_and_advances_the_mark(
     audited,
 ):
     """The malformed record must sit where the audit actually reads it.
@@ -751,10 +751,15 @@ def test_a_malformed_record_inside_the_streak_read_extends_it_and_keeps_the_ledg
     than updated. This is the updated assertion.
 
     Under `WATCHED` the record is inside the streak read, so it pins three
-    things at once: the audit does not abort (`TypeError`/`AttributeError` are
-    not `OSError`, so no guard catches them and the step would never return),
-    the malformed record counts as a FAILURE rather than resetting the streak,
-    and the mark ledger survives and advances.
+    things: the audit does not abort (`TypeError`/`AttributeError` are not
+    `OSError`, so no guard catches them and the step would never return), the
+    malformed record counts as a FAILURE rather than resetting the streak, and
+    the mark advances to the new run id.
+
+    It does NOT pin that the CARRIED ledger survives — this pass escalates, so
+    the mark is written fresh, and the carried ledger is load-bearing only on a
+    pass that suppresses. `test_a_malformed_own_record_does_not_erase_the_ledger`
+    covers that.
     """
     _live_failing_twice(audited)
     first = _audit_pass(audited)
@@ -787,3 +792,33 @@ def test_a_malformed_record_inside_the_streak_read_extends_it_and_keeps_the_ledg
     advanced = second[f"{WATCHED}{ESCALATED_SUFFIX}"]
     assert advanced == malformed_at.strftime("%Y%m%d_%H%M%S")
     assert advanced != first_mark, "the ledger did not advance"
+
+
+def test_a_malformed_own_record_does_not_erase_the_ledger(audited):
+    """The suppressing half, which the escalating test above cannot reach.
+
+    `_prior_escalation_marks` skips a non-string key and keeps reading. The
+    plausible wrong refactor is to bail out on the whole record instead, which
+    would erase every mark for every workflow and re-alert everything on the
+    next pass. That is invisible to any test where there is no prior mark to
+    lose, so this one arranges for there to be one: escalate, then hand the
+    auditor a record of its own that carries the marks BESIDE a key it cannot
+    read, and require the marks to come back.
+    """
+    _live_failing_twice(audited)
+    first = _audit_pass(audited)
+    assert _escalated(first) == [WATCHED]
+    mark = first[f"{WATCHED}{ESCALATED_SUFFIX}"]
+
+    # Newer than the pass above, so `_prior_escalation_marks` reads THIS record.
+    write_archive(
+        audited,
+        "run_audit",
+        _now() + timedelta(minutes=1),
+        context={f"{WATCHED}{ESCALATED_SUFFIX}": mark, 3: "a key it cannot read"},
+    )
+
+    second = _audit_pass(audited, run_at=_now() + timedelta(minutes=2))
+
+    assert second[f"{WATCHED}_consecutive_failures"] == 2, "the streak changed"
+    assert _escalated(second) == [], "the mark was lost, so it re-alerted"
