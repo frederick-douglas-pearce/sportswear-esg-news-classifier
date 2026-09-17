@@ -12,7 +12,7 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -27,22 +27,15 @@ from src.agent.archive import (
     run_succeeded,
     vacuous_success_signals,
 )
-from src.agent.config import (
-    AgentSettings,
-    agent_settings,
-    parse_failure_threshold,
-)
+from src.agent.config import AgentSettings, agent_settings
 from src.agent.health import HealthVerdict
 from src.agent.notifications import delivered
 from src.agent.state import StepState, WorkflowState, WorkflowStatus
 from src.agent.workflows.base import StepFailure
 from src.agent.workflows.run_audit import (
-    RunAuditWorkflow,
-    check_failure_streaks,
     check_liveness,
     fail_on_unknown_verdict,
     generate_audit_report,
-    send_failure_escalations,
     send_stale_alerts,
 )
 

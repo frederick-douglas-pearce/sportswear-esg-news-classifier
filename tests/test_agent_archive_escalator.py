@@ -22,7 +22,6 @@ import pytest
 from src.agent.config import AgentSettings, agent_settings, parse_failure_threshold
 from src.agent.health import HealthVerdict
 from src.agent.notifications import send_consecutive_failure_notification
-from src.agent import workflows as _agent_workflows  # noqa: F401
 from src.agent.archive import consecutive_failures, latest_run_per_workflow
 from src.agent.state import StateManager
 from src.agent.workflows import run_audit as run_audit_module
