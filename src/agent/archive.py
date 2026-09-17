@@ -136,10 +136,20 @@ KIND_STEP_ERROR = "step_error"
 KIND_VERDICT_UNKNOWN = "verdict_unknown"
 KIND_SUCCESS_FLAG_FALSE = "success_flag_false"
 KIND_CONTEXT_ERRORS = "context_errors"
+KIND_MALFORMED_RECORD = "malformed_record"
 
 #: Signal kinds that mean the run did not succeed, under the contract that
 #: #73 and #74 established. Deliberately excludes ``success_flag_false`` and
 #: ``context_errors`` -- see the module docstring.
+#:
+#: ``malformed_record`` covers **non-string keys of ``steps`` and ``context``,
+#: at their top level, and only those**. Dropping such
+#: a key silently let a run carrying a failed step under one read as a success.
+#: It is not a general "unparseable means failed" rule, and the difference
+#: matters: ``ArchivedRun.steps``/``.context`` still return ``{}`` for a
+#: non-mapping, and a step whose value is not a dict is still skipped, so a
+#: record malformed in *those* ways can still read as a success. Widening the
+#: treatment to them is a separate change.
 DISQUALIFYING_KINDS = frozenset(
     {
         KIND_STATUS_FAILED,
@@ -147,6 +157,7 @@ DISQUALIFYING_KINDS = frozenset(
         KIND_STEP_FAILED,
         KIND_STEP_ERROR,
         KIND_VERDICT_UNKNOWN,
+        KIND_MALFORMED_RECORD,
     }
 )
 
@@ -274,6 +285,79 @@ def latest_run_per_workflow(
     return latest
 
 
+def consecutive_failures(
+    history_dir: Path | None = None,
+    *,
+    workflows: Iterable[str] | None = None,
+) -> dict[str, int]:
+    """Map each workflow to the length of its *trailing* run of failures.
+
+    The peer of ``latest_run_per_workflow``: the same group-by-workflow reduction
+    over ``iter_runs``, reducing to "how many of the newest runs in a row did not
+    succeed" instead of to "which run is newest". It is the count only -- the
+    threshold, the alert and the once-only bookkeeping are policy and live in
+    ``workflows/run_audit`` (D014).
+
+    ``run_succeeded`` is the per-run predicate, so this inherits its narrowness
+    deliberately: a historical run carrying ``<name>_success: false`` is not a
+    failure under that predicate and therefore **resets** a streak rather than
+    extending it. That is what stops #75 re-alerting on history, and it is also
+    why a live firing needs two genuinely-failing runs archived under the
+    #73/#74 contract.
+
+    Args:
+        history_dir: Directory to read. Defaults to ``agent_settings.history_dir``.
+        workflows: Allowlist of workflow names, passed straight to ``iter_runs``.
+            Callers should always pass one: the archive can hold records written
+            under synthetic names by a test harness (#124), and an allowlist is a
+            fact about the name rather than a heuristic over the contents.
+
+    Returns:
+        ``{workflow_name: trailing failure count}``. A workflow whose newest run
+        succeeded maps to ``0``; one with no archived run at all is **absent**,
+        on the ``latest_run_per_workflow`` convention that the caller decides
+        what an absence means. Never-ran is a liveness finding, not a streak of
+        length zero, and absence must not be re-read as healthy.
+
+    Raises:
+        OSError: if the archive directory cannot be listed. Propagated from
+            ``iter_runs`` rather than caught: an empty result and an unreadable
+            archive must not share an answer, because "no consecutive failures
+            anywhere" is exactly the silent all-clear this issue exists to
+            remove.
+    """
+    streaks: dict[str, int] = {}
+    # ``iter_runs`` is oldest-first, so resetting on each success leaves the
+    # trailing streak in place when the sequence ends. Walking forward and
+    # resetting is equivalent to walking backward and stopping, without
+    # materializing a reversed per-workflow list.
+    for run in iter_runs(history_dir, workflows=workflows):
+        if run_succeeded(run):
+            streaks[run.workflow_name] = 0
+        else:
+            streaks[run.workflow_name] = streaks.get(run.workflow_name, 0) + 1
+    return streaks
+
+
+def _partition_string_keys(
+    mapping: dict[str, Any],
+) -> tuple[list[tuple[str, Any]], list[str]]:
+    """Split a mapping into string-keyed items and a list of the other keys.
+
+    Returned as a list of pairs rather than a dict so the caller can ``sorted()``
+    it without re-checking, and the rejected keys are returned rather than
+    discarded so their presence can be reported.
+    """
+    readable: list[tuple[str, Any]] = []
+    rejected: list[str] = []
+    for key, value in mapping.items():
+        if isinstance(key, str):
+            readable.append((key, value))
+        else:
+            rejected.append(repr(key))
+    return readable, sorted(rejected)
+
+
 def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
     """Every piece of failure evidence carried by this run's record.
 
@@ -291,7 +375,34 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
     if run_error:
         signals.append(FailureSignal(KIND_RUN_ERROR, "error", str(run_error)))
 
-    for step_name, step in sorted(run.steps.items()):
+    # A record can parse as YAML and still carry a non-string key, where
+    # `sorted()` raises `TypeError` comparing it to a string and `key.endswith`
+    # raises `AttributeError`. Neither is an `OSError`, so no caller's guard
+    # catches them and the whole unattended audit aborts.
+    #
+    # The keys are therefore partitioned rather than filtered, and the
+    # unreadable ones become a DISQUALIFYING signal. Silently dropping them was
+    # tried and was wrong: a run archived `completed` whose failed step sat
+    # under a non-string key then read as a success and reset the streak.
+    #
+    # KEYS only. The `isinstance(step, dict)` guard below, and the `{}` that
+    # `ArchivedRun.steps`/`.context` return for a non-mapping, still drop
+    # silently -- so this does not establish a general rule about malformed
+    # records, and no comment here should claim one.
+    readable_steps, unreadable = _partition_string_keys(run.steps)
+    readable_context, unreadable_context = _partition_string_keys(run.context)
+    unreadable += unreadable_context
+    if unreadable:
+        signals.append(
+            FailureSignal(
+                KIND_MALFORMED_RECORD,
+                "record",
+                "the record carries keys this reader cannot interpret "
+                f"({', '.join(unreadable)}), so it cannot be read as a success",
+            )
+        )
+
+    for step_name, step in sorted(readable_steps):
         if not isinstance(step, dict):
             continue
         if step.get("status") == "failed":
@@ -308,7 +419,7 @@ def failure_signals(run: ArchivedRun) -> list[FailureSignal]:
                 )
             )
 
-    for key, value in sorted(run.context.items()):
+    for key, value in sorted(readable_context):
         if key.endswith("_verdict") and value == "unknown":
             signals.append(
                 FailureSignal(

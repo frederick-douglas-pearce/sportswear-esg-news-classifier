@@ -146,6 +146,30 @@ class AgentSettings:
         }
     )
 
+    # Consecutive-failure escalation (#75)
+    #
+    # How many runs of a watched workflow must fail in a row before the auditor
+    # escalates. Env-overridable, unlike the cadence dicts above: which jobs are
+    # watched is a governance decision, while N is an operator's sensitivity
+    # knob. The inconsistency with `audit_grace_hours` -- also a sensitivity
+    # knob, also code-only -- is deliberate and was ratified at #75's plan gate.
+    #
+    # Held as the RAW string and parsed by `parse_failure_threshold` at the point
+    # of use, so a bad value fails the one step that reads it rather than the
+    # import. Validating in `__post_init__` raised from module scope, where
+    # `agent_settings` is constructed: one mistyped knob then stopped every agent
+    # workflow, including the auditor that exists to notice things going dark.
+    # That is this epic's own defect class recursing through its configuration,
+    # and D014.7 (which asked for the `__post_init__` raise) was reversed at
+    # #75's code-review scope ruling. `_cadence_config_error` is the precedent --
+    # loud, and scoped to the check it disables.
+    #
+    # Nothing guards the UP direction: a large N is a detector that never fires
+    # and says nothing about it.
+    consecutive_failure_threshold_raw: str = field(
+        default_factory=lambda: os.getenv("AGENT_CONSECUTIVE_FAILURE_THRESHOLD", "2")
+    )
+
     # Project paths
     project_root: Path = field(
         default_factory=lambda: Path(
@@ -191,6 +215,31 @@ class AgentSettings:
         log_dir = self.project_root / self.logs_dir
         log_dir.mkdir(parents=True, exist_ok=True)
         return log_dir / f"{workflow_name}.log"
+
+
+def parse_failure_threshold(raw: str) -> tuple[int | None, str | None]:
+    """Parse the consecutive-failure threshold, returning (value, error).
+
+    Returns exactly one of the two: a usable threshold, or a message naming the
+    variable and quoting what was found. Never raises, and never clamps -- a
+    clamp would run the escalator at a threshold nobody configured and report
+    nothing wrong, which is the failure mode #75 exists to remove.
+
+    N = 0 is refused because it would escalate a workflow that has not failed at
+    all. That is the DOWN direction; nothing here guards the UP direction, where
+    a large N is a detector that never fires.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None, (
+            f"AGENT_CONSECUTIVE_FAILURE_THRESHOLD is not a number: {raw!r}"
+        )
+    if value < 1:
+        return None, (
+            f"AGENT_CONSECUTIVE_FAILURE_THRESHOLD must be at least 1; got {value}"
+        )
+    return value, None
 
 
 agent_settings = AgentSettings()

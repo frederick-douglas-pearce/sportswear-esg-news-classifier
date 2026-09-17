@@ -1088,3 +1088,229 @@ D008, D009, D010 and D012 each record correct code shipped with a false claim at
 and its two-correction cap is now spent for it: the next disposition is deletion of the claim, not a
 third correction. Several of #76's explanatory sentences were deleted on that basis rather than
 reworded, including from this entry.
+
+---
+
+## D014: The Consecutive-Failure Escalator Carries a High-Water Mark and Stays Out of the Verdict Vocabulary (#75)
+
+**Status:** decided at the design gate, before implementation. Recorded from the `architect` review
+of `.claude/loop/silent-success/issue-75.plan.md`.
+
+### Context
+
+#75 adds the forward detector this epic still lacks. #73 makes a failed step fail its run, #74
+makes an unresolved check fail its run, and #76 detects a job that has **stopped running** —
+nothing yet watches a job that **runs and fails every time**. `archive.run_succeeded` shipped in
+#76 with no production caller; #75 is its first consumer.
+
+### Decisions
+
+**1. The escalator is two new steps inside `run_audit`, not a hook in `_finalize()` and not a new
+workflow.** Liveness and failure-streak are two checks over one data source serving one purpose;
+they stay in one workflow. A `_finalize()` hook would put an outbound network call inside the
+single function that turns step outcomes into workflow status, where a notifier exception would
+change the archived status. It would additionally see an archive that does not yet contain the run
+it is counting, because `complete_workflow`/`fail_workflow` write the record from inside that path
+(D009) — true, but the weakest of the three reasons and recorded as such. The same timing fact
+works the other way for decision 2: a step reading `run_audit`'s own archive cleanly gets the
+*previous* run.
+
+**2. "Exactly once" is a carried-forward high-water mark, not a record of what this pass did.**
+Each pass stores `{workflow}_escalated_run_id` in `run_audit`'s own archived context, escalates
+only when the streak is at or above N **and** the newest run id differs from the stored one, and
+**carries the stored value forward unchanged when it suppresses**. Omitting that carry-forward is
+a defect whose signature is invisible to a two-pass test: pass 1 escalates and records, pass 2
+suppresses and records nothing, pass 3 reads an empty ledger and re-escalates. The guard is
+therefore a test spanning **three or more** passes over the same newest run.
+
+This is reuse of the existing archive, not a new store: it rides a write that already happens, and
+adds no file, table or persistence lifecycle. Reading `run_audit`'s own prior context is a
+different operation from the liveness self-audit skip, which stands.
+
+**3. When the escalator cannot tell, it escalates — it never suppresses.** A prior context that is
+missing, corrupt or absent (the first-ever run) yields an escalation and a possibly-duplicate
+alert. Suppressing on "I cannot tell whether I already alerted" is this epic's own defect
+reproduced inside the escalator.
+
+**4. The streak step contributes no `{name}_verdict` key.** `check_liveness` writes one per
+subject and step results merge into a flat context, so a second writer would clobber the liveness
+verdict by loop order (D009). The streak step uses a disjoint namespace and guards on
+`context["archive_readable"]`, delegating its only genuine can't-tell case to the liveness path
+that already converts it to `unknown` and already fails the run at the existing gate.
+
+**5. A detection is never `unknown`.** "Failed N times" is real and actionable — the same shape
+D012 ruled `degraded` for a stalled job — so it alerts and lets `run_audit` complete. Mapping a
+successful detection to `unknown` would fail the auditor's own run at the moment it worked, which
+is the trap D012 exists to name.
+
+**6. `consecutive_failures()` belongs in `archive.py`.** It is the peer of
+`latest_run_per_workflow` — the same group-by-workflow-and-reduce shape with a different
+reduction — and stays pure, preserving the module's no-state property. The threshold comparison,
+the dedupe and the alerting stay in `run_audit`; a threshold in `archive.py` would be the boundary
+violation the module's "extraction is not policy" line guards.
+
+**7. `N` is env-overridable with a fail-loud lower bound.** `AGENT_CONSECUTIVE_FAILURE_THRESHOLD`
+defaults to 2 and `AgentSettings` raises on `N < 1`. N's dangerous direction is *too high → the
+detector never fires*, a silent direction, and a config knob with a silent direction is pinned in
+CI rather than trusted. Whether N should be an env var at all — its nearest sibling
+`audit_grace_hours` is deliberately code-only — is put to the human at the plan gate.
+
+### What this decision does not settle
+
+Two readings of AC-1 remain, and the human chooses: one alert per new failed run while the streak
+holds (a daily job failing daily nags daily), or one alert per streak episode. The plan proposes
+the first.
+
+### Claim discipline
+
+Per `loop.config.md` §6 this entry asserts no quantity and no causal history over
+`~/.esg-agent/history/`. One consequence is recorded as a shape rather than a measurement:
+`KIND_SUCCESS_FLAG_FALSE` is not in `DISQUALIFYING_KINDS`, so a historical vacuous-success run
+resets the streak, and a live firing requires two genuinely-failing post-contract runs. Acceptance
+therefore rests on synthesized runs in CI, not on the live archive.
+
+---
+
+## D015: Four Corrections to D014, From #75's Code-Review Scope Ruling (#75)
+
+**Status:** decided at the code-review scope ruling, after implementation and before the fixes were
+applied. `.claude/specs/decisions.md` is append-only, so D014 is corrected here rather than edited —
+the D012 → D013 precedent. **Read D014 with this entry.**
+
+Round 1 of code review returned findings from four lenses. Four of them landed on D014 itself rather
+than on the code: the decision either under-specified a path, gave a reason that does not hold, or
+ruled something whose blast radius the finders measured and I had not.
+
+### 1. D014.7 is REVERSED: the threshold is validated at the point of use, not in `__post_init__`
+
+D014.7 asked for `AgentSettings` to raise on `N < 1`. `agent_settings` is constructed at module
+scope, so the raise fired at **import**: one mistyped `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` stopped
+`daily_labeling`, `website_export`, `drift_monitoring` and `run_audit` alike. A knob read by one step
+of one workflow disabled every liveness detector in the system, and the auditor cannot audit itself.
+That is this epic's own defect class recursing through its configuration.
+
+The setting now holds the **raw string**; `config.parse_failure_threshold` returns `(value, error)`
+and `check_failure_streaks` turns an error into a `StepFailure`. `_cadence_config_error` is the
+precedent this should have followed from the start: loud, and **scoped to the check it disables**.
+Clamping stays rejected for D014.7's original reason — it would run the escalator at a threshold
+nobody configured and report nothing wrong.
+
+### 2. D014.3 over-states: the marks come from the newest READABLE run, not the newest run
+
+D014.3 said "a prior context that is missing, corrupt or absent yields an escalation". False:
+`iter_runs` logs and skips a record that does not parse, so a corrupt newest `run_audit` record falls
+back to the one before it and returns **its** marks.
+
+The **behaviour is right and is kept**. Those marks are at most one pass stale, and staleness here
+resolves toward a duplicate alert for the one workflow the corrupt pass had just advanced — never
+toward suppression. Reading only the single newest file would turn one corrupt record into an empty
+ledger and re-escalate every current streak at once. Only the claim was wrong, and it was wrong in
+the code docstring, in D014.3, and in the test docstring, where the test passed because its fixture
+held exactly one prior record. The test now holds two, with the newest corrupt.
+
+D014.3's rule stands where it is true: with **no readable record at all**, the escalator alerts.
+
+### 3. D014's reason for the streak allowlist is a category error; the allowlist is unchanged
+
+The plan and D014 justified reusing `audit_expected_interval_hours` with cadence arguments —
+`model_training` has no cadence, `run_audit` cannot observe its own absence. **A failure streak needs
+no cadence**, only a sequence of archived runs, and both of those workflows produce one. The reasons
+did not support the conclusion.
+
+The conclusion survives on different grounds, recorded now so the next reader does not re-derive the
+wrong ones:
+
+- **`model_training` stays out because it PAUSES for notebooks.** `run_succeeded` is false for any
+  non-`completed` status, so a paused run counts as a failure and watching it would fire on every
+  ordinary train-then-pause cycle.
+- **`run_audit` watching its own failures is a real gap, deferred deliberately.** Unlike the liveness
+  self-skip, past failure *is* observable from prior archived runs — `_prior_escalation_marks`
+  already reads them. But an auditor escalating about its own failing runs, from inside a possibly
+  failing run, is a feedback loop that deserves its own decision rather than a one-line allowlist
+  change.
+
+### 4. The "pinned in CI" claim is withdrawn, and the claim class is cut rather than reworded
+
+D014.7 and the `config.py` comment both said a knob with a silent direction "is pinned in CI". The
+only test pinned the **downward** direction — the loud one. The dangerous direction is UP: a large N
+is a detector that never fires and says nothing about it, and nothing guards it.
+
+Per `loop.config.md` §6 the disposition is deletion, not a third wording: the comment now says
+plainly that the up direction is unguarded. The default value is pinned by a test instead of being
+asserted in prose.
+
+### What this entry does not change
+
+D014.1 (placement), D014.2 (the carry-forward high-water mark), D014.4 (no `{name}_verdict` key from
+the streak step), D014.5 (a detection is never `unknown`) and D014.6 (`consecutive_failures` belongs
+in `archive.py`) all stand and were confirmed by the review.
+
+### Resolved at the plan gate, recorded here because D014 still reads them as open
+
+D014's "What this decision does not settle" left two questions to the human. Both were answered on
+2026-09-15 before implementation, and `config.py` cites D014 as the record of that resolution:
+
+- **AC-1 semantics: nag per new failed run** while the streak holds — a job failing daily alerts
+  daily, rather than going quiet after the first alert.
+- **N is an env var**, with the guard now at the point of use per correction 1 above.
+
+### Deferrals from this round, to be filed
+
+- Archive scan efficiency, retention, and the non-atomic pair of reads, as **one** issue: the scan
+  cost grows with the archive, the concern is agent-wide rather than #75-local, and the single-scan
+  refactor also closes the race where a streak read and a newest read straddle a run being archived.
+- `archive.py` reader robustness to a **non-string key** in `failure_signals`/`sorted(items())`: a
+  pre-existing #76 surface that #75 merely newly routes the unattended auditor through. The
+  `_prior_escalation_marks` half is fixed here; the reader half is not.
+- #125 is already filed. This change names it in code and adds no independent clean exit.
+
+---
+
+## D016: The Streak Watch List Keeps Its Membership and Loses Its Rationale (#75)
+
+**Status:** decided at round 2 of code review, directed by the human. Corrects **D015 §3**, which
+corrected D014 on the same point. `.claude/specs/decisions.md` is append-only, so this is an entry
+rather than an edit. **Read D014 and D015 with it.**
+
+### What happened
+
+Which workflows the failure-streak check watches has now been justified **twice, wrongly**.
+
+1. **At the plan gate**, by cadence: `model_training` has no cadence and `run_audit` cannot observe
+   its own absence. False as a reason — a failure streak needs no cadence, only a sequence of
+   archived runs, and both workflows produce one. D015 §3 recorded that.
+2. **At the scope ruling**, by pause semantics: `model_training` pauses for notebooks and
+   `run_succeeded` is false for any non-`completed` status, so watching it would fire on every
+   train-then-pause cycle. Also false, and checkable: **a paused run is never archived at all.**
+   `_archive_workflow` has exactly two callers, `complete_workflow` and `fail_workflow`;
+   `pause_workflow` writes only `state.yaml`, and `Workflow._finalize` returns early without
+   archiving when the run is PAUSED with no failed step. The counter reads archived records, so it
+   cannot see a paused run. One record is written per run, at resume, and it counts as a success.
+
+### The decision
+
+`loop.config.md` §6 caps a class of claim at two corrections; the third disposition is **deletion of
+the class, not a third correction**. So:
+
+- **The membership stands unchanged.** The streak check watches
+  `audit_expected_interval_hours`, and `test_the_escalator_passes_the_allowlist_to_both_archive_reads`
+  pins the set that is actually read.
+- **The rationale is deleted**, from the code comment in `check_failure_streaks` and from
+  `docs/AGENT.md`. Neither now says *why* a workflow is or is not watched.
+- **Which workflows SHOULD be watched is recorded as OPEN.** That is a real question — two of the
+  three excluded workflows archive runs that could be counted — and it deserves to be settled
+  deliberately rather than inherited from a list built for a different purpose. It is not settled
+  here and nothing in #75 depends on settling it.
+
+**Why deletion rather than a third attempt.** The two wrong reasons were not careless; each was
+plausible, each survived a review gate, and the second was produced by the gate convened to correct
+the first. A third reason written under the same conditions carries the same risk, and a wrong
+*reason* attached to a correct *membership* is worse than no reason: it is the kind of claim a later
+reader stops looking behind. The membership is a fact a test can pin. The rationale was not.
+
+### One thing this does not license
+
+Deleting a rationale is not deleting a constraint. **Never every name on disk** — the archive can
+hold records written under names a test harness invented (#124), and excluding those is a fact about
+the name rather than a judgement about a workflow. That clause stays in the code and keeps its
+reason.

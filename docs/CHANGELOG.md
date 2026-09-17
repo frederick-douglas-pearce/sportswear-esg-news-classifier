@@ -4,6 +4,48 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-16: A workflow that runs and fails every time is escalated
+
+#73 fails a run with a failed step, #74 fails a run with an unresolved check, and #76 detects a
+job that has stopped running. None of them watched a job that keeps running and keeps failing:
+every run is correctly archived as failed, and nothing reads archives, so it hides behind a
+green light just the same. `run_succeeded()` shipped with #76 and had no production caller;
+this is its first.
+
+**What changed:**
+
+- **`archive.consecutive_failures()`** — the peer of `latest_run_per_workflow`: the same
+  group-by-workflow reduction over `iter_runs`, reducing to the length of the trailing
+  not-succeeded run. Count only; the threshold, the alert and the once-only bookkeeping are
+  policy and live in `run_audit`. An unreadable archive raises rather than returning an empty
+  result, because "no consecutive failures anywhere" is the silent all-clear this epic is about.
+- **Two steps in `run_audit`**, mirroring its existing check/alert split:
+  `check_failure_streaks` computes and `send_failure_escalations` alerts under
+  `skip_on_dry_run`. Liveness asks whether a job ran; the streak asks whether it kept
+  succeeding.
+- **"Exactly once" is a carried-forward high-water mark** in the auditor's own archived
+  context — reuse of a write that already happens, not a new store. The half that is easy to
+  miss: a pass that *suppresses* must carry the mark forward, or the ledger forgets and the
+  third pass re-alerts. That defect is invisible to a two-pass test, so the regression test
+  spans three.
+- **Every exit carries the ledger**, including the `StepFailure`, whose `context` replaces the
+  result rather than merging with one. Without that, one transient bad pass re-armed every
+  streak in the system.
+- **Delivery gates the mark.** Every notifier swallows its exception and returns `False`, so a
+  dead host or a rejected key is silent; the mark is left unadvanced and the next pass retries.
+  A console-only result — the no-channel-configured default — advances it instead, since
+  re-escalating to a console nobody reads on every pass forever is a busy-loop, not a signal.
+- **The report tells the truth on both of its surfaces.** A live workflow failing every run
+  left `generate_audit_report` rendering "No action needed" *and* archiving
+  `all_checked_healthy: true` — this epic's defect committed by the report. Both now carry the
+  streak result. A workflow that is stalled *and* failing is paged once, by the stall alert.
+- **`AGENT_CONSECUTIVE_FAILURE_THRESHOLD`** (default 2) is parsed at the point of use, so a bad
+  value fails the one step that reads it. Validating it in `AgentSettings.__post_init__` raised
+  from module scope and stopped every agent workflow — including the auditor meant to notice —
+  over a knob one step reads.
+
+Design gates: **D014**, corrected in four places by **D015** after code review.
+
 ### 2026-09-14: The run archive is read — a workflow that stops running is now detected
 
 `StateManager._archive_workflow` has always written each terminal run's full state to

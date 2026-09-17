@@ -794,3 +794,54 @@ def send_stale_workflow_notification(
 
     manager = NotificationManager()
     return manager.send(notification)
+
+
+def send_consecutive_failure_notification(
+    workflow_name: str,
+    consecutive_failures: int,
+    threshold: int,
+    details: dict[str, Any] | None = None,
+) -> dict[str, bool]:
+    """Send notification that a workflow has failed N runs in a row.
+
+    The forward detector the epic still lacked. `send_stale_workflow_notification`
+    reports a job that stopped *running*; this one reports a job that keeps
+    running and keeps failing -- the shape that hides behind a green light,
+    because every individual run is correctly archived as failed and nobody
+    reads archives (#75).
+
+    **It carries `NotificationType.CHECK_FAILED`**, as both of its siblings do,
+    on the precedent `send_stale_workflow_notification` states: nothing
+    dispatches on the notification type, so no member is added until something
+    needs to tell them apart programmatically. The three are distinguished by
+    subject and message, which is readable by a human and not by a program.
+
+    Args:
+        workflow_name: The workflow that keeps failing.
+        consecutive_failures: How many of its newest runs failed in a row.
+        threshold: The configured N this crossed, so the operator can see what
+            was being asked rather than inferring it from the count.
+        details: Additional details.
+
+    Returns:
+        Dict of channel results.
+    """
+    notification = Notification(
+        notification_type=NotificationType.CHECK_FAILED,
+        subject=f"Workflow Failing Repeatedly: {workflow_name}",
+        message=(
+            f"The {workflow_name} workflow has failed its last "
+            f"{consecutive_failures} runs in a row (escalation threshold: "
+            f"{threshold}). Its work has not been done since the streak began."
+        ),
+        details={
+            "workflow": workflow_name,
+            "consecutive_failures": consecutive_failures,
+            "threshold": threshold,
+            **(details or {}),
+        },
+        severity="error",
+    )
+
+    manager = NotificationManager()
+    return manager.send(notification)

@@ -20,6 +20,7 @@ import yaml
 from src.agent.archive import (
     SIGNAL_KINDS,
     ArchivedRun,
+    consecutive_failures,
     failure_signals,
     iter_runs,
     latest_run_per_workflow,
@@ -210,6 +211,25 @@ def test_latest_run_per_workflow_returns_the_newest(history):
 # --------------------------------------------------------------------------
 
 
+def test_latest_run_per_workflow_honours_its_allowlist(history):
+    """The callee must OBEY the allowlist, not merely be handed one.
+
+    `test_latest_run_per_workflow_returns_the_newest` passes an allowlist but
+    writes only allowlisted records, so the filter has nothing to exclude and
+    the outcome is identical with or without it. The escalator's own test
+    asserts the allowlist was *passed*. Neither sees the callee honour it, and
+    `_prior_escalation_marks` depends on exactly that: unfiltered, the newest
+    record of ANY workflow becomes the ledger, it carries no mark keys, and
+    every live streak re-escalates on every pass.
+    """
+    write_archive(history, "daily_labeling", NOW - timedelta(hours=1))
+    write_archive(history, "website_export", NOW)
+
+    latest = latest_run_per_workflow(history, workflows={"daily_labeling"})
+
+    assert set(latest) == {"daily_labeling"}, "the allowlist was not applied"
+
+
 def test_vacuous_success_flags_a_completed_run_carrying_a_failure(history):
     """AC-1: status completed, embedded failure signal -> flagged."""
     run = make_run(
@@ -247,6 +267,7 @@ def test_signal_kinds_matches_what_the_extractor_emits():
             "fp_verdict": "unknown",
             "fp_drift_check_success": False,
             "errors": ["export failed"],
+            7: "a key this reader cannot interpret",
         },
     )
 
@@ -910,3 +931,112 @@ def test_every_cron_scheduled_workflow_is_audited_or_explicitly_skipped():
     assert scheduled <= covered, (
         f"scheduled but not audited or skipped: {sorted(scheduled - covered)}"
     )
+
+
+# --------------------------------------------------------------------------
+# The consecutive-failure counter (#75)
+#
+# `consecutive_failures` is the count only; the threshold, the alert and the
+# once-only bookkeeping are policy and live in `run_audit` (D014). These pin
+# the count.
+# --------------------------------------------------------------------------
+
+
+def _failed(directory: Path, name: str, run_at: datetime) -> Path:
+    """An archived run that failed under the #73/#74 contract."""
+    return write_archive(
+        directory, name, run_at, status="failed", error="the step reported failure"
+    )
+
+
+def test_consecutive_failures_counts_only_the_trailing_run(history):
+    """A success earlier in the sequence does not shorten the trailing streak."""
+    _failed(history, "daily_labeling", NOW - timedelta(hours=72))
+    write_archive(history, "daily_labeling", NOW - timedelta(hours=48))
+    _failed(history, "daily_labeling", NOW - timedelta(hours=24))
+    _failed(history, "daily_labeling", NOW)
+
+    assert consecutive_failures(history) == {"daily_labeling": 2}
+
+
+def test_a_success_between_two_failures_resets_the_streak(history):
+    """AC-2: an isolated failure must not accumulate toward the threshold."""
+    _failed(history, "daily_labeling", NOW - timedelta(hours=48))
+    write_archive(history, "daily_labeling", NOW - timedelta(hours=24))
+    _failed(history, "daily_labeling", NOW)
+
+    assert consecutive_failures(history) == {"daily_labeling": 1}
+
+
+def test_three_consecutive_failures_count_three(history):
+    for hours in (48, 24, 0):
+        _failed(history, "daily_labeling", NOW - timedelta(hours=hours))
+
+    assert consecutive_failures(history) == {"daily_labeling": 3}
+
+
+def test_a_workflow_whose_newest_run_succeeded_counts_zero(history):
+    _failed(history, "daily_labeling", NOW - timedelta(hours=24))
+    write_archive(history, "daily_labeling", NOW)
+
+    assert consecutive_failures(history) == {"daily_labeling": 0}
+
+
+def test_a_workflow_with_no_runs_is_absent_rather_than_zero(history):
+    """Absent and zero are different answers and must not share a spelling.
+
+    Never-ran is a *liveness* finding (`degraded`), which `check_liveness`
+    owns. Reporting it as a zero-length streak here would be this reader
+    asserting something it did not observe.
+    """
+    write_archive(history, "daily_labeling", NOW)
+
+    result = consecutive_failures(history, workflows={"daily_labeling", "website_export"})
+
+    assert result == {"daily_labeling": 0}
+    assert "website_export" not in result
+
+
+def test_consecutive_failures_allowlist_excludes_synthetic_test_names(history):
+    """The #124 exposure: the archive can hold records under invented names."""
+    _failed(history, "failing", NOW - timedelta(hours=24))
+    _failed(history, "failing", NOW)
+    _failed(history, "daily_labeling", NOW)
+
+    assert consecutive_failures(history, workflows={"daily_labeling"}) == {
+        "daily_labeling": 1
+    }
+
+
+def test_consecutive_failures_raises_rather_than_reporting_no_failures(tmp_path):
+    """An unreadable archive must not read as 'no consecutive failures anywhere'.
+
+    That is the silent all-clear this issue exists to remove, so the OSError
+    from `iter_runs` is propagated rather than caught into an empty dict.
+    """
+    absent = tmp_path / "gone"
+
+    with pytest.raises(OSError):
+        consecutive_failures(absent, workflows={"daily_labeling"})
+
+
+def test_the_historical_success_flag_resets_a_streak_rather_than_extending_it(history):
+    """D014's recorded consequence, pinned so it cannot drift silently.
+
+    `KIND_SUCCESS_FLAG_FALSE` is deliberately not in `DISQUALIFYING_KINDS`, so a
+    pre-#73/#74 vacuous-success run counts as a success here. That is what stops
+    #75 re-alerting on history, and it is also why a live firing needs two
+    genuinely-failing post-contract runs.
+    """
+    _failed(history, "drift_monitoring", NOW - timedelta(hours=48))
+    write_archive(
+        history,
+        "drift_monitoring",
+        NOW - timedelta(hours=24),
+        context={"fp_drift_check_success": False},
+    )
+    _failed(history, "drift_monitoring", NOW)
+
+    assert consecutive_failures(history) == {"drift_monitoring": 1}
+
+
