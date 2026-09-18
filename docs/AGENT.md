@@ -351,11 +351,36 @@ is `max(core_drift_score, brand_drift_score)`, with both components kept in `det
 be described as a single threshold rule while the reported score was `core_drift_score` alone, so
 brand-only drift alerted with "score 0.0 exceeds 0.15" (issue #71).
 
-On the **default** path (`EVIDENTLY_ENABLED=false`, which is what the cron agent runs),
-`_legacy_drift_check` compares only `probability` (KS statistic) and `prediction` (rate difference)
-against a plain threshold. It does **not** assess `novelty_score` or any `brand_*` column, and
-`columns_missing_from_reference` stays empty because those columns *are* in the reference -- so a
-partial check is not currently distinguishable from a whole one there. Tracked as #102.
+On the **default** path (`EVIDENTLY_ENABLED=false`, which is also where `_setup_evidently` falls
+back on `ImportError`), `_legacy_drift_check` assesses the same four signal groups, but **scores the core ones
+differently, and deliberately** (#102, D017). Core drift is an *effect size* there --
+`probability` and `novelty_score` by KS statistic, `prediction` by rate difference -- and the core
+score is the largest of those magnitudes against the threshold, not a count of significant tests.
+`DRIFT_THRESHOLD` is tuned against that instrument and the run archive holds history computed that
+way, so the two paths are **not** expected to produce the same number. `brand_*` columns are
+assessed per column by chi-square and enter as their own component, OR'd into the verdict, exactly
+as on the Evidently path.
+
+Until #102 the legacy path compared `probability` and `prediction` and nothing else, while
+`columns_missing_from_reference` stayed empty because `novelty_score` and the `brand_*` columns
+*are* in the reference -- they were simply never looked at, so a total distributional shift in
+`novelty_score` reported as healthy.
+
+Both paths now record **`columns_assessed`** (what produced a reading, as against
+`columns_checked`, which is what was offered) and **`columns_skipped`** (a column present in both
+frames that could not be compared -- empty after a NaN drop, or constant). A skipped column is
+never counted as evidence of no drift: counting a degenerate chi-square as "not drifted" while it
+still filled the denominator is #103's shape, and #102's fix is where it would have entered.
+
+⚠ **Which of the two paths a given deployment actually takes is not recorded anywhere in the
+report.** It depends on the environment, and the `ImportError` fallback can change it without
+announcing it — so a `drift_score` cannot be interpreted without knowing which instrument produced
+it. Tracked as #136.
+
+⚠ **These two fields do not reach the summary, the alert or the run archive yet.**
+`print_summary_json` emits a fixed key set that excludes `details`, and `REQUIRED_SUMMARY_FIELDS`
+is that same set. So **within-window** partial coverage -- a column present but unusable on a given
+day -- is still visible only to someone reading the `--output` JSON. Carrying it across is #104.
 
 ### Website Export
 

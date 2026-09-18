@@ -1489,3 +1489,260 @@ class TestDetailsAreSerializable:
                 "details": report.details,
             }
         )
+
+
+# ============================================================================
+# Issue #102 -- the legacy path assessed 2 of 4 signal groups
+# ============================================================================
+
+class TestLegacyPathAssessesEverySignalGroup:
+    """`_legacy_drift_check` is the path the cron actually runs.
+
+    `EVIDENTLY_ENABLED` defaults to false and `_setup_evidently` also falls
+    back here on ImportError, so this is not a fallback in practice. It
+    compared `probability` and `prediction` and nothing else: a total
+    distributional shift in `novelty_score`, or in any `brand_*` column, was
+    reported as healthy while `columns_missing_from_reference` stayed empty
+    because those columns ARE in the reference. They were simply never looked
+    at, so a partial check was indistinguishable from a whole one (issue #102).
+    """
+
+    @staticmethod
+    def _frames(novelty_ref, novelty_curr, n=60):
+        """Two frames identical but for `novelty_score`."""
+        rng = np.random.default_rng(7)
+        return (
+            pd.DataFrame(
+                {
+                    "probability": rng.uniform(0.4, 0.6, n),
+                    "prediction": np.tile([0, 1], n // 2),
+                    "novelty_score": novelty_ref,
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "probability": rng.uniform(0.4, 0.6, n),
+                    "prediction": np.tile([0, 1], n // 2),
+                    "novelty_score": novelty_curr,
+                }
+            ),
+        )
+
+    def test_a_total_novelty_shift_does_not_read_as_healthy(self, disabled_monitor):
+        """The issue's own demonstration, as a test.
+
+        Injected drift: 0.0-0.1 in the reference, 0.9-1.0 in every current row.
+        Before #102 this returned `drift_detected=False` with a drift_score of
+        0.063 built from `probability` and `prediction` alone.
+        """
+        rng = np.random.default_rng(11)
+        reference, current = self._frames(
+            rng.uniform(0.0, 0.1, 60), rng.uniform(0.9, 1.0, 60)
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.drift_detected is True
+        assert report.indeterminate is False
+        assert "novelty_score" in report.details["columns_assessed"]
+        assert report.details["novelty_ks_statistic"] > 0.9
+
+    def test_brand_drift_reaches_the_verdict(self, disabled_monitor):
+        """A brand column that flips wholesale is assessed and it bites.
+
+        `brand_*` columns were never read on this path at all, so this frame
+        used to report healthy.
+        """
+        n = 80
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_nike": [1] * (n // 2) + [0] * (n // 2),
+                "brand_puma": [1, 0] * (n // 2),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                # brand_nike flips from 50% of rows to ~5%
+                "brand_nike": [1] * 4 + [0] * (n - 4),
+                "brand_puma": [1, 0] * (n // 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "brand_nike" in report.details["columns_assessed"]
+        assert "brand_nike" in report.details["brand_metrics_drifted"]
+        assert report.details["brand_drift_score"] > 0
+        assert report.drift_detected is True
+
+    def test_core_score_keeps_its_effect_size_meaning(self, disabled_monitor):
+        """AC-5: brand must not redefine the core score (D017).
+
+        `DRIFT_THRESHOLD` is tuned against an effect-size instrument and the run
+        archive holds history computed that way, so `probability`/`prediction`/
+        `novelty_score` stay magnitudes rather than a fraction of significant
+        tests. Brand contributes only via its own component.
+        """
+        n = 60
+        frame = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(frame.copy(), frame.copy())
+
+        # Identical frames: KS statistic is 0 and the rate difference is 0, so
+        # the core score is the max of those magnitudes -- not 0-of-2-drifted.
+        assert report.details["core_drift_score"] == pytest.approx(0.0, abs=1e-9)
+        assert report.drift_score == pytest.approx(0.0, abs=1e-9)
+        assert report.details["brand_drift_score"] == 0.0
+
+    def test_a_degenerate_brand_column_is_not_evidence_of_no_drift(
+        self, disabled_monitor
+    ):
+        """AC-6: #102's fix must not plant #103's shape.
+
+        A brand mentioned in no article is an all-zero column. Its chi-square
+        p-value is undefined; written naively `NaN < 0.01` is False, so the
+        column would count as "not drifted" WHILE still incrementing the
+        denominator -- a NaN p-value treated as evidence of no drift, diluting
+        `brand_drift_score`. It must be skipped and recorded instead.
+        """
+        n = 40
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_absent": [0] * n,
+                "brand_everywhere": [1] * n,
+                "brand_real": [1] * (n // 2) + [0] * (n // 2),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_absent": [0] * n,
+                "brand_everywhere": [1] * n,
+                "brand_real": [1] * 2 + [0] * (n - 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        skipped = report.details["columns_skipped"]
+        assert "brand_absent" in skipped
+        assert "brand_everywhere" in skipped
+        assert "brand_absent" not in report.details["columns_assessed"]
+        # The denominator counts only what was actually assessed: one column.
+        assert report.details["brand_assessed_count"] == 1
+        assert report.details["brand_drift_score"] == pytest.approx(1.0)
+
+    def test_a_degenerate_novelty_column_is_skipped_not_scored(
+        self, disabled_monitor
+    ):
+        """Same guard on the novelty branch: constant in both frames."""
+        reference, current = self._frames(np.full(60, 0.5), np.full(60, 0.5))
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "novelty_score" in report.details["columns_skipped"]
+        assert "novelty_score" not in report.details["columns_assessed"]
+        assert "novelty_ks_statistic" not in report.details
+
+    def test_an_all_nan_novelty_column_is_skipped_not_scored(
+        self, disabled_monitor
+    ):
+        """NaN-drop leaves nothing to compare, which is not 'no drift'."""
+        reference, current = self._frames(np.full(60, np.nan), np.full(60, np.nan))
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "novelty_score" in report.details["columns_skipped"]
+        assert "novelty_ks_statistic" not in report.details
+
+    def test_columns_assessed_lists_what_was_actually_read(self, disabled_monitor):
+        """The record #104 will carry and #105 will cross-check.
+
+        It is what was ASSESSED, not what was offered -- that is the whole
+        distinction, since `columns_missing_from_reference` already covers
+        offered-but-absent and reported `[]` on exactly the frames #102 is about.
+        """
+        n = 40
+        reference, current = self._frames(
+            np.linspace(0.1, 0.9, n), np.linspace(0.1, 0.9, n), n=n
+        )
+        reference["brand_nike"] = [1, 0] * (n // 2)
+        current["brand_nike"] = [1, 0] * (n // 2)
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert set(report.details["columns_assessed"]) == {
+            "probability",
+            "prediction",
+            "novelty_score",
+            "brand_nike",
+        }
+        assert report.details["columns_missing_from_reference"] == []
+
+    def test_both_paths_report_the_same_assessed_record(
+        self, mock_mlops_settings_enabled, disabled_monitor
+    ):
+        """AC-2: same `details` keys, NOT the same number (D017, D008).
+
+        The two remain different instruments -- legacy core is an effect size,
+        Evidently core is a fraction of significant tests -- so this asserts the
+        shape they share, which is what #104 lifts into the summary.
+        """
+        shared = ("columns_assessed", "columns_skipped", "brand_drift_score")
+        frame = pd.DataFrame(
+            {"probability": [0.5, 0.6, 0.4, 0.7], "prediction": [0, 1, 0, 1]}
+        )
+
+        monitor = DriftMonitor("fp")
+        snapshot = MagicMock()
+        snapshot.dict.return_value = {
+            "metrics": [
+                {
+                    "metric_name": "ValueDrift(column=probability)",
+                    "config": {"column": "probability", "threshold": 0.05},
+                    "value": 0.5,
+                }
+            ]
+        }
+        run = MagicMock()
+        run.run.return_value = snapshot
+        monitor._evidently = {
+            "Report": MagicMock(return_value=run),
+            "ValueDrift": MagicMock(),
+        }
+
+        evidently = monitor._evidently_drift_check(frame, frame, save_report=False)
+        legacy = disabled_monitor._legacy_drift_check(frame, frame)
+
+        for key in shared:
+            assert key in evidently.details, f"Evidently path missing {key!r}"
+            assert key in legacy.details, f"legacy path missing {key!r}"
+
+    def test_a_brand_only_reference_is_still_indeterminate(self, disabled_monitor):
+        """Control: assessing brand did NOT make brand sufficient on its own.
+
+        The indeterminacy guard stays keyed on the CORE columns, matching the
+        Evidently path's `total_core == 0`. Reading a brand assessment as a
+        verdict would re-open exactly what that guard closed.
+        """
+        current = pd.DataFrame(
+            {"probability": [0.5, 0.6], "prediction": [0, 1], "brand_nike": [1, 0]}
+        )
+        reference = pd.DataFrame({"brand_nike": [1, 1], "brand_puma": [0, 1]})
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.indeterminate is True
+        assert report.drift_detected is False

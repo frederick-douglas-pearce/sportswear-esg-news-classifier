@@ -1314,3 +1314,95 @@ Deleting a rationale is not deleting a constraint. **Never every name on disk** 
 hold records written under names a test harness invented (#124), and excluding those is a fact about
 the name rather than a judgement about a workflow. That clause stays in the code and keeps its
 reason.
+
+---
+
+## D017: The Legacy Drift Path Assesses All Four Signal Groups, and Only Brand Changes the Instrument (#102)
+
+**Status:** architect ruling recorded at the #102 plan gate, 2026-09-18. The plan is not yet
+approved by the human and no code has been written.
+
+### The question
+
+`EVIDENTLY_ENABLED` defaults to false and `_setup_evidently` also falls back on `ImportError`, so
+`_legacy_drift_check` is the path a deployment lands on by default or by accident. It assesses
+`probability` and `prediction`
+and nothing else — never `novelty_score`, never any `brand_*` column — while
+`columns_missing_from_reference` stays `[]` because those columns *are* in the reference. A total
+distributional shift in `novelty_score` reports as healthy.
+
+#102 proposed either assessing the columns (option 1) or recording the assessed set in
+`details["columns_assessed"]` (option 2), and stated option 2 was "cheaper and the one consistent
+with this epic's thesis".
+
+### The decision
+
+**Option 1 is the substance; option 2's field is added alongside.**
+
+The issue's stated preference is wrong on the facts, and the trace is the reason.
+`print_summary_json` emits a fixed key set that excludes `details`, and `REQUIRED_SUMMARY_FIELDS`
+is that same set — so a `columns_assessed` key in `details` is invisible to the workflow, the alert
+and the run archive until #104 widens the summary contract, which is three iterations away. Option
+2 alone changes the **record**, not the **verdict**: the cron would keep exiting 0 over a total
+novelty shift, and nothing would hold the line in the meantime. Option 1 changes `drift_detected`,
+hence the exit code, hence the verdict — the defect closes at merge.
+
+**The two paths agree on `details` keys and on verdict STRUCTURE, never on the number.**
+
+- **Core stays effect-size.** `novelty_score`'s KS statistic is the same kind of number as
+  `probability`'s, so it folds into the existing `max(drift_scores)` with no arithmetic change and
+  no comparability break. This is the load-bearing half of the fix and it is free.
+- **Brand is the only part that forces the instrument question**, because a fraction of significant
+  tests is a different unit from an effect size. It enters as its own component, OR'd into
+  `drift_detected` mirroring the Evidently path's structure, and reaches the reported `drift_score`
+  only as a labelled `max` term.
+
+**Why not unify the arithmetic.** D008 already records the two paths as not equivalent in general,
+and the existing cross-path test asserts agreement on `indeterminate` alone, never on
+`drift_score` — so unifying would contradict the established position rather than fulfil it. And
+`DRIFT_THRESHOLD` is tuned against the effect-size instrument while the archive holds history
+computed that way; converting core to p-value counting would make stored and future scores
+incomparable. Brand has no such problem, because brand was never in the legacy score at all.
+
+### The trap this ruling exists to avoid
+
+The brand branch is where fixing #102 can plant #103. A brand column that is constant or all-zero
+in a window — a brand mentioned in no articles — yields a NaN p-value, and `NaN < 0.01` is `False`.
+Written naively the column is counted as "not drifted" *while still incrementing* the denominator,
+diluting the score: a NaN p-value treated as evidence of no drift, which is #103's shape arriving
+inside #102's fix. A degenerate column is skipped, recorded, and does not count toward the total —
+the discipline the Evidently path already applies via `details["metrics_unreadable"]` and its
+`total_core == 0` guard.
+
+### What this does not decide
+
+- **`columns_assessed` is a plain record here and must not drive indeterminacy.** The general
+  "assessed set ≠ offered set ⇒ no verdict" cross-check is **#105**. #102 introduces the substrate;
+  it does not decide what the substrate means.
+- **Carrying the field to the summary and the archive is #104.** #102 does not touch
+  `print_summary_json` or `REQUIRED_SUMMARY_FIELDS`.
+- **A finer residual stays open and is named rather than left silent.** A column present in both
+  frames but unusable in a given window is skipped and recorded in `details` only, so within-window
+  partial coverage remains invisible at the consumer until #104. That is this epic's own class at
+  finer grain, deferred deliberately.
+
+### Correction, found at VERIFY in the same iteration
+
+**#102's premise about *this* deployment was wrong, and it was the basis for its order-1
+placement.** The issue, and the loop's own queue row, asserted that `evidently_enabled` is false
+here so the cron takes `_legacy_drift_check`. Running the real entry point and reading its output
+shows the opposite: the report carries `columns_checked` and `core_metrics_drifted`, emitted only
+by `_evidently_drift_check`, and none of the legacy-only keys, while the threshold in force is not
+the code default — so the environment sets both.
+
+The **default** in `config.py` is false, as the issue says. What does not follow is the claim about
+what runs here. So the defect this entry fixes is **latent in this deployment rather than live**,
+and #103 and #105 — which live on the Evidently path — are the ones currently in the line of fire.
+The fix stands on its own merits: the legacy path is the default, and the `ImportError` fallback
+reaches it without announcing the change of instrument.
+
+**That silent switch is now its own issue (#136)**, filed outside this epic: nothing records which
+path produced a verdict, so a `drift_score` cannot be interpreted without fingerprinting the keys
+in `details` — which is how the correction above had to be established.
+
+The ordering consequence is the human's to act on; this entry records it and amends no table.
