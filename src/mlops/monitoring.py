@@ -70,36 +70,48 @@ def _missing_from_reference(
 def _categorical_p_value(
     reference_col: pd.Series, current_col: pd.Series
 ) -> float | None:
-    """Chi-square p-value for a categorical column, or None where degenerate.
+    """Chi-square p-value for a categorical column, or None where undefined.
 
-    Returns None rather than a number whenever the comparison is not defined,
-    and the caller must treat None as "not assessed" rather than as "no drift".
-    That distinction is the whole point: a `brand_*` column for a brand
-    mentioned in no article is all-zero, its expected-frequency table has a
-    zero marginal, and the p-value is undefined. Written as
-    `p_value < threshold` with a NaN in hand, `NaN < 0.01` is False -- so the
-    column reads as "not drifted" while still counting toward the denominator,
-    which both dilutes the drift score and reports an unmeasured column as
-    evidence of health. That is issue #103's shape, and issue #102's fix is
-    exactly where it would have been introduced (D017).
+    Returns None wherever the comparison is not defined, and the caller treats
+    None as "not assessed" -- never as "no drift".
+
+    Counts are aligned by LABEL, via `reindex`. `value_counts()` sorts by count
+    descending, so a positional read takes the most-frequent category rather
+    than the one asked for: a reference of ints against a current frame of
+    bools built a symmetric table out of a total flip and returned p=1.0.
     """
     from scipy import stats
 
+    # Normalize bool to int before counting. `True` and `1` are equal and hash
+    # alike, so a bool-indexed and an int-indexed `value_counts` dedupe into one
+    # category set while neither can be looked up in the other's index -- which
+    # is how a total flip came back symmetric.
+    if pd.api.types.is_bool_dtype(reference_col):
+        reference_col = reference_col.astype("int64")
+    if pd.api.types.is_bool_dtype(current_col):
+        current_col = current_col.astype("int64")
+
     reference_counts = reference_col.value_counts()
     current_counts = current_col.value_counts()
-    categories = sorted(set(reference_counts.index) | set(current_counts.index))
+
+    # A column whose labels cannot be ordered together (mixed str/int, say) is
+    # not comparable; `sorted` would raise and abort the whole drift check.
+    try:
+        categories = sorted(set(reference_counts.index) | set(current_counts.index))
+    except TypeError:
+        return None
 
     table = np.array(
         [
-            [reference_counts.get(c, 0) for c in categories],
-            [current_counts.get(c, 0) for c in categories],
+            reference_counts.reindex(categories, fill_value=0).to_numpy(),
+            current_counts.reindex(categories, fill_value=0).to_numpy(),
         ],
         dtype=float,
     )
 
-    # One category across both frames means the value never varies, so there is
-    # nothing to compare. A zero row or column marginal makes the expected
-    # frequencies degenerate and `chi2_contingency` raises on it.
+    # One category across both frames means the value never varies. A zero row
+    # or column marginal makes the expected frequencies degenerate, which
+    # `chi2_contingency` raises on.
     if table.shape[1] < 2:
         return None
     if (table.sum(axis=0) == 0).any() or (table.sum(axis=1) == 0).any():
@@ -112,23 +124,27 @@ def _categorical_p_value(
 
 
 def _comparable_series(
-    reference_col: pd.Series, current_col: pd.Series
+    reference_col: pd.Series, current_col: pd.Series, min_size: int = 1
 ) -> tuple[pd.Series, pd.Series] | None:
     """Both columns with NaN dropped, or None where nothing is comparable.
 
-    None means the KS test would be undefined or vacuous: one side is empty
-    after the NaN drop, or the value is the same constant in both frames. As
-    with `_categorical_p_value`, the caller records that as not-assessed and
-    never as no-drift.
+    None means the KS test would be undefined, vacuous, or too small to mean
+    anything. The caller records that as not-assessed and never as no-drift.
 
-    Note what this deliberately does NOT reject: the same column constant at
-    DIFFERENT values in the two frames. That is a total distributional shift --
-    the loudest signal this path can see -- not a degenerate comparison.
+    Three rejections. Either side below `min_size` (issue #94): `ks_2samp` on
+    one surviving row returns a statistic of 1.0 -- the loudest value the
+    instrument can produce -- alongside a p-value saying it means nothing, and
+    this path uses the statistic. Either side empty after the NaN drop. And the
+    same constant in both frames, where there is nothing to compare.
+
+    What this deliberately does NOT reject: the same column constant at
+    DIFFERENT values in the two frames. That is a total distributional shift,
+    not a degenerate comparison.
     """
     reference_clean = reference_col.dropna()
     current_clean = current_col.dropna()
 
-    if len(reference_clean) == 0 or len(current_clean) == 0:
+    if len(reference_clean) < min_size or len(current_clean) < min_size:
         return None
     if (
         reference_clean.nunique() == 1
@@ -306,16 +322,27 @@ class DriftMonitor:
                     indeterminate=True,
                 )
 
-        if current_data.empty or reference_data.empty:
+        min_sample_size = mlops_settings.drift_min_sample_size
+        if (
+            len(current_data) < min_sample_size
+            or len(reference_data) < min_sample_size
+        ):
             # This branch returns before either checker runs, so the
             # `drift_detected=False` below is fabricated rather than measured.
             # Before #71 that was indistinguishable from a real clean result:
             # the script reported exit 0 and the workflow read it as healthy,
             # which is how the EP classifier -- which has never made a single
             # prediction -- passed on every run.
+            #
+            # The floor is a minimum, not emptiness (#94). Enough rows to
+            # compute a statistic is not enough for it to mean anything, and
+            # the two frames are tested independently: a large reference
+            # against a handful of current rows is as untrustworthy as the
+            # reverse.
             logger.warning(
                 f"{self.classifier_type}: insufficient data for drift analysis "
-                f"(reference={len(reference_data)} rows, current={len(current_data)} rows)"
+                f"(reference={len(reference_data)} rows, current={len(current_data)} rows, "
+                f"minimum={min_sample_size})"
             )
             return DriftReport(
                 classifier_type=self.classifier_type,
@@ -448,9 +475,7 @@ class DriftMonitor:
         # `columns_assessed` is NOT `columns_checked`. The latter is what was
         # offered to Evidently; the former is what came back with a readable
         # metric, which is the narrower and more honest set -- a column whose
-        # metric is unreadable was checked and not assessed. Both paths report
-        # this same shape (#102); #104 carries it to the summary and the
-        # archive, where it does not reach today (D017).
+        # metric is unreadable was checked and not assessed.
         columns_assessed: list[str] = []
         columns_skipped: dict[str, str] = {}
         details = {
@@ -649,16 +674,12 @@ class DriftMonitor:
         `novelty_score` reported as healthy and a partial check was
         indistinguishable from a whole one (issue #102).
 
-        **The core score keeps its effect-size meaning and brand does not
-        change it** (D017). `probability`, `prediction` and `novelty_score`
-        contribute magnitudes -- a KS statistic, a rate difference -- and the
-        reported core score is the largest of them, as before. `DRIFT_THRESHOLD`
-        is tuned against that instrument and the run archive holds history
-        computed that way, so converting it to the Evidently path's
-        fraction-of-significant-tests would make a stored score and a future one
-        incomparable. Brand enters as its own component, OR'd into the verdict,
-        which is incomparable with nothing because brand was never in this score
-        at all.
+        The core score is an effect size: `probability`, `prediction` and
+        `novelty_score` contribute magnitudes -- a KS statistic, a rate
+        difference -- and the core score is the largest of them. Brand is a
+        separate component, a fraction of significant chi-square tests, OR'd
+        into the verdict. `details["drift_score_source"]` records which of the
+        two produced the reported `drift_score`.
 
         Args:
             current_data: Current prediction data
@@ -682,27 +703,49 @@ class DriftMonitor:
         details["columns_assessed"] = columns_assessed
         details["columns_skipped"] = columns_skipped
 
+        min_size = mlops_settings.drift_min_sample_size
+
+        def _skip(column: str, reason: str) -> None:
+            columns_skipped[column] = reason
+
+        # Every core column goes through the SAME guard. Applying it to one of
+        # the three is what let a NaN reach `drift_scores`, where it poisons
+        # `max` -- NaN comparisons are False, so `max` keeps whichever operand
+        # it started with -- and `nan > threshold` is False, so the run reported
+        # healthy over a total shift in another column while `columns_assessed`
+        # named the NaN column as measured.
+
         # Check probability distribution
         if "probability" in current_data.columns and "probability" in reference_data.columns:
-            ks_stat, p_value = stats.ks_2samp(
-                reference_data["probability"],
-                current_data["probability"],
+            comparable = _comparable_series(
+                reference_data["probability"], current_data["probability"], min_size
             )
-            details["probability_ks_statistic"] = float(ks_stat)
-            details["probability_p_value"] = float(p_value)
-            drift_scores.append(ks_stat)
-            columns_assessed.append("probability")
+            if comparable is None:
+                _skip("probability", "no comparable values")
+            else:
+                ks_stat, p_value = stats.ks_2samp(*comparable)
+                details["probability_ks_statistic"] = float(ks_stat)
+                details["probability_p_value"] = float(p_value)
+                drift_scores.append(float(ks_stat))
+                columns_assessed.append("probability")
 
         # Check prediction rate
         if "prediction" in current_data.columns and "prediction" in reference_data.columns:
-            ref_rate = reference_data["prediction"].mean()
-            curr_rate = current_data["prediction"].mean()
-            rate_diff = abs(curr_rate - ref_rate)
-            details["reference_prediction_rate"] = float(ref_rate)
-            details["current_prediction_rate"] = float(curr_rate)
-            details["prediction_rate_diff"] = float(rate_diff)
-            drift_scores.append(rate_diff)
-            columns_assessed.append("prediction")
+            comparable = _comparable_series(
+                reference_data["prediction"], current_data["prediction"], min_size
+            )
+            if comparable is None:
+                _skip("prediction", "no comparable values")
+            else:
+                reference_clean, current_clean = comparable
+                ref_rate = reference_clean.mean()
+                curr_rate = current_clean.mean()
+                rate_diff = abs(curr_rate - ref_rate)
+                details["reference_prediction_rate"] = float(ref_rate)
+                details["current_prediction_rate"] = float(curr_rate)
+                details["prediction_rate_diff"] = float(rate_diff)
+                drift_scores.append(float(rate_diff))
+                columns_assessed.append("prediction")
 
         # Check novelty distribution (issue #102).
         #
@@ -715,23 +758,21 @@ class DriftMonitor:
             and "novelty_score" in reference_data.columns
         ):
             comparable = _comparable_series(
-                reference_data["novelty_score"], current_data["novelty_score"]
+                reference_data["novelty_score"],
+                current_data["novelty_score"],
+                min_size,
             )
             if comparable is None:
-                columns_skipped["novelty_score"] = (
-                    "no comparable values (empty after NaN-drop, or the same "
-                    "constant in both frames)"
-                )
-                logger.warning(
-                    f"{self.classifier_type}: novelty_score could not be "
-                    f"assessed; it is NOT counted as 'no drift'"
-                )
+                _skip("novelty_score", "no comparable values")
             else:
-                reference_novelty, current_novelty = comparable
-                ks_stat, p_value = stats.ks_2samp(reference_novelty, current_novelty)
-                details["novelty_ks_statistic"] = float(ks_stat)
-                details["novelty_p_value"] = float(p_value)
-                drift_scores.append(ks_stat)
+                ks_stat, p_value = stats.ks_2samp(*comparable)
+                # Spelled `novelty_score_*` to match the Evidently path's
+                # `f"{col_name}_p_value"`. #104 lifts these keys into the
+                # machine-readable summary, and two spellings for one column
+                # would become its problem.
+                details["novelty_score_ks_statistic"] = float(ks_stat)
+                details["novelty_score_p_value"] = float(p_value)
+                drift_scores.append(float(ks_stat))
                 columns_assessed.append("novelty_score")
 
         # Check brand columns (issue #102).
@@ -748,13 +789,21 @@ class DriftMonitor:
 
         for col in sorted(c for c in current_data.columns if c.startswith("brand_")):
             if col not in reference_data.columns:
+                # Recorded, not silently dropped. `_missing_from_reference`
+                # covers CORE_DRIFT_COLUMNS only by design, so without this a
+                # brand column the reference cannot answer for left no trace in
+                # any field. A reference built from files rather than the
+                # database carries no brand column at all -- `_add_brand_columns`
+                # runs only in `load_predictions_from_database` -- so every one
+                # of them took this branch.
+                _skip(col, "not in reference")
                 continue
             p_value = _categorical_p_value(reference_data[col], current_data[col])
             if p_value is None:
-                # Degenerate: skipped and recorded, never counted toward the
-                # denominator. Counting it would report an unmeasured column as
-                # evidence of health and dilute the score (#103's shape).
-                columns_skipped[col] = "degenerate contingency table (constant value)"
+                # Skipped and recorded, never counted toward the denominator.
+                # Counting it would report an unmeasured column as evidence of
+                # health and dilute the score.
+                _skip(col, "not comparable")
                 continue
             brand_assessed += 1
             columns_assessed.append(col)
@@ -774,9 +823,7 @@ class DriftMonitor:
         brand_drift_score = brand_drifted / brand_assessed if brand_assessed else 0.0
 
         # Written here rather than beside the verdict below so these keys are
-        # present on the indeterminate return too -- the two paths are supposed
-        # to report the same `details` shape whatever the outcome, and #104
-        # lifts that shape into the summary.
+        # present on the indeterminate return too.
         details["brand_metrics_drifted"] = brand_metrics_drifted
         details["brand_assessed_count"] = brand_assessed
         details["brand_drifted_count"] = brand_drifted
@@ -817,14 +864,13 @@ class DriftMonitor:
                 f"with --create-reference to compare them."
             )
 
-        # Core stays an effect size; brand is its own component (D017).
-        #
-        # With no brand column present this is arithmetically identical to what
-        # this path did before #102: `brand_drift_score` is 0.0, so
-        # `drift_detected` reduces to `core_drift_score > threshold` and
-        # `drift_score` to `max(drift_scores)`. That is deliberate -- the
-        # archive's history stays comparable and the threshold keeps governing
-        # the same quantity.
+        # Brand stays out of the core effect-size aggregation: `drift_scores`
+        # holds magnitudes (KS statistics, a rate difference) and
+        # `brand_drift_score` is a fraction of significant tests. The reported
+        # `drift_score` is then `max(core, brand)`, mirroring the Evidently
+        # path -- which is what stops brand-only drift alerting as
+        # "score 0.0 exceeds 0.15". So the reported number can be either
+        # quantity, and `drift_score_source` below says which.
         core_drift_score = max(drift_scores)
 
         drift_detected = (
@@ -833,6 +879,9 @@ class DriftMonitor:
         drift_score = max(core_drift_score, brand_drift_score)
 
         details["core_drift_score"] = core_drift_score
+        details["drift_score_source"] = (
+            "core" if core_drift_score >= brand_drift_score else "brand"
+        )
 
         return DriftReport(
             classifier_type=self.classifier_type,

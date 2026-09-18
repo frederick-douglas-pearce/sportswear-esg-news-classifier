@@ -1406,3 +1406,53 @@ path produced a verdict, so a `drift_score` cannot be interpreted without finger
 in `details` — which is how the correction above had to be established.
 
 The ordering consequence is the human's to act on; this entry records it and amends no table.
+
+### Round-2 amendment — what the code review changed, 2026-09-18
+
+Round 1 returned findings that falsified two of this entry's own claims and found the fix
+reproducing the defect it fixes. Recorded here rather than by editing the text above, so the
+sequence stays legible.
+
+**The fix reproduced #102's own demonstration.** `_comparable_series` was written to stop an
+unmeasurable column counting as evidence of no drift, and was applied to `novelty_score` alone. A
+NaN from the unguarded `probability` branch poisons `max` — NaN comparisons are False, so `max`
+keeps whichever operand it started with — and `nan > threshold` is False, so a total novelty shift
+reported healthy while `columns_assessed` named `probability` as measured. All three core columns
+now go through the one guard.
+
+**A `brand_*` column absent from the reference was dropped with no record** in any field;
+`_missing_from_reference` covers core columns only by design. Reachable, not theoretical:
+`_add_brand_columns` runs only in `load_predictions_from_database`, so a reference built from files
+carries no brand column at all and every one of them took that branch.
+
+**Chi-square counts were aligned positionally, not by label.** A bool-versus-int dtype mismatch
+made `value_counts().get(...)` fall through to positional lookup, and `value_counts()` sorts by
+count descending — so a total flip built a symmetric table and returned "no drift". Bool is now
+normalized to int before counting, and a column whose labels cannot be ordered together is skipped
+rather than raising.
+
+**Two claims in this entry were false and are withdrawn.**
+
+- *"no comparability break"* — folding `novelty_score` into the core max changes the score's value
+  on the same input and can only raise it, so pre-change scores are not level-comparable with
+  post-change ones, and the false-alarm rate at a fixed threshold rises. What is preserved is the
+  unit and the instrument, not the numeric history. AC-5 was reworded accordingly.
+- *"invisible to the workflow, the alert and the run archive"* — the summary and the archive, yes;
+  **not the alert.** `run_drift_analysis` passes `details` to `send_drift_alert`, which renders
+  every key into the webhook payload.
+
+**`loop.config.md` §6 was applied at class granularity.** Six false claims were authored across
+this iteration, so the disposition for the class — comparative, causal and mechanism claims about
+the drift report that no test pins — is deletion rather than a seventh correction. The
+comparability paragraph and the NaN-mechanism narrative were removed from the docstrings; the
+named tests carry the behaviour instead.
+
+**#94 was pulled forward into this change**, human-directed. A minimum sample size makes the
+verdict `indeterminate` rather than healthy, on both frames independently and per column after the
+NaN drop. #102 widened its reach: `novelty_score` is the one nullable core column, so a single
+surviving row produced a KS statistic of 1.0 that this path would have used while never reading the
+p-value saying it meant nothing.
+
+**Still deferred:** carrying `columns_assessed`/`columns_skipped` to the summary and archive
+(#104); the general assessed-versus-offered cross-check (#105); recording which of the two code
+paths produced a verdict (#136).

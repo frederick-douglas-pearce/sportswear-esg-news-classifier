@@ -4,6 +4,37 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-18: The legacy drift path assesses every signal group, and an unmeasured column stops reading as health
+
+`_legacy_drift_check` compared `probability` and `prediction` and nothing else, while
+`columns_missing_from_reference` stayed empty because `novelty_score` and the `brand_*` columns
+*are* in the reference — they were simply never looked at. A total distributional shift in
+`novelty_score` reported as healthy.
+
+**What changed:**
+
+- **All four signal groups are assessed on that path.** `novelty_score` joins the core score by KS
+  statistic; `brand_*` columns are assessed per column by chi-square and enter as their own
+  component, OR'd into the verdict.
+- **Core stays an effect size and brand does not redefine it.** The reported `drift_score` is
+  `max(core, brand)` — which is what stops brand-only drift alerting as "score 0.0 exceeds 0.15" —
+  so the number can be either quantity, and `details["drift_score_source"]` records which.
+  **Adding a term to a max can only raise it, so scores from before this change are not
+  level-comparable with scores after it.**
+- **No column that could not be measured is counted as evidence of no drift.** All three core
+  columns go through one guard; a `brand_*` column absent from the reference, or with a degenerate
+  contingency table, is recorded in `details["columns_skipped"]` with its reason rather than
+  scored. `details["columns_assessed"]` records what did produce a reading.
+- **Chi-square counts are aligned by label.** A bool-versus-int mismatch indexed positionally, and
+  since `value_counts()` sorts by count descending it read the most-frequent category rather than
+  the one asked for — returning "no drift" on a total flip.
+- **A minimum sample size makes the verdict `indeterminate`, not healthy** (`#94`,
+  `DRIFT_MIN_SAMPLE_SIZE`, default 30), on the reference and the current window independently and
+  per column after the NaN drop.
+
+Both paths now report `columns_assessed` and `columns_skipped`; neither reaches the machine-readable
+summary yet (#104). Which of the two paths produced a verdict is still unrecorded (#136).
+
 ### 2026-09-16: A workflow that runs and fails every time is escalated
 
 #73 fails a run with a failed step, #74 fails a run with an unresolved check, and #76 detects a

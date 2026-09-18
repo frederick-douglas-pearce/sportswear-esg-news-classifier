@@ -30,6 +30,14 @@ class MLOpsSettings:
     drift_threshold: float = field(
         default_factory=lambda: float(os.getenv("DRIFT_THRESHOLD", "0.1"))
     )
+    # Below this many rows a drift verdict is `indeterminate`, not `healthy`
+    # (issue #94). Enough rows to compute a statistic is not enough rows for it
+    # to mean anything: a p-value from three rows reports as confidently as one
+    # from three thousand. Applies to the reference and the current window
+    # independently, and per column after the NaN drop.
+    drift_min_sample_size: int = field(
+        default_factory=lambda: int(os.getenv("DRIFT_MIN_SAMPLE_SIZE", "30"))
+    )
 
     # Reference data settings
     reference_data_dir: Path = field(
