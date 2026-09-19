@@ -68,12 +68,27 @@ def _missing_from_reference(
 
 
 def _categorical_p_value(
-    reference_col: pd.Series, current_col: pd.Series
-) -> float | None:
-    """Chi-square p-value for a categorical column, or None where undefined.
+    reference_col: pd.Series,
+    current_col: pd.Series,
+    min_size: int = 1,
+) -> tuple[float | None, str | None]:
+    """Chi-square p-value for a categorical column, with the reason where none.
 
-    Returns None wherever the comparison is not defined, and the caller treats
-    None as "not assessed" -- never as "no drift".
+    Returns `(p_value, None)` when the test ran and `(None, reason)` when it did
+    not; exactly one of the two is ever set. The caller records the reason and
+    treats a None p-value as "not assessed" -- never as "no drift".
+
+    Every rejection names its own cause. They used to reach the caller as one
+    string, which left `columns_skipped` unable to answer the only question it
+    exists to answer.
+
+    What this deliberately does NOT reject is a column too rare for the
+    chi-square approximation to be sound. A rare brand is power-ASYMMETRIC, not
+    powerless: `brand_li-ning` (3 positives in the shipped 934-row reference)
+    cannot evidence a decrease, but three positives in a 73-row window take it
+    to p=0.0011 -- and a rare brand suddenly appearing is the drift this project
+    most wants to hear about. A minimum-expected-cell floor removes the dead
+    reading and that detection together, so it is not applied (D017).
 
     Counts are aligned by LABEL, via `reindex`. `value_counts()` sorts by count
     descending, so a positional read takes the most-frequent category rather
@@ -82,24 +97,32 @@ def _categorical_p_value(
     """
     from scipy import stats
 
+    # The #94 row floor, per column and after the NaN drop, on this path too. It
+    # was reachable only from the three core columns while five places said it
+    # applied per column.
+    reference_clean = reference_col.dropna()
+    current_clean = current_col.dropna()
+    if len(reference_clean) < min_size or len(current_clean) < min_size:
+        return None, "below the sample floor"
+
     # Normalize bool to int before counting. `True` and `1` are equal and hash
     # alike, so a bool-indexed and an int-indexed `value_counts` dedupe into one
     # category set while neither can be looked up in the other's index -- which
     # is how a total flip came back symmetric.
-    if pd.api.types.is_bool_dtype(reference_col):
-        reference_col = reference_col.astype("int64")
-    if pd.api.types.is_bool_dtype(current_col):
-        current_col = current_col.astype("int64")
+    if pd.api.types.is_bool_dtype(reference_clean):
+        reference_clean = reference_clean.astype("int64")
+    if pd.api.types.is_bool_dtype(current_clean):
+        current_clean = current_clean.astype("int64")
 
-    reference_counts = reference_col.value_counts()
-    current_counts = current_col.value_counts()
+    reference_counts = reference_clean.value_counts()
+    current_counts = current_clean.value_counts()
 
     # A column whose labels cannot be ordered together (mixed str/int, say) is
     # not comparable; `sorted` would raise and abort the whole drift check.
     try:
         categories = sorted(set(reference_counts.index) | set(current_counts.index))
     except TypeError:
-        return None
+        return None, "labels cannot be ordered together"
 
     table = np.array(
         [
@@ -113,14 +136,14 @@ def _categorical_p_value(
     # or column marginal makes the expected frequencies degenerate, which
     # `chi2_contingency` raises on.
     if table.shape[1] < 2:
-        return None
+        return None, "one category in both frames"
     if (table.sum(axis=0) == 0).any() or (table.sum(axis=1) == 0).any():
-        return None
+        return None, "a category or a frame is empty"
 
     _, p_value, _, _ = stats.chi2_contingency(table)
     if not np.isfinite(p_value):
-        return None
-    return float(p_value)
+        return None, "p-value is not finite"
+    return float(p_value), None
 
 
 def _comparable_series(
@@ -693,11 +716,14 @@ class DriftMonitor:
         details: dict[str, Any] = {}
         drift_scores = []
 
-        # What was actually measured, as opposed to what was offered. Recorded
-        # on both paths in the same shape: #104 lifts these into the summary
-        # (they do not reach it today), and #105 is the general cross-check that
-        # reads them. Introduced here as a plain record -- it must NOT drive
-        # indeterminacy, which is #105's call to make, not this one's (D017).
+        # What was actually measured, as opposed to what was offered. Both
+        # fields carry the same TYPES on the Evidently path, but not the same
+        # coverage: that path has one writer (an unreadable metric) and still
+        # drops a brand column absent from the reference silently, so the two
+        # are not like-for-like and #105's cross-check will have to say which
+        # path it is reading. #104 lifts them into the summary (they do not
+        # reach it today). Introduced here as a plain record -- it must NOT
+        # drive indeterminacy, which is #105's call, not this one's (D017).
         columns_assessed: list[str] = []
         columns_skipped: dict[str, str] = {}
         details["columns_assessed"] = columns_assessed
@@ -798,12 +824,14 @@ class DriftMonitor:
                 # of them took this branch.
                 _skip(col, "not in reference")
                 continue
-            p_value = _categorical_p_value(reference_data[col], current_data[col])
+            p_value, reason = _categorical_p_value(
+                reference_data[col], current_data[col], min_size
+            )
             if p_value is None:
                 # Skipped and recorded, never counted toward the denominator.
                 # Counting it would report an unmeasured column as evidence of
                 # health and dilute the score.
-                _skip(col, "not comparable")
+                _skip(col, reason or "not comparable")
                 continue
             brand_assessed += 1
             columns_assessed.append(col)

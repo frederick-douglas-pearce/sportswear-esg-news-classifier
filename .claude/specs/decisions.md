@@ -1456,3 +1456,72 @@ p-value saying it meant nothing.
 **Still deferred:** carrying `columns_assessed`/`columns_skipped` to the summary and archive
 (#104); the general assessed-versus-offered cross-check (#105); recording which of the two code
 paths produced a verdict (#136).
+
+#### D017 — Round-3 amendment (2026-09-19, human-directed)
+
+**The claim "per column after the NaN drop" was false in five places when the Round-2 amendment
+above was written**, including in that amendment. The #94 floor was threaded through
+`_comparable_series`, which only the three core columns call; the brand loop called
+`_categorical_p_value` with no sample-size argument at all. Round 2 of code review found it, and
+the human chose to make the claim true rather than to narrow it.
+
+**The row floor now reaches the brand columns.** `_categorical_p_value` takes `min_size` and drops
+NaN before counting, so the floor applies per column after the NaN drop on every column, which is
+what the five surfaces already said. In practice it is a defensive guard rather than a behaviour
+change: the frame-level floor already requires 30 rows in both frames, and `_add_brand_columns`
+writes no NaN, so a brand column reaches this branch only from a reference built some other way.
+
+**The power floor that was going to accompany it was dropped, because measuring it falsified its
+premise.** The finding, and the option this work was authorized under, described a rare brand
+column as one that "cannot detect anything": `brand_li-ning` has 3 positives in the shipped 934-row
+reference, returns p=1.0 against a quiet week with a smallest expected cell of 0.22, and was
+counted as assessed. Skipping such a column below a minimum expected cell count was implemented,
+tested and then checked against the counterfactual — and the column turns out to be
+power-**asymmetric**, not powerless:
+
+| `brand_li-ning` positives in a 73-row window | p | smallest expected cell |
+|---|---|---|
+| 0 | 1.0000 | 0.22 |
+| 1 | 0.6849 | 0.29 |
+| 2 | 0.0492 | 0.36 |
+| 3 | 0.0011 | 0.43 |
+| 5 | 0.0000 | 0.58 |
+
+A rare brand cannot evidence a *decrease* — there is nothing to lose. It detects an *increase*
+sharply, below the 0.01 brand threshold from three occurrences, and a rare brand suddenly
+appearing in the news is the drift this project most wants to hear about. Every candidate floor
+removes the dead reading and that detection together, so none is applied. A test pins the
+asymmetry so the obvious-looking optimization is not reattempted.
+
+(The familiar "every expected cell >= 5" was rejected earlier and separately: measured on the same
+reference at the production window size it discards `brand_lululemon`, the one column that
+actually drifted at p < 1e-4, and collapses the denominator from 15 to 3.)
+
+**Each rejection now names its own cause.** `_categorical_p_value` returns `(p_value, reason)`
+instead of `float | None`; four distinct failures used to reach `columns_skipped` as the single
+string `"not comparable"`, which left the field unable to answer the only question it exists for.
+
+**Two further claims are withdrawn rather than corrected.**
+
+- *"on both paths"*, said of `columns_skipped` being populated with a reason — false for the
+  Evidently path, which has one writer (an unreadable metric) and still drops a `brand_*` column
+  absent from the reference silently, before `columns_to_check` is built. The docs now state the
+  asymmetry instead of claiming symmetry. Closing the gap on the Evidently path is follow-up work,
+  not folded in here.
+- *"below it the verdict is `indeterminate`"*, said of the sample floor without qualification —
+  true of a whole frame, false of a single column, where the column is skipped and the check still
+  returns a verdict. All five surfaces now distinguish the two scopes.
+
+**The enumerated list of skip reasons is deleted, not corrected a third time.** Prose that lists
+which reasons can appear in `columns_skipped` has been wrong at every revision; the field carries
+its own reason per entry and the docs now say only that.
+
+**Process note.** The Round-2 amendment recorded that §6's class-deletion remedy had been applied.
+It was — and the same commit authored a seventh instance of the class across five files. This
+amendment nearly authored an eighth: "a column that cannot detect anything", carried from the
+review finding into code comments, three docs and two tests before the counterfactual was run. The
+rule that caught it is the one already in memory — running the fixed code proves the outcome, never
+the attribution; restore the other arm and re-run. §6 tells you to delete a class of claim, and it
+does not tell you to measure the claim you are about to replace it with. Code review escalated at
+its two-round cap; this work exists because the human directed it after the escalation, and it has
+therefore not itself been through a review round.

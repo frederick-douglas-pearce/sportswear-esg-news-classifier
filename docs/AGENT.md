@@ -367,10 +367,15 @@ Until #102 the legacy path compared `probability` and `prediction` and nothing e
 `novelty_score` reported as healthy.
 
 Both paths now record **`columns_assessed`** (what produced a reading) and
-**`columns_skipped`** (a column that was present but could not be assessed, with the reason: not
-in the reference, no comparable values, or below the sample floor). **A skipped column is never
-counted as evidence of no drift** -- it is left out of `drift_scores` and out of the brand
-denominator rather than scored as "not drifted".
+**`columns_skipped`** (a column that was present but could not be assessed, each entry carrying
+its own reason). **A skipped column is never counted as evidence of no drift** -- it is left out
+of `drift_scores` and out of the brand denominator rather than scored as "not drifted".
+
+⚠ **The two paths do not populate `columns_skipped` for the same reasons, so it is not a
+like-for-like field between them.** The legacy path records a column it declined to test, for
+whatever reason it declined. The Evidently path has one writer -- a metric whose value came back
+unreadable -- and a `brand_*` column absent from the reference is still dropped there silently,
+before `columns_to_check` is built.
 
 ⚠ **Which of the two paths a given deployment actually takes is not recorded anywhere in the
 report.** It depends on the environment, and the `ImportError` fallback can change it without
@@ -383,10 +388,21 @@ is that same set. So **within-window** partial coverage -- a column present but 
 day -- does not reach the workflow. Carrying it across is #104. (They *are* visible in the
 `--output` JSON, and in the webhook alert, which renders every `details` key.)
 
-**Minimum sample size** (`DRIFT_MIN_SAMPLE_SIZE`, default 30 -- issue #94). Below it the verdict is
-`indeterminate`, not healthy. It applies to the reference and the current window independently, and
-per column after the NaN drop: enough rows to compute a statistic is not enough rows for it to mean
-anything.
+**Minimum sample size** (`DRIFT_MIN_SAMPLE_SIZE`, default 30 -- issue #94). Enough rows to compute
+a statistic is not enough rows for it to mean anything. Two scopes, two outcomes:
+
+- a whole **frame** below the floor -- the reference and the current window are checked
+  independently -- makes the verdict `indeterminate`, not healthy;
+- a single **column** below it, counted after its NaN are dropped, is skipped and recorded, and
+  the check still returns a verdict from whatever else it could measure.
+
+⚠ **A rare `brand_*` column is NOT filtered out for being rare**, and this is deliberate.
+`brand_li-ning` carries 3 positives in the shipped 934-row reference; against a quiet week it
+returns p=1.0 with a smallest expected cell of 0.22, which reads like a column that cannot detect
+anything and only enlarges the denominator of `brand_drift_score`. It is power-*asymmetric*, not
+powerless: it cannot evidence a decrease, and three positives in a 73-row window take it to
+p=0.0011. A rare brand suddenly appearing is the drift this project most wants to hear about, so a
+minimum-expected-cell floor would remove the dead reading and that detection together (D017).
 
 ### Website Export
 
