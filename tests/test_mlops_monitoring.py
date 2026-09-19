@@ -1795,6 +1795,40 @@ class TestNoUnmeasuredColumnReachesTheVerdictAsHealth:
         assert "probability" not in report.details["columns_assessed"]
         assert "probability" in report.details["columns_skipped"]
 
+    def test_a_nan_prediction_does_not_mask_a_total_novelty_shift(
+        self, disabled_monitor
+    ):
+        """The middle branch of the three the guard was widened to cover.
+
+        `probability` and `novelty_score` each have a test; `prediction` had
+        none, and it is the one branch that does not use `ks_2samp` -- it takes
+        `.mean()` of the surviving rows, so an unguarded all-NaN column yields
+        `nan` from a different expression than its two siblings.
+        """
+        n = 60
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.full(n, np.nan),
+                "novelty_score": np.linspace(0.0, 0.1, n),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.full(n, np.nan),
+                "novelty_score": np.linspace(0.9, 1.0, n),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.drift_detected is True
+        assert not np.isnan(report.drift_score)
+        assert "prediction" not in report.details["columns_assessed"]
+        assert "prediction" in report.details["columns_skipped"]
+        assert "prediction_rate_diff" not in report.details
+
     def test_the_reported_score_is_never_nan(self, disabled_monitor):
         """A NaN score serializes as a bare `NaN`, which is not valid JSON.
 
@@ -1867,8 +1901,8 @@ class TestCategoricalPValueIsLabelSafe:
         current_bool = pd.Series([True] * 90 + [False] * 10)
         current_int = pd.Series([1] * 90 + [0] * 10)
 
-        p_mixed, _ = _categorical_p_value(reference, current_bool)
-        p_same, _ = _categorical_p_value(reference, current_int)
+        p_mixed, _ = _categorical_p_value(reference, current_bool, 1)
+        p_same, _ = _categorical_p_value(reference, current_int, 1)
 
         assert p_mixed is not None
         assert p_mixed == pytest.approx(p_same)
@@ -1880,7 +1914,7 @@ class TestCategoricalPValueIsLabelSafe:
         reference_bool = pd.Series([True] * 10 + [False] * 90)
         current_int = pd.Series([1] * 90 + [0] * 10)
 
-        assert _categorical_p_value(reference_bool, current_int)[0] is not None
+        assert _categorical_p_value(reference_bool, current_int, 1)[0] is not None
 
     def test_an_uncomparable_dtype_is_skipped_not_raised(self):
         """`sorted()` over mixed str/int raised, aborting the whole check."""
@@ -1888,7 +1922,7 @@ class TestCategoricalPValueIsLabelSafe:
 
         assert (
             _categorical_p_value(
-                pd.Series(["0", "1"] * 50), pd.Series([0, 1] * 50)
+                pd.Series(["0", "1"] * 50), pd.Series([0, 1] * 50), 1
             )[0]
             is None
         )
@@ -2159,7 +2193,7 @@ class TestCategoricalPValueReportsWhyItDeclined:
         from src.mlops.monitoring import _categorical_p_value
 
         p_value, reason = _categorical_p_value(
-            pd.Series([1] * 300 + [0] * 634), pd.Series([1] * 19 + [0] * 54)
+            pd.Series([1] * 300 + [0] * 634), pd.Series([1] * 19 + [0] * 54), 1
         )
 
         assert reason is None
@@ -2169,7 +2203,7 @@ class TestCategoricalPValueReportsWhyItDeclined:
         from src.mlops.monitoring import _categorical_p_value
 
         p_value, reason = _categorical_p_value(
-            pd.Series([0] * 934), pd.Series([0] * 73)
+            pd.Series([0] * 934), pd.Series([0] * 73), 1
         )
 
         assert p_value is None
@@ -2181,5 +2215,5 @@ class TestCategoricalPValueReportsWhyItDeclined:
         reference = pd.Series([1] * 300 + [0] * 634)
         current = pd.Series([1] * 10 + [0] * 15)  # 25 rows
 
-        assert _categorical_p_value(reference, current, min_size=30)[0] is None
-        assert _categorical_p_value(reference, current, min_size=1)[0] is not None
+        assert _categorical_p_value(reference, current, 30)[0] is None
+        assert _categorical_p_value(reference, current, 1)[0] is not None

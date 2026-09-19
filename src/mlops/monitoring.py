@@ -70,7 +70,7 @@ def _missing_from_reference(
 def _categorical_p_value(
     reference_col: pd.Series,
     current_col: pd.Series,
-    min_size: int = 1,
+    min_size: int,
 ) -> tuple[float | None, str | None]:
     """Chi-square p-value for a categorical column, with the reason where none.
 
@@ -81,6 +81,10 @@ def _categorical_p_value(
     Every rejection names its own cause. They used to reach the caller as one
     string, which left `columns_skipped` unable to answer the only question it
     exists to answer.
+
+    `min_size` has no default on purpose. Both floors here are easy to leave
+    off a column added later, and a defaulted `1` would let that happen without
+    a diff anywhere near this function.
 
     What this deliberately does NOT reject is a column too rare for the
     chi-square approximation to be sound. A rare brand is power-ASYMMETRIC, not
@@ -147,7 +151,7 @@ def _categorical_p_value(
 
 
 def _comparable_series(
-    reference_col: pd.Series, current_col: pd.Series, min_size: int = 1
+    reference_col: pd.Series, current_col: pd.Series, min_size: int
 ) -> tuple[pd.Series, pd.Series] | None:
     """Both columns with NaN dropped, or None where nothing is comparable.
 
@@ -163,6 +167,10 @@ def _comparable_series(
     What this deliberately does NOT reject: the same column constant at
     DIFFERENT values in the two frames. That is a total distributional shift,
     not a degenerate comparison.
+
+    `min_size` has no default on purpose. Three core columns pass it today; a
+    fourth added later would inherit a defaulted `1` -- no floor -- silently,
+    and the omission would be visible nowhere near this function.
     """
     reference_clean = reference_col.dropna()
     current_clean = current_col.dropna()
