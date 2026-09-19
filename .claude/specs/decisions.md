@@ -1314,3 +1314,214 @@ Deleting a rationale is not deleting a constraint. **Never every name on disk** 
 hold records written under names a test harness invented (#124), and excluding those is a fact about
 the name rather than a judgement about a workflow. That clause stays in the code and keeps its
 reason.
+
+---
+
+## D017: The Legacy Drift Path Assesses All Four Signal Groups, and Only Brand Changes the Instrument (#102)
+
+**Status:** architect ruling recorded at the #102 plan gate, 2026-09-18. The plan is not yet
+approved by the human and no code has been written.
+
+### The question
+
+`EVIDENTLY_ENABLED` defaults to false and `_setup_evidently` also falls back on `ImportError`, so
+`_legacy_drift_check` is the path a deployment lands on by default or by accident. It assesses
+`probability` and `prediction`
+and nothing else — never `novelty_score`, never any `brand_*` column — while
+`columns_missing_from_reference` stays `[]` because those columns *are* in the reference. A total
+distributional shift in `novelty_score` reports as healthy.
+
+#102 proposed either assessing the columns (option 1) or recording the assessed set in
+`details["columns_assessed"]` (option 2), and stated option 2 was "cheaper and the one consistent
+with this epic's thesis".
+
+### The decision
+
+**Option 1 is the substance; option 2's field is added alongside.**
+
+The issue's stated preference is wrong on the facts, and the trace is the reason.
+`print_summary_json` emits a fixed key set that excludes `details`, and `REQUIRED_SUMMARY_FIELDS`
+is that same set — so a `columns_assessed` key in `details` is invisible to the workflow, the alert
+and the run archive until #104 widens the summary contract, which is three iterations away. Option
+2 alone changes the **record**, not the **verdict**: the cron would keep exiting 0 over a total
+novelty shift, and nothing would hold the line in the meantime. Option 1 changes `drift_detected`,
+hence the exit code, hence the verdict — the defect closes at merge.
+
+**The two paths agree on `details` keys and on verdict STRUCTURE, never on the number.**
+
+- **Core stays effect-size.** `novelty_score`'s KS statistic is the same kind of number as
+  `probability`'s, so it folds into the existing `max(drift_scores)` with no arithmetic change and
+  no comparability break. This is the load-bearing half of the fix and it is free.
+- **Brand is the only part that forces the instrument question**, because a fraction of significant
+  tests is a different unit from an effect size. It enters as its own component, OR'd into
+  `drift_detected` mirroring the Evidently path's structure, and reaches the reported `drift_score`
+  only as a labelled `max` term.
+
+**Why not unify the arithmetic.** D008 already records the two paths as not equivalent in general,
+and the existing cross-path test asserts agreement on `indeterminate` alone, never on
+`drift_score` — so unifying would contradict the established position rather than fulfil it. And
+`DRIFT_THRESHOLD` is tuned against the effect-size instrument while the archive holds history
+computed that way; converting core to p-value counting would make stored and future scores
+incomparable. Brand has no such problem, because brand was never in the legacy score at all.
+
+### The trap this ruling exists to avoid
+
+The brand branch is where fixing #102 can plant #103. A brand column that is constant or all-zero
+in a window — a brand mentioned in no articles — yields a NaN p-value, and `NaN < 0.01` is `False`.
+Written naively the column is counted as "not drifted" *while still incrementing* the denominator,
+diluting the score: a NaN p-value treated as evidence of no drift, which is #103's shape arriving
+inside #102's fix. A degenerate column is skipped, recorded, and does not count toward the total —
+the discipline the Evidently path already applies via `details["metrics_unreadable"]` and its
+`total_core == 0` guard.
+
+### What this does not decide
+
+- **`columns_assessed` is a plain record here and must not drive indeterminacy.** The general
+  "assessed set ≠ offered set ⇒ no verdict" cross-check is **#105**. #102 introduces the substrate;
+  it does not decide what the substrate means.
+- **Carrying the field to the summary and the archive is #104.** #102 does not touch
+  `print_summary_json` or `REQUIRED_SUMMARY_FIELDS`.
+- **A finer residual stays open and is named rather than left silent.** A column present in both
+  frames but unusable in a given window is skipped and recorded in `details` only, so within-window
+  partial coverage remains invisible at the consumer until #104. That is this epic's own class at
+  finer grain, deferred deliberately.
+
+### Correction, found at VERIFY in the same iteration
+
+**#102's premise about *this* deployment was wrong, and it was the basis for its order-1
+placement.** The issue, and the loop's own queue row, asserted that `evidently_enabled` is false
+here so the cron takes `_legacy_drift_check`. Running the real entry point and reading its output
+shows the opposite: the report carries `columns_checked` and `core_metrics_drifted`, emitted only
+by `_evidently_drift_check`, and none of the legacy-only keys, while the threshold in force is not
+the code default — so the environment sets both.
+
+The **default** in `config.py` is false, as the issue says. What does not follow is the claim about
+what runs here. So the defect this entry fixes is **latent in this deployment rather than live**,
+and #103 and #105 — which live on the Evidently path — are the ones currently in the line of fire.
+The fix stands on its own merits: the legacy path is the default, and the `ImportError` fallback
+reaches it without announcing the change of instrument.
+
+**That silent switch is now its own issue (#136)**, filed outside this epic: nothing records which
+path produced a verdict, so a `drift_score` cannot be interpreted without fingerprinting the keys
+in `details` — which is how the correction above had to be established.
+
+The ordering consequence is the human's to act on; this entry records it and amends no table.
+
+### Round-2 amendment — what the code review changed, 2026-09-18
+
+Round 1 returned findings that falsified two of this entry's own claims and found the fix
+reproducing the defect it fixes. Recorded here rather than by editing the text above, so the
+sequence stays legible.
+
+**The fix reproduced #102's own demonstration.** `_comparable_series` was written to stop an
+unmeasurable column counting as evidence of no drift, and was applied to `novelty_score` alone. A
+NaN from the unguarded `probability` branch poisons `max` — NaN comparisons are False, so `max`
+keeps whichever operand it started with — and `nan > threshold` is False, so a total novelty shift
+reported healthy while `columns_assessed` named `probability` as measured. All three core columns
+now go through the one guard.
+
+**A `brand_*` column absent from the reference was dropped with no record** in any field;
+`_missing_from_reference` covers core columns only by design. Reachable, not theoretical:
+`_add_brand_columns` runs only in `load_predictions_from_database`, so a reference built from files
+carries no brand column at all and every one of them took that branch.
+
+**Chi-square counts were aligned positionally, not by label.** A bool-versus-int dtype mismatch
+made `value_counts().get(...)` fall through to positional lookup, and `value_counts()` sorts by
+count descending — so a total flip built a symmetric table and returned "no drift". Bool is now
+normalized to int before counting, and a column whose labels cannot be ordered together is skipped
+rather than raising.
+
+**Two claims in this entry were false and are withdrawn.**
+
+- *"no comparability break"* — folding `novelty_score` into the core max changes the score's value
+  on the same input and can only raise it, so pre-change scores are not level-comparable with
+  post-change ones, and the false-alarm rate at a fixed threshold rises. What is preserved is the
+  unit and the instrument, not the numeric history. AC-5 was reworded accordingly.
+- *"invisible to the workflow, the alert and the run archive"* — the summary and the archive, yes;
+  **not the alert.** `run_drift_analysis` passes `details` to `send_drift_alert`, which renders
+  every key into the webhook payload.
+
+**`loop.config.md` §6 was applied at class granularity.** Six false claims were authored across
+this iteration, so the disposition for the class — comparative, causal and mechanism claims about
+the drift report that no test pins — is deletion rather than a seventh correction. The
+comparability paragraph and the NaN-mechanism narrative were removed from the docstrings; the
+named tests carry the behaviour instead.
+
+**#94 was pulled forward into this change**, human-directed. A minimum sample size makes the
+verdict `indeterminate` rather than healthy, on both frames independently and per column after the
+NaN drop. #102 widened its reach: `novelty_score` is the one nullable core column, so a single
+surviving row produced a KS statistic of 1.0 that this path would have used while never reading the
+p-value saying it meant nothing.
+
+**Still deferred:** carrying `columns_assessed`/`columns_skipped` to the summary and archive
+(#104); the general assessed-versus-offered cross-check (#105); recording which of the two code
+paths produced a verdict (#136).
+
+#### D017 — Round-3 amendment (2026-09-19, human-directed)
+
+**The claim "per column after the NaN drop" was false in five places when the Round-2 amendment
+above was written**, including in that amendment. The #94 floor was threaded through
+`_comparable_series`, which only the three core columns call; the brand loop called
+`_categorical_p_value` with no sample-size argument at all. Round 2 of code review found it, and
+the human chose to make the claim true rather than to narrow it.
+
+**The row floor now reaches the brand columns.** `_categorical_p_value` takes `min_size` and drops
+NaN before counting, so the floor applies per column after the NaN drop on every column, which is
+what the five surfaces already said. In practice it is a defensive guard rather than a behaviour
+change: the frame-level floor already requires 30 rows in both frames, and `_add_brand_columns`
+writes no NaN, so a brand column reaches this branch only from a reference built some other way.
+
+**The power floor that was going to accompany it was dropped, because measuring it falsified its
+premise.** The finding, and the option this work was authorized under, described a rare brand
+column as one that "cannot detect anything": `brand_li-ning` has 3 positives in the shipped 934-row
+reference, returns p=1.0 against a quiet week with a smallest expected cell of 0.22, and was
+counted as assessed. Skipping such a column below a minimum expected cell count was implemented,
+tested and then checked against the counterfactual — and the column turns out to be
+power-**asymmetric**, not powerless:
+
+| `brand_li-ning` positives in a 73-row window | p | smallest expected cell |
+|---|---|---|
+| 0 | 1.0000 | 0.22 |
+| 1 | 0.6849 | 0.29 |
+| 2 | 0.0492 | 0.36 |
+| 3 | 0.0011 | 0.43 |
+| 5 | 0.0000 | 0.58 |
+
+A rare brand cannot evidence a *decrease* — there is nothing to lose. It detects an *increase*
+sharply, below the 0.01 brand threshold from three occurrences, and a rare brand suddenly
+appearing in the news is the drift this project most wants to hear about. Every candidate floor
+removes the dead reading and that detection together, so none is applied. A test pins the
+asymmetry so the obvious-looking optimization is not reattempted.
+
+(The familiar "every expected cell >= 5" was rejected earlier and separately: measured on the same
+reference at the production window size it discards `brand_lululemon`, the one column that
+actually drifted at p < 1e-4, and collapses the denominator from 15 to 3.)
+
+**Each rejection now names its own cause.** `_categorical_p_value` returns `(p_value, reason)`
+instead of `float | None`; four distinct failures used to reach `columns_skipped` as the single
+string `"not comparable"`, which left the field unable to answer the only question it exists for.
+
+**Two further claims are withdrawn rather than corrected.**
+
+- *"on both paths"*, said of `columns_skipped` being populated with a reason — false for the
+  Evidently path, which has one writer (an unreadable metric) and still drops a `brand_*` column
+  absent from the reference silently, before `columns_to_check` is built. The docs now state the
+  asymmetry instead of claiming symmetry. Closing the gap on the Evidently path is follow-up work,
+  not folded in here.
+- *"below it the verdict is `indeterminate`"*, said of the sample floor without qualification —
+  true of a whole frame, false of a single column, where the column is skipped and the check still
+  returns a verdict. All five surfaces now distinguish the two scopes.
+
+**The enumerated list of skip reasons is deleted, not corrected a third time.** Prose that lists
+which reasons can appear in `columns_skipped` has been wrong at every revision; the field carries
+its own reason per entry and the docs now say only that.
+
+**Process note.** The Round-2 amendment recorded that §6's class-deletion remedy had been applied.
+It was — and the same commit authored a seventh instance of the class across five files. This
+amendment nearly authored an eighth: "a column that cannot detect anything", carried from the
+review finding into code comments, three docs and two tests before the counterfactual was run. The
+rule that caught it is the one already in memory — running the fixed code proves the outcome, never
+the attribution; restore the other arm and re-run. §6 tells you to delete a class of claim, and it
+does not tell you to measure the claim you are about to replace it with. Code review escalated at
+its two-round cap; this work exists because the human directed it after the escalation, and it has
+therefore not itself been through a review round.

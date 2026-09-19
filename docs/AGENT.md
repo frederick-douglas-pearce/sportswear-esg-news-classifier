@@ -351,11 +351,58 @@ is `max(core_drift_score, brand_drift_score)`, with both components kept in `det
 be described as a single threshold rule while the reported score was `core_drift_score` alone, so
 brand-only drift alerted with "score 0.0 exceeds 0.15" (issue #71).
 
-On the **default** path (`EVIDENTLY_ENABLED=false`, which is what the cron agent runs),
-`_legacy_drift_check` compares only `probability` (KS statistic) and `prediction` (rate difference)
-against a plain threshold. It does **not** assess `novelty_score` or any `brand_*` column, and
-`columns_missing_from_reference` stays empty because those columns *are* in the reference -- so a
-partial check is not currently distinguishable from a whole one there. Tracked as #102.
+On the **default** path (`EVIDENTLY_ENABLED=false`, which is also where `_setup_evidently` falls
+back on `ImportError`), `_legacy_drift_check` assesses the same four signal groups, but **scores the core ones
+differently, and deliberately** (#102, D017). Core drift is an *effect size* there --
+`probability` and `novelty_score` by KS statistic, `prediction` by rate difference -- and the core
+score is the largest of those magnitudes against the threshold, not a count of significant tests.
+The two paths are **not** expected to produce the same number. `brand_*` columns are assessed per
+column by chi-square and enter as their own component, OR'd into the verdict, exactly as on the
+Evidently path -- and the reported `drift_score` is `max(core, brand)`, so it can be either
+quantity. `details["drift_score_source"]` records which one it was.
+
+Until #102 the legacy path compared `probability` and `prediction` and nothing else, while
+`columns_missing_from_reference` stayed empty because `novelty_score` and the `brand_*` columns
+*are* in the reference -- they were simply never looked at, so a total distributional shift in
+`novelty_score` reported as healthy.
+
+Both paths now record **`columns_assessed`** (what produced a reading) and
+**`columns_skipped`** (a column that was present but could not be assessed, each entry carrying
+its own reason). **A skipped column is never counted as evidence of no drift** -- it is left out
+of `drift_scores` and out of the brand denominator rather than scored as "not drifted".
+
+⚠ **The two paths do not populate `columns_skipped` for the same reasons, so it is not a
+like-for-like field between them.** The legacy path records a column it declined to test, for
+whatever reason it declined. The Evidently path has one writer -- a metric whose value came back
+unreadable -- and a `brand_*` column absent from the reference is still dropped there silently,
+before `columns_to_check` is built.
+
+⚠ **Which of the two paths a given deployment actually takes is not recorded anywhere in the
+report.** It depends on the environment, and the `ImportError` fallback can change it without
+announcing it — so a `drift_score` cannot be interpreted without knowing which instrument produced
+it. Tracked as #136.
+
+⚠ **These two fields do not reach the summary or the run archive yet.**
+`print_summary_json` emits a fixed key set that excludes `details`, and `REQUIRED_SUMMARY_FIELDS`
+is that same set. So **within-window** partial coverage -- a column present but unusable on a given
+day -- does not reach the workflow. Carrying it across is #104. (They *are* visible in the
+`--output` JSON, and in the webhook alert, which renders every `details` key.)
+
+**Minimum sample size** (`DRIFT_MIN_SAMPLE_SIZE`, default 30 -- issue #94). Enough rows to compute
+a statistic is not enough rows for it to mean anything. Two scopes, two outcomes:
+
+- a whole **frame** below the floor -- the reference and the current window are checked
+  independently -- makes the verdict `indeterminate`, not healthy;
+- a single **column** below it, counted after its NaN are dropped, is skipped and recorded, and
+  the check still returns a verdict from whatever else it could measure.
+
+⚠ **A rare `brand_*` column is NOT filtered out for being rare**, and this is deliberate.
+`brand_li-ning` carries 3 positives in the shipped 934-row reference; against a quiet week it
+returns p=1.0 with a smallest expected cell of 0.22, which reads like a column that cannot detect
+anything and only enlarges the denominator of `brand_drift_score`. It is power-*asymmetric*, not
+powerless: it cannot evidence a decrease, and three positives in a 73-row window take it to
+p=0.0011. A rare brand suddenly appearing is the drift this project most wants to hear about, so a
+minimum-expected-cell floor would remove the dead reading and that detection together (D017).
 
 ### Website Export
 

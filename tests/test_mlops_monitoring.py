@@ -3,6 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -22,6 +23,10 @@ def mock_mlops_settings_disabled():
     with patch('src.mlops.monitoring.mlops_settings') as mock_settings:
         mock_settings.evidently_enabled = False
         mock_settings.drift_threshold = 0.1
+        # 1 reproduces the pre-#94 guard exactly (it tested `.empty`), so every
+        # test written before the floor existed keeps its semantics. The tests
+        # for the floor itself raise this deliberately.
+        mock_settings.drift_min_sample_size = 1
         mock_settings.get_reports_dir = MagicMock(return_value=Path("/tmp/reports"))
         yield mock_settings
 
@@ -32,6 +37,7 @@ def mock_mlops_settings_enabled():
     with patch('src.mlops.monitoring.mlops_settings') as mock_settings:
         mock_settings.evidently_enabled = True
         mock_settings.drift_threshold = 0.1
+        mock_settings.drift_min_sample_size = 1
         mock_settings.get_reports_dir = MagicMock(return_value=Path("/tmp/reports"))
         yield mock_settings
 
@@ -1489,3 +1495,725 @@ class TestDetailsAreSerializable:
                 "details": report.details,
             }
         )
+
+
+# ============================================================================
+# Issue #102 -- the legacy path assessed 2 of 4 signal groups
+# ============================================================================
+
+class TestLegacyPathAssessesEverySignalGroup:
+    """`_legacy_drift_check` is the default path, and the ImportError fallback.
+
+    It compared `probability` and `prediction` and nothing else: a total
+    distributional shift in `novelty_score`, or in any `brand_*` column, was
+    reported as healthy while `columns_missing_from_reference` stayed empty
+    because those columns ARE in the reference. They were simply never looked
+    at, so a partial check was indistinguishable from a whole one (issue #102).
+    """
+
+    @staticmethod
+    def _frames(novelty_ref, novelty_curr, n=60):
+        """Two frames identical but for `novelty_score`."""
+        rng = np.random.default_rng(7)
+        return (
+            pd.DataFrame(
+                {
+                    "probability": rng.uniform(0.4, 0.6, n),
+                    "prediction": np.tile([0, 1], n // 2),
+                    "novelty_score": novelty_ref,
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "probability": rng.uniform(0.4, 0.6, n),
+                    "prediction": np.tile([0, 1], n // 2),
+                    "novelty_score": novelty_curr,
+                }
+            ),
+        )
+
+    def test_a_total_novelty_shift_does_not_read_as_healthy(self, disabled_monitor):
+        """The issue's own demonstration, as a test.
+
+        Injected drift: 0.0-0.1 in the reference, 0.9-1.0 in every current row.
+        Before #102 this returned `drift_detected=False` with a drift_score of
+        0.063 built from `probability` and `prediction` alone.
+        """
+        rng = np.random.default_rng(11)
+        reference, current = self._frames(
+            rng.uniform(0.0, 0.1, 60), rng.uniform(0.9, 1.0, 60)
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.drift_detected is True
+        assert report.indeterminate is False
+        assert "novelty_score" in report.details["columns_assessed"]
+        assert report.details["novelty_score_ks_statistic"] > 0.9
+
+    def test_brand_drift_reaches_the_verdict(self, disabled_monitor):
+        """A brand column that flips wholesale is assessed and it bites.
+
+        `brand_*` columns were never read on this path at all, so this frame
+        used to report healthy.
+        """
+        n = 80
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_nike": [1] * (n // 2) + [0] * (n // 2),
+                "brand_puma": [1, 0] * (n // 2),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                # brand_nike flips from 50% of rows to ~5%
+                "brand_nike": [1] * 4 + [0] * (n - 4),
+                "brand_puma": [1, 0] * (n // 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "brand_nike" in report.details["columns_assessed"]
+        assert "brand_nike" in report.details["brand_metrics_drifted"]
+        assert report.details["brand_drift_score"] > 0
+        assert report.drift_detected is True
+
+    def test_core_score_keeps_its_effect_size_meaning(self, disabled_monitor):
+        """AC-5: brand must not redefine the core score (D017).
+
+        `DRIFT_THRESHOLD` is tuned against an effect-size instrument and the run
+        archive holds history computed that way, so `probability`/`prediction`/
+        `novelty_score` stay magnitudes rather than a fraction of significant
+        tests. Brand contributes only via its own component.
+        """
+        n = 60
+        frame = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(frame.copy(), frame.copy())
+
+        # Identical frames: KS statistic is 0 and the rate difference is 0, so
+        # the core score is the max of those magnitudes -- not 0-of-2-drifted.
+        assert report.details["core_drift_score"] == pytest.approx(0.0, abs=1e-9)
+        assert report.drift_score == pytest.approx(0.0, abs=1e-9)
+        assert report.details["brand_drift_score"] == 0.0
+
+    def test_a_degenerate_brand_column_is_not_evidence_of_no_drift(
+        self, disabled_monitor
+    ):
+        """AC-6: #102's fix must not plant #103's shape.
+
+        A brand mentioned in no article is an all-zero column. Its chi-square
+        p-value is undefined; written naively `NaN < 0.01` is False, so the
+        column would count as "not drifted" WHILE still incrementing the
+        denominator -- a NaN p-value treated as evidence of no drift, diluting
+        `brand_drift_score`. It must be skipped and recorded instead.
+        """
+        n = 40
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_absent": [0] * n,
+                "brand_everywhere": [1] * n,
+                "brand_real": [1] * (n // 2) + [0] * (n // 2),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_absent": [0] * n,
+                "brand_everywhere": [1] * n,
+                "brand_real": [1] * 2 + [0] * (n - 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        skipped = report.details["columns_skipped"]
+        assert "brand_absent" in skipped
+        assert "brand_everywhere" in skipped
+        assert "brand_absent" not in report.details["columns_assessed"]
+        # The denominator counts only what was actually assessed: one column.
+        assert report.details["brand_assessed_count"] == 1
+        assert report.details["brand_drift_score"] == pytest.approx(1.0)
+
+    def test_a_degenerate_novelty_column_is_skipped_not_scored(
+        self, disabled_monitor
+    ):
+        """Same guard on the novelty branch: constant in both frames."""
+        reference, current = self._frames(np.full(60, 0.5), np.full(60, 0.5))
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "novelty_score" in report.details["columns_skipped"]
+        assert "novelty_score" not in report.details["columns_assessed"]
+        assert "novelty_score_ks_statistic" not in report.details
+
+    def test_an_all_nan_novelty_column_is_skipped_not_scored(
+        self, disabled_monitor
+    ):
+        """NaN-drop leaves nothing to compare, which is not 'no drift'."""
+        reference, current = self._frames(np.full(60, np.nan), np.full(60, np.nan))
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "novelty_score" in report.details["columns_skipped"]
+        assert "novelty_score_ks_statistic" not in report.details
+
+    def test_columns_assessed_lists_what_was_actually_read(self, disabled_monitor):
+        """The record #104 will carry and #105 will cross-check.
+
+        It is what was ASSESSED, not what was offered -- that is the whole
+        distinction, since `columns_missing_from_reference` already covers
+        offered-but-absent and reported `[]` on exactly the frames #102 is about.
+        """
+        n = 40
+        reference, current = self._frames(
+            np.linspace(0.1, 0.9, n), np.linspace(0.1, 0.9, n), n=n
+        )
+        reference["brand_nike"] = [1, 0] * (n // 2)
+        current["brand_nike"] = [1, 0] * (n // 2)
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert set(report.details["columns_assessed"]) == {
+            "probability",
+            "prediction",
+            "novelty_score",
+            "brand_nike",
+        }
+        assert report.details["columns_missing_from_reference"] == []
+
+    def test_both_paths_report_the_same_assessed_record(
+        self, mock_mlops_settings_enabled, disabled_monitor
+    ):
+        """AC-2: same `details` keys, NOT the same number (D017, D008).
+
+        The two remain different instruments -- legacy core is an effect size,
+        Evidently core is a fraction of significant tests -- so this asserts the
+        shape they share, which is what #104 lifts into the summary.
+        """
+        shared = ("columns_assessed", "columns_skipped", "brand_drift_score")
+        frame = pd.DataFrame(
+            {"probability": [0.5, 0.6, 0.4, 0.7], "prediction": [0, 1, 0, 1]}
+        )
+
+        monitor = DriftMonitor("fp")
+        snapshot = MagicMock()
+        snapshot.dict.return_value = {
+            "metrics": [
+                {
+                    "metric_name": "ValueDrift(column=probability)",
+                    "config": {"column": "probability", "threshold": 0.05},
+                    "value": 0.5,
+                }
+            ]
+        }
+        run = MagicMock()
+        run.run.return_value = snapshot
+        monitor._evidently = {
+            "Report": MagicMock(return_value=run),
+            "ValueDrift": MagicMock(),
+        }
+
+        evidently = monitor._evidently_drift_check(frame, frame, save_report=False)
+        legacy = disabled_monitor._legacy_drift_check(frame, frame)
+
+        for key in shared:
+            assert key in evidently.details, f"Evidently path missing {key!r}"
+            assert key in legacy.details, f"legacy path missing {key!r}"
+
+    def test_a_brand_only_reference_is_still_indeterminate(self, disabled_monitor):
+        """Control: assessing brand did NOT make brand sufficient on its own.
+
+        The indeterminacy guard stays keyed on the CORE columns, matching the
+        Evidently path's `total_core == 0`. Reading a brand assessment as a
+        verdict would re-open exactly what that guard closed.
+        """
+        current = pd.DataFrame(
+            {"probability": [0.5, 0.6], "prediction": [0, 1], "brand_nike": [1, 0]}
+        )
+        reference = pd.DataFrame({"brand_nike": [1, 1], "brand_puma": [0, 1]})
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.indeterminate is True
+        assert report.drift_detected is False
+
+
+# ============================================================================
+# Round-2 review findings on #102, and #94 pulled forward
+# ============================================================================
+
+class TestNoUnmeasuredColumnReachesTheVerdictAsHealth:
+    """Round 1 of #102's review found the fix reproducing the defect it fixed.
+
+    `_comparable_series` was written to stop an unmeasurable column being
+    counted as evidence of no drift, and was applied to `novelty_score` alone.
+    Its two sibling core branches went unguarded, so a single NaN in
+    `probability` poisoned `max(drift_scores)` -- NaN comparisons are False, so
+    `max` keeps whichever operand it started with and `nan > threshold` is False
+    -- and the run reported healthy over a total novelty shift, with
+    `columns_assessed` naming `probability` as measured.
+    """
+
+    def test_a_nan_probability_does_not_mask_a_total_novelty_shift(
+        self, disabled_monitor
+    ):
+        """#102's own demonstration, with one NaN column added."""
+        n = 60
+        reference = pd.DataFrame(
+            {
+                "probability": np.full(n, np.nan),
+                "prediction": np.tile([0, 1], n // 2),
+                "novelty_score": np.linspace(0.0, 0.1, n),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.full(n, np.nan),
+                "prediction": np.tile([0, 1], n // 2),
+                "novelty_score": np.linspace(0.9, 1.0, n),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.drift_detected is True
+        assert not np.isnan(report.drift_score)
+        assert "probability" not in report.details["columns_assessed"]
+        assert "probability" in report.details["columns_skipped"]
+
+    def test_a_nan_prediction_does_not_mask_a_total_novelty_shift(
+        self, disabled_monitor
+    ):
+        """The middle branch of the three the guard was widened to cover.
+
+        `probability` and `novelty_score` each have a test; `prediction` had
+        none, and it is the one branch that does not use `ks_2samp` -- it takes
+        `.mean()` of the surviving rows, so an unguarded all-NaN column yields
+        `nan` from a different expression than its two siblings.
+        """
+        n = 60
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.full(n, np.nan),
+                "novelty_score": np.linspace(0.0, 0.1, n),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.full(n, np.nan),
+                "novelty_score": np.linspace(0.9, 1.0, n),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.drift_detected is True
+        assert not np.isnan(report.drift_score)
+        assert "prediction" not in report.details["columns_assessed"]
+        assert "prediction" in report.details["columns_skipped"]
+        assert "prediction_rate_diff" not in report.details
+
+    def test_the_reported_score_is_never_nan(self, disabled_monitor):
+        """A NaN score serializes as a bare `NaN`, which is not valid JSON.
+
+        `scripts/monitor_drift.py` writes `report.details` and the score into
+        the `--output` file that `.github/workflows/monitoring.yml` reads.
+        """
+        n = 40
+        frame = pd.DataFrame(
+            {
+                "probability": np.full(n, np.nan),
+                "prediction": np.tile([0, 1], n // 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(frame.copy(), frame.copy())
+
+        assert not np.isnan(report.drift_score)
+        json.dumps({"drift_score": report.drift_score})
+
+    def test_a_brand_column_absent_from_the_reference_is_recorded(
+        self, disabled_monitor
+    ):
+        """It used to be `continue`d past, leaving no trace in any field.
+
+        `_missing_from_reference` covers `CORE_DRIFT_COLUMNS` only by design, so
+        nothing else would have caught it. Reachable: `_add_brand_columns` runs
+        only in `load_predictions_from_database`, so a reference built from
+        files carries no brand column at all and every one of them vanished.
+        """
+        n = 40
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_nike": [1, 0] * (n // 2),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_nike": [1, 0] * (n // 2),
+                "brand_adidas": [1, 0] * (n // 2),
+                "brand_puma": [1, 0] * (n // 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        skipped = report.details["columns_skipped"]
+        assert "brand_adidas" in skipped
+        assert "brand_puma" in skipped
+        assert "brand_nike" in report.details["columns_assessed"]
+        assert report.details["brand_assessed_count"] == 1
+
+
+class TestCategoricalPValueIsLabelSafe:
+    """A dtype mismatch made `value_counts().get(...)` index positionally.
+
+    `value_counts()` sorts by count descending, so a positional read takes the
+    most-frequent category rather than the labelled one. A total flip then built
+    a symmetric table and returned p=1.0 -- a confident "no drift" on the
+    loudest possible signal, recorded as assessed.
+    """
+
+    def test_a_total_flip_is_detected_across_an_int_bool_mismatch(self):
+        from src.mlops.monitoring import _categorical_p_value
+
+        reference = pd.Series([1] * 10 + [0] * 90)
+        current_bool = pd.Series([True] * 90 + [False] * 10)
+        current_int = pd.Series([1] * 90 + [0] * 10)
+
+        p_mixed, _ = _categorical_p_value(reference, current_bool, 1)
+        p_same, _ = _categorical_p_value(reference, current_int, 1)
+
+        assert p_mixed is not None
+        assert p_mixed == pytest.approx(p_same)
+        assert p_mixed < 0.01
+
+    def test_the_reverse_mismatch_is_assessed_not_skipped(self):
+        from src.mlops.monitoring import _categorical_p_value
+
+        reference_bool = pd.Series([True] * 10 + [False] * 90)
+        current_int = pd.Series([1] * 90 + [0] * 10)
+
+        assert _categorical_p_value(reference_bool, current_int, 1)[0] is not None
+
+    def test_an_uncomparable_dtype_is_skipped_not_raised(self):
+        """`sorted()` over mixed str/int raised, aborting the whole check."""
+        from src.mlops.monitoring import _categorical_p_value
+
+        assert (
+            _categorical_p_value(
+                pd.Series(["0", "1"] * 50), pd.Series([0, 1] * 50), 1
+            )[0]
+            is None
+        )
+
+
+class TestMinimumSampleSize:
+    """#94, pulled forward: too few rows to mean anything is not health.
+
+    A statistic computed from a handful of rows reports as confidently as one
+    computed from plenty. The floor applies to the reference and the current
+    window independently -- a 900-row reference against a 3-row window is as
+    untrustworthy as the reverse -- and per column after the NaN drop, which is
+    where a nullable column like `novelty_score` lands.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _floor(self, mock_mlops_settings_disabled):
+        """Raise the floor off the fixture default, which exists for OTHER tests."""
+        mock_mlops_settings_disabled.drift_min_sample_size = 30
+        return mock_mlops_settings_disabled
+
+    def test_the_shipped_default_is_the_floor_these_tests_exercise(self):
+        """Pin the production default, since the fixture above overrides it.
+
+        Without this the floor could be changed in `config.py` and every test
+        here would keep passing against the value it sets for itself.
+        """
+        import os
+        from unittest.mock import patch as _patch
+
+        from src.mlops.config import MLOpsSettings
+
+        with _patch.dict(os.environ, {}, clear=True):
+            assert MLOpsSettings().drift_min_sample_size == 30
+
+    def test_a_tiny_current_window_is_indeterminate_not_healthy(
+        self, disabled_monitor, reference_data
+    ):
+        current = pd.DataFrame(
+            {"probability": [0.5, 0.6, 0.4], "prediction": [0, 1, 0]}
+        )
+
+        report = disabled_monitor.check_drift(
+            current_data=current, reference_data=reference_data, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.drift_detected is False
+
+    def test_a_tiny_reference_is_indeterminate_not_healthy(
+        self, disabled_monitor, current_data_no_drift
+    ):
+        reference = pd.DataFrame(
+            {"probability": [0.5, 0.6, 0.4], "prediction": [0, 1, 0]}
+        )
+
+        report = disabled_monitor.check_drift(
+            current_data=current_data_no_drift,
+            reference_data=reference,
+            save_report=False,
+        )
+
+        assert report.indeterminate is True
+
+    def test_a_single_surviving_row_does_not_drive_the_verdict(
+        self, disabled_monitor
+    ):
+        """`novelty_score` is the one nullable core column.
+
+        One non-null row yielded a KS statistic of 1.0 -- the loudest value the
+        instrument can produce -- and the legacy path appends the statistic and
+        never reads the p-value that says it means nothing.
+        """
+        n = 60
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "novelty_score": np.full(n, 0.1),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "novelty_score": [0.9] + [np.nan] * (n - 1),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "novelty_score" in report.details["columns_skipped"]
+        assert "novelty_score" not in report.details["columns_assessed"]
+        assert "novelty_score_ks_statistic" not in report.details
+        assert report.drift_detected is False
+
+    def test_the_control_still_passes_at_a_real_sample_size(
+        self, disabled_monitor, reference_data, current_data_no_drift
+    ):
+        """The floor has not made every run indeterminate."""
+        report = disabled_monitor.check_drift(
+            current_data=current_data_no_drift,
+            reference_data=reference_data,
+            save_report=False,
+        )
+
+        assert report.indeterminate is False
+
+
+class TestReportedScoreSaysWhichComponentProducedIt:
+    """`drift_score = max(core, brand)` mixes two instruments in one number.
+
+    Keeping the max is the ruled design -- it mirrors the Evidently path and is
+    what stops brand-only drift alerting as "score 0.0 exceeds 0.15". What was
+    missing is any record of which component won, so a reader of the archive
+    cannot tell an effect size from a fraction of significant tests.
+    """
+
+    def test_brand_driven_score_is_labelled(self, disabled_monitor):
+        n = 80
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_nike": [1] * (n // 2) + [0] * (n // 2),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.4, 0.6, n),
+                "prediction": np.tile([0, 1], n // 2),
+                "brand_nike": [1] * 4 + [0] * (n - 4),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.details["drift_score_source"] == "brand"
+        assert report.drift_score == report.details["brand_drift_score"]
+
+    def test_core_driven_score_is_labelled(self, disabled_monitor):
+        n = 60
+        reference = pd.DataFrame(
+            {
+                "probability": np.linspace(0.0, 0.1, n),
+                "prediction": np.tile([0, 1], n // 2),
+            }
+        )
+        current = pd.DataFrame(
+            {
+                "probability": np.linspace(0.9, 1.0, n),
+                "prediction": np.tile([0, 1], n // 2),
+            }
+        )
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert report.details["drift_score_source"] == "core"
+        assert report.drift_score == report.details["core_drift_score"]
+
+
+def _drift_frame(n_rows: int, **brands: int) -> pd.DataFrame:
+    """A frame the legacy path can score, with brand columns at stated rates.
+
+    `probability` and `prediction` are present and steady so the report is a
+    real verdict rather than the indeterminate return -- these tests are about
+    what the brand component counts, not about whether anything was measured.
+    """
+    data: dict[str, Any] = {
+        "probability": np.linspace(0.4, 0.6, n_rows),
+        "prediction": np.array([0, 1] * (n_rows // 2) + [0] * (n_rows % 2)),
+    }
+    for name, n_positive in brands.items():
+        data[name] = [1] * n_positive + [0] * (n_rows - n_positive)
+    return pd.DataFrame(data)
+
+
+class TestTheSampleFloorReachesBrandColumnsToo:
+    """#94's floor was threaded through the core guard only (round-2 finding B1).
+
+    `_comparable_series` carries `min_size`, and only `probability`,
+    `prediction` and `novelty_score` call it. The brand loop called
+    `_categorical_p_value` with no sample-size argument at all, while five
+    places said the floor applied per column after the NaN drop.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _floor(self, mock_mlops_settings_disabled):
+        """Production floor, not the fixture default that exists for other tests."""
+        mock_mlops_settings_disabled.drift_min_sample_size = 30
+        return mock_mlops_settings_disabled
+
+    def test_the_row_floor_applies_to_brand_columns_after_the_nan_drop(
+        self, disabled_monitor
+    ):
+        reference = _drift_frame(934, brand_nike=336)
+        current = _drift_frame(73, brand_nike=19)
+        current["brand_nike"] = current["brand_nike"].astype(float)
+        current.loc[25:, "brand_nike"] = np.nan  # 25 non-null, floor is 30
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "brand_nike" in report.details["columns_skipped"]
+        assert "brand_nike" not in report.details["columns_assessed"]
+        assert report.details["brand_assessed_count"] == 0
+
+    def test_a_column_above_the_floor_is_still_assessed(self, disabled_monitor):
+        """The floor has not emptied the brand component."""
+        reference = _drift_frame(934, brand_nike=336)
+        current = _drift_frame(73, brand_nike=19)
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        assert "brand_nike" in report.details["columns_assessed"]
+        assert "brand_nike" not in report.details["columns_skipped"]
+        assert report.details["brand_assessed_count"] == 1
+
+    def test_a_rare_brand_still_detects_a_spike(self, disabled_monitor):
+        """Why there is no minimum-expected-cell floor here.
+
+        The obvious reading of `brand_li-ning` -- 3 positives in the shipped
+        934-row reference, p=1.0 against a quiet week, smallest expected cell
+        0.22 -- is that it cannot detect anything and only dilutes the
+        denominator. It is power-ASYMMETRIC, not powerless: it cannot evidence a
+        decrease and it detects an increase sharply. A rare brand suddenly
+        appearing is the drift this project most wants to hear about, so a floor
+        that discards the dead reading discards this detection with it.
+        """
+        reference = _drift_frame(934, brand_li_ning=3)
+        quiet = _drift_frame(73, brand_li_ning=0)
+        spike = _drift_frame(73, brand_li_ning=3)
+
+        quiet_report = disabled_monitor._legacy_drift_check(quiet, reference)
+        spike_report = disabled_monitor._legacy_drift_check(spike, reference)
+
+        assert quiet_report.details["brand_drifted_count"] == 0
+        assert spike_report.details["brand_metrics_drifted"] == ["brand_li_ning"]
+        assert spike_report.details["brand_li_ning_p_value"] < 0.01
+
+    def test_each_cause_of_a_skip_is_named_distinctly(self, disabled_monitor):
+        """Four different failures used to arrive as one string, "not comparable".
+
+        The reason is the only record of why a column produced no reading, so
+        collapsing the causes makes the record unable to answer the question it
+        exists for.
+        """
+        reference = _drift_frame(934, brand_thin=336, brand_constant=0)
+        current = _drift_frame(73, brand_thin=19, brand_constant=0)
+        current["brand_thin"] = current["brand_thin"].astype(float)
+        current.loc[25:, "brand_thin"] = np.nan
+        current["brand_absent"] = [1] * 19 + [0] * 54
+
+        report = disabled_monitor._legacy_drift_check(current, reference)
+
+        skipped = report.details["columns_skipped"]
+        reasons = {
+            skipped["brand_thin"],
+            skipped["brand_constant"],
+            skipped["brand_absent"],
+        }
+        assert len(reasons) == 3, f"causes collapsed: {reasons}"
+
+
+class TestCategoricalPValueReportsWhyItDeclined:
+    """The helper returns `(p_value, reason)`; exactly one of the two is set."""
+
+    def test_a_readable_comparison_returns_a_p_value_and_no_reason(self):
+        from src.mlops.monitoring import _categorical_p_value
+
+        p_value, reason = _categorical_p_value(
+            pd.Series([1] * 300 + [0] * 634), pd.Series([1] * 19 + [0] * 54), 1
+        )
+
+        assert reason is None
+        assert p_value is not None
+
+    def test_a_declined_comparison_returns_a_reason_and_no_p_value(self):
+        from src.mlops.monitoring import _categorical_p_value
+
+        p_value, reason = _categorical_p_value(
+            pd.Series([0] * 934), pd.Series([0] * 73), 1
+        )
+
+        assert p_value is None
+        assert reason
+
+    def test_the_row_floor_is_honoured_when_passed(self):
+        from src.mlops.monitoring import _categorical_p_value
+
+        reference = pd.Series([1] * 300 + [0] * 634)
+        current = pd.Series([1] * 10 + [0] * 15)  # 25 rows
+
+        assert _categorical_p_value(reference, current, 30)[0] is None
+        assert _categorical_p_value(reference, current, 1)[0] is not None

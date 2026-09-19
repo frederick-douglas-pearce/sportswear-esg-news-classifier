@@ -4,6 +4,46 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-18: The legacy drift path assesses every signal group, and an unmeasured column stops reading as health
+
+`_legacy_drift_check` compared `probability` and `prediction` and nothing else, while
+`columns_missing_from_reference` stayed empty because `novelty_score` and the `brand_*` columns
+*are* in the reference — they were simply never looked at. A total distributional shift in
+`novelty_score` reported as healthy.
+
+**What changed:**
+
+- **All four signal groups are assessed on that path.** `novelty_score` joins the core score by KS
+  statistic; `brand_*` columns are assessed per column by chi-square and enter as their own
+  component, OR'd into the verdict.
+- **Core stays an effect size and brand does not redefine it.** The reported `drift_score` is
+  `max(core, brand)` — which is what stops brand-only drift alerting as "score 0.0 exceeds 0.15" —
+  so the number can be either quantity, and `details["drift_score_source"]` records which.
+  **Adding a term to a max can only raise it, so scores from before this change are not
+  level-comparable with scores after it.**
+- **No column that could not be measured is counted as evidence of no drift.** All three core
+  columns go through one guard; a `brand_*` column the reference cannot answer for, or that the
+  chi-square declines to test, is recorded in `details["columns_skipped"]` with its own reason
+  rather than scored. `details["columns_assessed"]` records what did produce a reading.
+- **Chi-square counts are aligned by label.** A bool-versus-int mismatch indexed positionally, and
+  since `value_counts()` sorts by count descending it read the most-frequent category rather than
+  the one asked for — returning "no drift" on a total flip.
+- **A minimum sample size, with two scopes** (`#94`, `DRIFT_MIN_SAMPLE_SIZE`, default 30). A whole
+  frame below the floor — reference and current window checked independently — makes the verdict
+  `indeterminate` rather than healthy. A single column below it, counted after its NaN are
+  dropped, is skipped and recorded, and the check still returns a verdict.
+- **A rare brand column is not filtered out for being rare.** `brand_li-ning` (3 positives in the
+  shipped 934-row reference) returns p=1.0 against a quiet week and looks like dead weight in the
+  denominator, but it is power-*asymmetric* rather than powerless: three positives in a 73-row
+  window take it to p=0.0011. A minimum-expected-cell floor would discard that detection along
+  with the dead reading, so none is applied.
+
+Both paths now report `columns_assessed` and `columns_skipped`; neither reaches the machine-readable
+summary yet (#104). The two fields are not like-for-like across the paths — on the Evidently path
+the only skip reason that can occur is an unreadable metric, and a `brand_*` column absent from the
+reference is still dropped there silently. Which of the two paths produced a verdict is still
+unrecorded (#136).
+
 ### 2026-09-16: A workflow that runs and fails every time is escalated
 
 #73 fails a run with a failed step, #74 fails a run with an unresolved check, and #76 detects a

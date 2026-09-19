@@ -30,6 +30,19 @@ class MLOpsSettings:
     drift_threshold: float = field(
         default_factory=lambda: float(os.getenv("DRIFT_THRESHOLD", "0.1"))
     )
+    # The floor below which a reading is not trusted (issue #94). Enough rows
+    # to compute a statistic is not enough rows for it to mean anything: a
+    # p-value from three rows reports as confidently as one from three thousand.
+    #
+    # Two scopes, two outcomes. A whole FRAME below the floor -- the reference
+    # and the current window are checked independently -- makes the verdict
+    # `indeterminate` rather than healthy. A single COLUMN below it, counted
+    # after its NaN are dropped, is recorded in `details["columns_skipped"]` and
+    # left out of the score; the check still returns a verdict from whatever
+    # else it could measure.
+    drift_min_sample_size: int = field(
+        default_factory=lambda: int(os.getenv("DRIFT_MIN_SAMPLE_SIZE", "30"))
+    )
 
     # Reference data settings
     reference_data_dir: Path = field(
