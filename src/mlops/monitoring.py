@@ -541,13 +541,17 @@ class DriftMonitor:
                 # second is unreachable for a non-number *structurally*, so a
                 # later edit cannot break the ordering by reordering clauses.
                 #
-                # `metrics_unreadable` is now a PROPER SUBSET of
-                # `columns_skipped`: it means the snapshot's value could not be
-                # read at all. A non-finite value below WAS read -- the
-                # statistic is undefined, not the metric broken -- so it is
-                # skipped without being called unreadable. `columns_skipped` is
-                # the complete set of columns this path could not use; read
-                # that one, not `metrics_unreadable`, to get all of them.
+                # `metrics_unreadable` is the narrower of the two records, and
+                # can now be a STRICT subset of `columns_skipped`: it means the
+                # snapshot's value could not be read at all. A non-finite value
+                # below WAS read -- the statistic is undefined, not the metric
+                # broken -- so it is skipped without being called unreadable.
+                #
+                # `columns_skipped` is the WIDER of those two. It is NOT the
+                # complete set of columns this path could not use: a core column
+                # absent from the reference is in `columns_missing_from_reference`,
+                # and a `brand_*` column absent from the reference is in neither,
+                # because it never reaches `columns_to_check` (#105).
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     logger.warning(
                         f"{self.classifier_type}: metric for {col_name!r} had no "
@@ -569,8 +573,14 @@ class DriftMonitor:
                 # value in both frames (#103). `math.isfinite`, not
                 # `np.isfinite`: `np.float64` subclasses `float`, and the numpy
                 # predicate raises on non-numerics and returns `np.bool_`.
-                # The reason string is `_categorical_p_value`'s existing one --
-                # one vocabulary across both paths, one cause, one spelling.
+                # The string describes what THIS path observes -- a returned
+                # scalar that is not finite -- and names no cause, because the
+                # scalar cannot tell you which one produced it. It is NOT the
+                # legacy path's reason for this input: `_categorical_p_value`
+                # rejects a column constant in both frames at its category
+                # check, writing "one category in both frames" well before its
+                # own finite check is reached. The two paths do not share a
+                # reason vocabulary, and this does not give them one.
                 if not math.isfinite(value):
                     logger.warning(
                         f"{self.classifier_type}: metric for {col_name!r} came back "
@@ -616,11 +626,19 @@ class DriftMonitor:
         # comment claimed the coverage while the coercion still defeated it.
         if total_core == 0:
             logger.warning(
-                f"{self.classifier_type}: no core drift metric could be read "
-                f"(columns offered: {columns_to_check}, brand metrics read: "
-                f"{total_brand}); drift cannot be assessed"
+                f"{self.classifier_type}: no core drift metric was usable "
+                f"(columns offered: {columns_to_check}, columns skipped: "
+                f"{columns_skipped}, brand metrics assessed: {total_brand}); "
+                f"drift cannot be assessed"
             )
-            details["error"] = "No core drift metrics could be read from the Evidently report"
+            # "usable", not "could be read": a metric can also come back read
+            # and non-finite (#103), and this string is the only report-derived
+            # prose that escapes `details` -- it reaches the operator email, the
+            # run archive and the CI summary, while `columns_skipped` reaches
+            # none of them until #104. Naming the wrong cause there points the
+            # reader at a renamed metric when the real cause was a constant
+            # column.
+            details["error"] = "No core drift metrics were usable in the Evidently report"
             details["reference_size"] = len(reference_data)
             details["current_size"] = len(current_data)
             return DriftReport(

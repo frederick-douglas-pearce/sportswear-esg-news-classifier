@@ -11,34 +11,50 @@ guard; `nan < threshold` is then `False`, and the column was appended to `column
 counted toward `total_core`/`total_brand`. A column nobody could compute a statistic for was
 counted as evidence that it did not drift — the same p=1.0 coercion the comment above that guard
 says was removed, arriving by a different route. Evidently 0.7.18 returns `nan` from
-`ValueDrift(method="chisquare")` for a column constant at the same value in both frames; the
-legacy path already calls that input indeterminate, and the Evidently path's own comment says the
-two must agree (#103).
+`ValueDrift(method="chisquare")` for a column constant at the same value in both frames (#103) —
+an input `_categorical_p_value` refuses outright on the legacy path.
 
 **What changed:**
 
 - **A non-finite metric value is skipped, not scored.** `math.isfinite` — not `np.isfinite`, which
   raises on non-numerics and returns `np.bool_` — in its own guard after the readability check, so
   the ordering is structural rather than a positional property of an `or` chain.
-- **It is recorded in `details["columns_skipped"]`, with the reason string the legacy path already
-  writes**: `"p-value is not finite"`. One cause, one spelling, across both paths. A reader of
-  `columns_skipped` therefore cannot tell which path wrote it — still #136.
-- **`details["metrics_unreadable"]` stays narrow and is now a proper subset of `columns_skipped`.**
-  A value that could not be read and a value that was read and is undefined are different facts;
-  the legacy path already distinguishes them. **`columns_skipped` is the complete set of columns
-  the Evidently path could not use** — this supersedes the closing note of the 2026-09-18 entry
-  below, which said an unreadable metric was that path's only skip reason.
+- **It is recorded in `details["columns_skipped"]` as `"p-value is not finite"`** — a description
+  of what *this* path observed, naming no cause, because a returned scalar cannot tell you which
+  cause produced it. **This is not the legacy path's reason for the same input**: that path rejects
+  a column constant in both frames at its category check, writing `"one category in both frames"`,
+  and reaches its own finite check only for a table it actually ran chi-square on. The two paths
+  still do not share a reason vocabulary, and a reader of `columns_skipped` cannot tell which path
+  wrote an entry (#136).
+- **`details["metrics_unreadable"]` stays narrow** — only values that could not be read — and can
+  now be a strict subset of `columns_skipped`. `columns_skipped` is the wider of the two, but not a
+  complete inventory: a core column absent from the reference is in
+  `columns_missing_from_reference`, and a `brand_*` column absent from the reference is in neither,
+  because it never reaches `columns_to_check` (#105).
+- **The `total_core == 0` verdict stops naming a cause that did not occur.** Skipping a non-finite
+  metric makes that branch reachable on an input where every metric *was* read, so its message is
+  now "no core drift metrics were **usable**" rather than "could not be **read**". That string is
+  the only report-derived prose that reaches the operator email, the run archive and the CI
+  summary — `columns_skipped` reaches none of them until #104 — so the old wording would have
+  pointed the reader at a renamed metric when the cause was a constant column.
 - **The brand denominator no longer absorbs a skipped column.** `brand_drift_score` was diluted by
   every NaN brand metric, biasing brand drift toward healthy.
 
-Known limit, recorded rather than fixed: `total_brand` can now reach 0 with brand columns offered,
-making `brand_drift_score` a fabricated 0.0 of exactly the class #105 is open on. A test pins the
-new route to it. Making a skipped core column indeterminate is likewise #105's call, not this
-change's — the existing `total_core == 0` guard already covers the all-core-skipped case.
+**What this does NOT fix, and is not claimed to.** The two drift paths still disagree on the input
+that motivates this change. `probability` and `novelty_score` are configured for `ks`, and KS
+returns a **finite 1.0** for a column constant in both frames — so the Evidently path still assesses
+it, `total_core` is still non-zero, and the verdict is still healthy where `_legacy_drift_check`
+calls the same frames indeterminate. Catching that means inspecting the input frames rather than the
+returned scalar, which is the "assessed set ≠ offered set ⇒ no verdict" cross-check reserved for
+**#105**. Also filed there: `total_brand` can now reach 0 with brand columns offered by a second and
+far likelier route than the pre-existing unreadable-metric one, making `brand_drift_score` a
+fabricated 0.0.
 
-This fix moves no live number today: on the currently checked-in reference all 18 offered columns
-are still assessed and `columns_skipped` is empty. Verified by running both code arms against the
-live database seconds apart — the reports are identical but for their timestamps.
+This fix moves no live number today: on the live 7-day window as of 2026-09-19 all 18 offered
+columns are still assessed and `columns_skipped` is empty. Verified by running both code arms
+against the live database seconds apart — the reports are identical but for their timestamps. That
+is a property of the current window against the current reference, not of either alone, and one
+quiet week would change it.
 
 ### 2026-09-18: The legacy drift path assesses every signal group, and an unmeasured column stops reading as health
 

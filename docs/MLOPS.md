@@ -149,8 +149,10 @@ and the legacy code paths, and neither removes the need to regenerate:
   non-finite, is skipped and recorded in `details["columns_skipped"]` rather than counted as
   p=1.0, so it does not prop up `total_core` and the guard actually fires. Without it the score
   would be a fabricated 0.0. `details["metrics_unreadable"]` is the narrower record — only the
-  ones whose value could not be read — so a reader after the complete set wants
-  `columns_skipped`;
+  ones whose value could not be read. `columns_skipped` is the wider of the two, but it is **not**
+  a complete inventory of what went unassessed: a core column absent from the reference is in
+  `columns_missing_from_reference`, and a `brand_*` column absent from the reference is in neither,
+  because it never reaches `columns_to_check` (#105);
 - a column that is **present but cannot be assessed** is recorded in
   `details["columns_skipped"]` with its own reason and left out of the score entirely.
   `details["columns_assessed"]` is the complementary record of what produced a reading. Counting

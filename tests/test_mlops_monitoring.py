@@ -1209,6 +1209,12 @@ class TestUnreadableEvidentlyMetrics:
 
         assert report.indeterminate is True
         assert report.details["metrics_unreadable"] == ["probability"]
+        # Pins the subset relation from the OTHER side: an unreadable metric is
+        # in BOTH records. Without this, deleting the `columns_skipped` write
+        # from the readability guard leaves the whole suite green while the
+        # comments and docs go on telling readers `columns_skipped` is the
+        # wider record.
+        assert "probability" in report.details["columns_skipped"]
         # It must not have been silently scored as "no drift".
         assert "probability_p_value" not in report.details
 
@@ -1247,9 +1253,11 @@ class TestUnreadableEvidentlyMetrics:
 
         `float('nan')` IS an instance of `float`, so it passes the readability
         guard; `nan < threshold` is then False and the column is scored as "did
-        not drift" and counted toward `total_core`. Evidently returns this for a
-        column constant at the same value in both frames (#103) -- the case the
-        legacy path already calls indeterminate.
+        not drift" and counted toward `total_core`. Evidently's chi-square
+        returns this for a column constant at the same value in both frames
+        (#103) -- an input `_categorical_p_value` refuses on the legacy path,
+        though under its own reason (`"one category in both frames"`, written at
+        the category check, not at its finite check).
         """
         frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
         metrics = [
@@ -1423,6 +1431,50 @@ class TestUnreadableEvidentlyMetrics:
         assert sorted(report.details["columns_skipped"]) == [
             "brand_nike",
             "brand_puma",
+        ]
+        # `brand_drift_score == 0.0` alone does not discriminate: it reads 0.0
+        # pre-fix too, as 0-of-2. The assessed record is what separates a
+        # denominator of nothing from an honest zero.
+        assert report.details["columns_assessed"] == ["probability"]
+
+    def test_all_core_metrics_nan_does_not_report_an_unreadable_snapshot(
+        self, mock_mlops_settings_enabled
+    ):
+        """The operator-facing reason must not name a cause that did not occur.
+
+        `details["error"]` is the only report-derived prose that escapes to the
+        operator email, the run archive and the CI summary -- `columns_skipped`
+        reaches none of them until #104. Saying the metrics could not be *read*
+        points the reader at a renamed metric or a changed snapshot shape, which
+        is what this guard was originally added for. On this route every metric
+        WAS read and came back non-finite, and skipping them is what makes the
+        `total_core == 0` branch reachable at all.
+        """
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [1, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": float("nan"),
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": float("nan"),
+            },
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert "could be read" not in report.details["error"]
+        assert "usable" in report.details["error"]
+        assert report.details["columns_assessed"] == []
+        assert sorted(report.details["columns_skipped"]) == [
+            "prediction",
+            "probability",
         ]
 
     def test_an_infinite_value_is_not_counted_as_no_drift(
