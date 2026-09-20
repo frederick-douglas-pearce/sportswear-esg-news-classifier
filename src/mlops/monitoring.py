@@ -1,6 +1,7 @@
 """Evidently-based drift detection and monitoring."""
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -536,6 +537,17 @@ class DriftMonitor:
                 # `total_core` -- so the `total_core == 0` guard below could
                 # not fire, and the run reported a measured-looking 0.0 built
                 # from a metric nobody could read. Skip it and say so.
+                # Two sequential guards, not one three-clause condition. The
+                # second is unreachable for a non-number *structurally*, so a
+                # later edit cannot break the ordering by reordering clauses.
+                #
+                # `metrics_unreadable` is now a PROPER SUBSET of
+                # `columns_skipped`: it means the snapshot's value could not be
+                # read at all. A non-finite value below WAS read -- the
+                # statistic is undefined, not the metric broken -- so it is
+                # skipped without being called unreadable. `columns_skipped` is
+                # the complete set of columns this path could not use; read
+                # that one, not `metrics_unreadable`, to get all of them.
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     logger.warning(
                         f"{self.classifier_type}: metric for {col_name!r} had no "
@@ -547,6 +559,24 @@ class DriftMonitor:
                         f"metric had no readable value "
                         f"(got {type(value).__name__})"
                     )
+                    continue
+
+                # `nan < threshold` is False, so a NaN p-value would otherwise
+                # be scored as "did not drift" and counted toward
+                # `total_core`/`total_brand` -- the same coercion the comment
+                # above says was removed, arriving by a different route.
+                # Evidently returns `nan` for a column constant at the same
+                # value in both frames (#103). `math.isfinite`, not
+                # `np.isfinite`: `np.float64` subclasses `float`, and the numpy
+                # predicate raises on non-numerics and returns `np.bool_`.
+                # The reason string is `_categorical_p_value`'s existing one --
+                # one vocabulary across both paths, one cause, one spelling.
+                if not math.isfinite(value):
+                    logger.warning(
+                        f"{self.classifier_type}: metric for {col_name!r} came back "
+                        f"non-finite ({value}); it is not counted as 'no drift'"
+                    )
+                    columns_skipped[col_name] = "p-value is not finite"
                     continue
 
                 p_value = float(value)
@@ -726,12 +756,12 @@ class DriftMonitor:
 
         # What was actually measured, as opposed to what was offered. Both
         # fields carry the same TYPES on the Evidently path, but not the same
-        # coverage: that path has one writer (an unreadable metric) and still
-        # drops a brand column absent from the reference silently, so the two
-        # are not like-for-like and #105's cross-check will have to say which
-        # path it is reading. #104 lifts them into the summary (they do not
-        # reach it today). Introduced here as a plain record -- it must NOT
-        # drive indeterminacy, which is #105's call, not this one's (D017).
+        # coverage: that path still drops a brand column absent from the
+        # reference silently, so the two are not like-for-like and #105's
+        # cross-check will have to say which path it is reading. #104 lifts
+        # them into the summary (they do not reach it today). Introduced here
+        # as a plain record -- it must NOT drive indeterminacy, which is
+        # #105's call, not this one's (D017).
         columns_assessed: list[str] = []
         columns_skipped: dict[str, str] = {}
         details["columns_assessed"] = columns_assessed

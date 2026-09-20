@@ -1131,11 +1131,11 @@ class TestAllThreeAsymmetricReadsAreGuarded:
 class TestUnreadableEvidentlyMetrics:
     """A snapshot we cannot read a metric out of is not evidence of health."""
 
-    def _monitor(self, metrics):
+    def _monitor(self, metrics, threshold=0.1):
         monitor = DriftMonitor.__new__(DriftMonitor)
         monitor.classifier_type = "fp"
         monitor.enabled = True
-        monitor.threshold = 0.1
+        monitor.threshold = threshold
         mock_snapshot = MagicMock()
         mock_snapshot.dict.return_value = {"metrics": metrics}
         mock_report = MagicMock()
@@ -1239,6 +1239,216 @@ class TestUnreadableEvidentlyMetrics:
         assert report.indeterminate is False
         assert report.details["metrics_unreadable"] == ["prediction"]
         assert "prediction_p_value" not in report.details
+
+    def test_a_nan_value_is_not_counted_as_no_drift(
+        self, mock_mlops_settings_enabled
+    ):
+        """The value Evidently actually returns, which `None` does not stand in for.
+
+        `float('nan')` IS an instance of `float`, so it passes the readability
+        guard; `nan < threshold` is then False and the column is scored as "did
+        not drift" and counted toward `total_core`. Evidently returns this for a
+        column constant at the same value in both frames (#103) -- the case the
+        legacy path already calls indeterminate.
+        """
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": float("nan"),
+            }
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert "probability_p_value" not in report.details
+        assert "probability" not in report.details["columns_assessed"]
+        # Recorded with the cause, not silently dropped -- and with the same
+        # string `_categorical_p_value` writes on the legacy path.
+        assert report.details["columns_skipped"]["probability"] == (
+            "p-value is not finite"
+        )
+
+    def test_a_nan_value_is_not_recorded_as_unreadable(
+        self, mock_mlops_settings_enabled
+    ):
+        """`metrics_unreadable` is the narrower set, and stays narrow.
+
+        A NaN value WAS read -- the statistic is undefined, not the metric
+        broken. Pinned so `metrics_unreadable` remains a proper subset of
+        `columns_skipped` rather than the two coinciding by accident.
+        """
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": float("nan"),
+            }
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert "probability" not in report.details.get("metrics_unreadable", [])
+        assert "probability" in report.details["columns_skipped"]
+
+    def test_a_nan_brand_metric_does_not_inflate_the_denominator(
+        self, mock_mlops_settings_enabled
+    ):
+        """The denominator half of the defect, written so the VERDICT flips.
+
+        `threshold=0.5`, not this class's default 0.1: one drifting brand and
+        one NaN brand give `brand_drift_score` 0.5 before the fix and 1.0 after,
+        and `0.5 > 0.1` is already True -- so at the default threshold a
+        `drift_detected` assertion stays green on revert and proves nothing.
+        """
+        frame = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6],
+                "prediction": [0, 1],
+                "brand_nike": [0, 1],
+                "brand_puma": [0, 0],
+            }
+        )
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.5,
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "brand_nike", "threshold": 0.05},
+                "value": 0.001,
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "brand_puma", "threshold": 0.05},
+                "value": float("nan"),
+            },
+        ]
+
+        report = self._monitor(metrics, threshold=0.5)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.details["brand_assessed_count"] == 1
+        assert report.details["brand_drift_score"] == 1.0
+        assert "brand_puma" not in report.details["columns_assessed"]
+        # 1-of-1 brand columns drifted, not 1-of-2.
+        assert report.drift_detected is True
+
+    def test_one_nan_core_metric_does_not_hide_behind_a_readable_one(
+        self, mock_mlops_settings_enabled
+    ):
+        """The partial-core shape the issue's end-to-end reproduction shows.
+
+        An all-True `prediction` column alongside a healthy `probability`: still
+        a verdict, because one core metric was readable, but the gap is recorded
+        rather than counted as evidence of health.
+        """
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [1, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.5,
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": float("nan"),
+            },
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.indeterminate is False
+        assert "prediction_p_value" not in report.details
+        assert "prediction" not in report.details["columns_assessed"]
+        assert report.details["columns_skipped"]["prediction"] == (
+            "p-value is not finite"
+        )
+
+    def test_all_brand_metrics_nan_records_a_zero_denominator(
+        self, mock_mlops_settings_enabled
+    ):
+        """`brand_drift_score` 0.0 out of nothing -- recorded, not fixed here.
+
+        With every brand metric skipped, `total_brand` reaches 0 while brand
+        columns WERE offered, so `brand_drift_score` is a fabricated 0.0 of
+        exactly #105's class. Pinned so the new route to it is visible; making
+        it indeterminate is #105's call, not this fix's.
+        """
+        frame = pd.DataFrame(
+            {
+                "probability": [0.5, 0.6],
+                "prediction": [0, 1],
+                "brand_nike": [0, 0],
+                "brand_puma": [0, 0],
+            }
+        )
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.5,
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "brand_nike", "threshold": 0.05},
+                "value": float("nan"),
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "brand_puma", "threshold": 0.05},
+                "value": float("nan"),
+            },
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.details["brand_assessed_count"] == 0
+        assert report.details["brand_drift_score"] == 0.0
+        assert sorted(report.details["columns_skipped"]) == [
+            "brand_nike",
+            "brand_puma",
+        ]
+
+    def test_an_infinite_value_is_not_counted_as_no_drift(
+        self, mock_mlops_settings_enabled
+    ):
+        """The predicate is *finite*, not *not-NaN*.
+
+        `inf < threshold` is False just as `nan < threshold` is, so `value !=
+        value` would leave this one scored as "did not drift".
+        """
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": float("inf"),
+            }
+        ]
+
+        report = self._monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert "probability_p_value" not in report.details
+        assert "probability" in report.details["columns_skipped"]
 
 
 class TestDriftScoreMatchesTheDetection:

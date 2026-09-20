@@ -4,6 +4,42 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-19: A NaN p-value stops counting as evidence of no drift on the Evidently path
+
+`float('nan')` is an instance of `float`, so it passed the Evidently path's unreadable-metric
+guard; `nan < threshold` is then `False`, and the column was appended to `columns_assessed` and
+counted toward `total_core`/`total_brand`. A column nobody could compute a statistic for was
+counted as evidence that it did not drift — the same p=1.0 coercion the comment above that guard
+says was removed, arriving by a different route. Evidently 0.7.18 returns `nan` from
+`ValueDrift(method="chisquare")` for a column constant at the same value in both frames; the
+legacy path already calls that input indeterminate, and the Evidently path's own comment says the
+two must agree (#103).
+
+**What changed:**
+
+- **A non-finite metric value is skipped, not scored.** `math.isfinite` — not `np.isfinite`, which
+  raises on non-numerics and returns `np.bool_` — in its own guard after the readability check, so
+  the ordering is structural rather than a positional property of an `or` chain.
+- **It is recorded in `details["columns_skipped"]`, with the reason string the legacy path already
+  writes**: `"p-value is not finite"`. One cause, one spelling, across both paths. A reader of
+  `columns_skipped` therefore cannot tell which path wrote it — still #136.
+- **`details["metrics_unreadable"]` stays narrow and is now a proper subset of `columns_skipped`.**
+  A value that could not be read and a value that was read and is undefined are different facts;
+  the legacy path already distinguishes them. **`columns_skipped` is the complete set of columns
+  the Evidently path could not use** — this supersedes the closing note of the 2026-09-18 entry
+  below, which said an unreadable metric was that path's only skip reason.
+- **The brand denominator no longer absorbs a skipped column.** `brand_drift_score` was diluted by
+  every NaN brand metric, biasing brand drift toward healthy.
+
+Known limit, recorded rather than fixed: `total_brand` can now reach 0 with brand columns offered,
+making `brand_drift_score` a fabricated 0.0 of exactly the class #105 is open on. A test pins the
+new route to it. Making a skipped core column indeterminate is likewise #105's call, not this
+change's — the existing `total_core == 0` guard already covers the all-core-skipped case.
+
+This fix moves no live number today: on the currently checked-in reference all 18 offered columns
+are still assessed and `columns_skipped` is empty. Verified by running both code arms against the
+live database seconds apart — the reports are identical but for their timestamps.
+
 ### 2026-09-18: The legacy drift path assesses every signal group, and an unmeasured column stops reading as health
 
 `_legacy_drift_check` compared `probability` and `prediction` and nothing else, while

@@ -1525,3 +1525,63 @@ the attribution; restore the other arm and re-run. §6 tells you to delete a cla
 does not tell you to measure the claim you are about to replace it with. Code review escalated at
 its two-round cap; this work exists because the human directed it after the escalation, and it has
 therefore not itself been through a review round.
+
+---
+
+## D018: The Evidently Path Reuses the Legacy Path's Reason String and Nothing Else (#103)
+
+**Date:** 2026-09-19
+**Status:** Accepted — architect gate on the #103 plan, pre-implementation. Recorded before the
+human's plan-gate decision; the plan itself is not yet approved.
+
+**Context.** `_evidently_drift_check`'s unreadable-metric guard (`src/mlops/monitoring.py:539`)
+does not reject `float('nan')`, so a column no statistic was computed for is counted as evidence of
+no drift and inflates the brand denominator. The fix is one predicate. What needed deciding was how
+far the "the two paths must agree" invariant at `:569-579` reaches, and which `details` key records
+the skip.
+
+**Decisions.**
+
+1. **The must-agree invariant reaches the VERDICT, not the reason vocabulary.** The comment at
+   `:569-579` is about indeterminacy, the only cross-path test asserts indeterminacy
+   (`tests/test_mlops_monitoring.py:1112`), and D017 already settled it in as many words —
+   *"The two paths agree on `details` keys and on verdict STRUCTURE, never on the number."* The
+   Evidently path does **not** adopt the legacy path's full named-reason set.
+2. **It reuses one string — `"p-value is not finite"` (`:149`) — verbatim.** That is the one cause
+   the Evidently path can actually observe. The legacy path's other reasons
+   (`"one category in both frames"`, `"below the sample floor"`) are properties of input frames
+   *our* code computed; the Evidently path sees a returned scalar and cannot tell which produced the
+   NaN. Writing one of them there would assert an unobserved cause — this epic's failure class at
+   the reason level. A second spelling for the same cause was rejected for the opposite reason: it
+   hands #104 a reconciliation cost for free.
+3. **`columns_skipped` is the complete set; `metrics_unreadable` becomes a proper subset of it.**
+   A value that could not be *read* and a value that was read and is *undefined* are different
+   facts, and the legacy path already distinguishes them. A non-finite value therefore writes
+   `columns_skipped` only. **#104 should transport `columns_skipped`, which subsumes
+   `metrics_unreadable`** — one key, not two. Today the two sets coincide and nothing pins that, so
+   the split is pinned by a negative assertion in the same change rather than left as prose.
+4. **The guard is two sequential `if`/`continue` blocks, not one three-clause condition.** The
+   short-circuit ordering a three-clause `or` depends on is correct but positional; this module has
+   a recorded instance of a guard edited and silently defeated (`:584-586`). Two blocks make the
+   ordering structural. `math.isfinite`, not `np.isfinite`: `np.float64` subclasses `float`, which
+   is the type the issue measured.
+5. **Two things this change deliberately does NOT do.** It does not make a skipped *core* column
+   indeterminate — that is #105's call, reserved by D016/D017, and the existing `total_core == 0`
+   guard already covers the all-core-skipped case. And it does not fix the new reachability it
+   creates: `total_brand` can now reach 0 with brand columns offered, a fabricated `0.0` at `:608`
+   of #105's class. That is named in a test and in the PR body as input for #105, not repaired here.
+
+**Consequence, and it is the reason this entry exists rather than a comment.** The fix makes three
+checked-in statements false — `docs/AGENT.md:376`, `docs/MLOPS.md:155-158`, and the comment at
+`src/mlops/monitoring.py:728-729`, each asserting the Evidently path has *one* skip writer. Per
+D017 the enumerated skip-reason list is **deleted, not corrected a third time**. This is the second
+consecutive iteration in which a behaviour change falsified prose that enumerated the behaviour;
+the rule is holding, and so is the pressure to reword instead of delete.
+
+**On ordering, recorded as an open question and not as a decision.** #103 sits at order 2 on the
+premise that this deployment runs the Evidently path, so #103 is live. The plan's falsifier was run:
+the **path** is live, the NaN-producing **input** is not present in the live corpus today. The
+architect's recommendation is to keep the order and change the justification — the distance from
+latent to live here is one documented maintenance command (`--create-reference`), which is a
+different kind of distance from #102's "this code never executes here." The human decides at the
+plan gate; nothing has been re-ordered.
