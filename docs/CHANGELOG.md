@@ -50,6 +50,10 @@ returned scalar, which is the "assessed set ≠ offered set ⇒ no verdict" cros
 far likelier route than the pre-existing unreadable-metric one, making `brand_drift_score` a
 fabricated 0.0.
 
+**This supersedes the closing note of the 2026-09-18 entry below**, which said an unreadable metric
+was the only skip reason that can occur on the Evidently path. There are two now, and neither
+record is a complete inventory of what went unassessed.
+
 This fix moves no live number today: on the live 7-day window as of 2026-09-19 all 18 offered
 columns are still assessed and `columns_skipped` is empty. Verified by running both code arms
 against the live database seconds apart — the reports are identical but for their timestamps. That

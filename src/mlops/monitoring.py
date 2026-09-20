@@ -632,12 +632,12 @@ class DriftMonitor:
                 f"drift cannot be assessed"
             )
             # "usable", not "could be read": a metric can also come back read
-            # and non-finite (#103), and this string is the only report-derived
-            # prose that escapes `details` -- it reaches the operator email, the
-            # run archive and the CI summary, while `columns_skipped` reaches
-            # none of them until #104. Naming the wrong cause there points the
-            # reader at a renamed metric when the real cause was a constant
-            # column.
+            # and non-finite (#103), and this string is the only part of
+            # `details` that reaches the operator email, the run archive and the
+            # CI summary -- `columns_skipped` reaches none of those until #104,
+            # though it does reach the drift webhook. Naming the wrong cause
+            # here points the reader at a renamed metric when the real cause was
+            # a constant column.
             details["error"] = "No core drift metrics were usable in the Evidently report"
             details["reference_size"] = len(reference_data)
             details["current_size"] = len(current_data)

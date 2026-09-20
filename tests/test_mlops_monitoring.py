@@ -1275,8 +1275,8 @@ class TestUnreadableEvidentlyMetrics:
         assert report.indeterminate is True
         assert "probability_p_value" not in report.details
         assert "probability" not in report.details["columns_assessed"]
-        # Recorded with the cause, not silently dropped -- and with the same
-        # string `_categorical_p_value` writes on the legacy path.
+        # Recorded, not silently dropped. The string describes what this path
+        # observed; it is not the legacy path's reason for this input.
         assert report.details["columns_skipped"]["probability"] == (
             "p-value is not finite"
         )
