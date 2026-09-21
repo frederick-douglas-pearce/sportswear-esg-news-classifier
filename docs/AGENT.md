@@ -373,9 +373,12 @@ of `drift_scores` and out of the brand denominator rather than scored as "not dr
 
 ⚠ **The two paths do not populate `columns_skipped` for the same reasons, so it is not a
 like-for-like field between them.** The legacy path records a column it declined to test, for
-whatever reason it declined. The Evidently path has one writer -- a metric whose value came back
-unreadable -- and a `brand_*` column absent from the reference is still dropped there silently,
-before `columns_to_check` is built.
+whatever reason it declined, and names the cause. The Evidently path sees only a returned scalar,
+so it records what it observed — a value it could not read, or one that is not finite — and never
+why; an entry reading `p-value is not finite` on that path may have been produced by any of the
+causes the legacy path distinguishes. A `brand_*` column absent from the reference is still
+dropped there silently, before `columns_to_check` is built, so it appears in neither
+`columns_skipped` nor `metrics_unreadable`.
 
 ⚠ **Which of the two paths a given deployment actually takes is not recorded anywhere in the
 report.** It depends on the environment, and the `ImportError` fallback can change it without

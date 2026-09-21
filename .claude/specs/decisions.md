@@ -1525,3 +1525,149 @@ the attribution; restore the other arm and re-run. §6 tells you to delete a cla
 does not tell you to measure the claim you are about to replace it with. Code review escalated at
 its two-round cap; this work exists because the human directed it after the escalation, and it has
 therefore not itself been through a review round.
+
+---
+
+## D018: The Evidently Path Reuses the Legacy Path's Reason String and Nothing Else (#103)
+
+**Date:** 2026-09-19
+**Status:** Accepted — architect gate on the #103 plan, pre-implementation. Recorded before the
+human's plan-gate decision; the plan itself is not yet approved.
+
+**Context.** `_evidently_drift_check`'s unreadable-metric guard (`src/mlops/monitoring.py:539`)
+does not reject `float('nan')`, so a column no statistic was computed for is counted as evidence of
+no drift and inflates the brand denominator. The fix is one predicate. What needed deciding was how
+far the "the two paths must agree" invariant at `:569-579` reaches, and which `details` key records
+the skip.
+
+**Decisions.**
+
+1. **The must-agree invariant reaches the VERDICT, not the reason vocabulary.** The comment at
+   `:569-579` is about indeterminacy, the only cross-path test asserts indeterminacy
+   (`tests/test_mlops_monitoring.py:1112`), and D017 already settled it in as many words —
+   *"The two paths agree on `details` keys and on verdict STRUCTURE, never on the number."* The
+   Evidently path does **not** adopt the legacy path's full named-reason set.
+2. **It reuses one string — `"p-value is not finite"` (`:149`) — verbatim.** That is the one cause
+   the Evidently path can actually observe. The legacy path's other reasons
+   (`"one category in both frames"`, `"below the sample floor"`) are properties of input frames
+   *our* code computed; the Evidently path sees a returned scalar and cannot tell which produced the
+   NaN. Writing one of them there would assert an unobserved cause — this epic's failure class at
+   the reason level. A second spelling for the same cause was rejected for the opposite reason: it
+   hands #104 a reconciliation cost for free.
+3. **`columns_skipped` is the complete set; `metrics_unreadable` becomes a proper subset of it.**
+   A value that could not be *read* and a value that was read and is *undefined* are different
+   facts, and the legacy path already distinguishes them. A non-finite value therefore writes
+   `columns_skipped` only. **#104 should transport `columns_skipped`, which subsumes
+   `metrics_unreadable`** — one key, not two. Today the two sets coincide and nothing pins that, so
+   the split is pinned by a negative assertion in the same change rather than left as prose.
+4. **The guard is two sequential `if`/`continue` blocks, not one three-clause condition.** The
+   short-circuit ordering a three-clause `or` depends on is correct but positional; this module has
+   a recorded instance of a guard edited and silently defeated (`:584-586`). Two blocks make the
+   ordering structural. `math.isfinite`, not `np.isfinite`: `np.float64` subclasses `float`, which
+   is the type the issue measured.
+5. **Two things this change deliberately does NOT do.** It does not make a skipped *core* column
+   indeterminate — that is #105's call, reserved by D016/D017, and the existing `total_core == 0`
+   guard already covers the all-core-skipped case. And it does not fix the new reachability it
+   creates: `total_brand` can now reach 0 with brand columns offered, a fabricated `0.0` at `:608`
+   of #105's class. That is named in a test and in the PR body as input for #105, not repaired here.
+
+**Consequence, and it is the reason this entry exists rather than a comment.** The fix makes three
+checked-in statements false — `docs/AGENT.md:376`, `docs/MLOPS.md:155-158`, and the comment at
+`src/mlops/monitoring.py:728-729`, each asserting the Evidently path has *one* skip writer. Per
+D017 the enumerated skip-reason list is **deleted, not corrected a third time**. This is the second
+consecutive iteration in which a behaviour change falsified prose that enumerated the behaviour;
+the rule is holding, and so is the pressure to reword instead of delete.
+
+**On ordering, recorded as an open question and not as a decision.** #103 sits at order 2 on the
+premise that this deployment runs the Evidently path, so #103 is live. The plan's falsifier was run:
+the **path** is live, the NaN-producing **input** is not present in the live corpus today. The
+architect's recommendation is to keep the order and change the justification — the distance from
+latent to live here is one documented maintenance command (`--create-reference`), which is a
+different kind of distance from #102's "this code never executes here." The human decides at the
+plan gate; nothing has been re-ordered.
+
+---
+
+## D019: Five Corrections to D018, From #103's Code Review (#103)
+
+**Date:** 2026-09-20
+**Status:** Accepted — human-directed at the code-review design gate on PR #138, before any fix was
+applied. D018 stands except where corrected below. Recorded as an amendment rather than an edit to
+D018: the human's ruling on the append-only convention is that an entry is not rewritten once
+committed, whether or not it has reached `main`.
+
+**Code references: by symbol and quoted construct, per D007.** D018's own citations were bare
+`:NN` line numbers, which D007 bans, and adding `import math` at the top of `monitoring.py` shifted
+the file so that six of them now resolve to the wrong construct — one of them (`:569-579`, meant as
+the must-agree comment) to a real but different construct, which is the "misdirected rather than
+alerted" failure D007 exists to prevent. Read D018's citations as: the `isinstance(value, bool) or
+not isinstance(value, (int, float))` guard in `_evidently_drift_check`; the `total_core == 0`
+comment block beginning "No CORE metric was assessed"; `_categorical_p_value`'s `if not
+np.isfinite(p_value): return None, "p-value is not finite"`; the `brand_drift_score = brand_drifted
+/ total_brand` assignment; and the "that path has one writer" comment formerly in
+`_legacy_drift_check` (deleted by this change). **Correction 1.**
+
+**Correction 2 — D018 §2's premise is wrong, and the ruling survives anyway.** §2 says the
+Evidently path should reuse "the legacy path's exact existing reason string `p-value is not
+finite`" for this cause. The legacy path does not write that string for this input.
+`_categorical_p_value` tests `table.shape[1] < 2` and returns `"one category in both frames"` for a
+column constant at the same value in both frames; its finite check is reached only after
+`chi2_contingency` has run on a table with at least two categories. §5 of the same entry had this
+right while §2 had it wrong.
+
+The string stays, on the corrected justification: it describes **what this path observes** — a
+returned scalar that is not finite — and names no cause, because the scalar cannot identify one.
+What is **withdrawn** is the framing that the change gives the two paths "one vocabulary, one cause,
+one spelling." It does not. They write different reasons for the same input, and a reader of
+`columns_skipped` still cannot tell which path produced an entry (#136).
+
+**Correction 3 — `columns_skipped` is not "the complete set."** D018 §3 calls it the complete set
+of columns the Evidently path could not use, and directs #104 to transport it alone, "one key, not
+two." A `brand_*` column absent from the reference never reaches `columns_to_check` and so reaches
+neither record — a fact the same change restates in `docs/AGENT.md` and `docs/MLOPS.md`. The
+accurate statement: `columns_skipped` is the **wider of the two intra-loop records** (it contains
+`metrics_unreadable`); a core column absent from the reference is in
+`columns_missing_from_reference`; a `brand_*` column absent from the reference is recorded nowhere,
+which is #105's subject.
+
+**Consequence for #104:** it should transport `columns_skipped` **and**
+`columns_missing_from_reference`, and record that the brand-absent-from-reference gap stays silent
+until #105 closes it.
+
+**Correction 4 — "the only cross-path test asserts indeterminacy" is false.** There are two.
+`test_both_paths_agree_on_a_brand_only_reference` asserts `indeterminate` parity;
+`test_both_paths_report_the_same_assessed_record` asserts `details`-key parity across
+`columns_assessed`, `columns_skipped` and `brand_drift_score`, and predates D018. The stale premise
+is inherited from D017. It does not overturn D018's conclusion — key parity is not reason-vocabulary
+parity — but a reader would otherwise conclude the `details`-key contract has no test.
+
+**Correction 5 — D016 does not reserve anything about #105.** D018 attributes the
+"skipped core column ⇒ indeterminate" reservation to "D016/D017." D016 is *The Streak Watch List
+Keeps Its Membership and Loses Its Rationale* (#75) and concerns the agent failure-streak list.
+The reservation is **D017's**, verbatim: the general "assessed set ≠ offered set ⇒ no verdict"
+cross-check is #105. D018's other D017 citation — that an enumerated skip-reason list is deleted
+rather than corrected a third time — is correct.
+
+**The must-agree invariant is still false after the fix, on the other half of the input, and #103
+does not fix it.** `DRIFT_CONFIG` assigns `ks` to `probability` and `novelty_score`. For a column
+constant at the same value in both frames, `ValueDrift(method="ks")` returns a **finite 1.0** — so
+that column is still assessed, `total_core` is still non-zero, and the Evidently path still returns
+a healthy verdict on frames `_comparable_series` rejects outright, making `_legacy_drift_check`
+indeterminate. Widening the predicate does not reach it: 1.0 is finite and, from the returned scalar
+alone, indistinguishable from genuine health. Catching it requires inspecting the input frames,
+which is exactly the cross-check D017 reserves for **#105**, and it would change a scheduled job's
+verdict on live data. **Ruled out of scope for #103; filed to #105.** Every re-invocation of "the
+two paths must agree" that this change authored is withdrawn or qualified accordingly; the
+pre-existing comment in `_evidently_drift_check` is left as it stands, as #105's to revise.
+
+**One behaviour change adopted from the review.** The `total_core == 0` branch's operator-facing
+string said core metrics "could not be **read**". Skipping a non-finite metric makes that branch
+newly reachable on an input where every metric *was* read, so the string named a cause that did not
+occur — and it is the only report-derived prose that escapes `details` to the operator email, the
+run archive and the CI summary, since `columns_skipped` reaches none of them until #104. Reworded to
+"were **usable**", with a test pinning it. Deriving the message from `columns_skipped` is #104's,
+not this change's.
+
+**Also pinned:** deleting the `columns_skipped` write from the *readability* guard left all 1681
+tests green, so D018 §3's claim that "the split is pinned by a negative assertion in the same
+change" was half true. The subset relation is now asserted from both sides.

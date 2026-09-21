@@ -145,17 +145,21 @@ and the legacy code paths, and neither removes the need to regenerate:
   bury the signal;
 - a reference sharing *no* comparable core column returns `indeterminate`, i.e. exit 2 -- on both
   paths. On the Evidently path this also covers the case where core columns are offered but no
-  core metric comes back readable: a metric whose value cannot be read is skipped and recorded in
-  `details["metrics_unreadable"]` rather than counted as p=1.0, so it does not prop up
-  `total_core` and the guard actually fires. Without it the score would be a fabricated 0.0;
+  core metric comes back usable: a metric whose value cannot be read, or that comes back
+  non-finite, is skipped and recorded in `details["columns_skipped"]` rather than counted as
+  p=1.0, so it does not prop up `total_core` and the guard actually fires. Without it the score
+  would be a fabricated 0.0. `details["metrics_unreadable"]` is the narrower record — only the
+  ones whose value could not be read. `columns_skipped` is the wider of the two, but it is **not**
+  a complete inventory of what went unassessed: a core column absent from the reference is in
+  `columns_missing_from_reference`, and a `brand_*` column absent from the reference is in neither,
+  because it never reaches `columns_to_check` (#105);
 - a column that is **present but cannot be assessed** is recorded in
   `details["columns_skipped"]` with its own reason and left out of the score entirely.
   `details["columns_assessed"]` is the complementary record of what produced a reading. Counting
   an unassessable column as "not drifted" is the shape these two exist to prevent (#102). Both
   fields exist on both paths, but they are **not like-for-like**: the legacy path records any
-  column it declined to test, while on the Evidently path the only reason that can occur is a
-  metric whose value came back unreadable — a `brand_*` column absent from the reference is still
-  dropped there silently;
+  column it declined to test, while on the Evidently path a `brand_*` column absent from the
+  reference is still dropped silently;
 - **too few rows** is a floor with two scopes (`DRIFT_MIN_SAMPLE_SIZE`, default 30 — #94). Enough
   rows to compute a statistic is not enough for it to mean anything. A whole *frame* below the
   floor — the reference and the current window are checked independently — returns `indeterminate`

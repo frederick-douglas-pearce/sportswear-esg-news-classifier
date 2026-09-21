@@ -1,6 +1,7 @@
 """Evidently-based drift detection and monitoring."""
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -536,6 +537,21 @@ class DriftMonitor:
                 # `total_core` -- so the `total_core == 0` guard below could
                 # not fire, and the run reported a measured-looking 0.0 built
                 # from a metric nobody could read. Skip it and say so.
+                # Two sequential guards, not one three-clause condition. The
+                # second is unreachable for a non-number *structurally*, so a
+                # later edit cannot break the ordering by reordering clauses.
+                #
+                # `metrics_unreadable` is the narrower of the two records, and
+                # can now be a STRICT subset of `columns_skipped`: it means the
+                # snapshot's value could not be read at all. A non-finite value
+                # below WAS read -- the statistic is undefined, not the metric
+                # broken -- so it is skipped without being called unreadable.
+                #
+                # `columns_skipped` is the WIDER of those two. It is NOT the
+                # complete set of columns this path could not use: a core column
+                # absent from the reference is in `columns_missing_from_reference`,
+                # and a `brand_*` column absent from the reference is in neither,
+                # because it never reaches `columns_to_check` (#105).
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     logger.warning(
                         f"{self.classifier_type}: metric for {col_name!r} had no "
@@ -547,6 +563,30 @@ class DriftMonitor:
                         f"metric had no readable value "
                         f"(got {type(value).__name__})"
                     )
+                    continue
+
+                # `nan < threshold` is False, so a NaN p-value would otherwise
+                # be scored as "did not drift" and counted toward
+                # `total_core`/`total_brand` -- the same coercion the comment
+                # above says was removed, arriving by a different route.
+                # Evidently returns `nan` for a column constant at the same
+                # value in both frames (#103). `math.isfinite`, not
+                # `np.isfinite`: `np.float64` subclasses `float`, and the numpy
+                # predicate raises on non-numerics and returns `np.bool_`.
+                # The string describes what THIS path observes -- a returned
+                # scalar that is not finite -- and names no cause, because the
+                # scalar cannot tell you which one produced it. It is NOT the
+                # legacy path's reason for this input: `_categorical_p_value`
+                # rejects a column constant in both frames at its category
+                # check, writing "one category in both frames" well before its
+                # own finite check is reached. The two paths do not share a
+                # reason vocabulary, and this does not give them one.
+                if not math.isfinite(value):
+                    logger.warning(
+                        f"{self.classifier_type}: metric for {col_name!r} came back "
+                        f"non-finite ({value}); it is not counted as 'no drift'"
+                    )
+                    columns_skipped[col_name] = "p-value is not finite"
                     continue
 
                 p_value = float(value)
@@ -586,11 +626,19 @@ class DriftMonitor:
         # comment claimed the coverage while the coercion still defeated it.
         if total_core == 0:
             logger.warning(
-                f"{self.classifier_type}: no core drift metric could be read "
-                f"(columns offered: {columns_to_check}, brand metrics read: "
-                f"{total_brand}); drift cannot be assessed"
+                f"{self.classifier_type}: no core drift metric was usable "
+                f"(columns offered: {columns_to_check}, columns skipped: "
+                f"{columns_skipped}, brand metrics assessed: {total_brand}); "
+                f"drift cannot be assessed"
             )
-            details["error"] = "No core drift metrics could be read from the Evidently report"
+            # "usable", not "could be read": a metric can also come back read
+            # and non-finite (#103), and this string is the only part of
+            # `details` that reaches the operator email, the run archive and the
+            # CI summary -- `columns_skipped` reaches none of those until #104,
+            # though it does reach the drift webhook. Naming the wrong cause
+            # here points the reader at a renamed metric when the real cause was
+            # a constant column.
+            details["error"] = "No core drift metrics were usable in the Evidently report"
             details["reference_size"] = len(reference_data)
             details["current_size"] = len(current_data)
             return DriftReport(
@@ -726,12 +774,12 @@ class DriftMonitor:
 
         # What was actually measured, as opposed to what was offered. Both
         # fields carry the same TYPES on the Evidently path, but not the same
-        # coverage: that path has one writer (an unreadable metric) and still
-        # drops a brand column absent from the reference silently, so the two
-        # are not like-for-like and #105's cross-check will have to say which
-        # path it is reading. #104 lifts them into the summary (they do not
-        # reach it today). Introduced here as a plain record -- it must NOT
-        # drive indeterminacy, which is #105's call, not this one's (D017).
+        # coverage: that path still drops a brand column absent from the
+        # reference silently, so the two are not like-for-like and #105's
+        # cross-check will have to say which path it is reading. #104 lifts
+        # them into the summary (they do not reach it today). Introduced here
+        # as a plain record -- it must NOT drive indeterminacy, which is
+        # #105's call, not this one's (D017).
         columns_assessed: list[str] = []
         columns_skipped: dict[str, str] = {}
         details["columns_assessed"] = columns_assessed
