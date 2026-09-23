@@ -58,8 +58,10 @@ def _isolate_agent_state(tmp_path_factory, monkeypatch):
     Rebinds the shared `agent_settings.state_dir` (so `history_dir` and
     `state_file` follow), sets `AGENT_STATE_DIR` for any `AgentSettings()`
     built during the test, and points the import-time `state_manager`
-    singleton at an empty state file in the same dir. `mktemp` rather than
-    `tmp_path`, so nothing is added to a test's own `tmp_path`.
+    singleton's `state_file` into the same dir and clears its in-memory state.
+    The singleton's attributes are patched rather than the module name
+    rebound, because `workflows.base` imported the object itself. `mktemp`
+    rather than `tmp_path`, so nothing is added to a test's own `tmp_path`.
     """
     from src.agent.config import agent_settings
     from src.agent.state import state_manager

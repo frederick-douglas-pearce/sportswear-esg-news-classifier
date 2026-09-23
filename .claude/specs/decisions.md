@@ -1722,3 +1722,33 @@ D012's allowlist of real workflow names in the archive reader stays. It no longe
 the test suite, but it still excludes anything else that writes into the directory. #125, the
 production `history_dir` creating the directory on read, is untouched: this change only moves
 where the suite points.
+
+### Corrections from #139's code review
+
+Recorded as an addendum rather than as edits to the text above, following D019's precedent that an
+entry is not rewritten once committed.
+
+1. **Status line.** The plan file it cites lives in the dev loop's local ledger, which is
+   gitignored, so the path does not resolve from the repository. The `architect` and `pm` reviews
+   are summarised on #124 and PR #139.
+2. **Context.** Read "the structural fix for test runs writing into the real run archive" as "the
+   structural fix for keeping test runs out of the real run archive".
+3. **Decision, item 1.** The fixture does not create an empty state file. It sets the
+   `state.state_manager` singleton's `state_file` to a path in the per-test dir and clears the
+   singleton's in-memory state. It patches the singleton's attributes rather than rebinding the
+   module name, because `workflows.base` imported the object itself and `Workflow.__init__` falls
+   back to that reference.
+4. **The per-file fixtures paragraph.** Replace it with: the per-file `history_dir` bindings stay
+   as the dir their tests assert against. These are the `isolated_history` fixture on
+   `TestStepFailureContract` in `test_agent_workflows.py`, the `history` fixture in
+   `test_agent_archive.py` (also used by `test_agent_archive_escalator.py`), and an inline
+   `patch.object` in `test_agent_state.py::TestStateManager::test_archive_workflow`. In
+   `test_agent_health.py` and `test_agent_drift_workflow.py` no test reads them, and their
+   docstrings say they are redundant.
+5. **What does not change.** Withdrawn: "It no longer guards against the test suite." The
+   allowlist excludes anything in the directory written under a name that is not a real workflow,
+   and this change removes nothing already there.
+6. **Pinning.** Also pinned: `test_each_test_starts_with_an_empty_state_manager_singleton` fails
+   if the in-memory reset is removed, and
+   `test_workflow_built_without_a_manager_writes_to_the_isolated_dir` fails if the fixture
+   rebinds the module name instead of patching the shared object.

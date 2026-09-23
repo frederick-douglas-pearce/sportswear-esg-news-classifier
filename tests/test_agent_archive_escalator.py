@@ -2,7 +2,8 @@
 
 Split from `test_agent_archive.py` only for size; it shares that file's
 discipline. Every test writes into a `tmp_path` archive bound through the
-`history` fixture, never the real one — this epic exists to reason about a
+`history` fixture; isolation from the real archive is conftest's
+`_isolate_agent_state`, which covers every test — this epic exists to reason about a
 directory that historical test runs polluted under production workflow names
 (#124), so a test that wrote into it would manufacture the artifact under
 discussion.

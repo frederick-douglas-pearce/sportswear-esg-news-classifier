@@ -16,6 +16,8 @@ import pytest
 from src.agent import state as state_module
 from src.agent.config import AgentSettings, agent_settings
 from src.agent.state import StateManager
+from src.agent.workflows import base as base_module
+from src.agent.workflows.base import StepDefinition, Workflow
 
 REAL_DEFAULT_STATE_DIR = Path.home() / ".esg-agent"
 
@@ -39,7 +41,44 @@ def test_state_manager_singleton_uses_the_isolated_state_file(tmp_path_factory):
 
     assert state_module.state_manager.state_file == agent_settings.state_file
     assert _is_under(state_module.state_manager.state_file, base)
+
+
+@pytest.mark.parametrize("probe", ["first", "second"])
+def test_each_test_starts_with_an_empty_state_manager_singleton(probe):
+    """The workflow each parametrization leaves behind must not reach the other."""
     assert state_module.state_manager.list_workflows() == []
+
+    state_module.state_manager.create_workflow(
+        name=f"{PROBE_WORKFLOW}_singleton_{probe}", steps=["only"]
+    )
+
+
+class _ProbeWorkflow(Workflow):
+    name = f"{PROBE_WORKFLOW}_default_manager"
+    description = "Synthetic workflow built with no state manager"
+    steps = [
+        StepDefinition(
+            name="only",
+            description="does nothing",
+            handler=lambda workflow, context: {},
+        )
+    ]
+
+
+def test_workflow_built_without_a_manager_writes_to_the_isolated_dir(
+    tmp_path_factory,
+):
+    """`Workflow.__init__` falls back to the `state_manager` name `base` imported."""
+    workflow = _ProbeWorkflow()
+
+    assert workflow.state is base_module.state_manager
+    assert workflow.state.state_file == agent_settings.state_file
+
+    workflow.run()
+
+    assert _is_under(agent_settings.state_file, tmp_path_factory.getbasetemp())
+    assert agent_settings.state_file.exists()
+    assert list(agent_settings.history_dir.glob(f"{_ProbeWorkflow.name}_*.yaml"))
 
 
 def test_fresh_agent_settings_resolves_to_the_isolated_dir():
