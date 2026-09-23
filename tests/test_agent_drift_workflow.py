@@ -33,13 +33,14 @@ from src.mlops.exit_codes import (
 
 @pytest.fixture(autouse=True)
 def isolated_history(tmp_path):
-    """Keep these tests out of the real ~/.esg-agent/history archive.
+    """Bind a per-test history dir for these tests.
 
     Tests here run the real DriftMonitoringWorkflow to a terminal state, and
-    completing or failing a workflow archives it. Without this the suite wrote
-    archives named `drift_monitoring_*` — indistinguishable by name from
-    scheduled production runs — into the developer's own history directory,
-    which is the corpus #76 audits.
+    completing or failing a workflow archives it under `drift_monitoring_*` —
+    indistinguishable by name from scheduled production runs. Isolation from
+    the real archive is conftest's `_isolate_agent_state`, which covers every
+    test; no test here reads this dir, so this fixture is redundant with it and
+    kept only as a local statement of the exposure.
     """
     history_dir = tmp_path / "history"
     history_dir.mkdir()

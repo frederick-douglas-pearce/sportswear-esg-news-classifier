@@ -4,6 +4,27 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-23: The test suite can no longer write into the real agent run archive
+
+`AgentSettings.history_dir` resolves to `~/.esg-agent/history` unless a test rebinds it. Only some
+agent test modules did, so a suite run deposited workflow archives in the directory `run_audit`
+reads to decide whether a scheduled job is still alive (#124). The names were synthetic and the
+reader filters by an allowlist, but both were conventions, not guarantees.
+
+**What changed:**
+
+- **`tests/conftest.py` gives every test its own empty agent state dir** (`_isolate_agent_state`,
+  autouse). It is scoped per test rather than per session, so one test's archive cannot make a
+  workflow look alive to another test.
+- **A `pytest_configure` hook sets `AGENT_STATE_DIR` before `src.agent` is imported**, so the
+  import-time `agent_settings` and `state.state_manager` singletons are never built against the
+  real `~/.esg-agent`.
+- **`tests/test_agent_state_isolation.py` pins both**, using only synthetic workflow names.
+- The per-file `history_dir` fixtures are kept. Their docstrings now say which ones are assert
+  handles and which are redundant.
+
+D020 in `.claude/specs/decisions.md` records the mechanism and the per-test scope.
+
 ### 2026-09-19: A NaN p-value stops counting as evidence of no drift on the Evidently path
 
 `float('nan')` is an instance of `float`, so it passed the Evidently path's unreadable-metric
