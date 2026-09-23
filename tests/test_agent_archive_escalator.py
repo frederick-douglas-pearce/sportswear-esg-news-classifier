@@ -3,10 +3,8 @@
 Split from `test_agent_archive.py` only for size; it shares that file's
 discipline. Every test writes into a `tmp_path` archive bound through the
 `history` fixture; isolation from the real archive is conftest's
-`_isolate_agent_state`, which covers every test — this epic exists to reason about a
-directory that historical test runs polluted under production workflow names
-(#124), so a test that wrote into it would manufacture the artifact under
-discussion.
+`_isolate_agent_state`, which covers every test (#124). A test that wrote into
+the real archive would manufacture the artifact `run_audit` reasons about.
 
 **Timestamps here are relative to real `now`, not to a fixed constant.** The
 escalator's behaviour depends on the liveness verdict: a workflow that failed

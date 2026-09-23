@@ -1752,3 +1752,6 @@ entry is not rewritten once committed.
    if the in-memory reset is removed, and
    `test_workflow_built_without_a_manager_writes_to_the_isolated_dir` fails if the fixture
    rebinds the module name instead of patching the shared object.
+7. **Correction 1 is itself corrected.** Its second sentence, "The `architect` and `pm` reviews are
+   summarised on #124 and PR #139", is withdrawn: neither carries such a summary. What remains is
+   that the cited plan file does not resolve from the repository.

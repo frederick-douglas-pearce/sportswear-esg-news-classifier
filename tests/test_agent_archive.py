@@ -1,9 +1,8 @@
 """Tests for the run-archive reader and the liveness audit (#76).
 
 Every test here writes into a tmp_path archive, never the real one. That is not
-generic hygiene: this change exists to reason about a directory that historical
-test runs polluted under production workflow names, so a test that wrote into it
-would be manufacturing the very artifact under discussion.
+generic hygiene: a test that wrote into the real archive would manufacture the
+artifact `run_audit` reasons about.
 """
 
 import importlib.util

@@ -12,8 +12,9 @@ is still alive. Keeping test runs out of it was left to each agent test module (
 **What changed:**
 
 - **`tests/conftest.py` gives every test its own empty agent state dir** (`_isolate_agent_state`,
-  autouse), and clears the in-memory state of the `state.state_manager` singleton. It is scoped per test rather than per session, so one test's archive cannot make a
-  workflow look alive to another test.
+  autouse), and clears the in-memory state of the `state.state_manager` singleton. It is scoped
+  per test rather than per session, so one test's archive cannot make a workflow look alive to
+  another test.
 - **A `pytest_configure` hook sets `AGENT_STATE_DIR` before `src.agent` is imported**, so the
   import-time `agent_settings` and `state.state_manager` singletons are never built against the
   real `~/.esg-agent`.
