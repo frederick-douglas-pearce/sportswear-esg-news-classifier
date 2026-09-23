@@ -1,9 +1,8 @@
 """Tests for the run-archive reader and the liveness audit (#76).
 
 Every test here writes into a tmp_path archive, never the real one. That is not
-generic hygiene: this change exists to reason about a directory that historical
-test runs polluted under production workflow names, so a test that wrote into it
-would be manufacturing the very artifact under discussion.
+generic hygiene: a test that wrote into the real archive would manufacture the
+artifact `run_audit` reasons about.
 """
 
 import importlib.util
@@ -62,7 +61,11 @@ def run_sweep(*argv: str) -> int:
 
 @pytest.fixture
 def history(tmp_path):
-    """An isolated archive directory, bound as the agent's history dir."""
+    """The archive dir these tests write fixtures into and read back.
+
+    Isolation from the real archive is conftest's `_isolate_agent_state`; this
+    fixture is the handle to a dir the tests populate themselves.
+    """
     directory = tmp_path / "history"
     directory.mkdir()
     with patch.object(AgentSettings, "history_dir", directory):

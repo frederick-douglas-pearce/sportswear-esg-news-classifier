@@ -77,13 +77,12 @@ def cleanup_registry():
 
 @pytest.fixture(autouse=True)
 def isolated_history(tmp_path):
-    """Keep these tests out of the real ~/.esg-agent/history archive.
+    """Bind a per-test history dir for these tests.
 
     The workflows below reach `complete_workflow`/`fail_workflow`, which archive
-    into `agent_settings.history_dir`. Their names are local (`unresolved_run`
-    and friends), so this is not the "archived under a production name" case —
-    it is the plainer one: a test suite should not deposit runs in the directory
-    #76 will audit.
+    into `agent_settings.history_dir`. Isolation from the real archive is
+    conftest's `_isolate_agent_state`, which covers every test; no test here
+    reads this dir, so this fixture is redundant with it.
     """
     from unittest.mock import patch
 

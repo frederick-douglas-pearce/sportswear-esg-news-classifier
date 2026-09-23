@@ -1,6 +1,10 @@
 """Pytest fixtures for ESG News Classifier tests."""
 
 import hashlib
+import os
+import shutil
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,6 +12,66 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from src.data_collection.api_client import ArticleData
+
+_AGENT_STATE_ENV = "AGENT_STATE_DIR"
+_session_state_dir = pytest.StashKey[Path]()
+_prior_state_env = pytest.StashKey["str | None"]()
+
+
+def pytest_configure(config):
+    """Point the agent state dir at a throwaway directory before `src.agent` is imported.
+
+    `src.agent` builds two singletons at import time that the per-test
+    `_isolate_agent_state` fixture cannot reach: `agent_settings`, whose
+    `__post_init__` creates its state dir, and `state.state_manager`, which
+    caches its `state_file` and loads it. Setting the variable here, before any
+    test module is collected, means neither is ever built against the real
+    `~/.esg-agent`.
+    """
+    session_dir = Path(tempfile.mkdtemp(prefix="esg-agent-test-state-"))
+    config.stash[_session_state_dir] = session_dir
+    config.stash[_prior_state_env] = os.environ.get(_AGENT_STATE_ENV)
+    os.environ[_AGENT_STATE_ENV] = str(session_dir)
+
+
+def pytest_unconfigure(config):
+    """Restore the caller's AGENT_STATE_DIR and remove the session directory."""
+    prior = config.stash.get(_prior_state_env, None)
+    if prior is None:
+        os.environ.pop(_AGENT_STATE_ENV, None)
+    else:
+        os.environ[_AGENT_STATE_ENV] = prior
+    session_dir = config.stash.get(_session_state_dir, None)
+    if session_dir is not None:
+        shutil.rmtree(session_dir, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_agent_state(tmp_path_factory, monkeypatch):
+    """Give every test its own empty agent state dir.
+
+    This is what keeps the suite out of the real run archive, which
+    `run_audit` reads to decide whether a scheduled workflow is still running.
+    It is per test rather than per session so that one test's archive can never
+    make a workflow look alive to another test.
+
+    Rebinds the shared `agent_settings.state_dir` (so `history_dir` and
+    `state_file` follow), sets `AGENT_STATE_DIR` for any `AgentSettings()`
+    built during the test, and points the import-time `state_manager`
+    singleton's `state_file` into the same dir and clears its in-memory state.
+    The singleton's attributes are patched rather than the module name
+    rebound, because `workflows.base` imported the object itself. `mktemp`
+    rather than `tmp_path`, so nothing is added to a test's own `tmp_path`.
+    """
+    from src.agent.config import agent_settings
+    from src.agent.state import state_manager
+
+    state_dir = tmp_path_factory.mktemp("agent_state")
+    monkeypatch.setattr(agent_settings, "state_dir", state_dir)
+    monkeypatch.setenv(_AGENT_STATE_ENV, str(state_dir))
+    monkeypatch.setattr(state_manager, "state_file", agent_settings.state_file)
+    monkeypatch.setattr(state_manager, "_state", {})
+    return state_dir
 
 
 @pytest.fixture

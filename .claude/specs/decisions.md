@@ -1671,3 +1671,87 @@ not this change's.
 **Also pinned:** deleting the `columns_skipped` write from the *readability* guard left all 1681
 tests green, so D018 §3's claim that "the split is pinned by a negative assertion in the same
 change" was half true. The subset relation is now asserted from both sides.
+
+---
+
+## D020: The Test Suite Isolates Agent State Per Test, With a Session Floor Beneath It (#124)
+
+**Date:** 2026-09-23
+**Status:** Accepted. Approved at the plan gate, with the `architect` and `pm` reviews of
+`.claude/loop/silent-success/issue-124.plan.md` applied.
+
+### Context
+
+D013 names #124 as the structural fix for test runs writing into the real run archive. It describes
+that fix as "a session-scoped fixture". This entry records what shipped and where it departs from
+that description.
+
+### Decision
+
+Two mechanisms in `tests/conftest.py`:
+
+1. **`_isolate_agent_state`, an autouse fixture scoped per test.** It rebinds
+   `agent_settings.state_dir`. Every archive write goes through `StateManager._archive_workflow`,
+   which reads `agent_settings.history_dir` at call time, so rebinding the one shared instance
+   redirects all of them. It also sets `AGENT_STATE_DIR` for any `AgentSettings()` built during
+   the test, and points the `state.state_manager` singleton at an empty state file in the same dir.
+2. **`pytest_configure` sets `AGENT_STATE_DIR` to a session temp dir before `src.agent` is
+   imported.** The fixture cannot reach how the import-time singletons were built:
+   `agent_settings`, whose `__post_init__` creates its state dir, and `state.state_manager`, which
+   caches `state_file` at construction and loads it. `Workflow.__init__` falls back to
+   `state.state_manager` when no manager is passed. Without the floor, the suite would create
+   the real `~/.esg-agent` and load its `state.yaml` into memory.
+
+**Per test, not per session (a departure from D013's wording).** A shared session dir keeps the
+suite out of the real archive, but lets one test's archive make a workflow look alive to another
+test that reads the archive. That is the defect this epic is about, reproduced inside the suite.
+With per-test scope, a test that depends on another test's state fails immediately.
+
+The per-file `history_dir` fixtures stay. In `test_agent_workflows.py`, `test_agent_archive.py`
+and `test_agent_state.py` they are the dir each test asserts against. In `test_agent_health.py`
+and `test_agent_drift_workflow.py` no test reads them, and their docstrings now say they are
+redundant.
+
+Pinned by `tests/test_agent_state_isolation.py`. The floor is pinned by
+`test_import_time_singletons_were_built_outside_the_real_state_dir`, which undoes the per-test
+patch and inspects the values the singletons were built with.
+
+### What does not change
+
+D012's allowlist of real workflow names in the archive reader stays. It no longer guards against
+the test suite, but it still excludes anything else that writes into the directory. #125, the
+production `history_dir` creating the directory on read, is untouched: this change only moves
+where the suite points.
+
+### Corrections from #139's code review
+
+Recorded as an addendum rather than as edits to the text above, following D019's precedent that an
+entry is not rewritten once committed.
+
+1. **Status line.** The plan file it cites lives in the dev loop's local ledger, which is
+   gitignored, so the path does not resolve from the repository. The `architect` and `pm` reviews
+   are summarised on #124 and PR #139.
+2. **Context.** Read "the structural fix for test runs writing into the real run archive" as "the
+   structural fix for keeping test runs out of the real run archive".
+3. **Decision, item 1.** The fixture does not create an empty state file. It sets the
+   `state.state_manager` singleton's `state_file` to a path in the per-test dir and clears the
+   singleton's in-memory state. It patches the singleton's attributes rather than rebinding the
+   module name, because `workflows.base` imported the object itself and `Workflow.__init__` falls
+   back to that reference.
+4. **The per-file fixtures paragraph.** Replace it with: the per-file `history_dir` bindings stay
+   as the dir their tests assert against. These are the `isolated_history` fixture on
+   `TestStepFailureContract` in `test_agent_workflows.py`, the `history` fixture in
+   `test_agent_archive.py` (also used by `test_agent_archive_escalator.py`), and an inline
+   `patch.object` in `test_agent_state.py::TestStateManager::test_archive_workflow`. In
+   `test_agent_health.py` and `test_agent_drift_workflow.py` no test reads them, and their
+   docstrings say they are redundant.
+5. **What does not change.** Withdrawn: "It no longer guards against the test suite." The
+   allowlist excludes anything in the directory written under a name that is not a real workflow,
+   and this change removes nothing already there.
+6. **Pinning.** Also pinned: `test_each_test_starts_with_an_empty_state_manager_singleton` fails
+   if the in-memory reset is removed, and
+   `test_workflow_built_without_a_manager_writes_to_the_isolated_dir` fails if the fixture
+   rebinds the module name instead of patching the shared object.
+7. **Correction 1 is itself corrected.** Its second sentence, "The `architect` and `pm` reviews are
+   summarised on #124 and PR #139", is withdrawn: neither carries such a summary. What remains is
+   that the cited plan file does not resolve from the repository.

@@ -1527,7 +1527,10 @@ class TestStepFailureContract:
 
     @pytest.fixture(autouse=True)
     def isolated_history(self, tmp_path):
-        """Keep these tests out of the real ~/.esg-agent/history archive."""
+        """Bind the archive dir these tests assert against, as `self.history_dir`.
+
+        Isolation from the real archive is conftest's `_isolate_agent_state`.
+        """
         from src.agent.config import AgentSettings
 
         history_dir = tmp_path / "history"
