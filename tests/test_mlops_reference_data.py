@@ -535,15 +535,15 @@ class TestResolveReferenceWindow:
         with pytest.raises(ValueError, match="future"):
             resolve_reference_window(30, end_date=NOW + timedelta(days=1), now=NOW)
 
-    @pytest.mark.parametrize("days", [90, 30])
-    def test_documented_commands_do_not_overlap_the_comparison_window(self, days):
-        """CLAUDE.md builds --days 90 and docs/MLOPS.md --days 30 (AC-4).
+    def test_default_end_is_not_after_the_default_comparison_start(self):
+        """The default reference end does not fall inside the default comparison window.
 
         The comparison window is the last DEFAULT_DRIFT_WINDOW_DAYS days, and
         the loader bounds it inclusively (`created_at >= now - N`), so the
-        reference's exclusive end must not be after that start.
+        reference's exclusive end must not be after that start. The end does
+        not depend on the window's length. The docs' commands are not read here.
         """
-        _, end = resolve_reference_window(days, now=NOW)
+        _, end = resolve_reference_window(90, now=NOW)
         comparison_start = NOW - timedelta(days=DEFAULT_DRIFT_WINDOW_DAYS)
 
         assert end <= comparison_start
@@ -556,7 +556,7 @@ class TestCreateReferenceWindow:
         """`days` set on the loader discards the dates and rebuilds the overlap."""
         with patch(
             "src.mlops.reference_data.load_prediction_logs",
-            return_value=_rows([datetime.now(timezone.utc) - timedelta(days=20)]),
+            return_value=_rows([NOW - timedelta(days=20)]),
         ) as mock_load, patch(
             "src.mlops.reference_data.datetime", wraps=datetime
         ) as mock_dt:
@@ -695,3 +695,94 @@ class TestCountPredictions:
         assert params["classifier_type"] == "ep"
         expected_since = datetime.now(timezone.utc) - timedelta(days=7)
         assert abs((params["since"] - expected_since).total_seconds()) < 60
+
+
+class TestFileLogWindow:
+    """The file-log source reads the window's first, partial day (#97)."""
+
+    def test_file_loader_start_is_floored_to_midnight(self, tmp_path):
+        start = datetime(2026, 8, 1, 14, 30, tzinfo=timezone.utc)
+        end = datetime(2026, 8, 31, 14, 30, tzinfo=timezone.utc)
+        with patch(
+            "src.mlops.reference_data.load_prediction_logs",
+            return_value=_rows([start + timedelta(days=1)]),
+        ) as mock_load, patch(
+            "src.mlops.reference_data.resolve_reference_window", return_value=(start, end)
+        ):
+            create_reference_dataset(
+                "fp", logs_dir=tmp_path, days=30, output_path=tmp_path / "r.parquet"
+            )
+
+        mock_load.assert_called_once_with(
+            "fp", tmp_path, days=None,
+            start_date=datetime(2026, 8, 1), end_date=datetime(2026, 8, 31, 14, 30),
+        )
+
+    def test_rows_after_start_on_the_first_day_are_kept(self, tmp_path):
+        """Through the real file loader: the start day's file is read, then trimmed."""
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        start = datetime(2026, 8, 1, 14, 30, tzinfo=timezone.utc)
+        end = datetime(2026, 8, 3, 0, 0, tzinfo=timezone.utc)
+        rows = {
+            "20260801": ["2026-08-01T10:00:00+00:00", "2026-08-01T15:00:00+00:00"],
+            "20260802": ["2026-08-02T12:00:00+00:00"],
+        }
+        for day, stamps in rows.items():
+            with open(logs / f"fp_predictions_{day}.jsonl", "w") as f:
+                for ts in stamps:
+                    f.write(json.dumps({"timestamp": ts, "probability": 0.5}) + "\n")
+
+        with patch(
+            "src.mlops.reference_data.resolve_reference_window", return_value=(start, end)
+        ):
+            path = create_reference_dataset(
+                "fp", logs_dir=logs, days=30, output_path=tmp_path / "r.parquet"
+            )
+
+        kept = sorted(pd.to_datetime(pd.read_parquet(path)["timestamp"], utc=True))
+        assert kept == [
+            pd.Timestamp("2026-08-01T15:00:00Z"),
+            pd.Timestamp("2026-08-02T12:00:00Z"),
+        ]
+
+
+class TestCountPredictionsIsBounded:
+    """In-process DB call from the agent: bounded, and not pooled (#96)."""
+
+    def test_engine_has_timeouts_and_no_pool(self, monkeypatch):
+        from sqlalchemy.pool import NullPool
+
+        from src.mlops.reference_data import (
+            COUNT_CONNECT_TIMEOUT_SECONDS,
+            COUNT_STATEMENT_TIMEOUT_MS,
+        )
+
+        monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value.execute.return_value.scalar_one.return_value = 0
+
+        with patch("sqlalchemy.create_engine", return_value=engine) as mock_create:
+            count_predictions("ep", 7)
+
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["poolclass"] is NullPool
+        assert kwargs["connect_args"]["connect_timeout"] == COUNT_CONNECT_TIMEOUT_SECONDS
+        assert (
+            f"statement_timeout={COUNT_STATEMENT_TIMEOUT_MS}"
+            in kwargs["connect_args"]["options"]
+        )
+
+    def test_a_query_timeout_raises(self, monkeypatch):
+        """A timeout surfaces as an exception, which the EP skip reads as UNKNOWN."""
+        from sqlalchemy.exc import OperationalError
+
+        monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value.execute.side_effect = (
+            OperationalError("SELECT", {}, Exception("canceling statement due to statement timeout"))
+        )
+
+        with patch("sqlalchemy.create_engine", return_value=engine):
+            with pytest.raises(OperationalError):
+                count_predictions("ep", 7)

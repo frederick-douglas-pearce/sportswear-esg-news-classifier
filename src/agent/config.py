@@ -93,8 +93,8 @@ class AgentSettings:
     ep_drift_skip_reason: str = field(
         default_factory=lambda: os.getenv(
             "AGENT_EP_DRIFT_SKIP_REASON",
-            "EP classifier is on hold (CLAUDE.md); no EP predictions have ever "
-            "been recorded. Set AGENT_EP_DRIFT_ENABLED=true when it resumes.",
+            "EP classifier is on hold (CLAUDE.md). Set "
+            "AGENT_EP_DRIFT_ENABLED=true when it resumes.",
         )
     )
 

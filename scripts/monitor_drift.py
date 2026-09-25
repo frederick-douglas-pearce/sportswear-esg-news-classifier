@@ -52,6 +52,7 @@ from src.mlops import (
     DriftMonitor,
     create_reference_dataset,
     get_reference_stats,
+    load_reference_dataset,
     mlops_settings,
     run_drift_analysis,
     send_drift_alert,
@@ -131,6 +132,7 @@ def print_summary_json(report, exit_code: int) -> None:
         # Which baseline the comparison used (issue #97). Absent keys read as
         # None: "not recorded", never "no overlap".
         "reference_window": (report.details or {}).get("reference_window"),
+        "reference_observed": (report.details or {}).get("reference_observed"),
         "reference_overlaps_current": (report.details or {}).get(
             "reference_overlaps_current"
         ),
@@ -214,8 +216,8 @@ def main() -> int:
         help=(
             "With --create-reference: end the reference window this many days "
             f"ago (default: {DEFAULT_DRIFT_WINDOW_DAYS}, the drift check's "
-            "comparison window, so the reference never contains the rows it is "
-            "compared against)"
+            "default comparison window, so the reference does not contain that "
+            "window)"
         ),
     )
     parser.add_argument(
@@ -253,6 +255,13 @@ def main() -> int:
                 exclude_recent_days=args.exclude_recent_days,
             )
             print(f"Reference dataset created: {path}")
+            window = load_reference_dataset(
+                args.classifier, reference_path=path
+            ).attrs.get("reference_window") or {}
+            print(
+                f"Window: [{window.get('requested_start')}, "
+                f"{window.get('requested_end')}), {window.get('rows')} rows"
+            )
             return EXIT_NO_DRIFT
         except Exception as e:
             # EXIT_INDETERMINATE, not 1: under this script's contract 1 means

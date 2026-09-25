@@ -75,7 +75,7 @@ uv run python scripts/monitor_drift.py --classifier fp --from-db
 uv run python scripts/monitor_drift.py --classifier fp --from-db --days 30 --html-report
 
 # Create reference dataset from production data: the 30 days ending where the
-# default comparison window starts, so the two share no rows
+# default comparison window starts, so it does not contain that window
 uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30
 
 # Or pin the window's end explicitly (exclusive, 00:00 UTC) for a reproducible baseline
@@ -181,18 +181,22 @@ uv run python scripts/monitor_drift.py --classifier fp --from-db --create-refere
 ```
 
 The reference window ends where the default comparison window (`DEFAULT_DRIFT_WINDOW_DAYS`,
-`src/mlops/config.py`) starts, so a reference never contains the rows it is compared against
-(issue #97). `--exclude-recent-days N` or `--reference-end-date YYYY-MM-DD` move that end. The
-requested window is stored inside the parquet (`attrs["reference_window"]`), and every drift report
-carries `reference_window`, `reference_observed` and `reference_overlaps_current` in its details and
-in the machine-readable summary. A reference built before this was recorded reports
+`src/mlops/config.py`) starts, so a reference does not contain the default comparison window
+(issue #97). A check run with a longer `--days` can still overlap it. `--exclude-recent-days N` or
+`--reference-end-date YYYY-MM-DD` move the end, and `--create-reference` prints the resolved
+window. The requested window is stored inside the parquet (`attrs["reference_window"]`). Every
+drift report that loaded a reference carries `reference_window`, `reference_observed` and
+`reference_overlaps_current`, both in its details and in the machine-readable summary. The agent
+workflow copies them into its context, report and run archive. An overlap is recorded, and it does
+not change the verdict. A reference built before this was recorded reports
 `reference_window: null`, never a window inferred from its data.
 
 The EP check stays skipped while `AGENT_EP_DRIFT_ENABLED=false`, but the skip counts `ep`
 predictions in the drift window first (issue #96). Below `DRIFT_MIN_SAMPLE_SIZE` it stays
-`skipped`, with any count named in the reason. At or above the floor the verdict is `unknown` and
-the drift workflow fails, because EP is running unmonitored. A count that could not be taken is
-`unknown` too.
+`skipped`, and a nonzero count is named in the reason. At or above the floor the verdict is
+`unknown` and the drift workflow fails, because EP is running unmonitored. A count that could not
+be taken is `unknown` too; the count runs with a connect and a statement timeout, so a database
+that stops answering fails the check instead of hanging it.
 
 ### What Gets Monitored
 

@@ -253,6 +253,21 @@ class TestMainWiring:
         assert summary["exit_code"] == returned
 
 
+def _write_reference(tmp_path, window=None):
+    """A real reference parquet, so the CLI can read its window back."""
+    import pandas as pd
+
+    df = pd.DataFrame({"timestamp": [datetime(2026, 8, 1)], "probability": [0.5]})
+    df.attrs["reference_window"] = window or {
+        "requested_start": "2026-06-20T00:00:00+00:00",
+        "requested_end": "2026-09-18T00:00:00+00:00",
+        "rows": 1,
+    }
+    path = tmp_path / "ref.parquet"
+    df.to_parquet(path, index=False)
+    return path
+
+
 class TestCreateReferenceExitCodes:
     """`--create-reference` must obey the same contract.
 
@@ -299,7 +314,7 @@ class TestCreateReferenceExitCodes:
 
     def test_success_returns_no_drift(self, monitor_drift, monkeypatch, tmp_path):
         monkeypatch.setattr(
-            monitor_drift, "create_reference_dataset", lambda **kw: tmp_path / "ref.parquet"
+            monitor_drift, "create_reference_dataset", lambda **kw: _write_reference(tmp_path)
         )
         monkeypatch.setattr(
             sys,
@@ -360,7 +375,7 @@ class TestReferenceWindowFlags:
 
         def fake(**kwargs):
             seen.update(kwargs)
-            return tmp_path / "ref.parquet"
+            return _write_reference(tmp_path)
 
         monkeypatch.setattr(monitor_drift, "create_reference_dataset", fake)
         monkeypatch.setattr(sys, "argv", ["monitor_drift.py", "--classifier", "fp", *argv])
@@ -456,3 +471,30 @@ class TestSummaryNamesTheBaseline:
         summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
         assert summary["reference_window"] is None
         assert summary["reference_overlaps_current"] is None
+
+
+class TestCreateReferencePrintsItsWindow:
+    """The resolved window is printed on success (#97 review, G)."""
+
+    def test_window_is_printed(self, monitor_drift, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(
+            monitor_drift, "create_reference_dataset", lambda **kw: _write_reference(tmp_path)
+        )
+        monkeypatch.setattr(
+            sys, "argv", ["monitor_drift.py", "--classifier", "fp", "--create-reference"]
+        )
+
+        assert monitor_drift.main() == EXIT_NO_DRIFT
+        out = capsys.readouterr().out
+        assert "Window: [2026-06-20T00:00:00+00:00, 2026-09-18T00:00:00+00:00), 1 rows" in out
+
+
+class TestSummaryCarriesObservedSpan:
+    def test_reference_observed_is_in_the_summary(self, monitor_drift, capsys):
+        report = make_report()
+        report.details["reference_observed"] = {"start": "a", "end": "b"}
+
+        monitor_drift.print_summary_json(report, EXIT_NO_DRIFT)
+
+        summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert summary["reference_observed"] == {"start": "a", "end": "b"}

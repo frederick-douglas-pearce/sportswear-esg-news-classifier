@@ -1779,7 +1779,9 @@ third issue planned alongside these, shipped with #102 (D017).
 2. **The reference window is half-open, `[end - days, end)`,** and `end` defaults to
    `now - DEFAULT_DRIFT_WINDOW_DAYS`. The loaders are called with `days=None`, because either
    loader discards its dates whenever `days` is set. The window is then enforced on each row's
-   timestamp, which makes it half-open for both sources.
+   timestamp. For the file-log source the loader's start is first floored to midnight, because
+   it selects whole files by filename date. So the window is exactly `[start, end)` for both
+   sources.
 3. **The requested window lives in the parquet, as `df.attrs["reference_window"]`,** in JSON
    primitives. A sidecar file was rejected because it can come apart from the data. Explicit
    pyarrow metadata was rejected because it needs a signature change that `attrs` does not.
@@ -1788,19 +1790,26 @@ third issue planned alongside these, shipped with #102 (D017).
 4. **Overlap is recorded and does not change the verdict.** `reference_overlaps_current` compares
    observed timestamps, so it also answers for a legacy reference, and it is `None` when it could
    not be measured. An overlapping reference is a biased comparison, not a missing one: `degraded`
-   would claim drift, and `unknown` would claim no verdict was produced.
+   would claim drift, and `unknown` would claim no verdict was produced. The drift workflow copies
+   `reference_window`, `reference_observed` and `reference_overlaps_current` from the script's
+   summary into its context, so they reach its report and run archive. The report prints a note
+   when the reference overlaps.
 5. **The EP skip counts before it skips.** The flag still decides whether the check runs.
    - Below `DRIFT_MIN_SAMPLE_SIZE` `ep` rows in the drift window, the check stays `skipped`, with
-     any count named in the reason.
+     a nonzero count named in the reason. The default skip reason makes no claim about data.
    - At or above the floor, the verdict is `unknown` and the existing terminal gate fails the run.
    - A count that raised is `unknown` too.
 
-   The floor is reused deliberately. It is the size below which an enabled EP check would itself
-   return no verdict, so this fires at the point where enabling the check would help. It is not a
-   second sensitivity setting.
+   The floor is reused deliberately. An enabled EP check applies the same floor to the frames it
+   loads, so this fires at about the point where enabling the check would give a verdict. It is not
+   a second sensitivity setting. The count reads `classifier_predictions` alone. The enabled
+   check's loader also joins `articles`, so the two populations can differ where a prediction
+   has no article row.
 6. **`count_predictions()` raises on failure.** Its neighbour `load_predictions_from_database`
    swallows errors and returns an empty frame. A count that did the same would read as zero rows
-   and a clean skip.
+   and a clean skip. It runs in-process in the agent, not in a subprocess with a timeout, so it
+   uses a connect timeout and a statement timeout, and it does not pool its connection. A database
+   that stops answering raises, and so reads as `unknown`.
 7. **This adds no vocabulary.** `HealthVerdict.UNKNOWN`'s docstring gains a fourth cause: gated
    off while its subject is producing data. The context keys `ep_verdict`, `ep_error` and
    `ep_skip_reason` are unchanged, and no step was renamed.

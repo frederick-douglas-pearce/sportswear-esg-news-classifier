@@ -202,6 +202,12 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
 
     out[f"{classifier}_verdict"] = verdict.value
 
+    # Which baseline the check compared against, carried into the context so it
+    # reaches the report and the run archive (#97). Recorded, never a verdict
+    # input (D021.4): `None` means the script did not say, not "no overlap".
+    for key in ("reference_window", "reference_observed", "reference_overlaps_current"):
+        out[f"{classifier}_{key}"] = (summary or {}).get(key)
+
     if verdict is HealthVerdict.UNKNOWN:
         # Keep the diagnosis IN THE CONTEXT, not only in the log. This is the
         # dominant failure path -- the script raised and returned before
@@ -269,8 +275,8 @@ def check_ep_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
       with any nonzero count stated in the reason, so a stray row is visible
       but does not fail the run;
     - at least that many -> UNKNOWN: EP is running and nobody is watching it.
-      The floor is the one below which an enabled check would itself return
-      no verdict, so this fires at the point enabling it would help;
+      The floor is the one an enabled check applies to the frames it
+      loads, so this fires at about the point enabling it would help;
     - the count could not be taken -> UNKNOWN. A count nobody took must not
       read as "EP is not running".
     """
@@ -478,6 +484,10 @@ def _classifier_report(context: dict[str, Any], classifier: str) -> dict[str, An
         "threshold": context.get(f"{classifier}_threshold"),
         "error": context.get(f"{classifier}_error"),
         "skip_reason": context.get(f"{classifier}_skip_reason"),
+        "reference_window": context.get(f"{classifier}_reference_window"),
+        "reference_overlaps_current": context.get(
+            f"{classifier}_reference_overlaps_current"
+        ),
     }
 
 
@@ -536,6 +546,11 @@ def _log_classifier_line(label: str, section: dict[str, Any]) -> None:
         print(f"  Drift Score: {section['drift_score']:.4f}")
     if section["threshold"] is not None:
         print(f"  Threshold: {section['threshold']:.4f}")
+    if section.get("reference_overlaps_current"):
+        print(
+            "  NOTE: the reference overlaps the window it was compared against, "
+            "so this verdict is biased toward no drift"
+        )
 
 
 def _log_drift_summary(report: dict[str, Any]) -> None:

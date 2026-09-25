@@ -48,6 +48,21 @@ def isolated_history(tmp_path):
         yield history_dir
 
 
+@pytest.fixture(autouse=True)
+def no_ep_count_query():
+    """Keep the gated-off EP check from querying a real database.
+
+    `check_ep_drift` counts EP predictions before it skips (#96), and every
+    full-workflow test here runs it with the flag at its default (off). Without
+    this, those tests pass or fail on whether DATABASE_URL reaches a live
+    database. Tests of the count itself patch it again, inside this one.
+    """
+    with patch(
+        "src.agent.workflows.drift_monitoring.count_predictions", return_value=0
+    ) as mock_count:
+        yield mock_count
+
+
 @pytest.fixture
 def state_manager(tmp_path):
     """Create a fresh StateManager instance."""
@@ -1119,3 +1134,50 @@ class TestEpSkipLooksBeforeItSkips:
             check_ep_drift(mock_workflow, {})
 
         mock_count.assert_not_called()
+
+
+class TestReferenceProvenanceReachesTheReport:
+    """The baseline the script reported is carried into the context, report and
+    archive, and never changes the verdict (#97, D021.4)."""
+
+    def test_carried_from_the_summary_to_the_report(self, mock_workflow, capsys):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            result = script_result()
+            result.parsed_output = {
+                **result.parsed_output,
+                "reference_window": {"requested_end": "2026-09-18T00:00:00+00:00"},
+                "reference_observed": {"start": "a", "end": "b"},
+                "reference_overlaps_current": True,
+            }
+            mock_run.return_value = result
+            out = check_fp_drift(mock_workflow, {})
+
+        assert out["fp_verdict"] == HealthVerdict.HEALTHY.value
+        assert out["fp_reference_overlaps_current"] is True
+        assert out["fp_reference_window"] == {"requested_end": "2026-09-18T00:00:00+00:00"}
+        assert out["fp_reference_observed"] == {"start": "a", "end": "b"}
+
+        context = {**out, "ep_verdict": HealthVerdict.SKIPPED.value, "ep_skip_reason": "x"}
+        context.update(evaluate_drift_results(mock_workflow, context))
+        report = generate_drift_report(mock_workflow, context)["report"]
+
+        assert context["all_checked_healthy"] is True
+        assert report["fp_classifier"]["reference_overlaps_current"] is True
+        assert "reference overlaps the window" in capsys.readouterr().out
+
+    def test_absent_from_the_summary_is_none(self, mock_workflow):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result()
+            out = check_fp_drift(mock_workflow, {})
+
+        assert out["fp_reference_overlaps_current"] is None
+        assert out["fp_reference_window"] is None
+
+    def test_production_window_default_is_the_shared_constant(self, mock_workflow):
+        from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS
+
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result()
+            check_fp_drift(mock_workflow, {})
+
+        assert mock_run.call_args.kwargs["days"] == DEFAULT_DRIFT_WINDOW_DAYS

@@ -4,36 +4,42 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
-### 2026-09-25: A drift reference excludes the window it is compared against, and a gated-off EP check notices EP running
+### 2026-09-25: A drift reference excludes the default comparison window, and a gated-off EP check notices EP running
 
 **The reference window (#97).** `--create-reference` built a trailing window ending "now", so it
 contained the comparison window the next drift check would read. Nothing recorded which window a
 reference came from.
 
 - `create_reference_dataset()` builds `[end - days, end)`. By default `end` is the start of the
-  comparison window, `DEFAULT_DRIFT_WINDOW_DAYS` ago (`src/mlops/config.py`). That constant is
-  now also the default for `monitor_drift.py --days` and for the drift workflow's `drift_days`.
-  `--exclude-recent-days N` and `--reference-end-date YYYY-MM-DD` move the end. The window is
-  enforced on each row's timestamp, so a row on the boundary belongs to one window only.
+  default comparison window, `DEFAULT_DRIFT_WINDOW_DAYS` ago (`src/mlops/config.py`). That constant
+  is now also the default for every drift window (`monitor_drift.py --days`, `check_drift`,
+  `run_drift_analysis`, `run_monitor_drift` and the workflow's `drift_days`). A check run with a
+  longer `--days` can still overlap the reference.
+- `--exclude-recent-days N` and `--reference-end-date YYYY-MM-DD` move the end, and
+  `--create-reference` prints the resolved window. The window is enforced on each row's timestamp
+  for both the database and the file-log source, so a row on the boundary belongs to one window
+  only.
 - The requested window is stored in the parquet as `attrs["reference_window"]`, which is why
   `pandas>=2.1` is now required. `--reference-stats` reports it.
-- Every drift report now carries `reference_window`, `reference_observed` and
-  `reference_overlaps_current`, both in `details` and in the machine-readable summary. A reference
+- Every drift report that loaded a reference carries `reference_window`, `reference_observed` and
+  `reference_overlaps_current`, in `details` and in the machine-readable summary. The drift
+  workflow copies them into its context, so they reach its report and run archive. A reference
   written before this change reports `reference_window: null`. An overlap that could not be
-  measured is `null`, never `false`. An overlap is recorded, and does not change the verdict.
+  measured is `null`, never `false`. An overlap is recorded, and it does not change the verdict.
 
 **The EP skip (#96).** With `AGENT_EP_DRIFT_ENABLED=false`, the EP check reported `skipped` whether
 or not EP was making predictions, and `skipped` never fails a run. The skip now counts `ep`
-predictions in the drift window through `count_predictions()`, which raises on failure instead of
-returning 0:
+predictions in the drift window through `count_predictions()`. That function raises on failure
+instead of returning 0, and it runs with a connect and a statement timeout.
 
-- below `DRIFT_MIN_SAMPLE_SIZE` the check is still `skipped`, and a nonzero count is named in the
-  reason;
-- at or above it the check is `unknown`: the run fails, and the error names the count and the flag
-  to set;
-- if the count could not be taken, the check is `unknown`.
+- Below `DRIFT_MIN_SAMPLE_SIZE`, the check stays `skipped`, and a nonzero count is named in the
+  reason.
+- At or above the floor, the check is `unknown`: the run fails, and the error names the count and
+  the flag to set.
+- If the count could not be taken, the check is `unknown`.
 
-The flag still decides whether the check runs (D008). See D021.
+The flag still decides whether the check runs (D008). The default skip reason no longer says no
+EP prediction was ever recorded. See D021.
 
 ### 2026-09-23: The test suite can no longer write into the real agent run archive
 

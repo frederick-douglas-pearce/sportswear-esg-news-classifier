@@ -258,9 +258,9 @@ def resolve_reference_window(
     """Return the half-open `[start, end)` window a reference is built from.
 
     `end` is `end_date` when one is given. Otherwise it is `now` minus
-    `exclude_recent_days`, which defaults to the drift check's comparison window,
-    so a reference built today does not contain the rows it will be compared
-    against (issue #97). Both bounds are timezone-aware UTC.
+    `exclude_recent_days`, which defaults to the drift check's default
+    comparison window, so a reference built today does not contain that window
+    (issue #97). Both bounds are timezone-aware UTC.
     """
     if end_date is not None and exclude_recent_days is not None:
         raise ValueError("pass end_date or exclude_recent_days, not both")
@@ -287,10 +287,11 @@ def resolve_reference_window(
 def _within_window(df: pd.DataFrame, start: datetime, end: datetime) -> pd.DataFrame:
     """Keep only rows whose timestamp falls in `[start, end)`.
 
-    The loaders bound their queries inclusively at both ends, and the file-log
-    loader selects whole days by filename. Filtering here is what makes the
-    window half-open for both sources, so a row at the boundary instant belongs
-    to the reference or to the comparison window, never to both.
+    The database loader bounds its query inclusively at both ends, and the
+    file-log loader returns whole days by filename (read from the midnight
+    before `start`). Filtering here is what makes the window exactly `[start,
+    end)` for both sources, so a row at the boundary instant belongs to the
+    reference or to the comparison window, never to both.
     """
     if "timestamp" not in df.columns:
         raise ValueError(
@@ -314,7 +315,7 @@ def create_reference_dataset(
 
     The window is `days` long and ends at `end_date`, or, by default, at the
     start of the drift check's comparison window (`DEFAULT_DRIFT_WINDOW_DAYS`
-    ago), so the reference never contains the rows it will be compared against
+    ago), so the reference does not contain the default comparison window
     (issue #97). The window that was asked for is stored in the parquet itself
     as `attrs["reference_window"]`, so it cannot come apart from the data.
 
@@ -345,10 +346,16 @@ def create_reference_dataset(
             start_date=start, end_date=end, from_database=True,
         )
     else:
-        # The file-log loader compares naive filename dates.
+        # The file-log loader selects whole files by their naive (UTC) filename
+        # date at midnight, keeping a file only when `start_date <= file_date`.
+        # Floored to midnight so the window's first, partial day is read;
+        # `_within_window` below then trims it to the exact start.
         df = load_prediction_logs(
             classifier_type, logs_dir, days=None,
-            start_date=start.replace(tzinfo=None), end_date=end.replace(tzinfo=None),
+            start_date=start.replace(
+                tzinfo=None, hour=0, minute=0, second=0, microsecond=0
+            ),
+            end_date=end.replace(tzinfo=None),
         )
 
     if not df.empty:
@@ -425,6 +432,10 @@ def reference_provenance(
     }
 
 
+COUNT_CONNECT_TIMEOUT_SECONDS = 10
+COUNT_STATEMENT_TIMEOUT_MS = 30_000
+
+
 def count_predictions(classifier_type: str, days: int) -> int:
     """Count one classifier's predictions in the last `days` days.
 
@@ -435,13 +446,26 @@ def count_predictions(classifier_type: str, days: int) -> int:
     so a swallowed failure would report a clean skip over a count nobody took.
     """
     from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import NullPool
 
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL not set, cannot count predictions")
 
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    engine = create_engine(database_url)
+    # Bounded, because this runs in-process in the agent rather than in a
+    # subprocess with a timeout: a database that accepts the connection and
+    # never answers would otherwise hang the drift workflow before any failure
+    # path runs. A timeout raises, and the caller reads a raise as UNKNOWN.
+    # NullPool closes the connection on exit instead of pooling it.
+    engine = create_engine(
+        database_url,
+        poolclass=NullPool,
+        connect_args={
+            "connect_timeout": COUNT_CONNECT_TIMEOUT_SECONDS,
+            "options": f"-c statement_timeout={COUNT_STATEMENT_TIMEOUT_MS}",
+        },
+    )
     with engine.connect() as conn:
         count = conn.execute(
             text(
