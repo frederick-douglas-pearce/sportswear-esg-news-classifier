@@ -254,3 +254,16 @@ replay path (e.g. `monitor_drift.py` on a crafted window) so it isn't blocked on
   it from reintroducing vacuous health.
 - Planned ESG multi-label classifier: keep the realized-performance query `classifier_type`-generic.
 - D-4.1 done as a scalar hardcode would rot exactly like the thresholds this epic replaces.
+
+---
+
+## Addendum — Stories 9 & 10 (filed as #154, #155), 2026-09-24
+
+Reviewed against `e391972`. Full resolved design is in the issue bodies; summary:
+
+- **Only the FP export is contaminated** (`export_training_data.py:52-118`). `skipped_llm` → `false_positive` exists only on the FP path (`pipeline.py:414`, `:832`); EP and esg-labels exports use LLM-written statuses only.
+- **#154: derive provenance, do not store it.** It is a pure function of `classifier_predictions.action_taken`, `label_corrections` and `review_session_sample.was_confirmed`; a column would drift (cf. #135). Same predicate as #144 C2, defined once in `src/data_collection/database.py`. The owner-attested cutoff is an export parameter, not provenance.
+- **The carve-back must read `review_session_sample.was_confirmed`**: `fix_label.py` writes nothing on a confirmed-correct skip.
+- Exclude by default; `--include-classifier-labels` for ablation. Re-run fp2 tuning after (class balance). Attach an as-of contamination caveat to v2.5.0; headline recall minimally affected, negative-class precision and threshold at risk.
+- **#155:** `ArticleLabeler.label_article()` (`labeler.py:227`) directly: no chunk/embed/DB. Empty `brand_analyses` = POSITIVE (`pipeline.py:924-930`). LLM census of all ~390; human reviews all disagreements + ~60 agreements stratified by probability band (0/60 → <5% at 95%) + census of the pre-cutoff cohort if ≤ ~100; per-month error rates. LLM opinions to a one-off output file, not a table.
+- `review-fps` is a separate thin skill writing the same tables; recurring via #142. Add `fp_skipped` to #146 `sample_frame`.
