@@ -277,7 +277,11 @@ def resolve_reference_window(
             )
         end = now - timedelta(days=exclude_recent_days)
     else:
-        end = end_date if end_date.tzinfo else end_date.replace(tzinfo=timezone.utc)
+        end = (
+            end_date.astimezone(timezone.utc)
+            if end_date.tzinfo
+            else end_date.replace(tzinfo=timezone.utc)
+        )
         if end > now:
             raise ValueError(f"reference end date {end.isoformat()} is in the future")
 

@@ -262,10 +262,10 @@ def check_fp_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
 def check_ep_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     """Run drift detection for EP classifier, unless it is gated off.
 
-    EP is on hold and `classifier_predictions` has never held an `ep` row, so
-    the check found no data to compare and reported Healthy on every run. It is
-    now skipped explicitly, with the reason recorded -- `skipped` is a verdict,
-    not a silent absence, and it never counts toward "all classifiers healthy".
+    EP is on hold. Run against no data, the check reported Healthy (#71), so
+    while the flag is off it is skipped explicitly, with the reason recorded --
+    `skipped` is a verdict, not a silent absence, and it never counts toward
+    "all classifiers healthy".
 
     The skip still looks before it skips (issue #96). The flag decides whether
     the check RUNS (D008); the data only decides whether the skip is worth
@@ -485,6 +485,7 @@ def _classifier_report(context: dict[str, Any], classifier: str) -> dict[str, An
         "error": context.get(f"{classifier}_error"),
         "skip_reason": context.get(f"{classifier}_skip_reason"),
         "reference_window": context.get(f"{classifier}_reference_window"),
+        "reference_observed": context.get(f"{classifier}_reference_observed"),
         "reference_overlaps_current": context.get(
             f"{classifier}_reference_overlaps_current"
         ),

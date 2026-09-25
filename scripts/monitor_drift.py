@@ -255,14 +255,6 @@ def main() -> int:
                 exclude_recent_days=args.exclude_recent_days,
             )
             print(f"Reference dataset created: {path}")
-            window = load_reference_dataset(
-                args.classifier, reference_path=path
-            ).attrs.get("reference_window") or {}
-            print(
-                f"Window: [{window.get('requested_start')}, "
-                f"{window.get('requested_end')}), {window.get('rows')} rows"
-            )
-            return EXIT_NO_DRIFT
         except Exception as e:
             # EXIT_INDETERMINATE, not 1: under this script's contract 1 means
             # "drift detected", and it is non-retryable -- so a failed
@@ -274,6 +266,20 @@ def main() -> int:
             print(f"Error creating reference dataset: {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             return EXIT_INDETERMINATE
+
+        # Outside the build's try: the reference is already written, so failing
+        # to read its window back is a reporting problem, not a failed build.
+        try:
+            window = load_reference_dataset(
+                args.classifier, reference_path=path
+            ).attrs.get("reference_window") or {}
+            print(
+                f"Window: [{window.get('requested_start')}, "
+                f"{window.get('requested_end')}), {window.get('rows')} rows"
+            )
+        except Exception as e:
+            print(f"Warning: could not read back the reference window: {e}", file=sys.stderr)
+        return EXIT_NO_DRIFT
 
     if args.reference_stats:
         stats = get_reference_stats(args.classifier)

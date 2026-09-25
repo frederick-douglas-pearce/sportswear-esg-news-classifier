@@ -525,6 +525,20 @@ class TestResolveReferenceWindow:
 
         assert end == datetime(2026, 9, 1, tzinfo=timezone.utc)
 
+    def test_non_utc_end_date_is_normalized_to_utc(self):
+        """The file-log floor to midnight is a UTC day; a +05:00 end must not
+        move it (#97 review N4)."""
+        from datetime import timezone as tz
+
+        plus5 = tz(timedelta(hours=5))
+        start, end = resolve_reference_window(
+            1, end_date=datetime(2026, 9, 2, 0, 0, tzinfo=plus5), now=NOW
+        )
+
+        assert end.utcoffset() == timedelta(0)
+        assert end == datetime(2026, 9, 1, 19, 0, tzinfo=timezone.utc)
+        assert start == datetime(2026, 8, 31, 19, 0, tzinfo=timezone.utc)
+
     def test_end_date_and_exclude_are_exclusive(self):
         with pytest.raises(ValueError, match="not both"):
             resolve_reference_window(

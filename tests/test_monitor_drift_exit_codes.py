@@ -489,6 +489,27 @@ class TestCreateReferencePrintsItsWindow:
         assert "Window: [2026-06-20T00:00:00+00:00, 2026-09-18T00:00:00+00:00), 1 rows" in out
 
 
+    def test_window_read_back_failure_is_not_a_failed_build(
+        self, monitor_drift, monkeypatch, tmp_path, capsys
+    ):
+        """The reference is on disk; not reading its window back is a warning."""
+        path = _write_reference(tmp_path)
+        monkeypatch.setattr(monitor_drift, "create_reference_dataset", lambda **kw: path)
+
+        def boom(*a, **kw):
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(monitor_drift, "load_reference_dataset", boom)
+        monkeypatch.setattr(
+            sys, "argv", ["monitor_drift.py", "--classifier", "fp", "--create-reference"]
+        )
+
+        assert monitor_drift.main() == EXIT_NO_DRIFT
+        captured = capsys.readouterr()
+        assert "could not read back the reference window" in captured.err
+        assert "Error creating reference dataset" not in captured.err
+
+
 class TestSummaryCarriesObservedSpan:
     def test_reference_observed_is_in_the_summary(self, monitor_drift, capsys):
         report = make_report()

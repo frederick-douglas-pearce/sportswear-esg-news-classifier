@@ -1137,8 +1137,9 @@ class TestEpSkipLooksBeforeItSkips:
 
 
 class TestReferenceProvenanceReachesTheReport:
-    """The baseline the script reported is carried into the context, report and
-    archive, and never changes the verdict (#97, D021.4)."""
+    """The baseline the script reported is carried into the context and the
+    report, and never changes the verdict (#97, D021.4). The run archive
+    stores the context; that is not tested here."""
 
     def test_carried_from_the_summary_to_the_report(self, mock_workflow, capsys):
         with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
@@ -1163,6 +1164,10 @@ class TestReferenceProvenanceReachesTheReport:
 
         assert context["all_checked_healthy"] is True
         assert report["fp_classifier"]["reference_overlaps_current"] is True
+        assert report["fp_classifier"]["reference_observed"] == {"start": "a", "end": "b"}
+        assert report["fp_classifier"]["reference_window"] == {
+            "requested_end": "2026-09-18T00:00:00+00:00"
+        }
         assert "reference overlaps the window" in capsys.readouterr().out
 
     def test_absent_from_the_summary_is_none(self, mock_workflow):
