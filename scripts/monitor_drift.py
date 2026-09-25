@@ -48,9 +48,11 @@ from src.mlops import (
     EXIT_DRIFT_DETECTED,
     EXIT_INDETERMINATE,
     EXIT_NO_DRIFT,
+    DEFAULT_DRIFT_WINDOW_DAYS,
     DriftMonitor,
     create_reference_dataset,
     get_reference_stats,
+    load_reference_dataset,
     mlops_settings,
     run_drift_analysis,
     send_drift_alert,
@@ -127,9 +129,24 @@ def print_summary_json(report, exit_code: int) -> None:
         "drift_score": report.drift_score,
         "threshold": report.threshold,
         "error": report.details.get("error") if report.details else None,
+        # Which baseline the comparison used (issue #97). Absent keys read as
+        # None: "not recorded", never "no overlap".
+        "reference_window": (report.details or {}).get("reference_window"),
+        "reference_observed": (report.details or {}).get("reference_observed"),
+        "reference_overlaps_current": (report.details or {}).get(
+            "reference_overlaps_current"
+        ),
     }
     print(SUMMARY_LABEL)
     print(json.dumps(summary))
+
+
+def _utc_date(value: str) -> datetime:
+    """Parse YYYY-MM-DD as midnight UTC, for --reference-end-date."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"expected YYYY-MM-DD, got {value!r}") from e
 
 
 def main() -> int:
@@ -146,8 +163,12 @@ def main() -> int:
     parser.add_argument(
         "--days", "-d",
         type=int,
-        default=7,
-        help="Number of days of recent data to analyze (default: 7)",
+        default=DEFAULT_DRIFT_WINDOW_DAYS,
+        help=(
+            "Number of days of recent data to analyze "
+            f"(default: {DEFAULT_DRIFT_WINDOW_DAYS}); with --create-reference, "
+            "the length of the reference window"
+        ),
     )
     parser.add_argument(
         "--logs-dir",
@@ -180,6 +201,25 @@ def main() -> int:
         action="store_true",
         help="Create reference dataset from historical data",
     )
+    reference_end = parser.add_mutually_exclusive_group()
+    reference_end.add_argument(
+        "--reference-end-date",
+        type=_utc_date,
+        help=(
+            "With --create-reference: end the reference window at 00:00 UTC on "
+            "this date (YYYY-MM-DD, exclusive)"
+        ),
+    )
+    reference_end.add_argument(
+        "--exclude-recent-days",
+        type=int,
+        help=(
+            "With --create-reference: end the reference window this many days "
+            f"ago (default: {DEFAULT_DRIFT_WINDOW_DAYS}, the drift check's "
+            "default comparison window, so the reference does not contain that "
+            "window)"
+        ),
+    )
     parser.add_argument(
         "--reference-stats",
         action="store_true",
@@ -193,6 +233,14 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    if not args.create_reference and (
+        args.reference_end_date is not None or args.exclude_recent_days is not None
+    ):
+        parser.error(
+            "--reference-end-date and --exclude-recent-days only apply with "
+            "--create-reference"
+        )
+
     # Handle reference dataset operations
     if args.create_reference:
         source = "database" if args.from_db else f"logs in {args.logs_dir}"
@@ -203,9 +251,10 @@ def main() -> int:
                 logs_dir=args.logs_dir,
                 days=args.days,
                 from_database=args.from_db,
+                end_date=args.reference_end_date,
+                exclude_recent_days=args.exclude_recent_days,
             )
             print(f"Reference dataset created: {path}")
-            return EXIT_NO_DRIFT
         except Exception as e:
             # EXIT_INDETERMINATE, not 1: under this script's contract 1 means
             # "drift detected", and it is non-retryable -- so a failed
@@ -217,6 +266,20 @@ def main() -> int:
             print(f"Error creating reference dataset: {e}", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             return EXIT_INDETERMINATE
+
+        # Outside the build's try: the reference is already written, so failing
+        # to read its window back is a reporting problem, not a failed build.
+        try:
+            window = load_reference_dataset(
+                args.classifier, reference_path=path
+            ).attrs.get("reference_window") or {}
+            print(
+                f"Window: [{window.get('requested_start')}, "
+                f"{window.get('requested_end')}), {window.get('rows')} rows"
+            )
+        except Exception as e:
+            print(f"Warning: could not read back the reference window: {e}", file=sys.stderr)
+        return EXIT_NO_DRIFT
 
     if args.reference_stats:
         stats = get_reference_stats(args.classifier)

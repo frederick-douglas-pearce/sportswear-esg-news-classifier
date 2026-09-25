@@ -13,11 +13,12 @@ import importlib.util
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS
 from src.mlops.exit_codes import (
     EXIT_DRIFT_DETECTED,
     EXIT_INDETERMINATE,
@@ -252,6 +253,21 @@ class TestMainWiring:
         assert summary["exit_code"] == returned
 
 
+def _write_reference(tmp_path, window=None):
+    """A real reference parquet, so the CLI can read its window back."""
+    import pandas as pd
+
+    df = pd.DataFrame({"timestamp": [datetime(2026, 8, 1)], "probability": [0.5]})
+    df.attrs["reference_window"] = window or {
+        "requested_start": "2026-06-20T00:00:00+00:00",
+        "requested_end": "2026-09-18T00:00:00+00:00",
+        "rows": 1,
+    }
+    path = tmp_path / "ref.parquet"
+    df.to_parquet(path, index=False)
+    return path
+
+
 class TestCreateReferenceExitCodes:
     """`--create-reference` must obey the same contract.
 
@@ -298,7 +314,7 @@ class TestCreateReferenceExitCodes:
 
     def test_success_returns_no_drift(self, monitor_drift, monkeypatch, tmp_path):
         monkeypatch.setattr(
-            monitor_drift, "create_reference_dataset", lambda **kw: tmp_path / "ref.parquet"
+            monitor_drift, "create_reference_dataset", lambda **kw: _write_reference(tmp_path)
         )
         monkeypatch.setattr(
             sys,
@@ -348,3 +364,158 @@ class TestOutputJsonCarriesIndeterminate:
         written = json.loads(out.read_text())
         assert written["indeterminate"] is True
         assert written["details"]["error"] == "Insufficient data"
+
+
+class TestReferenceWindowFlags:
+    """`--create-reference` passes the window through (#97 AC-1, AC-4)."""
+
+    @staticmethod
+    def _capture(monitor_drift, monkeypatch, tmp_path, argv):
+        seen = {}
+
+        def fake(**kwargs):
+            seen.update(kwargs)
+            return _write_reference(tmp_path)
+
+        monkeypatch.setattr(monitor_drift, "create_reference_dataset", fake)
+        monkeypatch.setattr(sys, "argv", ["monitor_drift.py", "--classifier", "fp", *argv])
+        return seen
+
+    def test_default_leaves_the_exclusion_to_the_library_default(
+        self, monitor_drift, monkeypatch, tmp_path
+    ):
+        """None reaches create_reference_dataset, which applies
+        DEFAULT_DRIFT_WINDOW_DAYS -- the documented command needs no flag."""
+        seen = self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--from-db", "--create-reference", "--days", "90"],
+        )
+
+        assert monitor_drift.main() == EXIT_NO_DRIFT
+        assert seen["days"] == 90
+        assert seen["end_date"] is None
+        assert seen["exclude_recent_days"] is None
+
+    def test_end_date_is_midnight_utc(self, monitor_drift, monkeypatch, tmp_path):
+        seen = self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--create-reference", "--reference-end-date", "2026-09-01"],
+        )
+
+        monitor_drift.main()
+
+        assert seen["end_date"] == datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+    def test_exclude_recent_days_passes_through(self, monitor_drift, monkeypatch, tmp_path):
+        seen = self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--create-reference", "--exclude-recent-days", "14"],
+        )
+
+        monitor_drift.main()
+
+        assert seen["exclude_recent_days"] == 14
+
+    def test_both_flags_are_rejected(self, monitor_drift, monkeypatch, tmp_path):
+        self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--create-reference", "--reference-end-date", "2026-09-01",
+             "--exclude-recent-days", "7"],
+        )
+
+        with pytest.raises(SystemExit):
+            monitor_drift.main()
+
+    def test_window_flags_without_create_reference_are_rejected(
+        self, monitor_drift, monkeypatch, tmp_path
+    ):
+        self._capture(monitor_drift, monkeypatch, tmp_path, ["--exclude-recent-days", "7"])
+
+        with pytest.raises(SystemExit):
+            monitor_drift.main()
+
+    def test_analysis_window_defaults_to_the_shared_constant(
+        self, monitor_drift, monkeypatch
+    ):
+        seen = {}
+
+        def fake(**kwargs):
+            seen.update(kwargs)
+            return make_report()
+
+        monkeypatch.setattr(monitor_drift, "run_drift_analysis", fake)
+        monkeypatch.setattr(sys, "argv", ["monitor_drift.py", "--classifier", "fp"])
+
+        monitor_drift.main()
+
+        assert seen["days"] == DEFAULT_DRIFT_WINDOW_DAYS
+
+
+class TestSummaryNamesTheBaseline:
+    """The machine-readable summary states its baseline (#97 AC-3)."""
+
+    def test_summary_carries_window_and_overlap(self, monitor_drift, capsys):
+        report = make_report()
+        report.details["reference_window"] = {"requested_end": "2026-09-18T00:00:00+00:00"}
+        report.details["reference_overlaps_current"] = True
+
+        monitor_drift.print_summary_json(report, EXIT_NO_DRIFT)
+
+        summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert summary["reference_window"] == {"requested_end": "2026-09-18T00:00:00+00:00"}
+        assert summary["reference_overlaps_current"] is True
+
+    def test_unrecorded_overlap_is_null_not_false(self, monitor_drift, capsys):
+        monitor_drift.print_summary_json(make_report(), EXIT_NO_DRIFT)
+
+        summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert summary["reference_window"] is None
+        assert summary["reference_overlaps_current"] is None
+
+
+class TestCreateReferencePrintsItsWindow:
+    """The resolved window is printed on success (#97 review, G)."""
+
+    def test_window_is_printed(self, monitor_drift, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(
+            monitor_drift, "create_reference_dataset", lambda **kw: _write_reference(tmp_path)
+        )
+        monkeypatch.setattr(
+            sys, "argv", ["monitor_drift.py", "--classifier", "fp", "--create-reference"]
+        )
+
+        assert monitor_drift.main() == EXIT_NO_DRIFT
+        out = capsys.readouterr().out
+        assert "Window: [2026-06-20T00:00:00+00:00, 2026-09-18T00:00:00+00:00), 1 rows" in out
+
+
+    def test_window_read_back_failure_is_not_a_failed_build(
+        self, monitor_drift, monkeypatch, tmp_path, capsys
+    ):
+        """The reference is on disk; not reading its window back is a warning."""
+        path = _write_reference(tmp_path)
+        monkeypatch.setattr(monitor_drift, "create_reference_dataset", lambda **kw: path)
+
+        def boom(*a, **kw):
+            raise OSError("unreadable")
+
+        monkeypatch.setattr(monitor_drift, "load_reference_dataset", boom)
+        monkeypatch.setattr(
+            sys, "argv", ["monitor_drift.py", "--classifier", "fp", "--create-reference"]
+        )
+
+        assert monitor_drift.main() == EXIT_NO_DRIFT
+        captured = capsys.readouterr()
+        assert "could not read back the reference window" in captured.err
+        assert "Error creating reference dataset" not in captured.err
+
+
+class TestSummaryCarriesObservedSpan:
+    def test_reference_observed_is_in_the_summary(self, monitor_drift, capsys):
+        report = make_report()
+        report.details["reference_observed"] = {"start": "a", "end": "b"}
+
+        monitor_drift.print_summary_json(report, EXIT_NO_DRIFT)
+
+        summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert summary["reference_observed"] == {"start": "a", "end": "b"}

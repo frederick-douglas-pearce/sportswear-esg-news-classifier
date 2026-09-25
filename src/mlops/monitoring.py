@@ -10,8 +10,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .config import mlops_settings
-from .reference_data import TRACKED_BRANDS, load_prediction_logs, load_reference_dataset
+from .config import DEFAULT_DRIFT_WINDOW_DAYS, mlops_settings
+from .reference_data import (
+    TRACKED_BRANDS,
+    load_prediction_logs,
+    load_reference_dataset,
+    reference_provenance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +289,7 @@ class DriftMonitor:
         self,
         current_data: pd.DataFrame | None = None,
         reference_data: pd.DataFrame | None = None,
-        days: int = 7,
+        days: int = DEFAULT_DRIFT_WINDOW_DAYS,
         save_report: bool = True,
         from_database: bool = False,
     ) -> DriftReport:
@@ -354,6 +359,11 @@ class DriftMonitor:
                     indeterminate=True,
                 )
 
+        # Which baseline this comparison used, and whether it overlaps the
+        # window under test (issue #97). Attached to every report from here on,
+        # verdict or not; an overlap is recorded, never turned into a verdict.
+        provenance = reference_provenance(reference_data, current_data)
+
         min_sample_size = mlops_settings.drift_min_sample_size
         if (
             len(current_data) < min_sample_size
@@ -386,17 +396,20 @@ class DriftMonitor:
                     "error": "Insufficient data for drift analysis",
                     "reference_size": len(reference_data),
                     "current_size": len(current_data),
+                    **provenance,
                 },
                 indeterminate=True,
             )
 
         # Run drift analysis
         if self.enabled:
-            return self._evidently_drift_check(
+            report = self._evidently_drift_check(
                 current_data, reference_data, save_report
             )
         else:
-            return self._legacy_drift_check(current_data, reference_data)
+            report = self._legacy_drift_check(current_data, reference_data)
+        report.details.update(provenance)
+        return report
 
     def _get_drift_config(self, column_name: str) -> tuple[str, float]:
         """Get drift detection method and threshold for a column.
@@ -979,7 +992,7 @@ class DriftMonitor:
 
 def run_drift_analysis(
     classifier_type: str,
-    days: int = 7,
+    days: int = DEFAULT_DRIFT_WINDOW_DAYS,
     save_report: bool = True,
     send_alert: bool = True,
     from_database: bool = False,

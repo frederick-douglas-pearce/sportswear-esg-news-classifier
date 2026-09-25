@@ -1,6 +1,6 @@
 """MLOps module for experiment tracking and production monitoring."""
 
-from .config import mlops_settings
+from .config import DEFAULT_DRIFT_WINDOW_DAYS, mlops_settings
 from .exit_codes import (
     EXIT_DRIFT_DETECTED,
     EXIT_INDETERMINATE,
@@ -31,6 +31,7 @@ from .importance_tracking import (
 __all__ = [
     # Config
     "mlops_settings",
+    "DEFAULT_DRIFT_WINDOW_DAYS",
     # Exit-code contract (scripts/monitor_drift.py <-> agent runner)
     "EXIT_NO_DRIFT",
     "EXIT_DRIFT_DETECTED",

@@ -79,13 +79,11 @@ class AgentSettings:
 
     # Drift monitoring
     #
-    # The EP classifier is on hold (see CLAUDE.md) and `classifier_predictions`
-    # has never held an `ep` row, so its drift check found nothing to compare
-    # and reported "Healthy" on every run. Gating it on config rather than on a
-    # row count is deliberate: EP-on-hold is a governance decision, and zero
-    # predictions is only its symptom. A row-count gate would re-enable
-    # monitoring the moment one stray `ep` row landed, then compare it against
-    # a nonexistent reference (issues #71, #96).
+    # The EP classifier is on hold (see CLAUDE.md). Run against no EP data, its
+    # drift check found nothing to compare and reported "Healthy" (#71). Gating
+    # it on config rather than on a row count is deliberate: EP-on-hold is a
+    # governance decision. A row-count gate would re-enable monitoring the
+    # moment one stray `ep` row landed (issues #71, #96).
     ep_drift_enabled: bool = field(
         default_factory=lambda: os.getenv("AGENT_EP_DRIFT_ENABLED", "false").lower()
         == "true"
@@ -93,8 +91,8 @@ class AgentSettings:
     ep_drift_skip_reason: str = field(
         default_factory=lambda: os.getenv(
             "AGENT_EP_DRIFT_SKIP_REASON",
-            "EP classifier is on hold (CLAUDE.md); no EP predictions have ever "
-            "been recorded. Set AGENT_EP_DRIFT_ENABLED=true when it resumes.",
+            "EP classifier is on hold (CLAUDE.md). Set "
+            "AGENT_EP_DRIFT_ENABLED=true when it resumes.",
         )
     )
 

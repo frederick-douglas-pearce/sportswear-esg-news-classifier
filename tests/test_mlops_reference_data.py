@@ -292,8 +292,21 @@ class TestLoadPredictionLogs:
 class TestCreateReferenceDataset:
     """Tests for create_reference_dataset function."""
 
-    def test_creates_reference_from_logs(self, temp_logs_dir):
-        """Test creating reference dataset from log files."""
+    def test_creates_reference_from_logs(self, tmp_path):
+        """Test creating reference dataset from log files.
+
+        The log file and its records are dated inside the default window
+        (the 30 days ending DEFAULT_DRIFT_WINDOW_DAYS ago), because the window
+        is enforced on each record's timestamp (issue #97).
+        """
+        logs_dir = tmp_path / "logs"
+        logs_dir.mkdir()
+        day = datetime.now(timezone.utc) - timedelta(days=10)
+        with open(logs_dir / f"fp_predictions_{day.strftime('%Y%m%d')}.jsonl", "w") as f:
+            for i in range(5):
+                ts = day.replace(hour=0, minute=0) + timedelta(hours=i)
+                f.write(json.dumps({"timestamp": ts.isoformat(), "probability": 0.5}) + "\n")
+
         with TemporaryDirectory() as output_dir:
             output_path = Path(output_dir) / "reference.parquet"
 
@@ -303,8 +316,8 @@ class TestCreateReferenceDataset:
 
                 result_path = create_reference_dataset(
                     "fp",
-                    logs_dir=temp_logs_dir,
-                    days=1,
+                    logs_dir=logs_dir,
+                    days=30,
                     output_path=output_path,
                     from_database=False
                 )
@@ -322,7 +335,10 @@ class TestCreateReferenceDataset:
             output_path = Path(output_dir) / "reference.parquet"
 
             mock_data = pd.DataFrame({
-                "timestamp": pd.date_range("2025-01-01", periods=5, freq="h"),
+                # Inside the default window: 30 days ending 7 days ago.
+                "timestamp": pd.date_range(
+                    datetime.now(timezone.utc) - timedelta(days=10), periods=5, freq="h"
+                ),
                 "probability": [0.3, 0.5, 0.7, 0.8, 0.4],
                 "prediction": [0, 1, 1, 1, 0],
             })
@@ -467,3 +483,320 @@ class TestPredictionLogColumns:
     def test_is_list(self):
         """Test that PREDICTION_LOG_COLUMNS is a list."""
         assert isinstance(PREDICTION_LOG_COLUMNS, list)
+
+
+# ============================================================================
+# Reference window (issue #97)
+# ============================================================================
+
+from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS  # noqa: E402
+from src.mlops.reference_data import (  # noqa: E402
+    count_predictions,
+    reference_provenance,
+    resolve_reference_window,
+)
+
+NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
+
+
+def _rows(timestamps):
+    return pd.DataFrame({
+        "timestamp": pd.to_datetime(timestamps, utc=True),
+        "probability": [0.5] * len(timestamps),
+    })
+
+
+class TestResolveReferenceWindow:
+    def test_default_ends_where_the_comparison_window_starts(self):
+        start, end = resolve_reference_window(90, now=NOW)
+
+        assert end == NOW - timedelta(days=DEFAULT_DRIFT_WINDOW_DAYS)
+        assert start == end - timedelta(days=90)
+
+    def test_explicit_end_date(self):
+        end_date = datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+        start, end = resolve_reference_window(30, end_date=end_date, now=NOW)
+
+        assert (start, end) == (end_date - timedelta(days=30), end_date)
+
+    def test_naive_end_date_is_read_as_utc(self):
+        _, end = resolve_reference_window(30, end_date=datetime(2026, 9, 1), now=NOW)
+
+        assert end == datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+    def test_non_utc_end_date_is_normalized_to_utc(self):
+        """The file-log floor to midnight is a UTC day; a +05:00 end must not
+        move it (#97 review N4)."""
+        from datetime import timezone as tz
+
+        plus5 = tz(timedelta(hours=5))
+        start, end = resolve_reference_window(
+            1, end_date=datetime(2026, 9, 2, 0, 0, tzinfo=plus5), now=NOW
+        )
+
+        assert end.utcoffset() == timedelta(0)
+        assert end == datetime(2026, 9, 1, 19, 0, tzinfo=timezone.utc)
+        assert start == datetime(2026, 8, 31, 19, 0, tzinfo=timezone.utc)
+
+    def test_end_date_and_exclude_are_exclusive(self):
+        with pytest.raises(ValueError, match="not both"):
+            resolve_reference_window(
+                30, end_date=NOW - timedelta(days=10), exclude_recent_days=7, now=NOW
+            )
+
+    def test_future_end_date_is_rejected(self):
+        with pytest.raises(ValueError, match="future"):
+            resolve_reference_window(30, end_date=NOW + timedelta(days=1), now=NOW)
+
+    def test_default_end_is_not_after_the_default_comparison_start(self):
+        """The default reference end does not fall inside the default comparison window.
+
+        The comparison window is the last DEFAULT_DRIFT_WINDOW_DAYS days, and
+        the loader bounds it inclusively (`created_at >= now - N`), so the
+        reference's exclusive end must not be after that start. The end does
+        not depend on the window's length. The docs' commands are not read here.
+        """
+        _, end = resolve_reference_window(90, now=NOW)
+        comparison_start = NOW - timedelta(days=DEFAULT_DRIFT_WINDOW_DAYS)
+
+        assert end <= comparison_start
+
+
+class TestCreateReferenceWindow:
+    """The window reaches the loader and is enforced on the rows (AC-1, AC-2)."""
+
+    def test_loader_gets_dates_and_not_days(self, tmp_path):
+        """`days` set on the loader discards the dates and rebuilds the overlap."""
+        with patch(
+            "src.mlops.reference_data.load_prediction_logs",
+            return_value=_rows([NOW - timedelta(days=20)]),
+        ) as mock_load, patch(
+            "src.mlops.reference_data.datetime", wraps=datetime
+        ) as mock_dt:
+            mock_dt.now.return_value = NOW
+            create_reference_dataset(
+                "fp", days=30, output_path=tmp_path / "r.parquet", from_database=True
+            )
+
+        start, end = resolve_reference_window(30, now=NOW)
+        mock_load.assert_called_once_with(
+            "fp", "logs/predictions", days=None,
+            start_date=start, end_date=end, from_database=True,
+        )
+
+    def test_rows_outside_the_window_are_dropped_and_the_end_is_exclusive(self, tmp_path):
+        """A loader that returns everything still yields only [start, end).
+
+        The row at exactly `end` belongs to the comparison window, whose
+        loader bound is `>= now - N` -- so it must not be in the reference too.
+        """
+        now = datetime.now(timezone.utc)
+        start, end = resolve_reference_window(30, now=now)
+        inside = end - timedelta(microseconds=1)
+        on_start = start
+        at_end = end
+        after = now - timedelta(days=1)
+        before = start - timedelta(days=1)
+
+        with patch(
+            "src.mlops.reference_data.load_prediction_logs",
+            return_value=_rows([before, on_start, inside, at_end, after]),
+        ), patch("src.mlops.reference_data.resolve_reference_window", return_value=(start, end)):
+            path = create_reference_dataset(
+                "fp", days=30, output_path=tmp_path / "r.parquet", from_database=True
+            )
+
+        kept = set(pd.read_parquet(path)["timestamp"])
+        assert kept == {pd.Timestamp(on_start), pd.Timestamp(inside)}
+
+    def test_nothing_in_the_window_raises(self, tmp_path):
+        recent = datetime.now(timezone.utc) - timedelta(hours=1)
+        with patch(
+            "src.mlops.reference_data.load_prediction_logs", return_value=_rows([recent])
+        ):
+            with pytest.raises(ValueError, match="No prediction data found"):
+                create_reference_dataset(
+                    "fp", days=30, output_path=tmp_path / "r.parquet", from_database=True
+                )
+
+    def test_requested_window_round_trips_through_the_parquet_file(self, tmp_path):
+        """A real write and read, so an attrs-dropping pandas fails here."""
+        start, end = resolve_reference_window(30, now=datetime.now(timezone.utc))
+        with patch(
+            "src.mlops.reference_data.load_prediction_logs",
+            return_value=_rows([start + timedelta(days=1), start + timedelta(days=2)]),
+        ), patch("src.mlops.reference_data.resolve_reference_window", return_value=(start, end)):
+            path = create_reference_dataset(
+                "fp", days=30, output_path=tmp_path / "r.parquet", from_database=True
+            )
+
+        window = load_reference_dataset("fp", reference_path=path).attrs["reference_window"]
+
+        assert window["requested_start"] == start.isoformat()
+        assert window["requested_end"] == end.isoformat()
+        assert window["end_exclusive"] is True
+        assert window["source"] == "database"
+        assert window["rows"] == 2
+
+
+class TestReferenceProvenance:
+    """What a drift report says about its baseline (AC-2, AC-3)."""
+
+    def test_legacy_reference_reports_no_requested_window(self, tmp_path):
+        """Never a window inferred from the data; observed span still given."""
+        path = tmp_path / "legacy.parquet"
+        _rows([NOW - timedelta(days=40), NOW - timedelta(days=20)]).to_parquet(path, index=False)
+        legacy = load_reference_dataset("fp", reference_path=path)
+
+        result = reference_provenance(legacy, _rows([NOW - timedelta(days=3)]))
+
+        assert result["reference_window"] is None
+        assert result["reference_observed"] == {
+            "start": (NOW - timedelta(days=40)).isoformat(),
+            "end": (NOW - timedelta(days=20)).isoformat(),
+        }
+        assert result["reference_overlaps_current"] is False
+
+    def test_overlap_is_read_from_observed_timestamps(self):
+        reference = _rows([NOW - timedelta(days=30), NOW - timedelta(days=2)])
+
+        result = reference_provenance(reference, _rows([NOW - timedelta(days=5), NOW]))
+
+        assert result["reference_overlaps_current"] is True
+
+    def test_shared_boundary_instant_is_an_overlap(self):
+        edge = NOW - timedelta(days=7)
+
+        result = reference_provenance(_rows([edge]), _rows([edge, NOW]))
+
+        assert result["reference_overlaps_current"] is True
+
+    def test_unmeasurable_overlap_is_none_not_false(self):
+        no_ts = pd.DataFrame({"probability": [0.5]})
+
+        result = reference_provenance(no_ts, _rows([NOW]))
+
+        assert result["reference_overlaps_current"] is None
+        assert result["reference_observed"] is None
+
+
+class TestCountPredictions:
+    """A count nobody took must raise, never read as 0 (#96 AC-7)."""
+
+    def test_missing_database_url_raises(self, monkeypatch):
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+
+        with pytest.raises(RuntimeError, match="DATABASE_URL"):
+            count_predictions("ep", 7)
+
+    def test_database_error_propagates(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+        with patch("sqlalchemy.create_engine", side_effect=ConnectionError("refused")):
+            with pytest.raises(ConnectionError):
+                count_predictions("ep", 7)
+
+    def test_returns_the_scalar_for_the_classifier_and_window(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+        engine = MagicMock()
+        conn = engine.connect.return_value.__enter__.return_value
+        conn.execute.return_value.scalar_one.return_value = 42
+
+        with patch("sqlalchemy.create_engine", return_value=engine):
+            assert count_predictions("ep", 7) == 42
+
+        params = conn.execute.call_args.args[1]
+        assert params["classifier_type"] == "ep"
+        expected_since = datetime.now(timezone.utc) - timedelta(days=7)
+        assert abs((params["since"] - expected_since).total_seconds()) < 60
+
+
+class TestFileLogWindow:
+    """The file-log source reads the window's first, partial day (#97)."""
+
+    def test_file_loader_start_is_floored_to_midnight(self, tmp_path):
+        start = datetime(2026, 8, 1, 14, 30, tzinfo=timezone.utc)
+        end = datetime(2026, 8, 31, 14, 30, tzinfo=timezone.utc)
+        with patch(
+            "src.mlops.reference_data.load_prediction_logs",
+            return_value=_rows([start + timedelta(days=1)]),
+        ) as mock_load, patch(
+            "src.mlops.reference_data.resolve_reference_window", return_value=(start, end)
+        ):
+            create_reference_dataset(
+                "fp", logs_dir=tmp_path, days=30, output_path=tmp_path / "r.parquet"
+            )
+
+        mock_load.assert_called_once_with(
+            "fp", tmp_path, days=None,
+            start_date=datetime(2026, 8, 1), end_date=datetime(2026, 8, 31, 14, 30),
+        )
+
+    def test_rows_after_start_on_the_first_day_are_kept(self, tmp_path):
+        """Through the real file loader: the start day's file is read, then trimmed."""
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        start = datetime(2026, 8, 1, 14, 30, tzinfo=timezone.utc)
+        end = datetime(2026, 8, 3, 0, 0, tzinfo=timezone.utc)
+        rows = {
+            "20260801": ["2026-08-01T10:00:00+00:00", "2026-08-01T15:00:00+00:00"],
+            "20260802": ["2026-08-02T12:00:00+00:00"],
+        }
+        for day, stamps in rows.items():
+            with open(logs / f"fp_predictions_{day}.jsonl", "w") as f:
+                for ts in stamps:
+                    f.write(json.dumps({"timestamp": ts, "probability": 0.5}) + "\n")
+
+        with patch(
+            "src.mlops.reference_data.resolve_reference_window", return_value=(start, end)
+        ):
+            path = create_reference_dataset(
+                "fp", logs_dir=logs, days=30, output_path=tmp_path / "r.parquet"
+            )
+
+        kept = sorted(pd.to_datetime(pd.read_parquet(path)["timestamp"], utc=True))
+        assert kept == [
+            pd.Timestamp("2026-08-01T15:00:00Z"),
+            pd.Timestamp("2026-08-02T12:00:00Z"),
+        ]
+
+
+class TestCountPredictionsIsBounded:
+    """In-process DB call from the agent: bounded, and not pooled (#96)."""
+
+    def test_engine_has_timeouts_and_no_pool(self, monkeypatch):
+        from sqlalchemy.pool import NullPool
+
+        from src.mlops.reference_data import (
+            COUNT_CONNECT_TIMEOUT_SECONDS,
+            COUNT_STATEMENT_TIMEOUT_MS,
+        )
+
+        monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value.execute.return_value.scalar_one.return_value = 0
+
+        with patch("sqlalchemy.create_engine", return_value=engine) as mock_create:
+            count_predictions("ep", 7)
+
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["poolclass"] is NullPool
+        assert kwargs["connect_args"]["connect_timeout"] == COUNT_CONNECT_TIMEOUT_SECONDS
+        assert (
+            f"statement_timeout={COUNT_STATEMENT_TIMEOUT_MS}"
+            in kwargs["connect_args"]["options"]
+        )
+
+    def test_a_query_timeout_raises(self, monkeypatch):
+        """A timeout surfaces as an exception, which the EP skip reads as UNKNOWN."""
+        from sqlalchemy.exc import OperationalError
+
+        monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+        engine = MagicMock()
+        engine.connect.return_value.__enter__.return_value.execute.side_effect = (
+            OperationalError("SELECT", {}, Exception("canceling statement due to statement timeout"))
+        )
+
+        with patch("sqlalchemy.create_engine", return_value=engine):
+            with pytest.raises(OperationalError):
+                count_predictions("ep", 7)

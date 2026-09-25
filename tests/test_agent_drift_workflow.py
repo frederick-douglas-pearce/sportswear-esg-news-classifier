@@ -48,6 +48,21 @@ def isolated_history(tmp_path):
         yield history_dir
 
 
+@pytest.fixture(autouse=True)
+def no_ep_count_query():
+    """Keep the gated-off EP check from querying a real database.
+
+    `check_ep_drift` counts EP predictions before it skips (#96), and every
+    full-workflow test here runs it with the flag at its default (off). Without
+    this, those tests pass or fail on whether DATABASE_URL reaches a live
+    database. Tests of the count itself patch it again, inside this one.
+    """
+    with patch(
+        "src.agent.workflows.drift_monitoring.count_predictions", return_value=0
+    ) as mock_count:
+        yield mock_count
+
+
 @pytest.fixture
 def state_manager(tmp_path):
     """Create a fresh StateManager instance."""
@@ -208,7 +223,9 @@ class TestCheckEpDrift:
 
     def test_skipped_by_default_without_running_the_check(self, mock_workflow):
         """The mechanism is that the script is never invoked, not just labelled."""
-        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run, patch(
+            "src.agent.workflows.drift_monitoring.count_predictions", return_value=0
+        ):
             result = check_ep_drift(mock_workflow, {})
 
             mock_run.assert_not_called()
@@ -1015,3 +1032,157 @@ class TestVerdictsSerialiseSafely:
         result = generate_drift_report(mock_workflow, context)
 
         assert yaml.safe_load(yaml.safe_dump(result)) == result
+
+
+class TestEpSkipLooksBeforeItSkips:
+    """#96: the flag decides whether the check runs; the data decides whether
+    the skip deserves a complaint (D008, AC-5..AC-7)."""
+
+    FLOOR = 5
+
+    @pytest.fixture(autouse=True)
+    def _floor(self):
+        with patch(
+            "src.agent.workflows.drift_monitoring.mlops_settings"
+        ) as mock_mlops, patch(
+            "src.agent.workflows.drift_monitoring.agent_settings"
+        ) as mock_agent:
+            mock_mlops.drift_min_sample_size = self.FLOOR
+            mock_agent.ep_drift_enabled = False
+            mock_agent.ep_drift_skip_reason = "EP is on hold."
+            yield
+
+    @staticmethod
+    def _run(mock_workflow, count=None, raises=None, context=None):
+        kwargs = {"side_effect": raises} if raises else {"return_value": count}
+        with patch(
+            "src.agent.workflows.drift_monitoring.count_predictions", **kwargs
+        ) as mock_count, patch(
+            "src.agent.workflows.drift_monitoring.run_monitor_drift"
+        ) as mock_run:
+            result = check_ep_drift(mock_workflow, context or {})
+        mock_run.assert_not_called()
+        return result, mock_count
+
+    @staticmethod
+    def _gate(mock_workflow, result):
+        context = {"fp_verdict": HealthVerdict.HEALTHY.value, **result}
+        context.update(evaluate_drift_results(mock_workflow, context))
+        return context, fail_on_unknown_verdict(mock_workflow, context)
+
+    def test_no_rows_is_a_plain_skip(self, mock_workflow):
+        result, _ = self._run(mock_workflow, count=0)
+
+        assert result == {
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+            "ep_skip_reason": "EP is on hold.",
+        }
+
+    def test_stray_rows_below_the_floor_skip_and_say_so(self, mock_workflow):
+        """One stray row does not enable monitoring, or fail the run (AC-6)."""
+        result, _ = self._run(mock_workflow, count=self.FLOOR - 1)
+
+        assert result["ep_verdict"] == HealthVerdict.SKIPPED.value
+        assert f"{self.FLOOR - 1} EP predictions" in result["ep_skip_reason"]
+        _, gate = self._gate(mock_workflow, result)
+        assert not isinstance(gate, StepFailure)
+
+    def test_rows_at_the_floor_fail_the_run(self, mock_workflow):
+        """AC-5, through the gate: the run fails, not just the dict."""
+        result, _ = self._run(mock_workflow, count=self.FLOOR)
+
+        assert result["ep_verdict"] == HealthVerdict.UNKNOWN.value
+        assert f"{self.FLOOR} EP predictions" in result["ep_error"]
+        assert "AGENT_EP_DRIFT_ENABLED=true" in result["ep_error"]
+        context, gate = self._gate(mock_workflow, result)
+        assert context["classifiers_unknown"] == ["ep"]
+        assert isinstance(gate, StepFailure)
+        assert gate.context["unresolved_verdicts"] == ["ep"]
+        assert "EP predictions" in gate.error
+
+    def test_a_count_that_could_not_be_taken_fails_the_run(self, mock_workflow):
+        """AC-7: a failed count is not "EP is not running"."""
+        result, _ = self._run(mock_workflow, raises=RuntimeError("DATABASE_URL not set"))
+
+        assert result["ep_verdict"] == HealthVerdict.UNKNOWN.value
+        assert "DATABASE_URL not set" in result["ep_error"]
+        _, gate = self._gate(mock_workflow, result)
+        assert isinstance(gate, StepFailure)
+
+    def test_counts_over_the_drift_window(self, mock_workflow):
+        _, mock_count = self._run(mock_workflow, count=0, context={"drift_days": 14})
+
+        mock_count.assert_called_once_with("ep", 14)
+
+    def test_count_defaults_to_the_shared_window(self, mock_workflow):
+        from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS
+
+        _, mock_count = self._run(mock_workflow, count=0)
+
+        mock_count.assert_called_once_with("ep", DEFAULT_DRIFT_WINDOW_DAYS)
+
+    def test_enabled_check_does_not_count(self, mock_workflow):
+        with patch(
+            "src.agent.workflows.drift_monitoring.agent_settings"
+        ) as mock_agent, patch(
+            "src.agent.workflows.drift_monitoring.count_predictions"
+        ) as mock_count, patch(
+            "src.agent.workflows.drift_monitoring.run_monitor_drift"
+        ) as mock_run:
+            mock_agent.ep_drift_enabled = True
+            mock_run.return_value = script_result(classifier="ep")
+            check_ep_drift(mock_workflow, {})
+
+        mock_count.assert_not_called()
+
+
+class TestReferenceProvenanceReachesTheReport:
+    """The baseline the script reported is carried into the context and the
+    report, and never changes the verdict (#97, D021.4). The run archive
+    stores the context; that is not tested here."""
+
+    def test_carried_from_the_summary_to_the_report(self, mock_workflow, capsys):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            result = script_result()
+            result.parsed_output = {
+                **result.parsed_output,
+                "reference_window": {"requested_end": "2026-09-18T00:00:00+00:00"},
+                "reference_observed": {"start": "a", "end": "b"},
+                "reference_overlaps_current": True,
+            }
+            mock_run.return_value = result
+            out = check_fp_drift(mock_workflow, {})
+
+        assert out["fp_verdict"] == HealthVerdict.HEALTHY.value
+        assert out["fp_reference_overlaps_current"] is True
+        assert out["fp_reference_window"] == {"requested_end": "2026-09-18T00:00:00+00:00"}
+        assert out["fp_reference_observed"] == {"start": "a", "end": "b"}
+
+        context = {**out, "ep_verdict": HealthVerdict.SKIPPED.value, "ep_skip_reason": "x"}
+        context.update(evaluate_drift_results(mock_workflow, context))
+        report = generate_drift_report(mock_workflow, context)["report"]
+
+        assert context["all_checked_healthy"] is True
+        assert report["fp_classifier"]["reference_overlaps_current"] is True
+        assert report["fp_classifier"]["reference_observed"] == {"start": "a", "end": "b"}
+        assert report["fp_classifier"]["reference_window"] == {
+            "requested_end": "2026-09-18T00:00:00+00:00"
+        }
+        assert "reference overlaps the window" in capsys.readouterr().out
+
+    def test_absent_from_the_summary_is_none(self, mock_workflow):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result()
+            out = check_fp_drift(mock_workflow, {})
+
+        assert out["fp_reference_overlaps_current"] is None
+        assert out["fp_reference_window"] is None
+
+    def test_production_window_default_is_the_shared_constant(self, mock_workflow):
+        from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS
+
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result()
+            check_fp_drift(mock_workflow, {})
+
+        assert mock_run.call_args.kwargs["days"] == DEFAULT_DRIFT_WINDOW_DAYS

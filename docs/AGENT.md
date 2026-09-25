@@ -337,9 +337,14 @@ hand-rolled here: #74 replaced the local implementation with `fail_on_unresolved
 `workflows/base.py`, which is the retirement D008 asked for. The step *name* is unchanged so the
 archive key stays stable for #75/#76.
 
-**EP is on hold.** `classifier_predictions` has never held an `ep` row, so the check compared
-nothing and reported healthy. It is now gated on `AGENT_EP_DRIFT_ENABLED` (default `false`) and
-reports `skipped` with the reason in `AGENT_EP_DRIFT_SKIP_REASON`.
+**EP is on hold.** Run against no EP data, the check compared nothing and reported healthy (#71).
+It is gated on `AGENT_EP_DRIFT_ENABLED` (default `false`). While the flag is off, the step counts
+`ep` predictions in the drift window first (#96):
+
+- below `DRIFT_MIN_SAMPLE_SIZE`, it reports `skipped`, with the reason in
+  `AGENT_EP_DRIFT_SKIP_REASON` and any nonzero count appended;
+- at or above the floor it reports `unknown`, because EP is running unmonitored, and the run fails;
+- if the count cannot be taken, it reports `unknown`.
 
 **Alert Triggers**: **any** core metric (`probability`, `prediction`, `novelty_score`) drifts,
 **or** the `brand_*` drift score exceeds the configured threshold (default: 0.1), **or** a check

@@ -1755,3 +1755,69 @@ entry is not rewritten once committed.
 7. **Correction 1 is itself corrected.** Its second sentence, "The `architect` and `pm` reviews are
    summarised on #124 and PR #139", is withdrawn: neither carries such a summary. What remains is
    that the cited plan file does not resolve from the repository.
+
+## D021: A Drift Reference Ends Where the Comparison Window Starts, and a Gated-Off EP Check Counts Before It Skips (#97, #96)
+
+**Date:** 2026-09-25
+**Status:** Accepted. Approved at the plan gate after `pm` and `architect` reviews.
+
+### Context
+
+#97: `create_reference_dataset()` took `days` only, so the reference always contained the window a
+drift check would compare it against, and nothing recorded which window it came from. #96: with
+`AGENT_EP_DRIFT_ENABLED=false` the EP check reported `skipped` whether or not EP was making
+predictions, and `skipped` does not fail a run (D008 chose the flag over a data gate). #94, the
+third issue planned alongside these, shipped with #102 (D017).
+
+### Decision
+
+1. **One window constant.** `DEFAULT_DRIFT_WINDOW_DAYS` in `src/mlops/config.py` is the default
+   comparison window for `monitor_drift.py --days`, `DriftMonitor.check_drift`,
+   `run_drift_analysis`, the agent runner's `run_monitor_drift`, and the drift workflow's
+   `drift_days`. It is also the default number of
+   recent days a reference excludes. The two defaults cannot come apart.
+2. **The reference window is half-open, `[end - days, end)`,** and `end` defaults to
+   `now - DEFAULT_DRIFT_WINDOW_DAYS`. The loaders are called with `days=None`, because either
+   loader discards its dates whenever `days` is set. The window is then enforced on each row's
+   timestamp. For the file-log source the loader's start is first floored to midnight, because
+   it selects whole files by filename date. So the window is exactly `[start, end)` for both
+   sources.
+3. **The requested window lives in the parquet, as `df.attrs["reference_window"]`,** in JSON
+   primitives. A sidecar file was rejected because it can come apart from the data. Explicit
+   pyarrow metadata was rejected because it needs a signature change that `attrs` does not.
+   `pandas>=2.1` is required because older pandas drops `attrs` on read. A reference with no
+   recorded window reports `None` and is never given one inferred from its data.
+4. **Overlap is recorded and does not change the verdict.** `reference_overlaps_current` compares
+   observed timestamps, so it also answers for a legacy reference, and it is `None` when it could
+   not be measured. An overlapping reference is a biased comparison, not a missing one: `degraded`
+   would claim drift, and `unknown` would claim no verdict was produced. The drift workflow copies
+   `reference_window`, `reference_observed` and `reference_overlaps_current` from the script's
+   summary into its context, so they reach its report and run archive. The report prints a note
+   when the reference overlaps.
+5. **The EP skip counts before it skips.** The flag still decides whether the check runs.
+   - Below `DRIFT_MIN_SAMPLE_SIZE` `ep` rows in the drift window, the check stays `skipped`, with
+     a nonzero count named in the reason. The default skip reason makes no claim about data.
+   - At or above the floor, the verdict is `unknown` and the existing terminal gate fails the run.
+   - A count that raised is `unknown` too.
+
+   The floor is reused deliberately. An enabled EP check applies the same floor to the frames it
+   loads, so this fires at about the point where enabling the check would give a verdict. It is not
+   a second sensitivity setting. The count reads `classifier_predictions` alone. The enabled
+   check's loader also joins `articles`, so the two populations can differ where a prediction
+   has no article row.
+6. **`count_predictions()` raises on failure.** Its neighbour `load_predictions_from_database`
+   swallows errors and returns an empty frame. A count that did the same would read as zero rows
+   and a clean skip. It runs in-process in the agent, not in a subprocess with a timeout, so it
+   uses a connect timeout and a statement timeout, and it does not pool its connection. A database
+   that stops answering raises, and so reads as `unknown`.
+7. **This adds no vocabulary.** `HealthVerdict.UNKNOWN`'s docstring gains a fourth cause: gated
+   off while its subject is producing data. The context keys `ep_verdict`, `ep_error` and
+   `ep_skip_reason` are unchanged, and no step was renamed.
+
+### Consequences
+
+- The documented `--create-reference` commands now build a different window than before. That
+  change is the fix.
+- If EP resumes with the flag left off, every drift run fails until the flag is set, and #75's
+  consecutive-failure escalation will fire. That is intended.
+- Generalizing this guard to other workflows is #156, and it is not built here.

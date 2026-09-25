@@ -74,8 +74,12 @@ uv run python scripts/monitor_drift.py --classifier fp --from-db
 # Extended analysis with HTML report
 uv run python scripts/monitor_drift.py --classifier fp --from-db --days 30 --html-report
 
-# Create reference dataset from production data
+# Create reference dataset from production data: the 30 days ending where the
+# default comparison window starts, so it does not contain that window
 uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30
+
+# Or pin the window's end explicitly (exclusive, 00:00 UTC) for a reproducible baseline
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90 --reference-end-date 2026-09-01
 
 # Check reference dataset stats
 uv run python scripts/monitor_drift.py --classifier fp --reference-stats
@@ -176,8 +180,23 @@ Regenerate after any change to what is written to `classifier_predictions`:
 uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90
 ```
 
-Note the window is *trailing* and therefore overlaps the window it will later be compared
-against (issue #97).
+The reference window ends where the default comparison window (`DEFAULT_DRIFT_WINDOW_DAYS`,
+`src/mlops/config.py`) starts, so a reference does not contain the default comparison window
+(issue #97). A check run with a longer `--days` can still overlap it. `--exclude-recent-days N` or
+`--reference-end-date YYYY-MM-DD` move the end, and `--create-reference` prints the resolved
+window. The requested window is stored inside the parquet (`attrs["reference_window"]`). Every
+drift report that loaded a reference carries `reference_window`, `reference_observed` and
+`reference_overlaps_current`, both in its details and in the machine-readable summary. The agent
+workflow copies them into its context, report and run archive. An overlap is recorded, and it does
+not change the verdict. A reference built before this was recorded reports
+`reference_window: null`, never a window inferred from its data.
+
+The EP check stays skipped while `AGENT_EP_DRIFT_ENABLED=false`, but the skip counts `ep`
+predictions in the drift window first (issue #96). Below `DRIFT_MIN_SAMPLE_SIZE` it stays
+`skipped`, and a nonzero count is named in the reason. At or above the floor the verdict is
+`unknown` and the drift workflow fails, because EP is running unmonitored. A count that could not
+be taken is `unknown` too; the count runs with a connect and a statement timeout, so a database
+that stops answering fails the check instead of hanging it.
 
 ### What Gets Monitored
 
@@ -280,7 +299,7 @@ send_drift_alert(
 | `DRIFT_THRESHOLD` | Drift score threshold for alerts | `0.1` |
 | `REFERENCE_DATA_DIR` | Directory for reference datasets | `data/reference` |
 | `REFERENCE_WINDOW_DAYS` | Days of data for reference | `30` |
-| `AGENT_EP_DRIFT_ENABLED` | Run the EP classifier drift check. Off while EP is on hold; the check reports `skipped` with a stated reason rather than passing on an empty dataset | `false` |
+| `AGENT_EP_DRIFT_ENABLED` | Run the EP classifier drift check. Off while EP is on hold (see the EP paragraph above) | `false` |
 | `AGENT_EP_DRIFT_SKIP_REASON` | Reason recorded when the EP check is skipped | (see `src/agent/config.py`) |
 | `ALERT_WEBHOOK_URL` | Slack/Discord webhook URL | - |
 | `ALERT_ON_DRIFT` | Send alert on drift detection | `true` |
