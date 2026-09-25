@@ -299,7 +299,7 @@ send_drift_alert(
 | `DRIFT_THRESHOLD` | Drift score threshold for alerts | `0.1` |
 | `REFERENCE_DATA_DIR` | Directory for reference datasets | `data/reference` |
 | `REFERENCE_WINDOW_DAYS` | Days of data for reference | `30` |
-| `AGENT_EP_DRIFT_ENABLED` | Run the EP classifier drift check. Off while EP is on hold; the check reports `skipped` with a stated reason rather than passing on an empty dataset | `false` |
+| `AGENT_EP_DRIFT_ENABLED` | Run the EP classifier drift check. Off while EP is on hold (see the EP paragraph above) | `false` |
 | `AGENT_EP_DRIFT_SKIP_REASON` | Reason recorded when the EP check is skipped | (see `src/agent/config.py`) |
 | `ALERT_WEBHOOK_URL` | Slack/Discord webhook URL | - |
 | `ALERT_ON_DRIFT` | Send alert on drift detection | `true` |

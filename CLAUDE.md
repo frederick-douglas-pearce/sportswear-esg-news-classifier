@@ -360,7 +360,7 @@ MLFLOW_ENABLED=false, MLFLOW_TRACKING_URI=sqlite:///mlruns.db
 EVIDENTLY_ENABLED=false, DRIFT_THRESHOLD=0.1, DRIFT_MIN_SAMPLE_SIZE=30
 REFERENCE_DATA_DIR=data/reference, REFERENCE_WINDOW_DAYS=30
 ALERT_WEBHOOK_URL, ALERT_ON_DRIFT=true
-AGENT_EP_DRIFT_ENABLED=false  # EP is on hold; its check reports "skipped" with a reason, not "healthy"
+AGENT_EP_DRIFT_ENABLED=false  # EP is on hold; see docs/AGENT.md for what the gated check reports
 
 # Agent Orchestrator
 AGENT_EMAIL_ENABLED=false, AGENT_EMAIL_RECIPIENT=, AGENT_EMAIL_SENDER=
