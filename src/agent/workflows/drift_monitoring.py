@@ -30,11 +30,13 @@ from .base import (
     WorkflowRegistry,
     fail_on_unresolved_verdicts,
 )
+from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS, mlops_settings
 from src.mlops.exit_codes import (
     EXIT_DRIFT_DETECTED,
     EXIT_INDETERMINATE,
     EXIT_NO_DRIFT,
 )
+from src.mlops.reference_data import count_predictions
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +163,7 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
 
     result = run_monitor_drift(
         classifier=classifier,
-        days=context.get("drift_days", 7),
+        days=context.get("drift_days", DEFAULT_DRIFT_WINDOW_DAYS),
         from_db=True,
         html_report=context.get("generate_html", False),
         alert=False,  # We handle alerts in the notification step
@@ -258,16 +260,56 @@ def check_ep_drift(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any
     the check found no data to compare and reported Healthy on every run. It is
     now skipped explicitly, with the reason recorded -- `skipped` is a verdict,
     not a silent absence, and it never counts toward "all classifiers healthy".
-    """
-    if not agent_settings.ep_drift_enabled:
-        reason = agent_settings.ep_drift_skip_reason
-        logger.info(f"EP drift check skipped: {reason}")
-        return {
-            "ep_verdict": HealthVerdict.SKIPPED.value,
-            "ep_skip_reason": reason,
-        }
 
-    return _run_drift_check("ep", context)
+    The skip still looks before it skips (issue #96). The flag decides whether
+    the check RUNS (D008); the data only decides whether the skip is worth
+    complaining about:
+
+    - fewer than `DRIFT_MIN_SAMPLE_SIZE` EP predictions in the window -> SKIPPED,
+      with any nonzero count stated in the reason, so a stray row is visible
+      but does not fail the run;
+    - at least that many -> UNKNOWN: EP is running and nobody is watching it.
+      The floor is the one below which an enabled check would itself return
+      no verdict, so this fires at the point enabling it would help;
+    - the count could not be taken -> UNKNOWN. A count nobody took must not
+      read as "EP is not running".
+    """
+    if agent_settings.ep_drift_enabled:
+        return _run_drift_check("ep", context)
+
+    reason = agent_settings.ep_drift_skip_reason
+    days = context.get("drift_days", DEFAULT_DRIFT_WINDOW_DAYS)
+    try:
+        count = count_predictions("ep", days)
+    except Exception as e:
+        error = (
+            f"EP drift check is disabled by config, and whether EP predictions "
+            f"are being recorded could not be checked: {type(e).__name__}: {e}"
+        )
+        logger.error(error)
+        return {"ep_verdict": HealthVerdict.UNKNOWN.value, "ep_error": error}
+
+    floor = mlops_settings.drift_min_sample_size
+    if count >= floor:
+        error = (
+            f"EP drift check is disabled by config (AGENT_EP_DRIFT_ENABLED=false) "
+            f"but {count} EP predictions were recorded in the last {days} days "
+            f"(at or above DRIFT_MIN_SAMPLE_SIZE={floor}) - EP is running "
+            f"unmonitored; set AGENT_EP_DRIFT_ENABLED=true"
+        )
+        logger.error(error)
+        return {"ep_verdict": HealthVerdict.UNKNOWN.value, "ep_error": error}
+
+    if count:
+        reason = (
+            f"{reason} ({count} EP predictions recorded in the last {days} days, "
+            f"below DRIFT_MIN_SAMPLE_SIZE={floor})"
+        )
+    logger.info(f"EP drift check skipped: {reason}")
+    return {
+        "ep_verdict": HealthVerdict.SKIPPED.value,
+        "ep_skip_reason": reason,
+    }
 
 
 def _drift_verdict(context: dict[str, Any], classifier: str) -> HealthVerdict:
@@ -380,7 +422,7 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
                 reason=context.get(f"{classifier}_error") or "no verdict produced",
                 details={
                     "exit_code": context.get(f"{classifier}_drift_exit_code"),
-                    "days": context.get("drift_days", 7),
+                    "days": context.get("drift_days", DEFAULT_DRIFT_WINDOW_DAYS),
                 },
             )
             alerts_sent.append(
@@ -444,7 +486,7 @@ def generate_drift_report(workflow: Workflow, context: dict[str, Any]) -> dict[s
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "workflow_name": workflow.name,
-        "drift_days": context.get("drift_days", 7),
+        "drift_days": context.get("drift_days", DEFAULT_DRIFT_WINDOW_DAYS),
         "fp_classifier": _classifier_report(context, "fp"),
         "ep_classifier": _classifier_report(context, "ep"),
         "overall": {

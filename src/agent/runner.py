@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from src.labeling.exit_codes import NON_RETRYABLE_EXIT_CODES
+from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS
 from src.mlops.exit_codes import (
     NON_RETRYABLE_EXIT_CODES as DRIFT_NON_RETRYABLE_EXIT_CODES,
 )
@@ -368,7 +369,7 @@ def run_export_training_data(
 
 def run_monitor_drift(
     classifier: str,
-    days: int = 7,
+    days: int = DEFAULT_DRIFT_WINDOW_DAYS,
     from_db: bool = True,
     html_report: bool = False,
     alert: bool = False,

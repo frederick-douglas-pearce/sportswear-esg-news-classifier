@@ -74,8 +74,12 @@ uv run python scripts/monitor_drift.py --classifier fp --from-db
 # Extended analysis with HTML report
 uv run python scripts/monitor_drift.py --classifier fp --from-db --days 30 --html-report
 
-# Create reference dataset from production data
+# Create reference dataset from production data: the 30 days ending where the
+# default comparison window starts, so the two share no rows
 uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 30
+
+# Or pin the window's end explicitly (exclusive, 00:00 UTC) for a reproducible baseline
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90 --reference-end-date 2026-09-01
 
 # Check reference dataset stats
 uv run python scripts/monitor_drift.py --classifier fp --reference-stats
@@ -176,8 +180,19 @@ Regenerate after any change to what is written to `classifier_predictions`:
 uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90
 ```
 
-Note the window is *trailing* and therefore overlaps the window it will later be compared
-against (issue #97).
+The reference window ends where the default comparison window (`DEFAULT_DRIFT_WINDOW_DAYS`,
+`src/mlops/config.py`) starts, so a reference never contains the rows it is compared against
+(issue #97). `--exclude-recent-days N` or `--reference-end-date YYYY-MM-DD` move that end. The
+requested window is stored inside the parquet (`attrs["reference_window"]`), and every drift report
+carries `reference_window`, `reference_observed` and `reference_overlaps_current` in its details and
+in the machine-readable summary. A reference built before this was recorded reports
+`reference_window: null`, never a window inferred from its data.
+
+The EP check stays skipped while `AGENT_EP_DRIFT_ENABLED=false`, but the skip counts `ep`
+predictions in the drift window first (issue #96). Below `DRIFT_MIN_SAMPLE_SIZE` it stays
+`skipped`, with any count named in the reason. At or above the floor the verdict is `unknown` and
+the drift workflow fails, because EP is running unmonitored. A count that could not be taken is
+`unknown` too.
 
 ### What Gets Monitored
 

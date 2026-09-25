@@ -13,11 +13,12 @@ import importlib.util
 import json
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
+from src.mlops.config import DEFAULT_DRIFT_WINDOW_DAYS
 from src.mlops.exit_codes import (
     EXIT_DRIFT_DETECTED,
     EXIT_INDETERMINATE,
@@ -348,3 +349,110 @@ class TestOutputJsonCarriesIndeterminate:
         written = json.loads(out.read_text())
         assert written["indeterminate"] is True
         assert written["details"]["error"] == "Insufficient data"
+
+
+class TestReferenceWindowFlags:
+    """`--create-reference` passes the window through (#97 AC-1, AC-4)."""
+
+    @staticmethod
+    def _capture(monitor_drift, monkeypatch, tmp_path, argv):
+        seen = {}
+
+        def fake(**kwargs):
+            seen.update(kwargs)
+            return tmp_path / "ref.parquet"
+
+        monkeypatch.setattr(monitor_drift, "create_reference_dataset", fake)
+        monkeypatch.setattr(sys, "argv", ["monitor_drift.py", "--classifier", "fp", *argv])
+        return seen
+
+    def test_default_leaves_the_exclusion_to_the_library_default(
+        self, monitor_drift, monkeypatch, tmp_path
+    ):
+        """None reaches create_reference_dataset, which applies
+        DEFAULT_DRIFT_WINDOW_DAYS -- the documented command needs no flag."""
+        seen = self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--from-db", "--create-reference", "--days", "90"],
+        )
+
+        assert monitor_drift.main() == EXIT_NO_DRIFT
+        assert seen["days"] == 90
+        assert seen["end_date"] is None
+        assert seen["exclude_recent_days"] is None
+
+    def test_end_date_is_midnight_utc(self, monitor_drift, monkeypatch, tmp_path):
+        seen = self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--create-reference", "--reference-end-date", "2026-09-01"],
+        )
+
+        monitor_drift.main()
+
+        assert seen["end_date"] == datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+    def test_exclude_recent_days_passes_through(self, monitor_drift, monkeypatch, tmp_path):
+        seen = self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--create-reference", "--exclude-recent-days", "14"],
+        )
+
+        monitor_drift.main()
+
+        assert seen["exclude_recent_days"] == 14
+
+    def test_both_flags_are_rejected(self, monitor_drift, monkeypatch, tmp_path):
+        self._capture(
+            monitor_drift, monkeypatch, tmp_path,
+            ["--create-reference", "--reference-end-date", "2026-09-01",
+             "--exclude-recent-days", "7"],
+        )
+
+        with pytest.raises(SystemExit):
+            monitor_drift.main()
+
+    def test_window_flags_without_create_reference_are_rejected(
+        self, monitor_drift, monkeypatch, tmp_path
+    ):
+        self._capture(monitor_drift, monkeypatch, tmp_path, ["--exclude-recent-days", "7"])
+
+        with pytest.raises(SystemExit):
+            monitor_drift.main()
+
+    def test_analysis_window_defaults_to_the_shared_constant(
+        self, monitor_drift, monkeypatch
+    ):
+        seen = {}
+
+        def fake(**kwargs):
+            seen.update(kwargs)
+            return make_report()
+
+        monkeypatch.setattr(monitor_drift, "run_drift_analysis", fake)
+        monkeypatch.setattr(sys, "argv", ["monitor_drift.py", "--classifier", "fp"])
+
+        monitor_drift.main()
+
+        assert seen["days"] == DEFAULT_DRIFT_WINDOW_DAYS
+
+
+class TestSummaryNamesTheBaseline:
+    """The machine-readable summary states its baseline (#97 AC-3)."""
+
+    def test_summary_carries_window_and_overlap(self, monitor_drift, capsys):
+        report = make_report()
+        report.details["reference_window"] = {"requested_end": "2026-09-18T00:00:00+00:00"}
+        report.details["reference_overlaps_current"] = True
+
+        monitor_drift.print_summary_json(report, EXIT_NO_DRIFT)
+
+        summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert summary["reference_window"] == {"requested_end": "2026-09-18T00:00:00+00:00"}
+        assert summary["reference_overlaps_current"] is True
+
+    def test_unrecorded_overlap_is_null_not_false(self, monitor_drift, capsys):
+        monitor_drift.print_summary_json(make_report(), EXIT_NO_DRIFT)
+
+        summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert summary["reference_window"] is None
+        assert summary["reference_overlaps_current"] is None

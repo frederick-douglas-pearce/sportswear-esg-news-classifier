@@ -122,7 +122,7 @@ uv run python scripts/backfill_rerank_scores.py --batch-size 100  # Custom batch
 # MLOps - Drift Monitoring
 uv run python scripts/monitor_drift.py --classifier fp --from-db              # Production drift check (7 days)
 uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report  # Generate Evidently HTML report
-uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90  # Regenerate reference (do this after any change to what classifier_predictions stores)
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90  # Regenerate reference (do this after any change to what classifier_predictions stores); ends where the comparison window starts
 
 # MLOps - MLflow (when MLFLOW_ENABLED=true)
 uv run mlflow ui --backend-store-uri sqlite:///mlruns.db  # Start MLflow UI (http://localhost:5000)
@@ -493,6 +493,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-25**: A drift reference no longer contains the window it is compared against, and says which window it is - `--create-reference` ends at the comparison window's start by default (`DEFAULT_DRIFT_WINDOW_DAYS`), the requested window is stored in the parquet and reported with every drift result; and the EP drift skip fails the run when EP predictions are flowing while it is gated off (#97, #96)
 - **2026-09-23**: The test suite can no longer write into the real agent run archive - a per-test autouse `_isolate_agent_state` fixture plus a `pytest_configure` redirect that runs before `src.agent`'s import-time singletons are built, pinned by `tests/test_agent_state_isolation.py` (#124)
 - **2026-09-16**: A workflow that runs and fails every time is escalated - `archive.consecutive_failures()`, two new `run_audit` steps carrying a high-water mark in the auditor's own archived context, delivery-gated so a failed send retries, and `AGENT_CONSECUTIVE_FAILURE_THRESHOLD` parsed at the point of use rather than at import (#75)
 - **2026-09-14**: The run archive is read, so a workflow that stops running is detected - `src/agent/archive.py` as the shared reader, a `run_audit` liveness workflow on its own sub-daily cadence, a one-shot `scripts/audit_archive.py` sweep for runs that reported success over a failure, and a stalled job mapped to `degraded` rather than `unknown` (#76)

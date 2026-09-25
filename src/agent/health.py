@@ -73,8 +73,9 @@ class HealthVerdict(str, Enum):
     """The check did not produce a verdict.
 
     It raised, or it had nothing to compare, or it returned a result with no
-    evidence behind it. Never a synonym for healthy: this is the state whose
-    absence caused #71.
+    evidence behind it -- or it is gated off while its subject is producing
+    data, so a verdict is owed and nothing is producing one (#96). Never a
+    synonym for healthy: this is the state whose absence caused #71.
     """
 
     SKIPPED = "skipped"

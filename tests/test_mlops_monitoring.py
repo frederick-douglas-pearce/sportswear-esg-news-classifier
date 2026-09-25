@@ -2479,3 +2479,56 @@ class TestCategoricalPValueReportsWhyItDeclined:
 
         assert _categorical_p_value(reference, current, 30)[0] is None
         assert _categorical_p_value(reference, current, 1)[0] is not None
+
+
+class TestReferenceProvenanceInReport:
+    """Every report after the reference is loaded names its baseline (#97 AC-3)."""
+
+    @staticmethod
+    def _frames():
+        now = pd.Timestamp("2026-09-25T12:00:00Z")
+        reference = pd.DataFrame({
+            "timestamp": pd.date_range(now - pd.Timedelta(days=40), periods=100, freq="h"),
+            "probability": np.random.default_rng(1).uniform(0.3, 0.7, 100),
+            "prediction": np.random.default_rng(2).choice([0, 1], 100),
+        })
+        reference.attrs["reference_window"] = {"requested_end": "2026-09-18T12:00:00+00:00"}
+        current = pd.DataFrame({
+            "timestamp": pd.date_range(now - pd.Timedelta(days=5), periods=50, freq="h"),
+            "probability": np.random.default_rng(3).uniform(0.3, 0.7, 50),
+            "prediction": np.random.default_rng(4).choice([0, 1], 50),
+        })
+        return reference, current
+
+    def test_legacy_path_report_carries_it(self, disabled_monitor):
+        reference, current = self._frames()
+
+        report = disabled_monitor.check_drift(current_data=current, reference_data=reference)
+
+        assert report.details["reference_window"] == reference.attrs["reference_window"]
+        assert report.details["reference_overlaps_current"] is False
+        assert report.details["reference_observed"]["end"]
+
+    def test_evidently_path_report_carries_it(self, disabled_monitor):
+        """Attached in check_drift, after whichever checker ran."""
+        reference, current = self._frames()
+        disabled_monitor.enabled = True
+        stub = DriftReport(
+            classifier_type="fp", timestamp=datetime.now(), drift_detected=False,
+            drift_score=0.0, threshold=0.1, details={"columns_checked": ["probability"]},
+        )
+        with patch.object(disabled_monitor, "_evidently_drift_check", return_value=stub):
+            report = disabled_monitor.check_drift(current_data=current, reference_data=reference)
+
+        assert report.details["reference_window"] == reference.attrs["reference_window"]
+        assert report.details["reference_overlaps_current"] is False
+
+    def test_insufficient_data_report_carries_it(self, disabled_monitor, mock_mlops_settings_disabled):
+        reference, current = self._frames()
+        mock_mlops_settings_disabled.drift_min_sample_size = 1000
+
+        report = disabled_monitor.check_drift(current_data=current, reference_data=reference)
+
+        assert report.indeterminate
+        assert report.details["reference_window"] == reference.attrs["reference_window"]
+        assert report.details["reference_overlaps_current"] is False

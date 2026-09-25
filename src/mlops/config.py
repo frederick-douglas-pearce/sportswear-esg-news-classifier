@@ -4,6 +4,13 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# The comparison window a drift check reads: the last N days of predictions.
+# One constant, not a literal per caller, because a reference built for that
+# check excludes exactly this many recent days (issue #97). If the two numbers
+# came apart, the reference would silently start overlapping the window it is
+# compared against again.
+DEFAULT_DRIFT_WINDOW_DAYS = 7
+
 
 @dataclass
 class MLOpsSettings:
