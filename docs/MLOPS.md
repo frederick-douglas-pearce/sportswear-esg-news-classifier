@@ -126,7 +126,7 @@ HTML Report: reports/monitoring/fp/drift_report_20251229_103045.html
 ============================================================
 ✅ Status: Healthy - no significant drift detected
 --- drift summary (machine-readable) ---
-{"classifier": "fp", "exit_code": 0, "indeterminate": false, "drift_detected": false, "drift_score": 0.0523, "threshold": 0.1, "error": null}
+{"classifier": "fp", "exit_code": 0, "indeterminate": false, "drift_detected": false, "drift_score": 0.0523, "threshold": 0.1, "error": null, "reference_window": {...}, "reference_observed": {...}, "reference_overlaps_current": false, "columns_assessed": [...], "columns_skipped": {}, "columns_missing_from_reference": [], "metrics_unreadable": null, "columns_checked": null}
 ```
 
 The last line is a single-line JSON summary the `drift_monitoring` workflow consumes via
@@ -135,11 +135,13 @@ incomplete, or inconsistent with the exit code is treated as `unknown` rather th
 
 The summary also names what the check assessed (issue #104): `columns_assessed`,
 `columns_skipped`, `columns_missing_from_reference`, `metrics_unreadable`, and `columns_checked`
-(the columns offered to the Evidently report). Every key is present on every run. `null` means
-not recorded, or not applicable on the path that ran. An empty list or object means measured and
-none found. For example, `metrics_unreadable` is `null` wherever no Evidently metric snapshot was
-produced, and `columns_missing_from_reference` is `null` when there is no reference to compare
-against. The agent workflow copies these fields into its context, report and run archive. The drift
+(the columns offered to the Evidently report). Every summary carries every key; a run that fails
+before printing a summary has none. An empty list or object means that measurement ran and found
+nothing. `null` means it did not run on the path taken, or was not recorded. For example, a run
+with no reference, too few rows, or no column in common never reaches per-column assessment, so
+its `columns_assessed` and `columns_skipped` are `null`. `metrics_unreadable` is `null` wherever
+no Evidently metric snapshot was produced, and `columns_missing_from_reference` is `null` when
+there is no reference to compare against. The agent workflow copies these fields into its context, report and run archive. The drift
 alert includes whichever of them name something not assessed. They are a record: partial coverage
 does not change the verdict (turning it into one is #105), and the workflow neither requires them
 nor rejects a summary over them.

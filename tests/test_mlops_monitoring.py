@@ -2585,8 +2585,8 @@ class TestEveryReturnCarriesCoverageKeys:
 
         assert report.indeterminate is True
         assert self._coverage(report) == {
-            "columns_assessed": [],
-            "columns_skipped": {},
+            "columns_assessed": None,
+            "columns_skipped": None,
             "columns_missing_from_reference": None,
             "metrics_unreadable": None,
             "columns_checked": None,
@@ -2605,15 +2605,18 @@ class TestEveryReturnCarriesCoverageKeys:
 
         assert report.indeterminate is True
         assert self._coverage(report) == {
-            "columns_assessed": [],
-            "columns_skipped": {},
+            "columns_assessed": None,
+            "columns_skipped": None,
             "columns_missing_from_reference": ["novelty_score"],
             "metrics_unreadable": None,
             "columns_checked": None,
         }
 
     def test_evidently_no_common_columns(self, mock_mlops_settings_enabled):
-        """No Report was run, so readability was never checked: None."""
+        """No Report was run: nothing assessed or checked for readability -> None.
+
+        The offered set WAS computed, and is empty, so `columns_checked` is [].
+        """
         current = pd.DataFrame({"probability": [0.5, 0.6]})
         reference = pd.DataFrame({"other": [1, 2]})
 
@@ -2623,8 +2626,8 @@ class TestEveryReturnCarriesCoverageKeys:
 
         assert report.indeterminate is True
         assert self._coverage(report) == {
-            "columns_assessed": [],
-            "columns_skipped": {},
+            "columns_assessed": None,
+            "columns_skipped": None,
             "columns_missing_from_reference": ["probability"],
             "metrics_unreadable": None,
             "columns_checked": [],

@@ -573,3 +573,58 @@ class TestSummaryCarriesCoverage:
 
         assert summary["columns_skipped"] == {}
         assert summary["metrics_unreadable"] == []
+
+
+class TestCoverageSurvivesTheScriptToWorkflowSeam:
+    """A real report, through the real summary emitter and the runner's real
+    parser, into the drift workflow's context (#104, D022). Every other
+    coverage test injects one side of this seam by hand."""
+
+    def test_check_drift_report_reaches_the_context(self, monitor_drift, capsys):
+        from unittest.mock import MagicMock, patch
+
+        import numpy as np
+        import pandas as pd
+
+        from src.agent.runner import ScriptResult, _parse_json_from_output
+        from src.agent.workflows.drift_monitoring import check_fp_drift
+        from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY, DriftMonitor
+
+        rng = np.random.default_rng(7)
+        reference = pd.DataFrame({
+            "probability": rng.uniform(0.3, 0.7, 60),
+            "prediction": rng.choice([0, 1], 60),
+        })
+        # A core column the reference lacks, so the record is not all-empty.
+        current = reference.assign(novelty_score=rng.uniform(0, 1, 60))
+        with patch("src.mlops.monitoring.mlops_settings") as settings:
+            settings.evidently_enabled = False
+            settings.drift_threshold = 0.1
+            settings.drift_min_sample_size = 1
+            report = DriftMonitor("fp").check_drift(
+                current_data=current, reference_data=reference
+            )
+        assert report.details["columns_missing_from_reference"] == ["novelty_score"]
+
+        exit_code = monitor_drift.exit_code_for(report)
+        monitor_drift.print_report(report)
+        monitor_drift.print_summary_json(report, exit_code)
+        stdout = capsys.readouterr().out
+
+        result = ScriptResult(
+            command=["monitor_drift.py"],
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr="",
+            duration_seconds=1.0,
+            started_at=datetime.now(timezone.utc),
+            parsed_output=_parse_json_from_output(stdout),
+        )
+        with patch(
+            "src.agent.workflows.drift_monitoring.run_monitor_drift", return_value=result
+        ):
+            out = check_fp_drift(MagicMock(), {})
+
+        for key in (*COVERAGE_KEYS, OFFERED_KEY):
+            assert out[f"fp_{key}"] == report.details[key], key
+        assert out["fp_columns_missing_from_reference"] == ["novelty_score"]

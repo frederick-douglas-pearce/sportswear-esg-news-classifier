@@ -1824,8 +1824,9 @@ third issue planned alongside these, shipped with #102 (D017).
 
 ## D022: Coverage Fields Reach the Summary and Archive as a Record, With None Meaning "Not Recorded or Not Applicable" (#104)
 
-**Status:** architect ruling recorded at the #104 plan gate, 2026-09-25. The plan is not yet
-approved by the human and no code has been written.
+**Status:** architect ruling at the #104 plan gate, 2026-09-25, approved by the human and
+implemented in PR #162. Items 3 to 6 were revised by the human on the code-review scope ruling
+(see the end of this entry).
 
 ### The decision
 
@@ -1836,19 +1837,32 @@ approved by the human and no code has been written.
 2. **Optional in the summary contract.** They are not in `REQUIRED_SUMMARY_FIELDS` and are not
    type-validated. A rejected summary downgrades the verdict to UNKNOWN, and a record-only field
    must not gate the verdict. This follows D021.4: an absent key reads as `None`.
-3. **`None` versus empty.** `None` means not recorded, or not applicable on this path. An empty
-   list or dict means measured, and none found. `metrics_unreadable` is `None` wherever no
-   Evidently metric snapshot was produced: the legacy path, the no-reference return, the
-   sample-floor return, and the Evidently no-common-columns return. `columns_missing_from_reference`
-   is `None` when no reference exists.
+3. **`None` versus empty.** A field is an empty list or dict only on a path where that
+   measurement ran and found nothing. It is `None` where the measurement did not run on that
+   path, or was not recorded. So the no-reference, sample-floor and Evidently no-common-columns
+   returns, which never reach per-column assessment, carry `None` for `columns_assessed` and
+   `columns_skipped`. `metrics_unreadable` is `None` wherever no Evidently metric snapshot was
+   produced: the legacy path and those three returns. `columns_missing_from_reference` is `None`
+   when no reference exists.
 4. **`columns_checked` (the offered set) is carried alongside**, as a separate `OFFERED_KEY`.
    #105's offered-versus-assessed cross-check cannot be computed from the archive without it. It
-   is `None` on the legacy path and on the early returns in `check_drift`.
+   is `None` on the legacy path and on the no-reference and sample-floor returns. On the Evidently
+   no-common-columns return it is `[]`, because the offered set was computed and is empty.
 5. **Values are set per return site. Presence is guaranteed at one choke point.** The values
    depend on the path, so no central default in `DriftReport` sets them. The `print_summary_json`
-   emit over the shared constants yields each key on every run.
+   emit over the shared constants yields each key whenever a summary is printed. A run that raises
+   before printing one produces no summary at all. The workflow starts every classifier's context
+   with these keys as `None`, so its archived context carries them on every path.
 6. **The DEGRADED drift alert carries the non-empty coverage fields** in its details, so the
-   operator who is paged sees when a verdict rests on partial coverage.
+   operator who is paged sees when a verdict rests on partial coverage. The console summary notes
+   partial coverage on any verdict, UNKNOWN included. A field of an unexpected type is left out of
+   both rather than rendered. That is tolerance in rendering, not validation of the contract, and
+   it is what keeps a record-only field from failing the run.
 
 **Approval:** the human approved the plan on 2026-09-25 and ruled that `columns_checked` is included,
 to prepare for #105.
+
+**Revised at code review, 2026-09-25 (human decision on the architect's scope ruling).** Round 1
+found that item 3 as first written let `columns_assessed=[]` and `columns_skipped={}` stand on
+returns that measured nothing. The architect reversed its plan-gate call. The human ratified the
+rule in item 3 and the changes to items 4 to 6.

@@ -44,10 +44,11 @@ CORE_DRIFT_COLUMNS = ["probability", "prediction", "novelty_score"]
 # the run archive (#104, D022). A record, never a verdict input: deciding what
 # partial coverage means for the verdict is #105.
 #
-# `None` means not recorded, or not applicable on the path that returned; an
-# empty list or dict means measured and none found. `metrics_unreadable` is
-# about an Evidently metric snapshot, so it is `None` wherever no snapshot was
-# produced.
+# An empty list or dict means that measurement ran and found nothing; `None`
+# means it did not run on the path that returned, or was not recorded. So the
+# early returns that never reach per-column assessment carry `None` for
+# `columns_assessed` and `columns_skipped`, and `metrics_unreadable` -- about an
+# Evidently metric snapshot -- is `None` wherever no snapshot was produced.
 COVERAGE_KEYS = (
     "columns_assessed",
     "columns_skipped",
@@ -377,9 +378,10 @@ class DriftMonitor:
                         "error": "No reference dataset for this classifier",
                         "reference_path": str(reference_path),
                         "current_size": len(current_data),
-                        # With no reference, what it lacks cannot be known.
-                        "columns_assessed": [],
-                        "columns_skipped": {},
+                        # Nothing reached per-column assessment, and with no
+                        # reference what it lacks cannot be known.
+                        "columns_assessed": None,
+                        "columns_skipped": None,
                         "columns_missing_from_reference": None,
                         "metrics_unreadable": None,
                         OFFERED_KEY: None,
@@ -424,8 +426,8 @@ class DriftMonitor:
                     "error": "Insufficient data for drift analysis",
                     "reference_size": len(reference_data),
                     "current_size": len(current_data),
-                    "columns_assessed": [],
-                    "columns_skipped": {},
+                    "columns_assessed": None,
+                    "columns_skipped": None,
                     "columns_missing_from_reference": _missing_from_reference(
                         current_data, reference_data
                     ),
@@ -512,8 +514,8 @@ class DriftMonitor:
                     "error": "No columns available for drift detection",
                     "reference_columns": sorted(reference_data.columns),
                     "current_columns": sorted(current_data.columns),
-                    "columns_assessed": [],
-                    "columns_skipped": {},
+                    "columns_assessed": None,
+                    "columns_skipped": None,
                     "columns_missing_from_reference": _missing_from_reference(
                         current_data, reference_data
                     ),

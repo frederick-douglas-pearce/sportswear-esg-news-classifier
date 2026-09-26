@@ -13,12 +13,13 @@ could not tell a partial assessment from a whole one.
 - `src/mlops/monitoring.py` defines `COVERAGE_KEYS` (`columns_assessed`, `columns_skipped`,
   `columns_missing_from_reference`, `metrics_unreadable`) and `OFFERED_KEY` (`columns_checked`).
   Every report `check_drift` returns now carries all five, including the no-reference,
-  sample-floor and no-common-columns returns. `null` means not recorded or not applicable; an
-  empty value means measured and none found.
-- `print_summary_json` emits all five on every run. The drift workflow copies them into its
-  context and report, and so into the run archive. The console summary prints a NOTE when
-  coverage is partial, and a `degraded` alert includes the fields that name something not
-  assessed.
+  sample-floor and no-common-columns returns. An empty value means that measurement ran and found
+  nothing; `null` means it did not run on that path, or was not recorded.
+- Every summary `print_summary_json` prints carries all five. The drift workflow starts each
+  classifier's context with them as `null` and copies them in from the summary, so they reach its
+  report and run archive. The console summary prints a NOTE when coverage is partial, on any
+  verdict, and a `degraded` alert includes the fields that name something not assessed. A field of
+  an unexpected type is left out of the NOTE and the alert rather than failing the run.
 - The fields are a record, not a verdict input. They are not required in the summary, and
   partial coverage does not change the verdict (#105). Recorded as D022.
 
