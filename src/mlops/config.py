@@ -45,8 +45,9 @@ class MLOpsSettings:
     # and the current window are checked independently -- makes the verdict
     # `indeterminate` rather than healthy. A single COLUMN below it, counted
     # after its NaN are dropped, is recorded in `details["columns_skipped"]` and
-    # left out of the score; the check still returns a verdict from whatever
-    # else it could measure.
+    # left out of the score. For a `brand_*` column the check still returns a
+    # verdict from whatever else it could measure; for a core column it is
+    # `indeterminate`, on both paths (#105, D023).
     drift_min_sample_size: int = field(
         default_factory=lambda: int(os.getenv("DRIFT_MIN_SAMPLE_SIZE", "30"))
     )

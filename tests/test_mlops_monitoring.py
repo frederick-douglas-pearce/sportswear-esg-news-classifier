@@ -737,13 +737,16 @@ class TestNoveltyScoreGuardSymmetry:
         monitor.enabled = True
         monitor.threshold = 0.1
         mock_snapshot = MagicMock()
+        # A readable metric for every core column any test here offers. A
+        # metric for a column the reference lacks is ignored, not assessed.
         mock_snapshot.dict.return_value = {
             "metrics": [
                 {
                     "metric_name": "ValueDrift",
-                    "config": {"column": "probability", "threshold": 0.05},
+                    "config": {"column": col, "threshold": 0.05},
                     "value": 0.5,
                 }
+                for col in ("probability", "prediction", "novelty_score")
             ]
         }
         mock_report = MagicMock()
@@ -1048,8 +1051,8 @@ class TestAllThreeAsymmetricReadsAreGuarded:
     ):
         """Covers `reference_prob_mean` specifically.
 
-        The brand-only case no longer reaches the stats block — widening the
-        indeterminate guard to `total_core == 0` made it early-return above it —
+        The brand-only case no longer reaches the stats block — the
+        indeterminate guard (now `_core_coverage_incomplete`) returns above it —
         so without this test, reverting `reference_prob_mean`'s guard back to
         `current_data` would raise KeyError in production and no test would
         fail. The reference here keeps `prediction`, so one core column is
@@ -1175,7 +1178,12 @@ class TestUnreadableEvidentlyMetrics:
                 "metric_name": "ValueDrift",
                 "config": {"column": "probability", "threshold": 0.05},
                 "value": 0.5,
-            }
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": 0.5,
+            },
         ]
 
         report = self._monitor(metrics)._evidently_drift_check(
@@ -1240,9 +1248,10 @@ class TestUnreadableEvidentlyMetrics:
             frame, frame, save_report=False
         )
 
-        # Still assessed -- one core metric was readable -- but the gap is
-        # recorded rather than counted as evidence of health.
-        assert report.indeterminate is False
+        # One readable core metric no longer carries a verdict for the core
+        # signal (#105, D023): the gap is recorded AND the report says it
+        # could not assess drift.
+        assert report.indeterminate is True
         assert report.details["metrics_unreadable"] == ["prediction"]
         assert "prediction_p_value" not in report.details
 
@@ -1332,6 +1341,11 @@ class TestUnreadableEvidentlyMetrics:
             },
             {
                 "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": 0.5,
+            },
+            {
+                "metric_name": "ValueDrift",
                 "config": {"column": "brand_nike", "threshold": 0.05},
                 "value": 0.001,
             },
@@ -1357,9 +1371,11 @@ class TestUnreadableEvidentlyMetrics:
     ):
         """The partial-core shape the issue's end-to-end reproduction shows.
 
-        An all-True `prediction` column alongside a healthy `probability`: still
-        a verdict, because one core metric was readable, but the gap is recorded
-        rather than counted as evidence of health.
+        An all-True `prediction` column alongside a healthy `probability`. The
+        gap is recorded, and since #105 (D023) it also means no verdict: one
+        readable core metric does not stand in for the core signal. The input
+        check now catches this column before any metric runs, so the NaN value
+        below is never read.
         """
         frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [1, 1]})
         metrics = [
@@ -1379,22 +1395,23 @@ class TestUnreadableEvidentlyMetrics:
             frame, frame, save_report=False
         )
 
-        assert report.indeterminate is False
+        assert report.indeterminate is True
         assert "prediction_p_value" not in report.details
         assert "prediction" not in report.details["columns_assessed"]
         assert report.details["columns_skipped"]["prediction"] == (
-            "p-value is not finite"
+            "no comparable values"
         )
 
     def test_all_brand_metrics_nan_records_a_zero_denominator(
         self, mock_mlops_settings_enabled
     ):
-        """`brand_drift_score` 0.0 out of nothing -- recorded, not fixed here.
+        """`brand_drift_score` 0.0 out of nothing is read with its denominator.
 
         With every brand metric skipped, `total_brand` reaches 0 while brand
-        columns WERE offered, so `brand_drift_score` is a fabricated 0.0 of
-        exactly #105's class. Pinned so the new route to it is visible; making
-        it indeterminate is #105's call, not this fix's.
+        columns WERE offered. #105 ruled (D023) that this stays a verdict over
+        the core columns and `brand_drift_score` stays 0.0 -- `None` would meet
+        the `> threshold` and `max()` arithmetic -- so `brand_assessed_count`
+        is the field that says nothing was measured.
         """
         frame = pd.DataFrame(
             {
@@ -1408,6 +1425,11 @@ class TestUnreadableEvidentlyMetrics:
             {
                 "metric_name": "ValueDrift",
                 "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.5,
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
                 "value": 0.5,
             },
             {
@@ -1435,7 +1457,10 @@ class TestUnreadableEvidentlyMetrics:
         # `brand_drift_score == 0.0` alone does not discriminate: it reads 0.0
         # pre-fix too, as 0-of-2. The assessed record is what separates a
         # denominator of nothing from an honest zero.
-        assert report.details["columns_assessed"] == ["probability"]
+        assert report.details["columns_assessed"] == ["probability", "prediction"]
+        # Brand shortfall is record-only (D023): core was assessed in full, so
+        # this is a verdict, and `brand_drift_score` stays a float.
+        assert report.indeterminate is False
 
     def test_all_core_metrics_nan_does_not_report_an_unreadable_snapshot(
         self, mock_mlops_settings_enabled
@@ -1445,9 +1470,10 @@ class TestUnreadableEvidentlyMetrics:
         `details["error"]` is the reason the operator email names;
         `columns_skipped` is not in that email. Saying the metrics could not be *read*
         points the reader at a renamed metric or a changed snapshot shape, which
-        is what this guard was originally added for. On this route every metric
-        WAS read and came back non-finite, and skipping them is what makes the
-        `total_core == 0` branch reachable at all.
+        is what this guard was originally added for. On this route no core
+        metric was unreadable: `probability` came back non-finite, and
+        `prediction` (the same constant in both frames) was rejected by the
+        input check before any metric ran (#105).
         """
         frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [1, 1]})
         metrics = [
@@ -1573,6 +1599,11 @@ class TestDriftScoreMatchesTheDetection:
             {
                 "metric_name": "ValueDrift",
                 "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.001,  # drifting
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
                 "value": 0.001,  # drifting
             },
             {
@@ -1975,10 +2006,11 @@ class TestLegacyPathAssessesEverySignalGroup:
         snapshot.dict.return_value = {
             "metrics": [
                 {
-                    "metric_name": "ValueDrift(column=probability)",
-                    "config": {"column": "probability", "threshold": 0.05},
+                    "metric_name": f"ValueDrift(column={col})",
+                    "config": {"column": col, "threshold": 0.05},
                     "value": 0.5,
                 }
+                for col in ("probability", "prediction")
             ]
         }
         run = MagicMock()
@@ -1998,8 +2030,8 @@ class TestLegacyPathAssessesEverySignalGroup:
     def test_a_brand_only_reference_is_still_indeterminate(self, disabled_monitor):
         """Control: assessing brand did NOT make brand sufficient on its own.
 
-        The indeterminacy guard stays keyed on the CORE columns, matching the
-        Evidently path's `total_core == 0`. Reading a brand assessment as a
+        The indeterminacy guard stays keyed on the CORE columns: both paths
+        apply `_core_coverage_incomplete`, which ignores `brand_*`. Reading a brand assessment as a
         verdict would re-open exactly what that guard closed.
         """
         current = pd.DataFrame(
@@ -2051,8 +2083,13 @@ class TestNoUnmeasuredColumnReachesTheVerdictAsHealth:
 
         report = disabled_monitor._legacy_drift_check(current, reference)
 
-        assert report.drift_detected is True
-        assert not np.isnan(report.drift_score)
+        # Not healthy. Since #105 (D023) an offered core column that was not
+        # assessed means no verdict at all, so the shift is reported as
+        # indeterminate rather than as drift; the novelty statistic that shows
+        # it is still in `details`.
+        assert report.indeterminate is True
+        assert report.drift_detected is False
+        assert report.details["novelty_score_ks_statistic"] == 1.0
         assert "probability" not in report.details["columns_assessed"]
         assert "probability" in report.details["columns_skipped"]
 
@@ -2084,8 +2121,13 @@ class TestNoUnmeasuredColumnReachesTheVerdictAsHealth:
 
         report = disabled_monitor._legacy_drift_check(current, reference)
 
-        assert report.drift_detected is True
-        assert not np.isnan(report.drift_score)
+        # Not healthy. Since #105 (D023) an offered core column that was not
+        # assessed means no verdict at all, so the shift is reported as
+        # indeterminate rather than as drift; the novelty statistic that shows
+        # it is still in `details`.
+        assert report.indeterminate is True
+        assert report.drift_detected is False
+        assert report.details["novelty_score_ks_statistic"] == 1.0
         assert "prediction" not in report.details["columns_assessed"]
         assert "prediction" in report.details["columns_skipped"]
         assert "prediction_rate_diff" not in report.details
@@ -2616,6 +2658,8 @@ class TestEveryReturnCarriesCoverageKeys:
         """No Report was run: nothing assessed or checked for readability -> None.
 
         The offered set WAS computed, and is empty, so `columns_checked` is [].
+        The brand check against the reference also ran, so `columns_skipped` is
+        a measurement: `{}` here, with no brand column in current (#105, D023).
         """
         current = pd.DataFrame({"probability": [0.5, 0.6]})
         reference = pd.DataFrame({"other": [1, 2]})
@@ -2627,7 +2671,7 @@ class TestEveryReturnCarriesCoverageKeys:
         assert report.indeterminate is True
         assert self._coverage(report) == {
             "columns_assessed": None,
-            "columns_skipped": None,
+            "columns_skipped": {},
             "columns_missing_from_reference": ["probability"],
             "metrics_unreadable": None,
             "columns_checked": [],
@@ -2654,7 +2698,12 @@ class TestEveryReturnCarriesCoverageKeys:
                 "metric_name": "ValueDrift",
                 "config": {"column": "probability", "threshold": 0.05},
                 "value": 0.5,
-            }
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": 0.5,
+            },
         ]
 
         report = self._evidently_monitor(metrics)._evidently_drift_check(
@@ -2664,7 +2713,8 @@ class TestEveryReturnCarriesCoverageKeys:
         assert report.indeterminate is False
         coverage = self._coverage(report)
         assert coverage["metrics_unreadable"] == []
-        assert coverage["columns_assessed"] == ["probability"]
+        assert coverage["columns_assessed"] == ["probability", "prediction"]
+        assert coverage["columns_skipped"] == {}
         assert coverage["columns_checked"] == ["probability", "prediction"]
 
     def test_evidently_unreadable_metric_is_listed(self, mock_mlops_settings_enabled):
@@ -2709,3 +2759,459 @@ class TestEveryReturnCarriesCoverageKeys:
         coverage = self._coverage(report)
         assert coverage["metrics_unreadable"] is None
         assert coverage["columns_checked"] is None
+
+
+# ============================================================================
+# #105: offered versus assessed, and what partial core coverage means (D023)
+# ============================================================================
+
+def _metric(col, value=0.5, name="ValueDrift"):
+    return {
+        "metric_name": name,
+        "config": {"column": col, "threshold": 0.05},
+        "value": value,
+    }
+
+
+def _evidently(metrics):
+    """A monitor on the Evidently path whose snapshot returns `metrics`.
+
+    `ValueDrift` is a recording mock, so a test can assert which columns a
+    metric was actually requested for -- the mechanism, not only the outcome.
+    """
+    monitor = DriftMonitor.__new__(DriftMonitor)
+    monitor.classifier_type = "fp"
+    monitor.enabled = True
+    monitor.threshold = 0.1
+    snapshot = MagicMock()
+    snapshot.dict.return_value = {"metrics": metrics}
+    run = MagicMock()
+    run.run.return_value = snapshot
+    report_cls = MagicMock(return_value=run)
+    monitor._evidently = {"Report": report_cls, "ValueDrift": MagicMock()}
+    return monitor
+
+
+def _requested(monitor):
+    return [c.kwargs["column"] for c in monitor._evidently["ValueDrift"].call_args_list]
+
+
+def _frames(n=40, **overrides):
+    base = {
+        "probability": np.linspace(0.2, 0.8, n),
+        "prediction": np.tile([0, 1], n // 2),
+        "novelty_score": np.linspace(0.1, 0.5, n),
+    }
+    base.update(overrides)
+    frame = pd.DataFrame(base)
+    return frame.copy(), frame.copy()
+
+
+ALL_CORE = ("probability", "prediction", "novelty_score")
+
+
+class TestOfferedColumnsAreAllAccountedFor:
+    """AC1/AC4/AC5/AC6: every offered column is assessed or skipped with a reason."""
+
+    def test_a_renamed_core_metric_is_recorded_and_makes_the_report_indeterminate(
+        self, mock_mlops_settings_enabled
+    ):
+        current, reference = _frames()
+        metrics = [
+            _metric("probability"),
+            _metric("prediction", name="ColumnDrift"),
+            _metric("novelty_score"),
+        ]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.details["columns_skipped"] == {"prediction": "no metric returned"}
+        assert "prediction" in report.details["columns_checked"]
+        assert report.indeterminate is True
+        assert "prediction" in report.details["error"]
+
+    def test_a_renamed_brand_metric_is_recorded_and_the_verdict_stands(
+        self, mock_mlops_settings_enabled
+    ):
+        """AC6: a brand shortfall is record-only."""
+        current, reference = _frames(brand_nike=[0, 1] * 20)
+        metrics = [*(_metric(c) for c in ALL_CORE), _metric("brand_nike", name="Other")]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.details["columns_skipped"] == {"brand_nike": "no metric returned"}
+        assert report.indeterminate is False
+        assert report.details["brand_assessed_count"] == 0
+
+    def test_a_brand_column_absent_from_the_reference_is_recorded(
+        self, mock_mlops_settings_enabled
+    ):
+        """AC4: it used to reach no field at all on this path."""
+        current, reference = _frames(brand_nike=[0, 1] * 20)
+        reference = reference.drop(columns=["brand_nike"])
+        monitor = _evidently([_metric(c) for c in ALL_CORE])
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert report.details["columns_skipped"] == {"brand_nike": "not in reference"}
+        assert "brand_nike" not in _requested(monitor)
+        assert report.indeterminate is False
+
+    def test_a_metric_naming_no_column_is_not_an_assessment(
+        self, mock_mlops_settings_enabled
+    ):
+        """It used to be assessed as a core column called "unknown"."""
+        current, reference = _frames()
+        headless = {"metric_name": "ValueDrift", "config": {}, "value": 0.001}
+        metrics = [_metric("probability"), _metric("novelty_score"), headless]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.details["columns_assessed"] == ["probability", "novelty_score"]
+        assert "unknown_p_value" not in report.details
+        assert report.details["columns_skipped"] == {"prediction": "no metric returned"}
+        assert report.indeterminate is True
+
+    def test_nothing_assessed_among_brands_keeps_a_float_score_and_a_zero_count(
+        self, mock_mlops_settings_enabled
+    ):
+        """AC5: 0-of-0 is told apart by the count, and no arithmetic meets None."""
+        current, reference = _frames(brand_nike=[0, 1] * 20)
+        metrics = [*(_metric(c, 0.9) for c in ALL_CORE), _metric("brand_nike", float("nan"))]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is False
+        assert report.drift_detected is False
+        assert report.details["brand_drift_score"] == 0.0
+        assert report.details["brand_assessed_count"] == 0
+
+
+class TestEvidentlyCoreInputChecks:
+    """AC3: the Evidently path rejects the core inputs the legacy path rejects."""
+
+    def test_a_core_column_constant_in_both_frames_is_never_measured(
+        self, mock_mlops_settings_enabled
+    ):
+        """`ks` returns a finite 1.0 here, so only the input can reveal it."""
+        current, reference = _frames(probability=np.full(40, 0.5))
+        metrics = [_metric(c, 1.0) for c in ALL_CORE]
+        monitor = _evidently(metrics)
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert "probability" not in _requested(monitor)
+        assert report.details["columns_skipped"] == {"probability": "no comparable values"}
+        assert "probability" not in report.details["columns_assessed"]
+        assert report.indeterminate is True
+
+    def test_a_core_column_below_the_sample_floor_is_never_measured(
+        self, mock_mlops_settings_enabled
+    ):
+        mock_mlops_settings_enabled.drift_min_sample_size = 30
+        novelty = np.full(40, np.nan)
+        novelty[:5] = [0.1, 0.2, 0.3, 0.4, 0.5]
+        current, reference = _frames(novelty_score=novelty)
+        monitor = _evidently([_metric(c) for c in ALL_CORE])
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert _requested(monitor) == ["probability", "prediction"]
+        assert report.details["columns_skipped"] == {"novelty_score": "no comparable values"}
+        assert report.indeterminate is True
+
+    def test_with_nothing_left_to_measure_no_report_runs(
+        self, mock_mlops_settings_enabled
+    ):
+        """No snapshot, so `metrics_unreadable` is None, not a measured [] (D022)."""
+        current, reference = _frames(
+            probability=np.full(40, 0.5), prediction=np.full(40, 1)
+        )
+        current, reference = current.drop(columns=["novelty_score"]), reference.drop(
+            columns=["novelty_score"]
+        )
+        monitor = _evidently([])
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        monitor._evidently["Report"].assert_not_called()
+        assert report.details["metrics_unreadable"] is None
+        assert report.indeterminate is True
+        assert "No core drift metrics" in report.details["error"]
+
+
+class TestBothPathsAgreeOnPartialCoreCoverage:
+    """AC2/AC3: one coverage rule, one set of core skip causes, one answer."""
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            # #103's repro: every core column constant at the same value.
+            {"probability": np.full(60, 0.5), "prediction": np.full(60, 1)},
+            # Partial: one core column constant, the others informative.
+            {"novelty_score": np.full(60, 0.3)},
+            # One core column all NaN.
+            {"probability": np.full(60, np.nan)},
+        ],
+        ids=["all-constant", "partial-constant", "all-nan"],
+    )
+    def test_both_paths_are_indeterminate(
+        self, mock_mlops_settings_enabled, overrides
+    ):
+        current, reference = _frames(n=60, **overrides)
+        evidently = _evidently([_metric(c, 1.0) for c in ALL_CORE])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+        legacy_monitor = DriftMonitor.__new__(DriftMonitor)
+        legacy_monitor.classifier_type = "fp"
+        legacy_monitor.enabled = False
+        legacy_monitor.threshold = 0.1
+        legacy = legacy_monitor._legacy_drift_check(current, reference)
+
+        assert evidently.indeterminate is True
+        assert legacy.indeterminate is True
+        assert set(evidently.details["columns_skipped"]) == set(
+            legacy.details["columns_skipped"]
+        )
+
+    def test_below_the_floor_both_paths_are_indeterminate(
+        self, mock_mlops_settings_enabled
+    ):
+        mock_mlops_settings_enabled.drift_min_sample_size = 30
+        novelty = np.full(60, np.nan)
+        novelty[:10] = np.linspace(0.1, 0.5, 10)
+        current, reference = _frames(n=60, novelty_score=novelty)
+        evidently = _evidently([_metric(c) for c in ALL_CORE])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+        legacy_monitor = DriftMonitor.__new__(DriftMonitor)
+        legacy_monitor.classifier_type = "fp"
+        legacy_monitor.enabled = False
+        legacy_monitor.threshold = 0.1
+        legacy = legacy_monitor._legacy_drift_check(current, reference)
+
+        assert evidently.indeterminate is legacy.indeterminate is True
+        assert "novelty_score" in evidently.details["columns_skipped"]
+        assert "novelty_score" in legacy.details["columns_skipped"]
+
+    def test_control_full_coverage_is_a_verdict_on_both_paths(
+        self, mock_mlops_settings_enabled
+    ):
+        current, reference = _frames(n=60)
+        evidently = _evidently([_metric(c) for c in ALL_CORE])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+        legacy_monitor = DriftMonitor.__new__(DriftMonitor)
+        legacy_monitor.classifier_type = "fp"
+        legacy_monitor.enabled = False
+        legacy_monitor.threshold = 0.1
+        legacy = legacy_monitor._legacy_drift_check(current, reference)
+
+        assert evidently.indeterminate is False
+        assert legacy.indeterminate is False
+
+    def test_a_core_column_missing_from_the_reference_stays_record_only(
+        self, mock_mlops_settings_enabled
+    ):
+        """D023: that loss is already loud, so it is not the coverage rule's."""
+        current, reference = _frames(n=60)
+        reference = reference.drop(columns=["novelty_score"])
+        metrics = [_metric(c) for c in ALL_CORE]
+        evidently = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+        legacy_monitor = DriftMonitor.__new__(DriftMonitor)
+        legacy_monitor.classifier_type = "fp"
+        legacy_monitor.enabled = False
+        legacy_monitor.threshold = 0.1
+        legacy = legacy_monitor._legacy_drift_check(current, reference)
+
+        for report in (evidently, legacy):
+            assert report.details["columns_missing_from_reference"] == ["novelty_score"]
+            assert report.indeterminate is False
+
+
+class TestEvidentlyCoverageThroughCheckDrift:
+    """AC7 (#104 finding M): enter through `check_drift`, not the private method."""
+
+    def test_coverage_keys_survive_check_drift_on_the_evidently_path(
+        self, mock_mlops_settings_enabled
+    ):
+        from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
+
+        current, reference = _frames(brand_nike=[0, 1] * 20)
+        metrics = [*(_metric(c) for c in ALL_CORE), _metric("brand_nike", name="Renamed")]
+        monitor = _evidently(metrics)
+
+        report = monitor.check_drift(
+            current_data=current, reference_data=reference, save_report=False
+        )
+
+        for key in (*COVERAGE_KEYS, OFFERED_KEY):
+            assert key in report.details, key
+        assert report.details["columns_checked"] == [*ALL_CORE, "brand_nike"]
+        assert report.details["columns_assessed"] == list(ALL_CORE)
+        assert report.details["columns_skipped"] == {"brand_nike": "no metric returned"}
+        assert report.details["metrics_unreadable"] == []
+        assert report.indeterminate is False
+
+    def test_a_renamed_core_metric_is_indeterminate_through_check_drift(
+        self, mock_mlops_settings_enabled
+    ):
+        current, reference = _frames()
+        monitor = _evidently([_metric("probability"), _metric("prediction")])
+
+        report = monitor.check_drift(
+            current_data=current, reference_data=reference, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.details["columns_skipped"] == {"novelty_score": "no metric returned"}
+
+
+class TestRoundOneReviewOf105:
+    """Guards added after #163's first review round."""
+
+    def test_no_common_columns_still_records_a_brand_column_the_reference_lacks(
+        self, mock_mlops_settings_enabled
+    ):
+        """The early return used to drop it, so it reached no field at all."""
+        current = pd.DataFrame({"brand_nike": [0, 1], "brand_puma": [1, 0]})
+        reference = pd.DataFrame({"other": [1, 2]})
+
+        report = _evidently([])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.details["columns_checked"] == []
+        assert report.details["columns_assessed"] is None
+        assert report.details["columns_skipped"] == {
+            "brand_nike": "not in reference",
+            "brand_puma": "not in reference",
+        }
+
+    def test_an_indeterminate_evidently_report_keeps_its_brand_measurement(
+        self, mock_mlops_settings_enabled
+    ):
+        """Parity with the legacy path, which writes these before returning."""
+        current, reference = _frames(brand_nike=[0, 1] * 20)
+        metrics = [
+            _metric("probability"),
+            _metric("prediction"),
+            _metric("brand_nike", 0.001),
+        ]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.details["brand_assessed_count"] == 1
+        assert report.details["brand_drifted_count"] == 1
+        assert report.details["brand_drift_score"] == 1.0
+        assert report.details["brand_metrics_drifted"] == ["brand_nike"]
+
+    def test_a_duplicate_metric_for_one_column_is_read_once(
+        self, mock_mlops_settings_enabled
+    ):
+        """A second metric for a column must not count twice toward the score."""
+        current, reference = _frames()
+        metrics = [
+            _metric("probability", 0.001),
+            _metric("prediction", 0.9),
+            _metric("novelty_score", 0.9),
+            _metric("prediction", 0.9),
+        ]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.details["columns_assessed"] == list(ALL_CORE)
+        # 1 of 3, not 1 of 4.
+        assert report.details["core_drift_score"] == pytest.approx(1 / 3)
+
+    def test_a_metric_after_a_skip_for_the_same_column_does_not_assess_it(
+        self, mock_mlops_settings_enabled
+    ):
+        """An unreadable metric then a readable one: skipped, never both."""
+        current, reference = _frames()
+        metrics = [
+            _metric("probability"),
+            _metric("prediction", "not a number"),
+            _metric("prediction", 0.5),
+            _metric("novelty_score"),
+        ]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert "prediction" not in report.details["columns_assessed"]
+        assert "prediction" in report.details["columns_skipped"]
+        assert report.indeterminate is True
+
+    def test_a_metric_for_a_column_never_offered_is_not_an_assessment(
+        self, mock_mlops_settings_enabled
+    ):
+        """The "not requested" clause, on a column in neither record.
+
+        `brand_ghost` was never offered and never skipped, so only the
+        `col_name not in metric_columns` clause can stop it. Counted, its
+        drifting p-value would make a brand-only drift verdict out of nothing.
+        """
+        current, reference = _frames()
+        metrics = [*(_metric(c, 0.9) for c in ALL_CORE), _metric("brand_ghost", 0.001)]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert "brand_ghost" not in report.details["columns_assessed"]
+        assert "brand_ghost" not in report.details["columns_skipped"]
+        assert report.details["brand_assessed_count"] == 0
+        assert report.drift_detected is False
+        assert report.indeterminate is False
+
+    def test_a_metric_for_a_column_the_input_check_rejected_does_not_revive_it(
+        self, mock_mlops_settings_enabled
+    ):
+        """Caught by the `columns_skipped` clause, since the column is already there."""
+        mock_mlops_settings_enabled.drift_min_sample_size = 30
+        novelty = np.full(40, np.nan)
+        novelty[:5] = [0.1, 0.2, 0.3, 0.4, 0.5]
+        current, reference = _frames(novelty_score=novelty)
+        metrics = [_metric(c) for c in ALL_CORE]  # includes novelty_score
+        monitor = _evidently(metrics)
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert "novelty_score" not in _requested(monitor)
+        assert "novelty_score" not in report.details["columns_assessed"]
+        assert report.details["columns_skipped"]["novelty_score"] == "no comparable values"
+        assert report.indeterminate is True
+
+    def test_brand_columns_bypass_the_core_input_check(
+        self, mock_mlops_settings_enabled
+    ):
+        """The input check is scoped to core columns; brand goes to the metric."""
+        current, reference = _frames(brand_nike=np.zeros(40, dtype=int))
+        metrics = [*(_metric(c) for c in ALL_CORE), _metric("brand_nike", float("nan"))]
+        monitor = _evidently(metrics)
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert "brand_nike" in _requested(monitor)
+        assert report.details["columns_skipped"] == {
+            "brand_nike": "p-value is not finite"
+        }
+        assert report.indeterminate is False

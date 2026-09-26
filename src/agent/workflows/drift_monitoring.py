@@ -219,8 +219,9 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
     for key in _REFERENCE_KEYS:
         out[f"{classifier}_{key}"] = (summary or {}).get(key)
     # What the check assessed, carried the same way and for the same reason
-    # (#104, D022): a record for the archive, never a verdict input -- deciding
-    # what partial coverage means is #105. Absent reads as None.
+    # (#104, D022): a record for the archive, never a verdict input here. The
+    # check itself turns partial core coverage into an indeterminate result
+    # (#105, D023), which arrives as the exit code. Absent reads as None.
     for key in (*COVERAGE_KEYS, OFFERED_KEY):
         out[f"{classifier}_{key}"] = (summary or {}).get(key)
 
