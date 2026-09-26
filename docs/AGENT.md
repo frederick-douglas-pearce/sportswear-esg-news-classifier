@@ -390,11 +390,19 @@ report.** It depends on the environment, and the `ImportError` fallback can chan
 announcing it — so a `drift_score` cannot be interpreted without knowing which instrument produced
 it. Tracked as #136.
 
-⚠ **These two fields do not reach the summary or the run archive yet.**
-`print_summary_json` emits a fixed key set that excludes `details`, and `REQUIRED_SUMMARY_FIELDS`
-is that same set. So **within-window** partial coverage -- a column present but unusable on a given
-day -- does not reach the workflow. Carrying it across is #104. (They *are* visible in the
-`--output` JSON, and in the webhook alert, which renders every `details` key.)
+**Coverage reaches the context, the report and the run archive (#104, D022).** The script's
+machine-readable summary carries `columns_assessed`, `columns_skipped`,
+`columns_missing_from_reference`, `metrics_unreadable` and `columns_checked` (the offered set, on
+the Evidently path). `_run_drift_check` copies each one into the context as `<classifier>_<field>`,
+on every verdict, including `unknown` when a summary was read. `generate_drift_report` puts them
+in that classifier's section, and the run archive stores both the context and the report. When
+coverage is partial, the console summary prints a NOTE. When the verdict is `degraded`, the drift
+alert's details include the fields that name something not assessed.
+
+Read `null` as "not recorded, or not applicable on this path", and an empty value as "measured,
+none found". An archive auditor must not read `null` as zero. The fields are a record: they are not
+in `REQUIRED_SUMMARY_FIELDS`, `_validate_summary` does not check them, and partial coverage does
+not change the verdict. Deciding what it should mean for the verdict is #105.
 
 **Minimum sample size** (`DRIFT_MIN_SAMPLE_SIZE`, default 30 -- issue #94). Enough rows to compute
 a statistic is not enough rows for it to mean anything. Two scopes, two outcomes:

@@ -133,6 +133,17 @@ The last line is a single-line JSON summary the `drift_monitoring` workflow cons
 `ScriptResult.parsed_output`. A run whose exit code claims a verdict but whose summary is absent,
 incomplete, or inconsistent with the exit code is treated as `unknown` rather than trusted.
 
+The summary also names what the check assessed (issue #104): `columns_assessed`,
+`columns_skipped`, `columns_missing_from_reference`, `metrics_unreadable`, and `columns_checked`
+(the columns offered to the Evidently report). Every key is present on every run. `null` means
+not recorded, or not applicable on the path that ran. An empty list or object means measured and
+none found. For example, `metrics_unreadable` is `null` wherever no Evidently metric snapshot was
+produced, and `columns_missing_from_reference` is `null` when there is no reference to compare
+against. The agent workflow copies these fields into its context, report and run archive. The drift
+alert includes whichever of them name something not assessed. They are a record: partial coverage
+does not change the verdict (turning it into one is #105), and the workflow neither requires them
+nor rejects a summary over them.
+
 ### Keeping the reference dataset current
 
 A reference written against an older schema is the failure that started #71: `novelty_score` was
@@ -144,8 +155,8 @@ and the legacy code paths, and neither removes the need to regenerate:
 
 - a **core** column (`probability`, `prediction`, `novelty_score`) present in the current data but
   missing from the reference is **logged as not assessed** and recorded in
-  `details["columns_missing_from_reference"]`, so a partial comparison is not reported as a whole
-  one. `brand_*` columns are not tracked this way: they come and go with `TRACKED_BRANDS` and would
+  `details["columns_missing_from_reference"]`, which reaches the machine-readable summary and the
+  agent's run archive, so a partial comparison is not reported as a whole one. `brand_*` columns are not tracked this way: they come and go with `TRACKED_BRANDS` and would
   bury the signal;
 - a reference sharing *no* comparable core column returns `indeterminate`, i.e. exit 2 -- on both
   paths. On the Evidently path this also covers the case where core columns are offered but no

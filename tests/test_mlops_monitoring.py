@@ -1442,9 +1442,8 @@ class TestUnreadableEvidentlyMetrics:
     ):
         """The operator-facing reason must not name a cause that did not occur.
 
-        `details["error"]` is the only report-derived prose that escapes to the
-        operator email, the run archive and the CI summary -- `columns_skipped`
-        reaches none of them until #104. Saying the metrics could not be *read*
+        `details["error"]` is the reason the operator email names;
+        `columns_skipped` is not in that email. Saying the metrics could not be *read*
         points the reader at a renamed metric or a changed snapshot shape, which
         is what this guard was originally added for. On this route every metric
         WAS read and came back non-finite, and skipping them is what makes the
@@ -1934,7 +1933,7 @@ class TestLegacyPathAssessesEverySignalGroup:
         assert "novelty_score_ks_statistic" not in report.details
 
     def test_columns_assessed_lists_what_was_actually_read(self, disabled_monitor):
-        """The record #104 will carry and #105 will cross-check.
+        """The record #104 carries to the archive and #105 will cross-check.
 
         It is what was ASSESSED, not what was offered -- that is the whole
         distinction, since `columns_missing_from_reference` already covers
@@ -1964,7 +1963,7 @@ class TestLegacyPathAssessesEverySignalGroup:
 
         The two remain different instruments -- legacy core is an effect size,
         Evidently core is a fraction of significant tests -- so this asserts the
-        shape they share, which is what #104 lifts into the summary.
+        shape they share.
         """
         shared = ("columns_assessed", "columns_skipped", "brand_drift_score")
         frame = pd.DataFrame(

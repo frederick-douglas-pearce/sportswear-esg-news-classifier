@@ -1821,3 +1821,34 @@ third issue planned alongside these, shipped with #102 (D017).
 - If EP resumes with the flag left off, every drift run fails until the flag is set, and #75's
   consecutive-failure escalation will fire. That is intended.
 - Generalizing this guard to other workflows is #156, and it is not built here.
+
+## D022: Coverage Fields Reach the Summary and Archive as a Record, With None Meaning "Not Recorded or Not Applicable" (#104)
+
+**Status:** architect ruling recorded at the #104 plan gate, 2026-09-25. The plan is not yet
+approved by the human and no code has been written.
+
+### The decision
+
+1. **Record-only.** `columns_assessed`, `columns_skipped`, `columns_missing_from_reference` and
+   `metrics_unreadable` travel from `DriftReport.details` into the machine-readable summary, the
+   workflow context, the drift report and the run archive. They do not change the verdict. Turning
+   partial coverage into a verdict belongs to #105 (D017).
+2. **Optional in the summary contract.** They are not in `REQUIRED_SUMMARY_FIELDS` and are not
+   type-validated. A rejected summary downgrades the verdict to UNKNOWN, and a record-only field
+   must not gate the verdict. This follows D021.4: an absent key reads as `None`.
+3. **`None` versus empty.** `None` means not recorded, or not applicable on this path. An empty
+   list or dict means measured, and none found. `metrics_unreadable` is `None` wherever no
+   Evidently metric snapshot was produced: the legacy path, the no-reference return, the
+   sample-floor return, and the Evidently no-common-columns return. `columns_missing_from_reference`
+   is `None` when no reference exists.
+4. **`columns_checked` (the offered set) is carried alongside**, as a separate `OFFERED_KEY`.
+   #105's offered-versus-assessed cross-check cannot be computed from the archive without it. It
+   is `None` on the legacy path and on the early returns in `check_drift`.
+5. **Values are set per return site. Presence is guaranteed at one choke point.** The values
+   depend on the path, so no central default in `DriftReport` sets them. The `print_summary_json`
+   emit over the shared constants yields each key on every run.
+6. **The DEGRADED drift alert carries the non-empty coverage fields** in its details, so the
+   operator who is paged sees when a verdict rests on partial coverage.
+
+**Approval:** the human approved the plan on 2026-09-25 and ruled that `columns_checked` is included,
+to prepare for #105.

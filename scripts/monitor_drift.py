@@ -57,6 +57,7 @@ from src.mlops import (
     run_drift_analysis,
     send_drift_alert,
 )
+from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
 
 # Label for the machine-readable summary block. The agent workflow reads the
 # summary via ScriptResult.parsed_output rather than scraping the
@@ -137,6 +138,11 @@ def print_summary_json(report, exit_code: int) -> None:
             "reference_overlaps_current"
         ),
     }
+    # What the check assessed (#104, D022). Every key is emitted on every run,
+    # so a return path that did not populate one still yields it -- as None,
+    # "not recorded", never as an empty value that would claim a measurement.
+    for key in (*COVERAGE_KEYS, OFFERED_KEY):
+        summary[key] = (report.details or {}).get(key)
     print(SUMMARY_LABEL)
     print(json.dumps(summary))
 
