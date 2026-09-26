@@ -36,6 +36,7 @@ from src.mlops.exit_codes import (
     EXIT_INDETERMINATE,
     EXIT_NO_DRIFT,
 )
+from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
 from src.mlops.reference_data import count_predictions
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,9 @@ _VERDICT_BY_EXIT_CODE = {
     EXIT_DRIFT_DETECTED: HealthVerdict.DEGRADED,
     EXIT_INDETERMINATE: HealthVerdict.UNKNOWN,
 }
+
+
+_REFERENCE_KEYS = ("reference_window", "reference_observed", "reference_overlaps_current")
 
 
 def _validate_summary(result: ScriptResult, classifier: str) -> dict[str, Any] | None:
@@ -172,6 +176,13 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
     out: dict[str, Any] = {
         f"{classifier}_drift_exit_code": result.exit_code,
         f"{classifier}_drift_duration": result.duration_seconds,
+        # Recorded fields start as None ("not recorded") so every return below
+        # archives the same key set, including the two that return before a
+        # summary is read (#104, D022). Overwritten once a summary is read.
+        **{
+            f"{classifier}_{key}": None
+            for key in (*_REFERENCE_KEYS, *COVERAGE_KEYS, OFFERED_KEY)
+        },
     }
 
     verdict = _VERDICT_BY_EXIT_CODE.get(result.exit_code)
@@ -205,7 +216,12 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
     # Which baseline the check compared against, carried into the context so it
     # reaches the report and the run archive (#97). Recorded, never a verdict
     # input (D021.4): `None` means the script did not say, not "no overlap".
-    for key in ("reference_window", "reference_observed", "reference_overlaps_current"):
+    for key in _REFERENCE_KEYS:
+        out[f"{classifier}_{key}"] = (summary or {}).get(key)
+    # What the check assessed, carried the same way and for the same reason
+    # (#104, D022): a record for the archive, never a verdict input -- deciding
+    # what partial coverage means is #105. Absent reads as None.
+    for key in (*COVERAGE_KEYS, OFFERED_KEY):
         out[f"{classifier}_{key}"] = (summary or {}).get(key)
 
     if verdict is HealthVerdict.UNKNOWN:
@@ -410,6 +426,14 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
                     "recommendation": (
                         f"Retrain {classifier.upper()} classifier with recent data"
                     ),
+                    # A verdict over part of the columns is a weaker signal,
+                    # and the person paged is the one who needs to know (#104).
+                    **_partial_coverage(
+                        {
+                            key: context.get(f"{classifier}_{key}")
+                            for key in COVERAGE_KEYS
+                        }
+                    ),
                 },
             )
             alerts_sent.append(
@@ -489,6 +513,10 @@ def _classifier_report(context: dict[str, Any], classifier: str) -> dict[str, An
         "reference_overlaps_current": context.get(
             f"{classifier}_reference_overlaps_current"
         ),
+        **{
+            key: context.get(f"{classifier}_{key}")
+            for key in (*COVERAGE_KEYS, OFFERED_KEY)
+        },
     }
 
 
@@ -530,6 +558,10 @@ def _log_classifier_line(label: str, section: dict[str, Any]) -> None:
             f"({section['error'] or 'no reason recorded'})"
         )
         print("  This classifier is NOT being monitored.")
+        # A check that produced no verdict can still say what it could not
+        # assess -- on the no-usable-core-metric path that is the real cause.
+        for line in _partial_coverage_lines(section):
+            print(f"  NOTE: {line}")
         return
 
     # Read the VERDICT, not `drift_detected`. Deriving the healthy/degraded
@@ -552,6 +584,54 @@ def _log_classifier_line(label: str, section: dict[str, Any]) -> None:
             "  NOTE: the reference overlaps the window it was compared against, "
             "so this verdict is biased toward no drift"
         )
+    for line in _partial_coverage_lines(section):
+        print(f"  NOTE: {line}")
+
+
+_PARTIAL_COVERAGE_TYPES = {
+    "columns_missing_from_reference": list,
+    "columns_skipped": dict,
+    "metrics_unreadable": list,
+}
+
+
+def _partial_coverage(section: dict[str, Any]) -> dict[str, Any]:
+    """The coverage fields that name something not assessed.
+
+    Truthiness on purpose: None ("not recorded") and an empty value ("none
+    found") both have nothing to report. A value of an unexpected type is
+    skipped rather than rendered: these fields are a record, and a malformed
+    record must not fail the step that reports it (D022).
+    """
+    return {
+        key: section.get(key)
+        for key, expected in _PARTIAL_COVERAGE_TYPES.items()
+        if section.get(key) and isinstance(section.get(key), expected)
+    }
+
+
+def _partial_coverage_lines(section: dict[str, Any]) -> list[str]:
+    """Render partial coverage for the console summary."""
+    partial = _partial_coverage(section)
+    lines = []
+    if "columns_missing_from_reference" in partial:
+        lines.append(
+            "the reference lacks "
+            + ", ".join(map(str, partial["columns_missing_from_reference"]))
+            + "; not assessed"
+        )
+    if "columns_skipped" in partial:
+        lines.append(
+            "not assessed: "
+            + ", ".join(
+                f"{col} ({reason})" for col, reason in partial["columns_skipped"].items()
+            )
+        )
+    if "metrics_unreadable" in partial:
+        lines.append(
+            "metric unreadable for " + ", ".join(map(str, partial["metrics_unreadable"]))
+        )
+    return lines
 
 
 def _log_drift_summary(report: dict[str, Any]) -> None:

@@ -39,8 +39,9 @@ def isolated_history(tmp_path):
     completing or failing a workflow archives it under `drift_monitoring_*` —
     indistinguishable by name from scheduled production runs. Isolation from
     the real archive is conftest's `_isolate_agent_state`, which covers every
-    test; no test here reads this dir, so this fixture is redundant with it and
-    kept only as a local statement of the exposure.
+    test; this fixture also yields the directory, so a test can read the
+    archived run back from disk
+    (`TestCoverageReachesTheArchive.test_reaches_the_archived_run`).
     """
     history_dir = tmp_path / "history"
     history_dir.mkdir()
@@ -1186,3 +1187,214 @@ class TestReferenceProvenanceReachesTheReport:
             check_fp_drift(mock_workflow, {})
 
         assert mock_run.call_args.kwargs["days"] == DEFAULT_DRIFT_WINDOW_DAYS
+
+
+class TestCoverageReachesTheArchive:
+    """What the check assessed reaches the context, the report, the alert and
+    the run archive, and never changes the verdict (#104, D022)."""
+
+    PARTIAL = {
+        "columns_assessed": ["probability"],
+        "columns_skipped": {"prediction": "constant in both frames"},
+        "columns_missing_from_reference": ["novelty_score"],
+        "metrics_unreadable": ["brand_hoka"],
+        "columns_checked": ["probability", "prediction", "brand_hoka"],
+    }
+    FULL = {
+        "columns_assessed": ["probability", "prediction"],
+        "columns_skipped": {},
+        "columns_missing_from_reference": [],
+        "metrics_unreadable": [],
+        "columns_checked": ["probability", "prediction"],
+    }
+
+    @staticmethod
+    def _result(coverage, **kwargs):
+        result = script_result(**kwargs)
+        result.parsed_output = {**result.parsed_output, **coverage}
+        return result
+
+    def test_carried_into_the_context_on_a_verdict(self, mock_workflow):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(self.PARTIAL)
+            out = check_fp_drift(mock_workflow, {})
+
+        for key, value in self.PARTIAL.items():
+            assert out[f"fp_{key}"] == value
+
+    def test_carried_into_the_context_when_indeterminate(self, mock_workflow):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(
+                {"columns_assessed": [], "columns_missing_from_reference": None},
+                exit_code=EXIT_INDETERMINATE,
+                indeterminate=True,
+                error="No reference dataset for this classifier",
+            )
+            out = check_fp_drift(mock_workflow, {})
+
+        assert out["fp_verdict"] == HealthVerdict.UNKNOWN.value
+        assert out["fp_columns_assessed"] == []
+        assert out["fp_columns_missing_from_reference"] is None
+
+    def test_absent_from_the_summary_is_none(self, mock_workflow):
+        from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
+
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = script_result()
+            out = check_fp_drift(mock_workflow, {})
+
+        for key in (*COVERAGE_KEYS, OFFERED_KEY):
+            assert out[f"fp_{key}"] is None
+
+    def test_partial_coverage_does_not_change_the_verdict(self, mock_workflow):
+        """Record-only: turning partial coverage into a verdict is #105 (D017)."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(self.PARTIAL)
+            out = check_fp_drift(mock_workflow, {})
+
+        assert out["fp_verdict"] == HealthVerdict.HEALTHY.value
+        context = {**out, "ep_verdict": HealthVerdict.SKIPPED.value, "ep_skip_reason": "x"}
+        assert evaluate_drift_results(mock_workflow, context)["all_checked_healthy"] is True
+
+    def test_report_carries_it_and_the_summary_notes_it(self, mock_workflow, capsys):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(self.PARTIAL)
+            out = check_fp_drift(mock_workflow, {})
+        context = {**out, "ep_verdict": HealthVerdict.SKIPPED.value, "ep_skip_reason": "x"}
+
+        report = generate_drift_report(mock_workflow, context)["report"]
+
+        for key, value in self.PARTIAL.items():
+            assert report["fp_classifier"][key] == value
+        printed = capsys.readouterr().out
+        assert "novelty_score" in printed
+        assert "prediction" in printed.split("NOTE", 1)[1]
+        assert "metric unreadable for brand_hoka" in printed
+
+    def test_full_coverage_prints_no_note(self, mock_workflow, capsys):
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(self.FULL)
+            out = check_fp_drift(mock_workflow, {})
+        context = {**out, "ep_verdict": HealthVerdict.SKIPPED.value, "ep_skip_reason": "x"}
+
+        generate_drift_report(mock_workflow, context)
+
+        assert "NOTE" not in capsys.readouterr().out
+
+    def test_reaches_the_archived_run(self, state_manager, isolated_history):
+        """AC-4: read back from the archive itself, not from the context."""
+        from src.agent.archive import iter_runs
+
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(self.PARTIAL)
+            workflow = DriftMonitoringWorkflow(state_manager=state_manager, dry_run=True)
+            result = workflow.run()
+        assert result.status == WorkflowStatus.COMPLETED
+
+        runs = list(iter_runs(isolated_history, workflows={"drift_monitoring"}))
+        assert len(runs) == 1
+        archived = runs[0]
+        for key, value in self.PARTIAL.items():
+            assert archived.context[f"fp_{key}"] == value
+        report = archived.steps["generate_drift_report"]["result"]["report"]
+        assert report["fp_classifier"]["columns_skipped"] == self.PARTIAL["columns_skipped"]
+
+    def _drift_alert_details(self, state_manager, coverage):
+        with patch(
+            "src.agent.workflows.drift_monitoring.run_monitor_drift"
+        ) as mock_run, patch(
+            "src.agent.workflows.drift_monitoring.send_drift_notification"
+        ) as mock_drift_notify:
+            mock_run.return_value = self._result(
+                coverage, exit_code=EXIT_DRIFT_DETECTED, drift_detected=True, drift_score=0.3
+            )
+            mock_drift_notify.return_value = {"console": True}
+            DriftMonitoringWorkflow(state_manager=state_manager, dry_run=False).run()
+
+        mock_drift_notify.assert_called_once()
+        return mock_drift_notify.call_args.kwargs["details"]
+
+    def test_drift_alert_names_partial_coverage(self, state_manager):
+        details = self._drift_alert_details(state_manager, self.PARTIAL)
+
+        assert details["columns_missing_from_reference"] == ["novelty_score"]
+        assert details["columns_skipped"] == {"prediction": "constant in both frames"}
+        assert details["metrics_unreadable"] == ["brand_hoka"]
+
+    def test_drift_alert_with_full_coverage_adds_nothing(self, state_manager):
+        details = self._drift_alert_details(state_manager, self.FULL)
+
+        for key in ("columns_missing_from_reference", "columns_skipped", "metrics_unreadable"):
+            assert key not in details
+
+    def test_absent_from_the_context_never(self, mock_workflow):
+        """The two returns before a summary is read archive the same key set,
+        as None (D022): an unrecognised exit code, and a verdict with no
+        valid summary behind it."""
+        from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
+
+        for result in (
+            script_result(exit_code=-1, summary=None),
+            script_result(exit_code=EXIT_NO_DRIFT, summary=None),
+        ):
+            with patch(
+                "src.agent.workflows.drift_monitoring.run_monitor_drift",
+                return_value=result,
+            ):
+                out = check_fp_drift(mock_workflow, {})
+
+            assert out["fp_verdict"] == HealthVerdict.UNKNOWN.value
+            for key in (
+                *COVERAGE_KEYS,
+                OFFERED_KEY,
+                "reference_window",
+                "reference_observed",
+                "reference_overlaps_current",
+            ):
+                assert f"fp_{key}" in out, key
+                assert out[f"fp_{key}"] is None, key
+
+    def test_unknown_verdict_still_notes_what_was_not_assessed(
+        self, mock_workflow, capsys
+    ):
+        """The no-usable-core-metric path carries its real cause in coverage."""
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(
+                {"columns_skipped": {"probability": "p-value is not finite"}},
+                exit_code=EXIT_INDETERMINATE,
+                indeterminate=True,
+                error="No core drift metrics were usable in the Evidently report",
+            )
+            out = check_fp_drift(mock_workflow, {})
+        context = {**out, "ep_verdict": HealthVerdict.SKIPPED.value, "ep_skip_reason": "x"}
+
+        generate_drift_report(mock_workflow, context)
+
+        assert (
+            "  NOTE: not assessed: probability (p-value is not finite)"
+            in capsys.readouterr().out
+        )
+
+    def test_a_malformed_record_does_not_fail_the_report(self, mock_workflow, capsys):
+        """A record-only field must not change the run outcome (D022): a value of
+        the wrong type is left out of the NOTE and the alert, not raised on."""
+        from src.agent.workflows.drift_monitoring import _partial_coverage
+
+        malformed = {
+            "columns_skipped": ["probability"],
+            "columns_missing_from_reference": "novelty_score",
+            "metrics_unreadable": [1],
+        }
+        with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
+            mock_run.return_value = self._result(malformed)
+            out = check_fp_drift(mock_workflow, {})
+        context = {**out, "ep_verdict": HealthVerdict.SKIPPED.value, "ep_skip_reason": "x"}
+
+        report = generate_drift_report(mock_workflow, context)["report"]
+
+        assert report["fp_classifier"]["columns_skipped"] == ["probability"]
+        printed = capsys.readouterr().out
+        assert "NOTE: not assessed" not in printed
+        assert "the reference lacks" not in printed
+        assert "metric unreadable for 1" in printed
+        assert _partial_coverage(malformed) == {"metrics_unreadable": [1]}

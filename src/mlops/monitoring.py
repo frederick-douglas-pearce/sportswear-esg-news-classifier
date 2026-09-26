@@ -39,6 +39,29 @@ DRIFT_CONFIG = {
 # behaviour must say "a core column", not "a column" (issue #71 review).
 CORE_DRIFT_COLUMNS = ["probability", "prediction", "novelty_score"]
 
+# What a check assessed, carried by every report `check_drift` returns and
+# lifted verbatim into the machine-readable summary, the workflow context and
+# the run archive (#104, D022). A record, never a verdict input: deciding what
+# partial coverage means for the verdict is #105.
+#
+# An empty list or dict means that measurement ran and found nothing; `None`
+# means it did not run on the path that returned, or was not recorded. So the
+# early returns that never reach per-column assessment carry `None` for
+# `columns_assessed` and `columns_skipped`, and `metrics_unreadable` -- about an
+# Evidently metric snapshot -- is `None` wherever no snapshot was produced.
+COVERAGE_KEYS = (
+    "columns_assessed",
+    "columns_skipped",
+    "columns_missing_from_reference",
+    "metrics_unreadable",
+)
+
+# The columns offered to the Evidently report -- the other half of #105's
+# offered-versus-assessed comparison. Kept apart from COVERAGE_KEYS because it
+# says what was asked, not what was answered. `None` on the legacy path, which
+# has no separate offered set.
+OFFERED_KEY = "columns_checked"
+
 
 def _to_builtin(value: Any) -> Any:
     """Convert numpy scalars to Python built-ins, recursively.
@@ -355,6 +378,13 @@ class DriftMonitor:
                         "error": "No reference dataset for this classifier",
                         "reference_path": str(reference_path),
                         "current_size": len(current_data),
+                        # Nothing reached per-column assessment, and with no
+                        # reference what it lacks cannot be known.
+                        "columns_assessed": None,
+                        "columns_skipped": None,
+                        "columns_missing_from_reference": None,
+                        "metrics_unreadable": None,
+                        OFFERED_KEY: None,
                     },
                     indeterminate=True,
                 )
@@ -396,6 +426,13 @@ class DriftMonitor:
                     "error": "Insufficient data for drift analysis",
                     "reference_size": len(reference_data),
                     "current_size": len(current_data),
+                    "columns_assessed": None,
+                    "columns_skipped": None,
+                    "columns_missing_from_reference": _missing_from_reference(
+                        current_data, reference_data
+                    ),
+                    "metrics_unreadable": None,
+                    OFFERED_KEY: None,
                     **provenance,
                 },
                 indeterminate=True,
@@ -477,6 +514,14 @@ class DriftMonitor:
                     "error": "No columns available for drift detection",
                     "reference_columns": sorted(reference_data.columns),
                     "current_columns": sorted(current_data.columns),
+                    "columns_assessed": None,
+                    "columns_skipped": None,
+                    "columns_missing_from_reference": _missing_from_reference(
+                        current_data, reference_data
+                    ),
+                    # Returned before any Report ran, so no snapshot to read.
+                    "metrics_unreadable": None,
+                    OFFERED_KEY: columns_to_check,
                 },
                 indeterminate=True,
             )
@@ -528,6 +573,8 @@ class DriftMonitor:
             "columns_assessed": columns_assessed,
             "columns_skipped": columns_skipped,
             "columns_missing_from_reference": missing_from_reference,
+            # The snapshot is read below, so an empty list here is a measurement.
+            "metrics_unreadable": [],
             "core_metrics_drifted": [],
             "brand_metrics_drifted": [],
         }
@@ -645,12 +692,11 @@ class DriftMonitor:
                 f"drift cannot be assessed"
             )
             # "usable", not "could be read": a metric can also come back read
-            # and non-finite (#103), and this string is the only part of
-            # `details` that reaches the operator email, the run archive and the
-            # CI summary -- `columns_skipped` reaches none of those until #104,
-            # though it does reach the drift webhook. Naming the wrong cause
-            # here points the reader at a renamed metric when the real cause was
-            # a constant column.
+            # and non-finite (#103), and this string is the reason the operator
+            # email names. `columns_skipped` travels to the summary and the run
+            # archive as its own field (#104), not in that email. Naming the
+            # wrong cause here points the reader at a renamed metric when the
+            # real cause was a constant column.
             details["error"] = "No core drift metrics were usable in the Evidently report"
             details["reference_size"] = len(reference_data)
             details["current_size"] = len(current_data)
@@ -789,14 +835,18 @@ class DriftMonitor:
         # fields carry the same TYPES on the Evidently path, but not the same
         # coverage: that path still drops a brand column absent from the
         # reference silently, so the two are not like-for-like and #105's
-        # cross-check will have to say which path it is reading. #104 lifts
-        # them into the summary (they do not reach it today). Introduced here
+        # cross-check will have to say which path it is reading. Both reach
+        # the summary and the run archive (#104). Introduced here
         # as a plain record -- it must NOT drive indeterminacy, which is
         # #105's call, not this one's (D017).
         columns_assessed: list[str] = []
         columns_skipped: dict[str, str] = {}
         details["columns_assessed"] = columns_assessed
         details["columns_skipped"] = columns_skipped
+        # No metric snapshot and no separate offered set on this path, so both
+        # are not applicable rather than empty (D022).
+        details["metrics_unreadable"] = None
+        details[OFFERED_KEY] = None
 
         min_size = mlops_settings.drift_min_sample_size
 
@@ -862,9 +912,8 @@ class DriftMonitor:
             else:
                 ks_stat, p_value = stats.ks_2samp(*comparable)
                 # Spelled `novelty_score_*` to match the Evidently path's
-                # `f"{col_name}_p_value"`. #104 lifts these keys into the
-                # machine-readable summary, and two spellings for one column
-                # would become its problem.
+                # `f"{col_name}_p_value"`, so a reader of `details` comparing
+                # the two paths finds one spelling per column.
                 details["novelty_score_ks_statistic"] = float(ks_stat)
                 details["novelty_score_p_value"] = float(p_value)
                 drift_scores.append(float(ks_stat))

@@ -1442,9 +1442,8 @@ class TestUnreadableEvidentlyMetrics:
     ):
         """The operator-facing reason must not name a cause that did not occur.
 
-        `details["error"]` is the only report-derived prose that escapes to the
-        operator email, the run archive and the CI summary -- `columns_skipped`
-        reaches none of them until #104. Saying the metrics could not be *read*
+        `details["error"]` is the reason the operator email names;
+        `columns_skipped` is not in that email. Saying the metrics could not be *read*
         points the reader at a renamed metric or a changed snapshot shape, which
         is what this guard was originally added for. On this route every metric
         WAS read and came back non-finite, and skipping them is what makes the
@@ -1934,7 +1933,7 @@ class TestLegacyPathAssessesEverySignalGroup:
         assert "novelty_score_ks_statistic" not in report.details
 
     def test_columns_assessed_lists_what_was_actually_read(self, disabled_monitor):
-        """The record #104 will carry and #105 will cross-check.
+        """The record #104 carries to the archive and #105 will cross-check.
 
         It is what was ASSESSED, not what was offered -- that is the whole
         distinction, since `columns_missing_from_reference` already covers
@@ -1964,7 +1963,7 @@ class TestLegacyPathAssessesEverySignalGroup:
 
         The two remain different instruments -- legacy core is an effect size,
         Evidently core is a fraction of significant tests -- so this asserts the
-        shape they share, which is what #104 lifts into the summary.
+        shape they share.
         """
         shared = ("columns_assessed", "columns_skipped", "brand_drift_score")
         frame = pd.DataFrame(
@@ -2532,3 +2531,181 @@ class TestReferenceProvenanceInReport:
         assert report.indeterminate
         assert report.details["reference_window"] == reference.attrs["reference_window"]
         assert report.details["reference_overlaps_current"] is False
+
+
+class TestEveryReturnCarriesCoverageKeys:
+    """Every report `check_drift` can return names its coverage (#104, D022).
+
+    `None` means not recorded or not applicable on that path; an empty value
+    means measured and none found. The summary emitter guarantees the keys
+    reach the archive whatever a path does, so these tests pin the VALUES --
+    the part a direct reader of `details` (the `--verbose` dump) depends on.
+    """
+
+    @staticmethod
+    def _evidently_monitor(metrics):
+        monitor = DriftMonitor.__new__(DriftMonitor)
+        monitor.classifier_type = "fp"
+        monitor.enabled = True
+        monitor.threshold = 0.1
+        snapshot = MagicMock()
+        snapshot.dict.return_value = {"metrics": metrics}
+        run = MagicMock()
+        run.run.return_value = snapshot
+        monitor._evidently = {"Report": MagicMock(return_value=run), "ValueDrift": MagicMock()}
+        return monitor
+
+    @staticmethod
+    def _coverage(report):
+        from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
+
+        keys = (*COVERAGE_KEYS, OFFERED_KEY)
+        missing = [k for k in keys if k not in report.details]
+        assert not missing, f"coverage keys absent: {missing}"
+        return {k: report.details[k] for k in keys}
+
+    def test_the_key_set_is_named_once(self):
+        from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
+
+        assert COVERAGE_KEYS == (
+            "columns_assessed",
+            "columns_skipped",
+            "columns_missing_from_reference",
+            "metrics_unreadable",
+        )
+        assert OFFERED_KEY == "columns_checked"
+
+    def test_no_reference(self, disabled_monitor, current_data_no_drift):
+        """With no reference, what it lacks is unknowable -- None, not []."""
+        with patch(
+            "src.mlops.monitoring.load_reference_dataset",
+            side_effect=FileNotFoundError("absent"),
+        ):
+            report = disabled_monitor.check_drift(current_data=current_data_no_drift)
+
+        assert report.indeterminate is True
+        assert self._coverage(report) == {
+            "columns_assessed": None,
+            "columns_skipped": None,
+            "columns_missing_from_reference": None,
+            "metrics_unreadable": None,
+            "columns_checked": None,
+        }
+
+    def test_below_the_sample_floor(
+        self, disabled_monitor, mock_mlops_settings_disabled, reference_data
+    ):
+        """Both frames exist, so what the reference lacks IS known."""
+        mock_mlops_settings_disabled.drift_min_sample_size = 1000
+        current = reference_data.assign(novelty_score=0.5)
+
+        report = disabled_monitor.check_drift(
+            current_data=current, reference_data=reference_data
+        )
+
+        assert report.indeterminate is True
+        assert self._coverage(report) == {
+            "columns_assessed": None,
+            "columns_skipped": None,
+            "columns_missing_from_reference": ["novelty_score"],
+            "metrics_unreadable": None,
+            "columns_checked": None,
+        }
+
+    def test_evidently_no_common_columns(self, mock_mlops_settings_enabled):
+        """No Report was run: nothing assessed or checked for readability -> None.
+
+        The offered set WAS computed, and is empty, so `columns_checked` is [].
+        """
+        current = pd.DataFrame({"probability": [0.5, 0.6]})
+        reference = pd.DataFrame({"other": [1, 2]})
+
+        report = self._evidently_monitor([])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert self._coverage(report) == {
+            "columns_assessed": None,
+            "columns_skipped": None,
+            "columns_missing_from_reference": ["probability"],
+            "metrics_unreadable": None,
+            "columns_checked": [],
+        }
+
+    def test_evidently_no_usable_core_metric(self, mock_mlops_settings_enabled):
+        """The Report ran and nothing in it was unreadable: [] is a measurement."""
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+
+        report = self._evidently_monitor([])._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.indeterminate is True
+        coverage = self._coverage(report)
+        assert coverage["metrics_unreadable"] == []
+        assert coverage["columns_checked"] == ["probability", "prediction"]
+        assert coverage["columns_assessed"] == []
+
+    def test_evidently_verdict(self, mock_mlops_settings_enabled):
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.5,
+            }
+        ]
+
+        report = self._evidently_monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert report.indeterminate is False
+        coverage = self._coverage(report)
+        assert coverage["metrics_unreadable"] == []
+        assert coverage["columns_assessed"] == ["probability"]
+        assert coverage["columns_checked"] == ["probability", "prediction"]
+
+    def test_evidently_unreadable_metric_is_listed(self, mock_mlops_settings_enabled):
+        frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [0, 1]})
+        metrics = [
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "probability", "threshold": 0.05},
+                "value": 0.5,
+            },
+            {
+                "metric_name": "ValueDrift",
+                "config": {"column": "prediction", "threshold": 0.05},
+                "value": "not a number",
+            },
+        ]
+
+        report = self._evidently_monitor(metrics)._evidently_drift_check(
+            frame, frame, save_report=False
+        )
+
+        assert self._coverage(report)["metrics_unreadable"] == ["prediction"]
+
+    def test_legacy_verdict(self, disabled_monitor, reference_data, current_data_no_drift):
+        """The legacy path has no metric snapshot and no offered set: None."""
+        report = disabled_monitor.check_drift(
+            current_data=current_data_no_drift, reference_data=reference_data
+        )
+
+        assert report.indeterminate is False
+        coverage = self._coverage(report)
+        assert coverage["metrics_unreadable"] is None
+        assert coverage["columns_checked"] is None
+        assert "probability" in coverage["columns_assessed"]
+
+    def test_legacy_no_comparable_column(self, disabled_monitor):
+        current = pd.DataFrame({"other": [1, 2, 3]})
+
+        report = disabled_monitor.check_drift(current_data=current, reference_data=current)
+
+        assert report.indeterminate is True
+        coverage = self._coverage(report)
+        assert coverage["metrics_unreadable"] is None
+        assert coverage["columns_checked"] is None
