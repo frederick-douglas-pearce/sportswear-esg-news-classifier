@@ -142,9 +142,12 @@ few rows, or an Evidently run with no column in common, never reaches per-column
 `columns_assessed` and `columns_skipped` are `null`. `metrics_unreadable` is `null` wherever no
 Evidently metric snapshot was produced, and `columns_missing_from_reference` is `null` when there is
 no reference to compare against. The agent workflow copies these fields into its context, report and
-run archive. The drift alert includes whichever of them name something not assessed. They are a
-record: partial coverage does not change the verdict (turning it into one is #105), and the workflow
-neither requires them nor rejects a summary over them.
+run archive. The drift alert includes whichever of them name something not assessed. The fields are
+a record: the workflow neither requires them nor rejects a summary over them. What partial coverage
+means for the verdict is decided upstream of them, in the check itself (#105, D023): an offered
+**core** column that was not assessed makes the result indeterminate (exit 2) on both paths. A
+`brand_*` shortfall is recorded and does not change the verdict. When no brand column was assessed
+`brand_drift_score` stays `0.0`, and `brand_assessed_count` of `0` is what says nothing was measured.
 
 ### Keeping the reference dataset current
 
@@ -160,23 +163,23 @@ and the legacy code paths, and neither removes the need to regenerate:
   `details["columns_missing_from_reference"]`, which reaches the machine-readable summary and the
   agent's run archive, so a partial comparison is not reported as a whole one. `brand_*` columns are
   not tracked this way: they come and go with `TRACKED_BRANDS` and would bury the signal;
-- a reference sharing *no* comparable core column returns `indeterminate`, i.e. exit 2 -- on both
-  paths. On the Evidently path this also covers the case where core columns are offered but no
-  core metric comes back usable: a metric whose value cannot be read, or that comes back
-  non-finite, is skipped and recorded in `details["columns_skipped"]` rather than counted as
-  p=1.0, so it does not prop up `total_core` and the guard actually fires. Without it the score
-  would be a fabricated 0.0. `details["metrics_unreadable"]` is the narrower record — only the
-  ones whose value could not be read. `columns_skipped` is the wider of the two, but it is **not**
-  a complete inventory of what went unassessed: a core column absent from the reference is in
-  `columns_missing_from_reference`, and a `brand_*` column absent from the reference is in neither,
-  because it never reaches `columns_to_check` (#105);
+- a **core column offered and not assessed** returns `indeterminate`, i.e. exit 2 -- on both
+  paths (#105, D023). That covers a reference sharing no core column, and also any core column
+  that was present in both frames and came back unusable: too few values after the NaN drop, the
+  same constant in both frames, a metric whose value cannot be read or is non-finite, or a column
+  no recognised metric came back for (for example after an Evidently metric rename). Each is
+  recorded in `details["columns_skipped"]` with its reason. `details["metrics_unreadable"]` is the
+  narrower record: only the ones whose value could not be read. A core column **absent from the
+  reference** is the exception. It is never offered, stays in `columns_missing_from_reference`,
+  and does not make the result indeterminate: that loss is already logged and fixed by
+  `--create-reference`, while #105 is about losses that were silent;
 - a column that is **present but cannot be assessed** is recorded in
   `details["columns_skipped"]` with its own reason and left out of the score entirely.
   `details["columns_assessed"]` is the complementary record of what produced a reading. Counting
   an unassessable column as "not drifted" is the shape these two exist to prevent (#102). Both
-  fields exist on both paths, but they are **not like-for-like**: the legacy path records any
-  column it declined to test, while on the Evidently path a `brand_*` column absent from the
-  reference is still dropped silently;
+  fields exist on both paths. Both now record a `brand_*` column absent from the reference as
+  `not in reference`, and both apply the same input checks to core columns. Reasons for a skipped
+  `brand_*` column still differ between the paths, so the two records are not like-for-like;
 - **too few rows** is a floor with two scopes (`DRIFT_MIN_SAMPLE_SIZE`, default 30 — #94). Enough
   rows to compute a statistic is not enough for it to mean anything. A whole *frame* below the
   floor — the reference and the current window are checked independently — returns `indeterminate`

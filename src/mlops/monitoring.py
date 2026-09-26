@@ -41,8 +41,10 @@ CORE_DRIFT_COLUMNS = ["probability", "prediction", "novelty_score"]
 
 # What a check assessed, carried by every report `check_drift` returns and
 # lifted verbatim into the machine-readable summary, the workflow context and
-# the run archive (#104, D022). A record, never a verdict input: deciding what
-# partial coverage means for the verdict is #105.
+# the run archive (#104, D022). The fields themselves are a record. What partial
+# coverage means for the verdict was decided in #105 (D023): an offered core
+# column that was not assessed makes the report indeterminate, on both paths
+# (`_core_coverage_incomplete`). A brand shortfall stays record-only.
 #
 # An empty list or dict means that measurement ran and found nothing; `None`
 # means it did not run on the path that returned, or was not recorded. So the
@@ -88,6 +90,12 @@ def _missing_from_reference(
     A reference written against an older schema silently compares whichever
     columns it happens to share and returns a verdict that looks complete.
     Recording the gap is what stops a partial check reading as a whole one.
+
+    A core column listed here is never offered for comparison, so the #105
+    coverage rule does not make the report indeterminate over it. That is
+    deliberate (D023): #105 targets coverage lost silently, and this loss is
+    already loud -- logged, recorded in this field, and fixed by
+    `--create-reference`.
     """
     return [
         c
@@ -206,13 +214,41 @@ def _comparable_series(
 
     if len(reference_clean) < min_size or len(current_clean) < min_size:
         return None
-    if (
+    if _same_constant_in_both(reference_clean, current_clean):
+        return None
+    return reference_clean, current_clean
+
+
+def _same_constant_in_both(reference_clean: pd.Series, current_clean: pd.Series) -> bool:
+    """Both NaN-free columns hold one value, and it is the same value.
+
+    Shared by both paths (#105) so they reject the same input. It matters most
+    on the Evidently path: `ValueDrift(method="ks")` returns a FINITE p-value
+    of 1.0 here, indistinguishable from genuine health in the returned scalar,
+    so the input frames are the only place it can be caught.
+    """
+    return (
         reference_clean.nunique() == 1
         and current_clean.nunique() == 1
         and reference_clean.iloc[0] == current_clean.iloc[0]
-    ):
-        return None
-    return reference_clean, current_clean
+    )
+
+
+def _unassessed_core(offered: list[str], assessed: list[str]) -> list[str]:
+    """Core columns that were offered for comparison and not assessed."""
+    return [c for c in offered if not c.startswith("brand_") and c not in assessed]
+
+
+def _core_coverage_incomplete(offered: list[str], assessed: list[str]) -> bool:
+    """True where the core verdict does not rest on every core column offered.
+
+    The one coverage rule both paths apply (#105, D023). It is a union, and
+    both halves are needed: a reference sharing only `brand_*` columns offers
+    no core column, so "an offered core column went unassessed" is vacuously
+    false there, and only "no core column was assessed" catches it.
+    """
+    assessed_core = [c for c in assessed if not c.startswith("brand_")]
+    return bool(_unassessed_core(offered, assessed)) or not assessed_core
 
 
 @dataclass
@@ -228,8 +264,11 @@ class DriftReport:
     in it puts a load-bearing signal somewhere a reader has to know to look.
 
     When `indeterminate` is True, `drift_detected` and `drift_score` carry
-    their zero values because nothing was measured; they are NOT evidence of
-    health and must not be read as such (issue #71).
+    their zero values; they are NOT evidence of health and must not be read as
+    such (issue #71). That holds when some columns WERE measured too: a core
+    column offered and not assessed makes the whole report indeterminate
+    (#105), because a verdict over part of the core signal reads like a verdict
+    over all of it.
     """
 
     classifier_type: str
@@ -490,11 +529,16 @@ class DriftMonitor:
             if col in current_data.columns and col in reference_data.columns:
                 columns_to_check.append(col)
 
-        # Brand columns
+        # Brand columns. One the reference cannot answer for is recorded below
+        # as skipped, with the legacy path's reason. It used to be dropped here
+        # and recorded in no field at all (#105).
         brand_cols = [c for c in current_data.columns if c.startswith("brand_")]
+        brand_not_in_reference: list[str] = []
         for col in brand_cols:
             if col in reference_data.columns:
                 columns_to_check.append(col)
+            else:
+                brand_not_in_reference.append(col)
 
         if not columns_to_check:
             # Reference and current share no comparable column -- typically a
@@ -543,38 +587,57 @@ class DriftMonitor:
                 f"--create-reference to compare them."
             )
 
-        # Filter to only the columns we want to analyze
-        ref_filtered = reference_data[columns_to_check].copy()
-        curr_filtered = current_data[columns_to_check].copy()
+        # `columns_assessed` is NOT `columns_checked`. The latter is what was
+        # offered for comparison; the former is what came back with a usable
+        # metric, which is the narrower and more honest set.
+        columns_assessed: list[str] = []
+        columns_skipped: dict[str, str] = {
+            col: "not in reference" for col in brand_not_in_reference
+        }
+
+        # Core columns pass the SAME input checks the legacy path applies in
+        # `_comparable_series`: the per-column sample floor after the NaN drop
+        # (#94), and the same constant in both frames. The paths can agree on
+        # indeterminacy only if their core skip causes are one set (D023). The
+        # constant case cannot be caught downstream: `ks` returns a finite 1.0
+        # for it, which reads exactly like health.
+        min_size = mlops_settings.drift_min_sample_size
+        metric_columns: list[str] = []
+        for col in columns_to_check:
+            if not col.startswith("brand_") and (
+                _comparable_series(reference_data[col], current_data[col], min_size)
+                is None
+            ):
+                columns_skipped[col] = "no comparable values"
+                continue
+            metric_columns.append(col)
 
         # Build metrics with per-column configuration
         metrics = []
-        for col in columns_to_check:
+        for col in metric_columns:
             method, threshold = self._get_drift_config(col)
             metrics.append(ValueDrift(column=col, method=method, threshold=threshold))
 
-        # Build and run report
-        report = Report(metrics=metrics)
-        snapshot = report.run(
-            reference_data=ref_filtered,
-            current_data=curr_filtered,
-        )
+        # With nothing left to measure no Report runs, so there is no snapshot
+        # and `metrics_unreadable` is None rather than an empty measurement
+        # (D022). The coverage rule below then returns indeterminate.
+        snapshot = None
+        report_dict: dict[str, Any] = {"metrics": []}
+        if metrics:
+            report = Report(metrics=metrics)
+            snapshot = report.run(
+                reference_data=reference_data[metric_columns].copy(),
+                current_data=current_data[metric_columns].copy(),
+            )
+            report_dict = snapshot.dict()
 
-        # Extract results from the new API structure
-        report_dict = snapshot.dict()
-        # `columns_assessed` is NOT `columns_checked`. The latter is what was
-        # offered to Evidently; the former is what came back with a readable
-        # metric, which is the narrower and more honest set -- a column whose
-        # metric is unreadable was checked and not assessed.
-        columns_assessed: list[str] = []
-        columns_skipped: dict[str, str] = {}
         details = {
             "columns_checked": columns_to_check,
             "columns_assessed": columns_assessed,
             "columns_skipped": columns_skipped,
             "columns_missing_from_reference": missing_from_reference,
             # The snapshot is read below, so an empty list here is a measurement.
-            "metrics_unreadable": [],
+            "metrics_unreadable": [] if snapshot is not None else None,
             "core_metrics_drifted": [],
             "brand_metrics_drifted": [],
         }
@@ -589,7 +652,22 @@ class DriftMonitor:
             value = metric.get("value")
 
             if "ValueDrift" in metric_name:
-                col_name = config.get("column", "unknown")
+                col_name = config.get("column")
+                # A metric that names no column asked for -- or none at all --
+                # is not an assessment of anything. It used to be recorded as a
+                # column called "unknown" and counted toward `total_core`. The
+                # column it was meant for is caught by the cross-check below.
+                if (
+                    col_name not in metric_columns
+                    or col_name in columns_assessed
+                    or col_name in columns_skipped
+                ):
+                    logger.warning(
+                        f"{self.classifier_type}: ignored a drift metric for "
+                        f"column {col_name!r}, which was not requested or was "
+                        f"already read"
+                    )
+                    continue
                 p_value_threshold = config.get("threshold", 0.05)
                 # An unreadable value is NOT evidence of no drift. This
                 # used to coerce it to `p_value = 1.0`, which made
@@ -607,11 +685,11 @@ class DriftMonitor:
                 # below WAS read -- the statistic is undefined, not the metric
                 # broken -- so it is skipped without being called unreadable.
                 #
-                # `columns_skipped` is the WIDER of those two. It is NOT the
-                # complete set of columns this path could not use: a core column
-                # absent from the reference is in `columns_missing_from_reference`,
-                # and a `brand_*` column absent from the reference is in neither,
-                # because it never reaches `columns_to_check` (#105).
+                # `columns_skipped` is the WIDER of those two, and it also holds
+                # the input-check skips above, brand columns absent from the
+                # reference, and offered columns no metric came back for (#105).
+                # A core column absent from the reference is the exception: it
+                # is in `columns_missing_from_reference` instead.
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
                     logger.warning(
                         f"{self.classifier_type}: metric for {col_name!r} had no "
@@ -666,38 +744,49 @@ class DriftMonitor:
                         core_drifted += 1
                         details["core_metrics_drifted"].append(col_name)
 
-        # No CORE metric was assessed, so the drift score below would be a
-        # fabricated 0.0 -- `max()` of two scores neither of which measured
-        # probability or prediction.
-        #
-        # Keyed on `total_core`, not on `total_core == 0 and total_brand == 0`.
-        # The stricter form let a reference sharing only `brand_*` columns
-        # through: `columns_to_check` was non-empty so the guard above did not
-        # fire, one brand metric came back so this one did not either, and the
-        # report said HEALTHY with a 0.0 score while the log said probability
-        # and prediction had not been assessed. `_legacy_drift_check` calls that
-        # same input indeterminate; the two paths must agree.
-        #
-        # It also covers the case this guard was added for: a snapshot whose
-        # shape or `metric_name` spelling changed, yielding no readable metric
-        # at all (this code targets "v0.7+", so that has happened once). That
-        # is true only because the loop above `continue`s past an unreadable
-        # value rather than counting it as p=1.0; an earlier revision of this
-        # comment claimed the coverage while the coercion still defeated it.
-        if total_core == 0:
+        # The offered-versus-returned cross-check (#105). A column offered
+        # for measurement that is in neither record got no recognised metric
+        # back -- a renamed metric, a changed snapshot shape, a missing
+        # `config.column`. It used to be dropped with no record, leaving a
+        # HEALTHY verdict over a subset of `columns_checked`. The set difference
+        # catches it without the name test above having to be exhaustive.
+        for col in metric_columns:
+            if col not in columns_assessed and col not in columns_skipped:
+                logger.warning(
+                    f"{self.classifier_type}: no recognised drift metric came "
+                    f"back for {col!r}; it is not counted as 'no drift'"
+                )
+                columns_skipped[col] = "no metric returned"
+
+        # The coverage rule, shared with `_legacy_drift_check` (#105, D023): a
+        # core column offered and not assessed means the core verdict covers
+        # part of the core signal, and a verdict over part reads like a verdict
+        # over all of it. The union in `_core_coverage_incomplete` also covers
+        # the case the older `total_core == 0` guard was written for -- a
+        # reference sharing only `brand_*` columns, which offers no core column
+        # at all. A brand shortfall is recorded and does not reach this rule.
+        if _core_coverage_incomplete(columns_to_check, columns_assessed):
+            unassessed = _unassessed_core(columns_to_check, columns_assessed)
             logger.warning(
-                f"{self.classifier_type}: no core drift metric was usable "
+                f"{self.classifier_type}: core drift coverage is incomplete "
                 f"(columns offered: {columns_to_check}, columns skipped: "
                 f"{columns_skipped}, brand metrics assessed: {total_brand}); "
                 f"drift cannot be assessed"
             )
             # "usable", not "could be read": a metric can also come back read
-            # and non-finite (#103), and this string is the reason the operator
-            # email names. `columns_skipped` travels to the summary and the run
-            # archive as its own field (#104), not in that email. Naming the
-            # wrong cause here points the reader at a renamed metric when the
-            # real cause was a constant column.
-            details["error"] = "No core drift metrics were usable in the Evidently report"
+            # and non-finite (#103), or be skipped by an input check before any
+            # metric ran. This string is the reason the operator email names;
+            # `columns_skipped` carries the per-column reasons to the summary
+            # and the run archive (#104).
+            if total_core == 0:
+                details["error"] = (
+                    "No core drift metrics were usable in the Evidently report"
+                )
+            else:
+                details["error"] = (
+                    "Core drift metrics were not usable for: "
+                    + ", ".join(unassessed)
+                )
             details["reference_size"] = len(reference_data)
             details["current_size"] = len(current_data)
             return DriftReport(
@@ -712,6 +801,9 @@ class DriftMonitor:
 
         # Calculate drift scores
         core_drift_score = core_drifted / total_core if total_core > 0 else 0.0
+        # 0.0 with nothing assessed is not a measured zero: read it together
+        # with `brand_assessed_count`, which is 0 in that case (D023 keeps the
+        # float so the comparisons below cannot meet a None).
         brand_drift_score = brand_drifted / total_brand if total_brand > 0 else 0.0
 
         # Overall drift: triggered if any core metric drifts OR significant brand drift
@@ -992,6 +1084,37 @@ class DriftMonitor:
                 f"comparable column; drift cannot be assessed"
             )
             details["error"] = "No columns available for drift detection"
+            return DriftReport(
+                classifier_type=self.classifier_type,
+                timestamp=datetime.now(),
+                drift_detected=False,
+                drift_score=0.0,
+                threshold=self.threshold,
+                details=details,
+                indeterminate=True,
+            )
+
+        # The coverage rule shared with the Evidently path (#105, D023). The
+        # guard above catches no core column assessed; this catches some. A
+        # core column present in both frames was offered, and one the input
+        # checks rejected -- too few values after the NaN drop, or the same
+        # constant in both frames -- leaves the core verdict resting on part of
+        # the core signal. Brand shortfall is recorded and does not reach here.
+        offered_core = [
+            c
+            for c in CORE_DRIFT_COLUMNS
+            if c in current_data.columns and c in reference_data.columns
+        ]
+        if _core_coverage_incomplete(offered_core, columns_assessed):
+            unassessed = _unassessed_core(offered_core, columns_assessed)
+            logger.warning(
+                f"{self.classifier_type}: core drift columns "
+                f"{', '.join(unassessed)} were offered and not assessed; "
+                f"drift cannot be assessed"
+            )
+            details["error"] = (
+                "Core drift columns were not assessed: " + ", ".join(unassessed)
+            )
             return DriftReport(
                 classifier_type=self.classifier_type,
                 timestamp=datetime.now(),

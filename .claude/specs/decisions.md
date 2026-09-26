@@ -1866,3 +1866,38 @@ to prepare for #105.
 found that item 3 as first written let `columns_assessed=[]` and `columns_skipped={}` stand on
 returns that measured nothing. The architect reversed its plan-gate call. The human ratified the
 rule in item 3 and the changes to items 4 to 6.
+
+---
+
+## D023: Partial Core Coverage Is No Verdict, on Both Drift Paths (#105)
+
+**Status:** architect review recorded 2026-09-26. **Approved by the human on 2026-09-26:** the
+rule applies on both paths, the `min_size` floor on Evidently core columns is accepted, and a core
+column missing from the reference stays record-only.
+
+### Architect rulings on the plan
+
+1. **The verdict predicate is a union, not a replacement.** `indeterminate = bool(offered_core -
+   assessed_core) or not assessed_core`. "Any offered core column not assessed" alone is vacuously
+   false for a brand-only reference, which offers no core column, and would regress
+   `test_brand_only_reference_is_indeterminate`,
+   `test_reference_with_only_brand_columns_is_indeterminate` and
+   `test_both_paths_agree_on_a_brand_only_reference`.
+2. **Both paths adopt the rule, and both share the core skip causes.** The paths can agree on
+   indeterminacy only if their core skip causes are the same set. So the Evidently path adopts the
+   constant-in-both predicate and the per-column `min_size` floor (#94) that `_comparable_series`
+   applies on the legacy path. The floor on Evidently is a second live-path verdict change: a window
+   whose `novelty_score` falls below the floor after the NaN drop becomes indeterminate.
+3. **`brand_drift_score` stays `0.0` when no brand column is assessed.** `None` would raise at the
+   `brand_drift_score > threshold` and `max(...)` sites on both paths when no core metric drifted.
+   `brand_assessed_count == 0` is the signal that separates 0-of-0 from an honest zero.
+4. **A core column missing from the reference stays record-only.** The principle: #105 targets
+   *silent* coverage drops. Missing-from-reference is already loud: it is logged, it has its own
+   field, and `--create-reference` fixes it. This departs from the issue's literal "if it touches a
+   core column, indeterminate" and is put to the human.
+5. **A recognised metric with no usable `config.column` is a skip, not an assessment.** It no longer
+   enters `columns_assessed` as `"unknown"` or counts toward `total_core`.
+6. **One iteration.** If scope had to be cut, the brand-score representation would go first.
+
+**Forward note.** When EP drift resumes, its first windows are likely small and NaN-heavy. Under
+this rule they read UNKNOWN rather than as a verdict.
