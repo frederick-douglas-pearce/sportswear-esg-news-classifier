@@ -519,3 +519,57 @@ class TestSummaryCarriesObservedSpan:
 
         summary = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
         assert summary["reference_observed"] == {"start": "a", "end": "b"}
+
+
+class TestSummaryCarriesCoverage:
+    """The coverage record reaches the summary the workflow reads (#104, D022)."""
+
+    COVERAGE = {
+        "columns_assessed": ["probability"],
+        "columns_skipped": {"prediction": "constant in both frames"},
+        "columns_missing_from_reference": ["novelty_score"],
+        "metrics_unreadable": ["brand_nike"],
+        "columns_checked": ["probability", "prediction", "brand_nike"],
+    }
+
+    def _summary(self, monitor_drift, capsys, report, exit_code):
+        monitor_drift.print_summary_json(report, exit_code)
+        return json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+    def test_carried_on_a_verdict(self, monitor_drift, capsys):
+        report = make_report()
+        report.details.update(self.COVERAGE)
+
+        summary = self._summary(monitor_drift, capsys, report, EXIT_NO_DRIFT)
+
+        for key, value in self.COVERAGE.items():
+            assert summary[key] == value
+
+    def test_carried_on_an_indeterminate_run(self, monitor_drift, capsys):
+        report = make_report(indeterminate=True, error="Insufficient data for drift analysis")
+        report.details.update(self.COVERAGE)
+
+        summary = self._summary(monitor_drift, capsys, report, EXIT_INDETERMINATE)
+
+        assert summary["columns_missing_from_reference"] == ["novelty_score"]
+        assert summary["columns_skipped"] == {"prediction": "constant in both frames"}
+
+    def test_every_key_is_present_and_absent_reads_as_none(self, monitor_drift, capsys):
+        """Presence is guaranteed here, whatever a return path populated."""
+        from src.mlops.monitoring import COVERAGE_KEYS, OFFERED_KEY
+
+        summary = self._summary(monitor_drift, capsys, make_report(), EXIT_NO_DRIFT)
+
+        for key in (*COVERAGE_KEYS, OFFERED_KEY):
+            assert key in summary
+            assert summary[key] is None
+
+    def test_empty_is_not_turned_into_none(self, monitor_drift, capsys):
+        """[] is a measurement; it must not collapse into "not recorded"."""
+        report = make_report()
+        report.details.update({"columns_skipped": {}, "metrics_unreadable": []})
+
+        summary = self._summary(monitor_drift, capsys, report, EXIT_NO_DRIFT)
+
+        assert summary["columns_skipped"] == {}
+        assert summary["metrics_unreadable"] == []
