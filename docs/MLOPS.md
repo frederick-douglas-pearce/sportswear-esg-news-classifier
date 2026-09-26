@@ -119,14 +119,14 @@ DRIFT MONITORING REPORT - FP
 
 Timestamp: 2025-12-29 10:30:45
 Drift Detected: NO
-Drift Score: 0.0523 (threshold: 0.1000)
+Drift Score: 0.0000 (threshold: 0.1000)
 
 HTML Report: reports/monitoring/fp/drift_report_20251229_103045.html
 
 ============================================================
 ✅ Status: Healthy - no significant drift detected
 --- drift summary (machine-readable) ---
-{"classifier": "fp", "exit_code": 0, "indeterminate": false, "drift_detected": false, "drift_score": 0.0523, "threshold": 0.1, "error": null, "reference_window": {...}, "reference_observed": {...}, "reference_overlaps_current": false, "columns_assessed": [...], "columns_skipped": {}, "columns_missing_from_reference": [], "metrics_unreadable": [], "columns_checked": [...]}
+{"classifier": "fp", "exit_code": 0, "indeterminate": false, "drift_detected": false, "drift_score": 0.0, "threshold": 0.1, "error": null, "reference_window": {...}, "reference_observed": {...}, "reference_overlaps_current": false, "columns_assessed": [...], "columns_skipped": {}, "columns_missing_from_reference": [], "metrics_unreadable": [], "columns_checked": [...]}
 ```
 
 The last line is a single-line JSON summary the `drift_monitoring` workflow consumes via
