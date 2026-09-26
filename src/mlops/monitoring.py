@@ -49,8 +49,12 @@ CORE_DRIFT_COLUMNS = ["probability", "prediction", "novelty_score"]
 # An empty list or dict means that measurement ran and found nothing; `None`
 # means it did not run on the path that returned, or was not recorded. So the
 # early returns that never reach per-column assessment carry `None` for
-# `columns_assessed` and `columns_skipped`, and `metrics_unreadable` -- about an
-# Evidently metric snapshot -- is `None` wherever no snapshot was produced.
+# `columns_assessed`, and the no-reference and sample-floor returns carry `None`
+# for `columns_skipped` too. The Evidently no-common-columns return is the
+# exception for `columns_skipped`: it checks brand columns against the
+# reference first, so it carries that measurement (D023, amending D022 item 3).
+# `metrics_unreadable` -- about an Evidently metric snapshot -- is `None`
+# wherever no snapshot was produced.
 COVERAGE_KEYS = (
     "columns_assessed",
     "columns_skipped",
@@ -946,9 +950,12 @@ class DriftMonitor:
         # fields reach the summary and the run archive (#104), and both paths
         # fill them. `columns_assessed` also drives the verdict: an offered core
         # column missing from it makes the report indeterminate, below
-        # (`_core_coverage_incomplete`, #105, D023). The two paths share their
-        # core skip causes but not their brand ones, so a `brand_*` entry's
-        # reason can differ between them.
+        # (`_core_coverage_incomplete`, #105, D023). The two paths apply the
+        # same input checks to core columns, so they reject the same core
+        # inputs; the Evidently path can also skip a core column after its
+        # metric runs (unreadable, non-finite, or no metric returned). Their
+        # brand input checks differ, so a `brand_*` entry's reason can differ
+        # between them.
         columns_assessed: list[str] = []
         columns_skipped: dict[str, str] = {}
         details["columns_assessed"] = columns_assessed

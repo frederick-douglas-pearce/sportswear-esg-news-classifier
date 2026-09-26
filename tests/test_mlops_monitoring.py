@@ -3160,10 +3160,32 @@ class TestRoundOneReviewOf105:
         assert "prediction" in report.details["columns_skipped"]
         assert report.indeterminate is True
 
-    def test_a_metric_for_a_column_not_requested_is_not_an_assessment(
+    def test_a_metric_for_a_column_never_offered_is_not_an_assessment(
         self, mock_mlops_settings_enabled
     ):
-        """A metric for a column the input check rejected must not revive it."""
+        """The "not requested" clause, on a column in neither record.
+
+        `brand_ghost` was never offered and never skipped, so only the
+        `col_name not in metric_columns` clause can stop it. Counted, its
+        drifting p-value would make a brand-only drift verdict out of nothing.
+        """
+        current, reference = _frames()
+        metrics = [*(_metric(c, 0.9) for c in ALL_CORE), _metric("brand_ghost", 0.001)]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert "brand_ghost" not in report.details["columns_assessed"]
+        assert "brand_ghost" not in report.details["columns_skipped"]
+        assert report.details["brand_assessed_count"] == 0
+        assert report.drift_detected is False
+        assert report.indeterminate is False
+
+    def test_a_metric_for_a_column_the_input_check_rejected_does_not_revive_it(
+        self, mock_mlops_settings_enabled
+    ):
+        """Caught by the `columns_skipped` clause, since the column is already there."""
         mock_mlops_settings_enabled.drift_min_sample_size = 30
         novelty = np.full(40, np.nan)
         novelty[:5] = [0.1, 0.2, 0.3, 0.4, 0.5]

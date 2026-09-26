@@ -135,11 +135,13 @@ incomplete, or inconsistent with the exit code is treated as `unknown` rather th
 
 The summary also names what the check assessed (issue #104): `columns_assessed`, `columns_skipped`,
 `columns_missing_from_reference`, `metrics_unreadable`, and `columns_checked` (the columns offered
-to the Evidently report). Every summary carries every key; a run that fails before printing a
+for comparison on the Evidently path, before its per-column input checks). Every summary carries every key; a run that fails before printing a
 summary has none. An empty list or object means that measurement ran and found nothing. `null` means
 it did not run on the path taken, or was not recorded. For example, a run with no reference or too
-few rows, or an Evidently run with no column in common, never reaches per-column assessment, so its
-`columns_assessed` and `columns_skipped` are `null`. `metrics_unreadable` is `null` wherever no
+few rows never reaches per-column assessment, so its `columns_assessed` and `columns_skipped` are
+`null`. An Evidently run with no column in common also has `columns_assessed` of `null`, but it
+checks brand columns against the reference first, so its `columns_skipped` records any the
+reference lacks (`{}` when there are none; #105). `metrics_unreadable` is `null` wherever no
 Evidently metric snapshot was produced, and `columns_missing_from_reference` is `null` when there is
 no reference to compare against. The agent workflow copies these fields into its context, report and
 run archive. The drift alert includes whichever of them name something not assessed. The fields are
