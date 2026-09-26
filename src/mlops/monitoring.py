@@ -58,10 +58,12 @@ COVERAGE_KEYS = (
     "metrics_unreadable",
 )
 
-# The columns offered to the Evidently report -- the other half of #105's
-# offered-versus-assessed comparison. Kept apart from COVERAGE_KEYS because it
-# says what was asked, not what was answered. `None` on the legacy path, which
-# has no separate offered set.
+# The columns offered for comparison on the Evidently path -- core columns in
+# both frames plus the `brand_*` columns the reference has -- before the
+# per-column input checks, so not every one reaches the Evidently report. The
+# other half of #105's offered-versus-assessed comparison. Kept apart from
+# COVERAGE_KEYS because it says what was asked, not what was answered. `None`
+# on the legacy path, which has no separate offered set.
 OFFERED_KEY = "columns_checked"
 
 
@@ -559,7 +561,15 @@ class DriftMonitor:
                     "reference_columns": sorted(reference_data.columns),
                     "current_columns": sorted(current_data.columns),
                     "columns_assessed": None,
-                    "columns_skipped": None,
+                    # Per-column assessment never ran, but the brand check
+                    # against the reference did, so its result is a
+                    # measurement: `{}` when every brand column was there
+                    # (#105, D023 amending D022 item 3). Without this, a brand
+                    # column the reference lacks is recorded in no field on
+                    # this return, where the legacy path records it.
+                    "columns_skipped": {
+                        col: "not in reference" for col in brand_not_in_reference
+                    },
                     "columns_missing_from_reference": _missing_from_reference(
                         current_data, reference_data
                     ),
@@ -671,10 +681,11 @@ class DriftMonitor:
                 p_value_threshold = config.get("threshold", 0.05)
                 # An unreadable value is NOT evidence of no drift. This
                 # used to coerce it to `p_value = 1.0`, which made
-                # `col_drift` False AND counted the metric toward
-                # `total_core` -- so the `total_core == 0` guard below could
-                # not fire, and the run reported a measured-looking 0.0 built
-                # from a metric nobody could read. Skip it and say so.
+                # `col_drift` False AND counted the metric as assessed -- so
+                # the verdict guard below (then `total_core == 0`, now the
+                # coverage rule `_core_coverage_incomplete`) could not fire,
+                # and the run reported a measured-looking 0.0 built from a
+                # metric nobody could read. Skip it and say so.
                 # Two sequential guards, not one three-clause condition. The
                 # second is unreachable for a non-number *structurally*, so a
                 # later edit cannot break the ordering by reordering clauses.
@@ -778,6 +789,14 @@ class DriftMonitor:
             # metric ran. This string is the reason the operator email names;
             # `columns_skipped` carries the per-column reasons to the summary
             # and the run archive (#104).
+            # The brand aggregates the legacy path writes before its own
+            # indeterminate return, so a brand measurement is not lost with
+            # the verdict.
+            details["brand_drift_score"] = (
+                brand_drifted / total_brand if total_brand > 0 else 0.0
+            )
+            details["brand_drifted_count"] = brand_drifted
+            details["brand_assessed_count"] = total_brand
             if total_core == 0:
                 details["error"] = (
                     "No core drift metrics were usable in the Evidently report"
@@ -924,13 +943,12 @@ class DriftMonitor:
         drift_scores = []
 
         # What was actually measured, as opposed to what was offered. Both
-        # fields carry the same TYPES on the Evidently path, but not the same
-        # coverage: that path still drops a brand column absent from the
-        # reference silently, so the two are not like-for-like and #105's
-        # cross-check will have to say which path it is reading. Both reach
-        # the summary and the run archive (#104). Introduced here
-        # as a plain record -- it must NOT drive indeterminacy, which is
-        # #105's call, not this one's (D017).
+        # fields reach the summary and the run archive (#104), and both paths
+        # fill them. `columns_assessed` also drives the verdict: an offered core
+        # column missing from it makes the report indeterminate, below
+        # (`_core_coverage_incomplete`, #105, D023). The two paths share their
+        # core skip causes but not their brand ones, so a `brand_*` entry's
+        # reason can differ between them.
         columns_assessed: list[str] = []
         columns_skipped: dict[str, str] = {}
         details["columns_assessed"] = columns_assessed

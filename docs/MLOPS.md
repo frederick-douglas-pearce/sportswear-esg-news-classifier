@@ -184,7 +184,8 @@ and the legacy code paths, and neither removes the need to regenerate:
   rows to compute a statistic is not enough for it to mean anything. A whole *frame* below the
   floor — the reference and the current window are checked independently — returns `indeterminate`
   rather than healthy. A single *column* below it, counted after its NaN are dropped, is skipped
-  and recorded, and the check still returns a verdict from whatever else it could measure;
+  and recorded. For a `brand_*` column the check still returns a verdict from whatever else it
+  could measure; for a core column the result is `indeterminate`, on both paths (#105);
 - **no reference dataset at all** returns `indeterminate` as well. This used to split the current
   window in half and compare the halves -- two samples from one window, which agree by
   construction and so always read as "no drift". Use `--create-reference` to establish a

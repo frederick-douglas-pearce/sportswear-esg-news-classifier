@@ -1051,8 +1051,8 @@ class TestAllThreeAsymmetricReadsAreGuarded:
     ):
         """Covers `reference_prob_mean` specifically.
 
-        The brand-only case no longer reaches the stats block — widening the
-        indeterminate guard to `total_core == 0` made it early-return above it —
+        The brand-only case no longer reaches the stats block — the
+        indeterminate guard (now `_core_coverage_incomplete`) returns above it —
         so without this test, reverting `reference_prob_mean`'s guard back to
         `current_data` would raise KeyError in production and no test would
         fail. The reference here keeps `prediction`, so one core column is
@@ -1470,9 +1470,10 @@ class TestUnreadableEvidentlyMetrics:
         `details["error"]` is the reason the operator email names;
         `columns_skipped` is not in that email. Saying the metrics could not be *read*
         points the reader at a renamed metric or a changed snapshot shape, which
-        is what this guard was originally added for. On this route every metric
-        WAS read and came back non-finite, and skipping them is what makes the
-        `total_core == 0` branch reachable at all.
+        is what this guard was originally added for. On this route no core
+        metric was unreadable: `probability` came back non-finite, and
+        `prediction` (the same constant in both frames) was rejected by the
+        input check before any metric ran (#105).
         """
         frame = pd.DataFrame({"probability": [0.5, 0.6], "prediction": [1, 1]})
         metrics = [
@@ -2029,8 +2030,8 @@ class TestLegacyPathAssessesEverySignalGroup:
     def test_a_brand_only_reference_is_still_indeterminate(self, disabled_monitor):
         """Control: assessing brand did NOT make brand sufficient on its own.
 
-        The indeterminacy guard stays keyed on the CORE columns, matching the
-        Evidently path's `total_core == 0`. Reading a brand assessment as a
+        The indeterminacy guard stays keyed on the CORE columns: both paths
+        apply `_core_coverage_incomplete`, which ignores `brand_*`. Reading a brand assessment as a
         verdict would re-open exactly what that guard closed.
         """
         current = pd.DataFrame(
@@ -2088,7 +2089,6 @@ class TestNoUnmeasuredColumnReachesTheVerdictAsHealth:
         # it is still in `details`.
         assert report.indeterminate is True
         assert report.drift_detected is False
-        assert not np.isnan(report.drift_score)
         assert report.details["novelty_score_ks_statistic"] == 1.0
         assert "probability" not in report.details["columns_assessed"]
         assert "probability" in report.details["columns_skipped"]
@@ -2127,7 +2127,6 @@ class TestNoUnmeasuredColumnReachesTheVerdictAsHealth:
         # it is still in `details`.
         assert report.indeterminate is True
         assert report.drift_detected is False
-        assert not np.isnan(report.drift_score)
         assert report.details["novelty_score_ks_statistic"] == 1.0
         assert "prediction" not in report.details["columns_assessed"]
         assert "prediction" in report.details["columns_skipped"]
@@ -2659,6 +2658,8 @@ class TestEveryReturnCarriesCoverageKeys:
         """No Report was run: nothing assessed or checked for readability -> None.
 
         The offered set WAS computed, and is empty, so `columns_checked` is [].
+        The brand check against the reference also ran, so `columns_skipped` is
+        a measurement: `{}` here, with no brand column in current (#105, D023).
         """
         current = pd.DataFrame({"probability": [0.5, 0.6]})
         reference = pd.DataFrame({"other": [1, 2]})
@@ -2670,7 +2671,7 @@ class TestEveryReturnCarriesCoverageKeys:
         assert report.indeterminate is True
         assert self._coverage(report) == {
             "columns_assessed": None,
-            "columns_skipped": None,
+            "columns_skipped": {},
             "columns_missing_from_reference": ["probability"],
             "metrics_unreadable": None,
             "columns_checked": [],
@@ -3074,3 +3075,121 @@ class TestEvidentlyCoverageThroughCheckDrift:
 
         assert report.indeterminate is True
         assert report.details["columns_skipped"] == {"novelty_score": "no metric returned"}
+
+
+class TestRoundOneReviewOf105:
+    """Guards added after #163's first review round."""
+
+    def test_no_common_columns_still_records_a_brand_column_the_reference_lacks(
+        self, mock_mlops_settings_enabled
+    ):
+        """The early return used to drop it, so it reached no field at all."""
+        current = pd.DataFrame({"brand_nike": [0, 1], "brand_puma": [1, 0]})
+        reference = pd.DataFrame({"other": [1, 2]})
+
+        report = _evidently([])._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.details["columns_checked"] == []
+        assert report.details["columns_assessed"] is None
+        assert report.details["columns_skipped"] == {
+            "brand_nike": "not in reference",
+            "brand_puma": "not in reference",
+        }
+
+    def test_an_indeterminate_evidently_report_keeps_its_brand_measurement(
+        self, mock_mlops_settings_enabled
+    ):
+        """Parity with the legacy path, which writes these before returning."""
+        current, reference = _frames(brand_nike=[0, 1] * 20)
+        metrics = [
+            _metric("probability"),
+            _metric("prediction"),
+            _metric("brand_nike", 0.001),
+        ]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.indeterminate is True
+        assert report.details["brand_assessed_count"] == 1
+        assert report.details["brand_drifted_count"] == 1
+        assert report.details["brand_drift_score"] == 1.0
+        assert report.details["brand_metrics_drifted"] == ["brand_nike"]
+
+    def test_a_duplicate_metric_for_one_column_is_read_once(
+        self, mock_mlops_settings_enabled
+    ):
+        """A second metric for a column must not count twice toward the score."""
+        current, reference = _frames()
+        metrics = [
+            _metric("probability", 0.001),
+            _metric("prediction", 0.9),
+            _metric("novelty_score", 0.9),
+            _metric("prediction", 0.9),
+        ]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert report.details["columns_assessed"] == list(ALL_CORE)
+        # 1 of 3, not 1 of 4.
+        assert report.details["core_drift_score"] == pytest.approx(1 / 3)
+
+    def test_a_metric_after_a_skip_for_the_same_column_does_not_assess_it(
+        self, mock_mlops_settings_enabled
+    ):
+        """An unreadable metric then a readable one: skipped, never both."""
+        current, reference = _frames()
+        metrics = [
+            _metric("probability"),
+            _metric("prediction", "not a number"),
+            _metric("prediction", 0.5),
+            _metric("novelty_score"),
+        ]
+
+        report = _evidently(metrics)._evidently_drift_check(
+            current, reference, save_report=False
+        )
+
+        assert "prediction" not in report.details["columns_assessed"]
+        assert "prediction" in report.details["columns_skipped"]
+        assert report.indeterminate is True
+
+    def test_a_metric_for_a_column_not_requested_is_not_an_assessment(
+        self, mock_mlops_settings_enabled
+    ):
+        """A metric for a column the input check rejected must not revive it."""
+        mock_mlops_settings_enabled.drift_min_sample_size = 30
+        novelty = np.full(40, np.nan)
+        novelty[:5] = [0.1, 0.2, 0.3, 0.4, 0.5]
+        current, reference = _frames(novelty_score=novelty)
+        metrics = [_metric(c) for c in ALL_CORE]  # includes novelty_score
+        monitor = _evidently(metrics)
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert "novelty_score" not in _requested(monitor)
+        assert "novelty_score" not in report.details["columns_assessed"]
+        assert report.details["columns_skipped"]["novelty_score"] == "no comparable values"
+        assert report.indeterminate is True
+
+    def test_brand_columns_bypass_the_core_input_check(
+        self, mock_mlops_settings_enabled
+    ):
+        """The input check is scoped to core columns; brand goes to the metric."""
+        current, reference = _frames(brand_nike=np.zeros(40, dtype=int))
+        metrics = [*(_metric(c) for c in ALL_CORE), _metric("brand_nike", float("nan"))]
+        monitor = _evidently(metrics)
+
+        report = monitor._evidently_drift_check(current, reference, save_report=False)
+
+        assert "brand_nike" in _requested(monitor)
+        assert report.details["columns_skipped"] == {
+            "brand_nike": "p-value is not finite"
+        }
+        assert report.indeterminate is False

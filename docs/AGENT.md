@@ -378,13 +378,15 @@ of `drift_scores` and out of the brand denominator rather than scored as "not dr
 
 ⚠ **The two paths do not populate `columns_skipped` for the same reasons, so it is not a
 like-for-like field between them.** The legacy path records a column it declined to test, for
-whatever reason it declined, and names the cause. The Evidently path sees only a returned scalar,
-so it records what it observed — a value it could not read, or one that is not finite — and never
-why; an entry reading `p-value is not finite` on that path may have been produced by any of the
-causes the legacy path distinguishes. Since #105 the two paths share the input checks for core
-columns (`no comparable values`), both record a `brand_*` column absent from the reference as
-`not in reference`, and the Evidently path records an offered column that got no recognised metric
-back as `no metric returned`.
+whatever reason it declined, and names the cause. Since #105 the Evidently path does too for
+anything it can decide before a metric runs: core columns go through the same input checks as on
+the legacy path (`no comparable values`), a `brand_*` column absent from the reference is
+`not in reference` on both paths, and an offered column that got no recognised metric back is
+`no metric returned`. After a metric runs, the Evidently path sees only the returned scalar, so it
+records what it observed — a value it could not read, or one that is not finite — and not why. An
+entry reading `p-value is not finite` there is on a `brand_*` column in practice, since core
+columns with no comparable values are rejected before the metric; its cause could be any the
+legacy path distinguishes for brand columns.
 
 ⚠ **Which of the two paths a given deployment actually takes is not recorded anywhere in the
 report.** It depends on the environment, and the `ImportError` fallback can change it without
@@ -413,8 +415,9 @@ a statistic is not enough rows for it to mean anything. Two scopes, two outcomes
 
 - a whole **frame** below the floor -- the reference and the current window are checked
   independently -- makes the verdict `indeterminate`, not healthy;
-- a single **column** below it, counted after its NaN are dropped, is skipped and recorded, and
-  the check still returns a verdict from whatever else it could measure.
+- a single **column** below it, counted after its NaN are dropped, is skipped and recorded. For a
+  `brand_*` column the check still returns a verdict from whatever else it could measure; for a
+  core column the result is `indeterminate`, on both paths (#105).
 
 ⚠ **A rare `brand_*` column is NOT filtered out for being rare**, and this is deliberate.
 `brand_li-ning` carries 3 positives in the shipped 934-row reference; against a quiet week it

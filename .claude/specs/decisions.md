@@ -1901,3 +1901,18 @@ column missing from the reference stays record-only.
 
 **Forward note.** When EP drift resumes, its first windows are likely small and NaN-heavy. Under
 this rule they read UNKNOWN rather than as a verdict.
+
+### Code-review round 1 (2026-09-26, human decisions on the architect's scope ruling)
+
+1. **D022 item 3 is amended for one return.** The Evidently path's no-common-columns return now
+   carries `columns_skipped` as a measurement: each `brand_*` column the reference lacks is
+   recorded as `not in reference`, and the value is `{}` when there is none. That is because the
+   brand-against-reference check runs before that return. `columns_assessed` stays `None` there,
+   since per-column assessment never ran. Without this, such a column reached no field on that
+   return, while the legacy path records it.
+2. **The Evidently coverage-incomplete return carries the brand aggregates**
+   (`brand_drift_score`, `brand_drifted_count`, `brand_assessed_count`), matching the legacy path.
+3. **Deferred to a follow-up issue:** a `brand_*` column constant in both frames is skipped on the
+   legacy path ("one category in both frames") but sent to the metric on the Evidently path. So the
+   brand denominators can differ between the paths. The path parity in item 2 above covers core
+   skip causes only.
