@@ -394,16 +394,16 @@ it. Tracked as #136.
 machine-readable summary carries `columns_assessed`, `columns_skipped`,
 `columns_missing_from_reference`, `metrics_unreadable` and `columns_checked` (the offered set, on
 the Evidently path). `_run_drift_check` starts the context with each one as `<classifier>_<field>`
-set to `None`, and copies the value in whenever a summary was read, on any verdict. `generate_drift_report` puts them
-in that classifier's section, and the run archive stores both the context and the report. When
-coverage is partial, the console summary prints a NOTE, on any verdict. When the verdict is
-`degraded`, the drift alert's details include the fields that name something not assessed. A field
-of an unexpected type is left out of both rather than failing the run.
+set to `None`, and copies the value in whenever a summary was read, on any verdict.
+`generate_drift_report` puts them in that classifier's section, and the run archive stores both the
+context and the report. When coverage is partial, the console summary prints a NOTE, on any verdict.
+When the verdict is `degraded`, the drift alert's details include the fields that name something not
+assessed. A field of an unexpected type is left out of both rather than failing the run.
 
-Read `null` as "that measurement did not run on this path, or was not recorded", and an empty
-value as "it ran and found nothing". An archive auditor must not read `null` as zero. The fields are a record: they are not
-in `REQUIRED_SUMMARY_FIELDS`, `_validate_summary` does not check them, and partial coverage does
-not change the verdict. Deciding what it should mean for the verdict is #105.
+Read `null` as "that measurement did not run on this path, or was not recorded", and an empty value
+as "it ran and found nothing". An archive auditor must not read `null` as zero. The fields are a
+record: they are not in `REQUIRED_SUMMARY_FIELDS`, `_validate_summary` does not check them, and
+partial coverage does not change the verdict. Deciding what it should mean for the verdict is #105.
 
 **Minimum sample size** (`DRIFT_MIN_SAMPLE_SIZE`, default 30 -- issue #94). Enough rows to compute
 a statistic is not enough rows for it to mean anything. Two scopes, two outcomes:
