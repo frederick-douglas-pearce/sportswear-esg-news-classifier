@@ -3163,12 +3163,7 @@ class TestRoundOneReviewOf105:
     def test_a_metric_for_a_column_never_offered_is_not_an_assessment(
         self, mock_mlops_settings_enabled
     ):
-        """The "not requested" clause, on a column in neither record.
-
-        `brand_ghost` was never offered and never skipped, so only the
-        `col_name not in metric_columns` clause can stop it. Counted, its
-        drifting p-value would make a brand-only drift verdict out of nothing.
-        """
+        """A metric for a column that was never offered is not assessed."""
         current, reference = _frames()
         metrics = [*(_metric(c, 0.9) for c in ALL_CORE), _metric("brand_ghost", 0.001)]
 
@@ -3185,7 +3180,7 @@ class TestRoundOneReviewOf105:
     def test_a_metric_for_a_column_the_input_check_rejected_does_not_revive_it(
         self, mock_mlops_settings_enabled
     ):
-        """Caught by the `columns_skipped` clause, since the column is already there."""
+        """A metric for a column the input check rejected does not bring it back."""
         mock_mlops_settings_enabled.drift_min_sample_size = 30
         novelty = np.full(40, np.nan)
         novelty[:5] = [0.1, 0.2, 0.3, 0.4, 0.5]
