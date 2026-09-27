@@ -30,6 +30,24 @@ TITLE_SIMILARITY_THRESHOLD = 0.90
 # Error types that are transient (API/network issues) — articles should stay pending for retry
 TRANSIENT_ERROR_TYPES = {"server_error", "timeout", "connection", "rate_limit"}
 
+# Lead phrase of an FP skip reason, keyed on the prediction's own confidence_level
+# (stored as risk_level). The phrase states the band and nothing else: how far
+# below the threshold the article fell is carried by the numbers after it. The
+# band string from the API is never interpolated, so the reason stays within the
+# skip_reason column's length. See D024.
+_FP_SKIP_LEADS = {
+    "low": "Likely false positive (low risk)",
+    "medium": "Uncertain skip (medium risk)",
+    "high": "Below FP threshold (high risk)",
+}
+_FP_SKIP_LEAD_UNKNOWN = "Below FP threshold (risk band unknown)"
+
+
+def _fp_skip_reason(probability: float, threshold: float, confidence_level: str | None) -> str:
+    """Human-readable reason for an FP skip. Not a filter key - see D024."""
+    lead = _FP_SKIP_LEADS.get(confidence_level, _FP_SKIP_LEAD_UNKNOWN)
+    return f"{lead}: probability {probability:.3f} < threshold {threshold}"
+
 
 @dataclass
 class LabelingStats:
@@ -59,6 +77,8 @@ class LabelingStats:
     # FP classifier stats
     fp_classifier_calls: int = 0
     fp_classifier_skipped: int = 0
+    # Skips outside the `low` band (medium, high, or no band): a subset of fp_classifier_skipped
+    fp_classifier_skipped_not_low: int = 0
     fp_classifier_continued: int = 0
     fp_classifier_errors: int = 0
 
@@ -412,9 +432,8 @@ class LabelingPipeline:
                     )
                 else:
                     action = "skipped_llm"
-                    skip_reason = (
-                        f"High-confidence false positive: probability {result.probability:.3f} "
-                        f"< threshold {threshold}"
+                    skip_reason = _fp_skip_reason(
+                        result.probability, threshold, result.confidence_level
                     )
                     logger.info(f"Article {article_id}: Skipping LLM - {skip_reason}")
 
@@ -668,6 +687,8 @@ class LabelingPipeline:
                         stats.fp_classifier_calls += 1
                         if result.get("fp_classifier_skipped"):
                             stats.fp_classifier_skipped += 1
+                            if result.get("fp_classifier_skipped_not_low"):
+                                stats.fp_classifier_skipped_not_low += 1
                         elif result.get("fp_classifier_continued"):
                             stats.fp_classifier_continued += 1
                         elif result.get("fp_classifier_error"):
@@ -794,6 +815,7 @@ class LabelingPipeline:
             # FP classifier tracking
             "fp_classifier_called": False,
             "fp_classifier_skipped": False,
+            "fp_classifier_skipped_not_low": False,
             "fp_classifier_continued": False,
             "fp_classifier_error": False,
         }
@@ -831,13 +853,16 @@ class LabelingPipeline:
             result["fp_classifier_called"] = True
             if fp_prediction.action_taken == "skipped_llm":
                 result["fp_classifier_skipped"] = True
+                result["fp_classifier_skipped_not_low"] = (
+                    fp_prediction.confidence_level != "low"
+                )
             elif fp_prediction.action_taken == "continued_to_llm":
                 result["fp_classifier_continued"] = True
             elif fp_prediction.action_taken == "failed":
                 result["fp_classifier_error"] = True
 
         if not should_continue:
-            # High-confidence false positive - skip LLM labeling
+            # Below the FP threshold - skip LLM labeling
             logger.info(
                 f"Article {article_id} marked as false_positive by FP classifier"
             )

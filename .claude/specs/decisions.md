@@ -1916,3 +1916,30 @@ this rule they read UNKNOWN rather than as a verdict.
    legacy path ("one category in both frames") but sent to the metric on the Evidently path. So the
    brand denominators can differ between the paths. The path parity in item 2 above covers core
    skip causes only.
+
+## D024: An FP Skip Reason States the Stored Risk Band and the Numbers, Nothing Else (#116)
+
+**Date:** 2026-09-27 · **Context:** architect review of the #116 plan (dev loop, plan gate pending).
+
+Every FP skip wrote a fixed "High-confidence false positive" reason, whatever the prediction's own
+`confidence_level` (stored as `risk_level`) said. Scope is issue fix items 1 and 3 only; routing
+medium-band skips to the LLM is #142's.
+
+1. **Key the wording on the stored band, not on the margin to the threshold.** A margin rule needs a
+   new "near" width — another cut point for #141 to re-tune. The band keeps the text and `risk_level`
+   in agreement by construction. The pipeline does not import the API's band edges.
+2. **The text asserts only the band; the printed numbers carry the distance.** Lead phrases from a
+   fixed map: `low` → "Likely false positive (low risk)", `medium` → "Uncertain skip (medium risk)",
+   `high` → "Below FP threshold (high risk)", anything else → "Below FP threshold (risk band unknown)",
+   rendered as `<lead>: probability P < threshold T`. Rejected: "low confidence" (reads as low
+   confidence in the skip, the inverse of the band's meaning) and "near threshold" (a distance claim
+   the band cannot support). The raw API string is never interpolated.
+3. **`skip_reason` is human-readable text, never a filter key.** Consumers filter on `action_taken`,
+   `risk_level`, `probability` and `threshold_used`. Historical rows keep the old wording; no backfill.
+4. **The medium-risk skip count travels the existing stdout channel** into the `daily_labeling` report,
+   as a subset of `Skipped LLM`. No new stored field: the eval-calibration stories query
+   `classifier_predictions` directly.
+
+**Amendment (human, plan gate, same day):** the count in item 4 is of skips **not in the `low` band** —
+medium, high, or band unknown — rather than medium only. A skip threshold above 0.6 is plausible after a
+retrain, and a `high`-band or unbanded skip is at least as worth counting as a medium one.

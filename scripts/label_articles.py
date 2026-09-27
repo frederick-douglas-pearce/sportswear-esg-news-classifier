@@ -213,6 +213,35 @@ def exit_code_for(stats) -> int:
     return EXIT_FAILURE
 
 
+def print_fp_classifier_stats(stats) -> None:
+    """Print the FP pre-filter block of the run summary.
+
+    The daily_labeling workflow parses these lines by substring, so a new line
+    must not contain the text of an existing label (e.g. "Skipped LLM:").
+
+    Args:
+        stats: LabelingStats from the pipeline
+    """
+    if stats.fp_classifier_calls <= 0:
+        return
+    print("\n=== FP Classifier Pre-filter ===")
+    print(f"FP classifier calls:    {stats.fp_classifier_calls}")
+    print(f"Skipped LLM:            {stats.fp_classifier_skipped}")
+    print(f"  of which not low risk: {stats.fp_classifier_skipped_not_low}")
+    print(f"Continued to LLM:       {stats.fp_classifier_continued}")
+    if stats.fp_classifier_errors > 0:
+        print(f"Classifier errors:      {stats.fp_classifier_errors}")
+    # Calculate cost savings estimate
+    if stats.fp_classifier_skipped > 0:
+        # Estimate ~1500 input tokens and ~500 output tokens per skipped article
+        saved_input = stats.fp_classifier_skipped * 1500
+        saved_output = stats.fp_classifier_skipped * 500
+        saved_input_cost = (saved_input / 1_000_000) * LLM_INPUT_COST_PER_MTOK
+        saved_output_cost = (saved_output / 1_000_000) * LLM_OUTPUT_COST_PER_MTOK
+        saved_cost = saved_input_cost + saved_output_cost
+        print(f"Est. LLM cost saved:    ${saved_cost:.4f}")
+
+
 def main() -> int:
     """Main entry point."""
     args = parse_args()
@@ -294,22 +323,7 @@ def main() -> int:
         print(f"Output tokens:          {stats.output_tokens}")
 
         # FP Classifier stats
-        if stats.fp_classifier_calls > 0:
-            print("\n=== FP Classifier Pre-filter ===")
-            print(f"FP classifier calls:    {stats.fp_classifier_calls}")
-            print(f"Skipped LLM:            {stats.fp_classifier_skipped}")
-            print(f"Continued to LLM:       {stats.fp_classifier_continued}")
-            if stats.fp_classifier_errors > 0:
-                print(f"Classifier errors:      {stats.fp_classifier_errors}")
-            # Calculate cost savings estimate
-            if stats.fp_classifier_skipped > 0:
-                # Estimate ~1500 input tokens and ~500 output tokens per skipped article
-                saved_input = stats.fp_classifier_skipped * 1500
-                saved_output = stats.fp_classifier_skipped * 500
-                saved_input_cost = (saved_input / 1_000_000) * LLM_INPUT_COST_PER_MTOK
-                saved_output_cost = (saved_output / 1_000_000) * LLM_OUTPUT_COST_PER_MTOK
-                saved_cost = saved_input_cost + saved_output_cost
-                print(f"Est. LLM cost saved:    ${saved_cost:.4f}")
+        print_fp_classifier_stats(stats)
 
         # Cost estimate
         if stats.input_tokens > 0 or stats.output_tokens > 0:
