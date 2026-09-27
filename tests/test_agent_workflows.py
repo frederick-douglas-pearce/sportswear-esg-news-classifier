@@ -834,6 +834,144 @@ class TestReportUsesAuthoritativeCounts:
         ) == labeling["articles_processed"]
 
 
+class TestNotLowRiskFpSkips:
+    """The count of FP skips outside the `low` band reaches the report (#116, D024)."""
+
+    OLD_SUMMARY = """
+=== FP Classifier Pre-filter ===
+FP classifier calls:    20
+Skipped LLM:            8
+Continued to LLM:       12
+"""
+
+    def test_script_summary_round_trips_through_the_parser(self, capsys):
+        """The line `print_fp_classifier_stats` prints is the line the workflow parses."""
+        from scripts.label_articles import print_fp_classifier_stats
+        from src.agent.workflows.daily_labeling import _parse_labeling_output
+        from src.labeling.pipeline import LabelingStats
+
+        print_fp_classifier_stats(
+            LabelingStats(
+                fp_classifier_calls=20,
+                fp_classifier_skipped=8,
+                fp_classifier_skipped_not_low=3,
+                fp_classifier_continued=12,
+            )
+        )
+        stats = _parse_labeling_output(capsys.readouterr().out)
+
+        assert stats["fp_skipped_not_low"] == 3
+        # The new line must not be read as the skip total.
+        assert stats["fp_skipped_llm"] == 8
+        assert stats["fp_continued_llm"] == 12
+
+    @pytest.mark.parametrize("skipped", [0, 4])
+    def test_line_is_printed_and_parsed_when_the_count_is_zero(self, capsys, skipped):
+        """A zero is printed, not omitted: the report would turn a missing line into 0 too."""
+        from scripts.label_articles import print_fp_classifier_stats
+        from src.agent.workflows.daily_labeling import _parse_labeling_output
+        from src.labeling.pipeline import LabelingStats
+
+        print_fp_classifier_stats(
+            LabelingStats(
+                fp_classifier_calls=5,
+                fp_classifier_skipped=skipped,
+                fp_classifier_skipped_not_low=0,
+                fp_classifier_continued=5 - skipped,
+            )
+        )
+        out = capsys.readouterr().out
+        stats = _parse_labeling_output(out)
+
+        assert "  of which not low risk: 0" in out
+        assert "fp_skipped_not_low" in stats
+        assert stats["fp_skipped_not_low"] == 0
+
+    def test_block_is_absent_without_fp_calls(self, capsys):
+        from scripts.label_articles import print_fp_classifier_stats
+        from src.labeling.pipeline import LabelingStats
+
+        print_fp_classifier_stats(LabelingStats())
+
+        assert capsys.readouterr().out == ""
+
+    def test_logged_summary_prints_the_count(self, capsys):
+        from src.agent.workflows.daily_labeling import _log_summary
+
+        _log_summary(
+            {
+                "labeling": {
+                    "fp_classifier_calls": 20,
+                    "fp_skipped_llm": 8,
+                    "fp_skipped_not_low": 0,
+                },
+                "quality": {},
+            }
+        )
+
+        assert "of which not low risk: 0" in capsys.readouterr().out
+
+    def test_old_summary_without_the_line_leaves_the_key_missing(self):
+        from src.agent.workflows.daily_labeling import _parse_labeling_output
+
+        stats = _parse_labeling_output(self.OLD_SUMMARY)
+
+        assert "fp_skipped_not_low" not in stats
+        assert stats["fp_skipped_llm"] == 8
+
+    def test_report_carries_the_count(self):
+        from src.agent.workflows.daily_labeling import generate_report
+
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        context = {
+            "labeling_output": {
+                "fp_classifier_calls": 20,
+                "fp_skipped_llm": 8,
+                "fp_skipped_not_low": 3,
+            }
+        }
+
+        labeling = generate_report(workflow, context)["report"]["labeling"]
+
+        assert labeling["fp_skipped_not_low"] == 3
+
+    def test_report_defaults_the_count_to_zero_on_old_output(self):
+        from src.agent.workflows.daily_labeling import generate_report
+
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        context = {"labeling_output": {"fp_classifier_calls": 20, "fp_skipped_llm": 8}}
+
+        labeling = generate_report(workflow, context)["report"]["labeling"]
+
+        assert labeling["fp_skipped_not_low"] == 0
+
+    def test_notification_details_carry_the_count(self):
+        from src.agent.workflows.daily_labeling import send_notification
+
+        context = {
+            "report": {
+                "labeling": {
+                    "articles_processed": 20,
+                    "fp_classifier_calls": 20,
+                    "fp_skipped_llm": 8,
+                    "fp_skipped_not_low": 3,
+                },
+                "collection": {},
+                "quality": {},
+            }
+        }
+
+        with patch(
+            "src.agent.notifications.send_labeling_summary",
+            return_value={"console": True},
+        ) as send:
+            send_notification(MagicMock(), context)
+
+        assert send.call_args.kwargs["additional_details"]["fp_skipped_not_low"] == 3
+
+
 class TestLlmAnalysisStatsSource:
     """The LLM narrative must not contradict the counts printed above it (#81)."""
 

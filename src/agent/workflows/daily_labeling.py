@@ -242,6 +242,8 @@ def _parse_labeling_output(output: str) -> dict[str, Any]:
             stats["fp_classifier_calls"] = _extract_number(line)
         elif "Skipped LLM:" in line:
             stats["fp_skipped_llm"] = _extract_number(line)
+        elif "of which not low risk:" in line:
+            stats["fp_skipped_not_low"] = _extract_number(line)
         elif "Continued to LLM:" in line:
             stats["fp_continued_llm"] = _extract_number(line)
         elif "Est. LLM cost saved:" in line:
@@ -553,6 +555,7 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
             "metrics_degraded": context.get("metrics_degraded", False),
             "fp_classifier_calls": labeling_output.get("fp_classifier_calls", 0),
             "fp_skipped_llm": labeling_output.get("fp_skipped_llm", 0),
+            "fp_skipped_not_low": labeling_output.get("fp_skipped_not_low", 0),
             "fp_cost_saved_usd": labeling_output.get("fp_cost_saved_usd", 0),
         }
         if context.get("labeling_error"):
@@ -667,6 +670,7 @@ def send_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
         if labeling.get("fp_classifier_calls", 0) > 0:
             additional_details["fp_classifier_calls"] = labeling.get("fp_classifier_calls", 0)
             additional_details["fp_skipped_llm"] = labeling.get("fp_skipped_llm", 0)
+            additional_details["fp_skipped_not_low"] = labeling.get("fp_skipped_not_low", 0)
             if labeling.get("fp_cost_saved_usd", 0) > 0:
                 additional_details["fp_cost_saved"] = f"${labeling.get('fp_cost_saved_usd', 0):.4f}"
 
@@ -736,6 +740,7 @@ def _log_summary(report: dict[str, Any]) -> None:
         if labeling.get("fp_classifier_calls"):
             print(f"  FP Classifier Calls: {labeling.get('fp_classifier_calls', 0)}")
             print(f"  FP Skipped LLM: {labeling.get('fp_skipped_llm', 0)}")
+            print(f"    of which not low risk: {labeling.get('fp_skipped_not_low', 0)}")
             if labeling.get("fp_cost_saved_usd"):
                 print(f"  FP Cost Saved: ${labeling.get('fp_cost_saved_usd', 0):.4f}")
 

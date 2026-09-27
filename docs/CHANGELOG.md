@@ -4,6 +4,22 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-27: An FP skip reason no longer claims high confidence for a near-threshold call
+
+**Skip wording (#116).** Every FP skip was recorded as a "High-confidence false positive", whatever
+the prediction's own risk band, so a skip just under the threshold read as safely as one far below it.
+
+- The reason now opens with a phrase fixed per stored band — `Likely false positive (low risk)`,
+  `Uncertain skip (medium risk)`, `Below FP threshold (high risk)`, or
+  `Below FP threshold (risk band unknown)` — followed by `probability P < threshold T`. The API's band
+  string is never copied into the reason.
+- The labeling run summary adds `of which not low risk: N` under `Skipped LLM`, and the
+  `daily_labeling` workflow carries it into its report and notification as `fp_skipped_not_low`.
+- Which articles are skipped is unchanged. Routing or queueing medium-band skips is not taken here
+  and is owned by #166 (#142's exploration sample is related but not band-keyed). Existing rows
+  keep their wording. `skip_reason` is documented as text, not a filter key (`docs/DATABASE.md`).
+  Recorded as D024.
+
 ### 2026-09-26: A drift check that could not assess a core column says so
 
 **Offered versus assessed (#105).** The Evidently path read metrics by name, so a column whose

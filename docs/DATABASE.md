@@ -332,3 +332,18 @@ The restore command includes safety features:
 | `FP_CLASSIFIER_URL` | FP classifier API URL | `http://localhost:8000` |
 | `FP_SKIP_LLM_THRESHOLD` | Skip LLM for articles below this probability | `0.5` |
 | `FP_CLASSIFIER_TIMEOUT` | FP classifier API timeout (seconds) | `30.0` |
+
+A skipped article's `classifier_predictions.skip_reason` (for an article that reached the per-article
+FP check, also written to `articles.labeling_error`; neither is written in a dry run) states the
+prediction's stored risk band and its numbers, e.g.
+`Uncertain skip (medium risk): probability 0.467 < threshold 0.53`. The band is the FP API's
+`confidence_level`, stored as `risk_level`; it is independent of `FP_SKIP_LLM_THRESHOLD`, and the
+distance to the threshold is carried by the printed numbers. **`skip_reason` is human-readable text,
+not a filter key** — query on `action_taken`, `risk_level`, `probability` and `threshold_used`. Rows
+written before #116 carry the older "High-confidence false positive" wording whatever their band.
+
+The labeling run summary's `of which not low risk` line counts skips outside the `low` band
+(medium, high, or no recognised band), as a subset of `Skipped LLM`. Like the other FP lines it counts
+only articles that reached the per-article FP check: an article set aside for too little content or
+no brands is not counted there, although, outside a dry run, the batch classifier still recorded a
+prediction row for it.
