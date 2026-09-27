@@ -77,7 +77,8 @@ class LabelingStats:
     # FP classifier stats
     fp_classifier_calls: int = 0
     fp_classifier_skipped: int = 0
-    # Skips outside the `low` band (medium, high, or no band): a subset of fp_classifier_skipped
+    # Skips outside the `low` band (medium, high, or no recognised band): a subset of
+    # fp_classifier_skipped
     fp_classifier_skipped_not_low: int = 0
     fp_classifier_continued: int = 0
     fp_classifier_errors: int = 0

@@ -585,7 +585,7 @@ class TestFPSkipReasonWording:
 
 
 class TestFPSkipDecisionUnchanged:
-    """#116 changes the wording only; routing stays #142's (AC3)."""
+    """#116 does not change the skip decision (AC3)."""
 
     def test_probability_equal_to_threshold_continues(self):
         should_continue, prediction = _prefilter(0.53, "medium", 0.53)
@@ -603,7 +603,12 @@ class TestFPSkipDecisionUnchanged:
 class TestNotLowRiskSkipCount:
     """Skips outside the `low` band are counted, as a subset of all skips (#116)."""
 
-    def _process_skip(self, band):
+    def _process(self, band, action_taken="skipped_llm"):
+        """Run _process_article on a precomputed FP result.
+
+        should_continue is False, so _process_article returns right after
+        setting its FP flags and never reaches the chunker or the labeler.
+        """
         mock_database = MagicMock()
         pipeline = LabelingPipeline(database=mock_database)
         article = {
@@ -619,7 +624,7 @@ class TestNotLowRiskSkipCount:
             probability=0.4,
             prediction=False,
             threshold_used=0.53,
-            action_taken="skipped_llm",
+            action_taken=action_taken,
             confidence_level=band,
         )
         return pipeline._process_article(
@@ -627,15 +632,31 @@ class TestNotLowRiskSkipCount:
         )
 
     @pytest.mark.parametrize(
-        "band,expected", [("low", False), ("medium", True), ("high", True), (None, True)]
+        "band,expected",
+        [
+            ("low", False),
+            ("medium", True),
+            ("high", True),
+            (None, True),
+            # Unrecognised bands are counted, matching the "risk band unknown" wording.
+            ("LOW", True),
+            ("x", True),
+        ],
     )
     def test_skip_flag_by_band(self, band, expected):
-        result = self._process_skip(band)
+        result = self._process(band)
         assert result["fp_classifier_skipped"] is True
         assert result["fp_classifier_skipped_not_low"] is expected
 
+    @pytest.mark.parametrize("action_taken", ["continued_to_llm", "failed"])
+    @pytest.mark.parametrize("band", ["medium", None])
+    def test_flag_is_never_set_off_a_skip(self, action_taken, band):
+        result = self._process(band, action_taken=action_taken)
+        assert result["fp_classifier_skipped"] is False
+        assert result["fp_classifier_skipped_not_low"] is False
+
     def test_label_articles_counts_not_low_skips_only_among_skips(self):
-        """medium and None skips count; a low skip and a medium continue do not."""
+        """Two not-low skip flags count; a low skip does not, and a stray not-low flag on a continue is ignored."""
         results = [
             {"fp_classifier_called": True, "fp_classifier_skipped": True,
              "fp_classifier_skipped_not_low": True, "false_positive": True},

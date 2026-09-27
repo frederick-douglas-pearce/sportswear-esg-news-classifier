@@ -1919,11 +1919,13 @@ this rule they read UNKNOWN rather than as a verdict.
 
 ## D024: An FP Skip Reason States the Stored Risk Band and the Numbers, Nothing Else (#116)
 
-**Date:** 2026-09-27 · **Context:** architect review of the #116 plan (dev loop, plan gate pending).
+**Date:** 2026-09-27 · **Context:** architect review of the #116 plan; approved at the plan gate with
+the amendment below.
 
 Every FP skip wrote a fixed "High-confidence false positive" reason, whatever the prediction's own
-`confidence_level` (stored as `risk_level`) said. Scope is issue fix items 1 and 3 only; routing
-medium-band skips to the LLM is #142's.
+`confidence_level` (stored as `risk_level`) said. Scope is issue fix items 1 and 3 only. Item 2
+(routing or queueing medium-band skips) is not taken here and is owned by #166. #142 is related but
+different: a random sample of all would-be-skips for measurement, not band-keyed routing.
 
 1. **Key the wording on the stored band, not on the margin to the threshold.** A margin rule needs a
    new "near" width — another cut point for #141 to re-tune. The band keeps the text and `risk_level`
@@ -1936,9 +1938,12 @@ medium-band skips to the LLM is #142's.
    the band cannot support). The raw API string is never interpolated.
 3. **`skip_reason` is human-readable text, never a filter key.** Consumers filter on `action_taken`,
    `risk_level`, `probability` and `threshold_used`. Historical rows keep the old wording; no backfill.
-4. **The medium-risk skip count travels the existing stdout channel** into the `daily_labeling` report,
-   as a subset of `Skipped LLM`. No new stored field: the eval-calibration stories query
-   `classifier_predictions` directly.
+   This covers any value, including #142's planned `exploration_sample` tag: #142 identifies its
+   cohort by `action_taken='continued_to_llm' AND probability < threshold_used`, not by `skip_reason`.
+4. **The count of skips not in the `low` band (see the amendment) travels the existing stdout
+   channel** into the `daily_labeling` report, as a subset of `Skipped LLM`. No new stored field: the
+   eval-calibration stories in `.claude/specs/prd-eval-calibration.md` read `classifier_predictions`
+   directly.
 
 **Amendment (human, plan gate, same day):** the count in item 4 is of skips **not in the `low` band** —
 medium, high, or band unknown — rather than medium only. A skip threshold above 0.6 is plausible after a

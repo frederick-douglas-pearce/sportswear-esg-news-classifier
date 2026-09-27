@@ -15,7 +15,8 @@ the prediction's own risk band, so a skip just under the threshold read as safel
   string is never copied into the reason.
 - The labeling run summary adds `of which not low risk: N` under `Skipped LLM`, and the
   `daily_labeling` workflow carries it into its report and notification as `fp_skipped_not_low`.
-- Which articles are skipped is unchanged; routing uncertain skips to the LLM is #142. Existing rows
+- Which articles are skipped is unchanged. Routing or queueing medium-band skips is not taken here
+  and is owned by #166 (#142's exploration sample is related but not band-keyed). Existing rows
   keep their wording. `skip_reason` is documented as text, not a filter key (`docs/DATABASE.md`).
   Recorded as D024.
 

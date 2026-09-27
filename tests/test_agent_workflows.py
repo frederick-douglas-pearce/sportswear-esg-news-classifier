@@ -845,7 +845,7 @@ Continued to LLM:       12
 """
 
     def test_script_summary_round_trips_through_the_parser(self, capsys):
-        """The line the script prints is the line the workflow parses."""
+        """The line `print_fp_classifier_stats` prints is the line the workflow parses."""
         from scripts.label_articles import print_fp_classifier_stats
         from src.agent.workflows.daily_labeling import _parse_labeling_output
         from src.labeling.pipeline import LabelingStats
@@ -864,6 +864,52 @@ Continued to LLM:       12
         # The new line must not be read as the skip total.
         assert stats["fp_skipped_llm"] == 8
         assert stats["fp_continued_llm"] == 12
+
+    @pytest.mark.parametrize("skipped", [0, 4])
+    def test_line_is_printed_and_parsed_when_the_count_is_zero(self, capsys, skipped):
+        """A zero is printed, not omitted: the report would turn a missing line into 0 too."""
+        from scripts.label_articles import print_fp_classifier_stats
+        from src.agent.workflows.daily_labeling import _parse_labeling_output
+        from src.labeling.pipeline import LabelingStats
+
+        print_fp_classifier_stats(
+            LabelingStats(
+                fp_classifier_calls=5,
+                fp_classifier_skipped=skipped,
+                fp_classifier_skipped_not_low=0,
+                fp_classifier_continued=5 - skipped,
+            )
+        )
+        out = capsys.readouterr().out
+        stats = _parse_labeling_output(out)
+
+        assert "  of which not low risk: 0" in out
+        assert "fp_skipped_not_low" in stats
+        assert stats["fp_skipped_not_low"] == 0
+
+    def test_block_is_absent_without_fp_calls(self, capsys):
+        from scripts.label_articles import print_fp_classifier_stats
+        from src.labeling.pipeline import LabelingStats
+
+        print_fp_classifier_stats(LabelingStats())
+
+        assert capsys.readouterr().out == ""
+
+    def test_logged_summary_prints_the_count(self, capsys):
+        from src.agent.workflows.daily_labeling import _log_summary
+
+        _log_summary(
+            {
+                "labeling": {
+                    "fp_classifier_calls": 20,
+                    "fp_skipped_llm": 8,
+                    "fp_skipped_not_low": 0,
+                },
+                "quality": {},
+            }
+        )
+
+        assert "of which not low risk: 0" in capsys.readouterr().out
 
     def test_old_summary_without_the_line_leaves_the_key_missing(self):
         from src.agent.workflows.daily_labeling import _parse_labeling_output
