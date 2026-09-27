@@ -524,9 +524,11 @@ class TestSummaryCarriesObservedSpan:
 class TestSummaryCarriesCoverage:
     """The coverage record reaches the summary the workflow reads (#104, D022)."""
 
+    # Reachable with a verdict since #105 (D023): the shortfall is on a brand
+    # column and a core column missing from the reference, both record-only.
     COVERAGE = {
-        "columns_assessed": ["probability"],
-        "columns_skipped": {"prediction": "constant in both frames"},
+        "columns_assessed": ["probability", "prediction"],
+        "columns_skipped": {"brand_nike": "metric had no readable value (got str)"},
         "columns_missing_from_reference": ["novelty_score"],
         "metrics_unreadable": ["brand_nike"],
         "columns_checked": ["probability", "prediction", "brand_nike"],
@@ -552,7 +554,7 @@ class TestSummaryCarriesCoverage:
         summary = self._summary(monitor_drift, capsys, report, EXIT_INDETERMINATE)
 
         assert summary["columns_missing_from_reference"] == ["novelty_score"]
-        assert summary["columns_skipped"] == {"prediction": "constant in both frames"}
+        assert summary["columns_skipped"] == self.COVERAGE["columns_skipped"]
 
     def test_every_key_is_present_and_absent_reads_as_none(self, monitor_drift, capsys):
         """Presence is guaranteed here, whatever a return path populated."""

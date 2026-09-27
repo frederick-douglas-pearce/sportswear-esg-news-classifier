@@ -4,6 +4,27 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-26: A drift check that could not assess a core column says so
+
+**Offered versus assessed (#105).** The Evidently path read metrics by name, so a column whose
+metric came back under a different name was dropped with no record, and the check could report
+healthy over a subset of the columns it listed as checked. A core column constant at the same value
+in both frames also passed as healthy there, because `ks` returns a finite p-value of 1.0 for it.
+
+- Every column offered to the Evidently report is now either assessed or recorded in
+  `columns_skipped` with a reason. New reasons: `no metric returned` (no recognised metric came
+  back), `no comparable values` (the core input checks below), and `not in reference` for a
+  `brand_*` column the reference lacks, which was previously recorded nowhere on this path.
+- Core columns on the Evidently path now go through the same input checks as the legacy path:
+  the per-column sample floor after the NaN drop, and the same constant in both frames.
+- **Verdict change, both paths:** an offered core column that was not assessed makes the check
+  indeterminate (exit 2), not only a check with no core column assessed. A core column absent from
+  the reference stays record-only in `columns_missing_from_reference`. A `brand_*` shortfall stays
+  record-only; `brand_drift_score` stays `0.0` when no brand column was assessed, alongside
+  `brand_assessed_count` of `0`.
+- A metric that names no requested column is ignored rather than assessed as a column called
+  `"unknown"`. Recorded as D023.
+
 ### 2026-09-25: What a drift check assessed reaches the run archive
 
 **Coverage fields (#104).** `DriftReport.details` recorded what a check assessed, but the

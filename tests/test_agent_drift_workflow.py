@@ -1193,9 +1193,16 @@ class TestCoverageReachesTheArchive:
     """What the check assessed reaches the context, the report, the alert and
     the run archive, and never changes the verdict (#104, D022)."""
 
+    # A shape the check can return with a verdict: since #105 (D023) an
+    # offered core column that was not assessed makes it indeterminate, so the
+    # partial coverage here is a brand shortfall plus a core column missing
+    # from the reference, the two that stay record-only.
     PARTIAL = {
-        "columns_assessed": ["probability"],
-        "columns_skipped": {"prediction": "constant in both frames"},
+        "columns_assessed": ["probability", "prediction"],
+        "columns_skipped": {
+            "brand_anta": "not in reference",
+            "brand_hoka": "metric had no readable value (got str)",
+        },
         "columns_missing_from_reference": ["novelty_score"],
         "metrics_unreadable": ["brand_hoka"],
         "columns_checked": ["probability", "prediction", "brand_hoka"],
@@ -1247,7 +1254,12 @@ class TestCoverageReachesTheArchive:
             assert out[f"fp_{key}"] is None
 
     def test_partial_coverage_does_not_change_the_verdict(self, mock_workflow):
-        """Record-only: turning partial coverage into a verdict is #105 (D017)."""
+        """The workflow does not reinterpret coverage: the check decides the verdict.
+
+        Partial core coverage is made indeterminate inside the check (#105,
+        D023), and arrives here as an exit code. What reaches the workflow with
+        a verdict is record-only.
+        """
         with patch("src.agent.workflows.drift_monitoring.run_monitor_drift") as mock_run:
             mock_run.return_value = self._result(self.PARTIAL)
             out = check_fp_drift(mock_workflow, {})
@@ -1268,7 +1280,7 @@ class TestCoverageReachesTheArchive:
             assert report["fp_classifier"][key] == value
         printed = capsys.readouterr().out
         assert "novelty_score" in printed
-        assert "prediction" in printed.split("NOTE", 1)[1]
+        assert "brand_anta" in printed.split("NOTE", 1)[1]
         assert "metric unreadable for brand_hoka" in printed
 
     def test_full_coverage_prints_no_note(self, mock_workflow, capsys):
@@ -1318,7 +1330,7 @@ class TestCoverageReachesTheArchive:
         details = self._drift_alert_details(state_manager, self.PARTIAL)
 
         assert details["columns_missing_from_reference"] == ["novelty_score"]
-        assert details["columns_skipped"] == {"prediction": "constant in both frames"}
+        assert details["columns_skipped"] == self.PARTIAL["columns_skipped"]
         assert details["metrics_unreadable"] == ["brand_hoka"]
 
     def test_drift_alert_with_full_coverage_adds_nothing(self, state_manager):

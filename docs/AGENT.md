@@ -378,12 +378,15 @@ of `drift_scores` and out of the brand denominator rather than scored as "not dr
 
 ⚠ **The two paths do not populate `columns_skipped` for the same reasons, so it is not a
 like-for-like field between them.** The legacy path records a column it declined to test, for
-whatever reason it declined, and names the cause. The Evidently path sees only a returned scalar,
-so it records what it observed — a value it could not read, or one that is not finite — and never
-why; an entry reading `p-value is not finite` on that path may have been produced by any of the
-causes the legacy path distinguishes. A `brand_*` column absent from the reference is still
-dropped there silently, before `columns_to_check` is built, so it appears in neither
-`columns_skipped` nor `metrics_unreadable`.
+whatever reason it declined, and names the cause. Since #105 the Evidently path does too for
+anything it can decide before a metric runs: core columns go through the same input checks as on
+the legacy path (`no comparable values`), a `brand_*` column absent from the reference is
+`not in reference` on both paths, and an offered column that got no recognised metric back is
+`no metric returned`. After a metric runs, the Evidently path sees only the returned scalar, so it
+records what it observed — a value it could not read, or one that is not finite — and not why. An
+entry reading `p-value is not finite` there is on a `brand_*` column in practice, since core
+columns with no comparable values are rejected before the metric; its cause could be any the
+legacy path distinguishes for brand columns.
 
 ⚠ **Which of the two paths a given deployment actually takes is not recorded anywhere in the
 report.** It depends on the environment, and the `ImportError` fallback can change it without
@@ -402,16 +405,19 @@ assessed. A field of an unexpected type is left out of both rather than failing 
 
 Read `null` as "that measurement did not run on this path, or was not recorded", and an empty value
 as "it ran and found nothing". An archive auditor must not read `null` as zero. The fields are a
-record: they are not in `REQUIRED_SUMMARY_FIELDS`, `_validate_summary` does not check them, and
-partial coverage does not change the verdict. Deciding what it should mean for the verdict is #105.
+record: they are not in `REQUIRED_SUMMARY_FIELDS` and `_validate_summary` does not check them.
+The verdict decision is made in the check itself (#105, D023): an offered core column that was not
+assessed makes the check indeterminate, which the workflow reads as `unknown`. A `brand_*`
+shortfall stays record-only.
 
 **Minimum sample size** (`DRIFT_MIN_SAMPLE_SIZE`, default 30 -- issue #94). Enough rows to compute
 a statistic is not enough rows for it to mean anything. Two scopes, two outcomes:
 
 - a whole **frame** below the floor -- the reference and the current window are checked
   independently -- makes the verdict `indeterminate`, not healthy;
-- a single **column** below it, counted after its NaN are dropped, is skipped and recorded, and
-  the check still returns a verdict from whatever else it could measure.
+- a single **column** below it, counted after its NaN are dropped, is skipped and recorded. For a
+  `brand_*` column the check still returns a verdict from whatever else it could measure; for a
+  core column the result is `indeterminate`, on both paths (#105).
 
 ⚠ **A rare `brand_*` column is NOT filtered out for being rare**, and this is deliberate.
 `brand_li-ning` carries 3 positives in the shipped 934-row reference; against a quiet week it
