@@ -33,6 +33,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.deployment.versioning import stamp_artifact_version  # noqa: E402
+
 
 def get_next_version(registry: dict, classifier: str, bump: str = "patch") -> str:
     """Calculate next semantic version."""
@@ -309,6 +314,9 @@ def main():
             set_production=args.set_production,
         )
         print(f"   ✅ Added version {version}")
+        # After the registry write, so the config never claims a version the registry lacks.
+        stamp_artifact_version(config_path, version, pipeline_path)
+        print(f"   ✅ Stamped {version} into {config_path}")
         if args.set_production:
             print(f"   ✅ Set as production")
 

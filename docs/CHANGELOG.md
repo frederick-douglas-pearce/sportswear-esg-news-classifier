@@ -4,6 +4,25 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-28: Classifier predictions record the loaded model's version
+
+**`model_version` is no longer always `unknown` (#115, D026).** `/model/info` had no `version` field,
+and FastAPI's `response_model` strips keys the schema does not declare, so the pipeline's
+`model_info.get("version", "unknown")` could only ever take its default.
+
+- The version describes the artifact the API loaded, not the registry's production pointer (the two
+  can differ; see #172). `register_model.py --update-registry`, `retrain.py` promotion and
+  `promote_model.py` stamp `version` and `pipeline_sha256` into the artifact's config through
+  `src/deployment/versioning.py`. The API reports that version only when the hash matches the loaded
+  joblib, else `unversioned`.
+- `/model/info` returns `version` and `artifact_sha256`.
+- When no version is known the pipeline records a value naming why: `unversioned`, `unreported` (API
+  image predates the field), `unavailable` (model-info fetch or FP batch failed), or `disabled`.
+  `unknown` is no longer written. Rows written before this change keep `unknown`. A missing version
+  logs a WARNING and does not stop the pre-filter.
+- Recorded rows change only after the `fp-classifier-api` image is rebuilt. No drift-reference
+  regeneration is needed: `model_version` is not a drift column.
+
 ### 2026-09-27: The drift workflow no longer recommends retraining or sends a drift alert
 
 **Drift is report-only (#140, L1a of #152).** A `degraded` drift verdict recommended "Consider

@@ -216,6 +216,39 @@ predictions in the drift window first (issue #96). Below `DRIFT_MIN_SAMPLE_SIZE`
 be taken is `unknown` too; the count runs with a connect and a statement timeout, so a database
 that stops answering fails the check instead of hanging it.
 
+### Model version in `classifier_predictions`
+
+`model_version` records the version of the artifact the classifier API **loaded**, not the
+registry's production pointer (#115, D026). Every script that records a version in
+`models/registry.json` (`register_model.py --update-registry`, `retrain.py` promotion,
+`promote_model.py`) stamps `version` and `pipeline_sha256` into the artifact's
+`<type>_classifier_config.json`. The API reports that version only when `pipeline_sha256` matches the
+joblib it loaded. `/model/info` returns it as `version`, with the loaded joblib's short hash as
+`artifact_sha256`.
+
+When no version can be reported, one of these is recorded instead. The constants live in
+`src/deployment/versioning.py` (`NON_VERSION_SENTINELS` is the set):
+
+| Value | Meaning | What to do |
+|---|---|---|
+| `vX.Y.Z` | a registered artifact whose hash matched | nothing |
+| `unversioned` | the loaded artifact has no version, or its config's hash does not match the loaded joblib | register the artifact |
+| `unreported` | the API answered, but its `/model/info` has no `version` field (the image predates it) | rebuild the image |
+| `unavailable` | the model-info fetch failed, or the FP batch call failed | look at the API |
+| `disabled` | the FP classifier is turned off | configuration |
+| `unknown` | rows written before #115; never written now | nothing |
+
+The labeling pipeline logs one WARNING per batch when it records any value other than a version.
+A missing version does not stop the pre-filter.
+
+Merging the change does not alter recorded rows: they change only when the `fp-classifier-api`
+image is rebuilt. Which artifact that rebuild should serve is #172; the committed artifact under
+`models/` is not necessarily the registered production model.
+
+`model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
+in the values it records does not require regenerating the drift reference. EP reports `unversioned`
+until an EP artifact is registered with this in place.
+
 ### What Gets Monitored
 
 - Probability distribution drift (KS test or Evidently)

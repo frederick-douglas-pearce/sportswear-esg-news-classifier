@@ -21,6 +21,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.deployment.versioning import stamp_artifact_version  # noqa: E402
+
 
 def load_model_config(classifier_type: str, models_dir: Path) -> dict:
     """Load the classifier config from the models directory."""
@@ -164,6 +169,12 @@ def main():
         registry[args.classifier]["production"] = args.version
 
     save_registry(registry, models_dir)
+    # After the registry write, so the config never claims a version the registry lacks.
+    stamp_artifact_version(
+        models_dir / f"{args.classifier}_classifier_config.json",
+        args.version,
+        models_dir / f"{args.classifier}_classifier_pipeline.joblib",
+    )
 
     print(f"\n✓ Registry updated: models/registry.json")
     print(f"✓ {args.classifier} {args.version} is now registered")

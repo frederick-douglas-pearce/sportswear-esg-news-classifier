@@ -1993,3 +1993,41 @@ and nothing yet measures realized performance (that is L1c, #144).
 "drift, report-only".
 Silence is not "no drift"; `classifiers_with_drift` in the run archive says which. Until L1c, a real
 performance regression is not emailed (issue #140 §Risk).
+
+## D026: A Model Version Describes the Loaded Artifact, Not the Registry Pointer (#115)
+
+**Date:** 2026-09-28 · **Status:** accepted (architect-reviewed; plan approved by the human) · **Issue:** #115
+(prerequisite of #145, epic #152)
+
+**Context.** `classifier_predictions.model_version` is always `unknown`: `/model/info`'s
+`response_model` strips any `version` key, and the client's error fallback also returns `unknown`.
+The issue proposes populating the version from `models/registry.json`. The registry pointer, the
+committed artifact and the served model are not the same model: the pointer names v2.5.0, the
+committed FP artifact's commit says it was not promoted, and the running API reports a threshold and
+metrics matching v2.4.0 (inferred from those values; nothing recorded confirms it — which is this bug).
+
+**Decision (architect review of the #115 plan).**
+1. The reported version describes **the artifact the API loaded**. Every registry writer
+   (`register_model.py --update-registry`, `retrain.py promote_version`, `promote_model.py`) stamps
+   `version` and `pipeline_sha256` into the artifact's config through one helper in
+   `src/deployment/versioning.py`. The API reports the version only when `pipeline_sha256` matches
+   the joblib it loaded; otherwise `unversioned`. `/model/info` also returns `artifact_sha256`.
+   A serve-time lookup of the pointer is rejected: it would replace an honest `unknown` with a false
+   version.
+2. Non-version values are constants in `src/deployment/versioning.py`, each with a distinct remedy:
+   `unversioned` (register the artifact), `unreported` (the API image predates the field — rebuild),
+   `unavailable` (model-info fetch or the FP batch failed — look at the API), `disabled` (FP off),
+   legacy `unknown` (rows written before this change only). `NON_VERSION_SENTINELS` is exported for
+   #145's queries.
+3. A missing version does not fail the pre-filter (that would route every article to the LLM while
+   the skip decision does not depend on the version); the pipeline logs one WARNING per batch.
+4. The registry pointer is intent, the stamped version is fact. #141 should select which artifact is
+   built from the pointer and compare it with `/model/info.version`, and take the threshold from the
+   same artifact whose version is reported, never from the pointer at serve time.
+5. `model_version` is not a drift column, so this change needs no drift-reference regeneration.
+
+**Accepted consequence.** Nothing changes in recorded rows until the `fp-classifier-api` image is
+rebuilt, and a rebuild from the current tree would swap the served model for the unpromoted artifact.
+Reconciling served vs pointer vs committed artifact, and making the registry pointer decide what is
+built and deployed, is #172 — the human's direction is that the registry must become the source of
+truth for the deployed model.

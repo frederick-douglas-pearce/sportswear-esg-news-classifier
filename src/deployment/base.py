@@ -1,5 +1,6 @@
 """Abstract base class for all classifiers."""
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -7,6 +8,9 @@ from typing import Any, Dict, List, Optional
 import joblib
 
 from .config import load_config
+from .versioning import UNVERSIONED, file_sha256
+
+logger = logging.getLogger(__name__)
 
 
 class BaseClassifier(ABC):
@@ -52,11 +56,26 @@ class BaseClassifier(ABC):
 
         # Load pipeline
         self.pipeline = joblib.load(pipeline_path)
+        self.artifact_sha256 = file_sha256(pipeline_path)
 
         # Load config
         self.config = load_config(config_path)
         self.threshold = self.config.get("threshold", 0.5)
         self.model_name = self.config.get("model_name", self.CLASSIFIER_TYPE.upper())
+        self.version = self._verified_version()
+
+    def _verified_version(self) -> str:
+        """Return the config's version if it describes the loaded joblib, else UNVERSIONED."""
+        version = self.config.get("version")
+        if not version:
+            return UNVERSIONED
+        if self.config.get("pipeline_sha256") != self.artifact_sha256:
+            logger.error(
+                f"{self.CLASSIFIER_TYPE} config claims version {version}, but its "
+                f"pipeline_sha256 does not match the loaded pipeline; reporting {UNVERSIONED}"
+            )
+            return UNVERSIONED
+        return version
 
     @abstractmethod
     def _get_default_paths(self) -> tuple[str, str]:
@@ -246,6 +265,8 @@ class BaseClassifier(ABC):
         return {
             "classifier_type": self.CLASSIFIER_TYPE,
             "model_name": self.model_name,
+            "version": self.version,
+            "artifact_sha256": self.artifact_sha256[:12],
             "threshold": self.threshold,
             "target_recall": self.config.get("target_recall", 0.98),
             "transformer_method": self.config.get("transformer_method", "unknown"),
