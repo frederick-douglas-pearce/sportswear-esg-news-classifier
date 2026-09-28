@@ -98,7 +98,12 @@ def print_report(report, verbose: bool = False) -> None:
         reason = report.details.get("error", "no verdict produced")
         print(f"❓ Status: INDETERMINATE - drift could not be assessed ({reason})")
     elif report.drift_detected:
-        print("⚠️  ACTION REQUIRED: Drift detected - consider retraining")
+        # Distribution shift, not measured degradation: not a retrain signal on
+        # its own (#140, D025).
+        print(
+            "⚠️  Status: DRIFT DETECTED - distribution shift "
+            "(informational; not a retrain signal on its own)"
+        )
     else:
         print("✅ Status: Healthy - no significant drift detected")
 

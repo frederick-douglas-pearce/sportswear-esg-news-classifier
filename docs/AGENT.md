@@ -48,7 +48,7 @@ The custom agent provides:
 | Metric | Without Agent | With Agent |
 |--------|---------------|------------|
 | Daily maintenance time | ~30 min/day | ~0 min/day |
-| Model drift detection | Manual checks | Automated with alerts |
+| Model drift detection | Manual checks | Automated, report-only (alerts only when a check fails) |
 | Labeling quality assurance | Periodic manual review | Daily LLM analysis |
 | Website updates | Manual export/push | Automated commit/push |
 | Visibility into operations | Check logs manually | Email summaries daily |
@@ -321,7 +321,7 @@ LLM Analysis:
 | 1. `check_fp_drift` | Run drift detection for FP classifier; map its exit code to a `HealthVerdict` |
 | 2. `check_ep_drift` | Same for EP -- **skipped by default** with a stated reason (`AGENT_EP_DRIFT_ENABLED`, see below) |
 | 3. `evaluate_drift_results` | Determine if action is needed, from the verdicts |
-| 4. `send_drift_alerts` | Alert on detected drift **and** on any check that produced no verdict |
+| 4. `send_drift_alerts` | Alert on any check that produced no verdict. Detected drift is report-only: no notification (#140) |
 | 5. `generate_drift_report` | Generate summary report |
 | 6. `fail_on_unknown_verdict` | Fail the workflow if any verdict is not explicitly healthy/degraded/skipped |
 
@@ -346,9 +346,25 @@ It is gated on `AGENT_EP_DRIFT_ENABLED` (default `false`). While the flag is off
 - at or above the floor it reports `unknown`, because EP is running unmonitored, and the run fails;
 - if the count cannot be taken, it reports `unknown`.
 
-**Alert Triggers**: **any** core metric (`probability`, `prediction`, `novelty_score`) drifts,
-**or** the `brand_*` drift score exceeds the configured threshold (default: 0.1), **or** a check
-produced no verdict.
+**Drift verdict**: `degraded` when **any** core metric (`probability`, `prediction`,
+`novelty_score`) drifts, **or** the `brand_*` drift score exceeds the configured threshold
+(default: 0.1).
+
+**Drift is report-only (#140, D025).** Distribution shift is not evidence that the classifier got
+worse, so in this workflow a `degraded` drift verdict recommends no retraining and sends **no
+notification** on any channel. It is recorded in the report, the console summary and the run
+archive. Every non-dry-run return of the alert step carries `drift_not_alerted` (the classifiers
+whose drift it did not notify on, `[]` when none), and `reason: drift_report_only` is set only when
+drift was present and no alert was sent. The one alert this workflow sends is for a check that
+produced no verdict (`unknown`). Recommending a retrain on *measured* performance degradation is
+#144's. The opt-in `scripts/monitor_drift.py --alert` drift webhook, which `scripts/cron_monitor.sh`
+passes when `ALERT_WEBHOOK_URL` is set, is unchanged and outside this workflow (it runs with
+`alert=False`).
+
+⚠ **So no email does not mean no drift.** Read `classifiers_with_drift` in the archived run,
+`$AGENT_STATE_DIR/history/drift_monitoring_*.yaml` (default `~/.esg-agent/history/`), to see whether
+drift was found. Until #144 lands, a real performance regression is not emailed either; the
+spot-check is `/review-labels`.
 
 That describes the **Evidently** path (`EVIDENTLY_ENABLED=true`). There, core drift is a *count*
 test, not a threshold test -- one core metric drifting is enough -- and the reported `drift_score`
@@ -400,8 +416,10 @@ the Evidently path). `_run_drift_check` starts the context with each one as `<cl
 set to `None`, and copies the value in whenever a summary was read, on any verdict.
 `generate_drift_report` puts them in that classifier's section, and the run archive stores both the
 context and the report. When coverage is partial, the console summary prints a NOTE, on any verdict.
-When the verdict is `degraded`, the drift alert's details include the fields that name something not
-assessed. A field of an unexpected type is left out of both rather than failing the run.
+In the `drift_monitoring` workflow a drift verdict sends no alert (#140; the opt-in
+`monitor_drift.py --alert` webhook is separate), so the report and the archive are where partial
+coverage is read; the drift alert that used to carry these fields (D022 item 6) is gone, superseded
+by D025. A field of an unexpected type is left out of the console NOTE rather than failing the run.
 
 Read `null` as "that measurement did not run on this path, or was not recorded", and an empty value
 as "it ran and found nothing". An archive auditor must not read `null` as zero. The fields are a
@@ -730,7 +748,8 @@ RESEND_API_KEY=re_...
 
 ### Webhooks (Slack/Discord)
 
-For drift alerts and failures:
+For check-failure alerts. The `drift_monitoring` workflow sends none for drift itself; the opt-in
+`scripts/monitor_drift.py --alert` path posts its drift webhook to the same URL:
 
 ```bash
 # Slack webhook
@@ -745,7 +764,7 @@ ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 | Type | Trigger | Channels |
 |------|---------|----------|
 | Labeling Summary | Daily after labeling | Email |
-| Drift Alert | When drift exceeds threshold | Email + Webhook |
+| Drift | Never from the `drift_monitoring` workflow -- drift is report-only (#140) | None |
 | Check Failed | When a scheduled check produces no verdict (severity `error`) | Email + Webhook |
 | Export Error | When website export fails | Email |
 | Training Ready | When data export completes | Email |

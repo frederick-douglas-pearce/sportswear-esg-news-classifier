@@ -14,6 +14,11 @@ workflow finish green when any verdict is missing or `unknown`. That gate is no
 longer written here: #74 moved it into `base.fail_on_unresolved_verdicts`, and
 the aggregation into `health.summarize`, so every workflow adopting the
 vocabulary shares one implementation instead of re-deriving it (D010).
+
+**Drift is a distribution signal, not a performance measure, so a `degraded`
+drift verdict is report-only** (#140, D025). It is recorded in the report and
+the run archive and recommends no retraining; nothing is sent for it. The one
+notification this workflow sends is for a check that produced no verdict.
 """
 
 import logging
@@ -22,7 +27,7 @@ from typing import Any
 
 from ..config import agent_settings
 from ..health import HealthVerdict, summarize, verdict_of
-from ..notifications import send_check_failure_notification, send_drift_notification
+from ..notifications import send_check_failure_notification
 from ..runner import ScriptResult, run_monitor_drift, tail
 from .base import (
     StepDefinition,
@@ -170,7 +175,10 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
         days=context.get("drift_days", DEFAULT_DRIFT_WINDOW_DAYS),
         from_db=True,
         html_report=context.get("generate_html", False),
-        alert=False,  # We handle alerts in the notification step
+        # Keeps the script's own `--alert` drift webhook out of this workflow:
+        # drift is report-only here (D025), and check-failure alerts are sent
+        # by `send_drift_alerts`.
+        alert=False,
     )
 
     out: dict[str, Any] = {
@@ -380,7 +388,14 @@ def evaluate_drift_results(workflow: Workflow, context: dict[str, Any]) -> dict[
             f"the check did not complete, so these classifiers are unmonitored"
         )
     elif drifted:
-        evaluation["recommendation"] = "Consider retraining affected classifiers"
+        # Drift alone is not a retrain signal: nothing here measures realized
+        # performance yet (#144 adds that), so a shift is reported, not acted on
+        # (#140, D025).
+        evaluation["recommendation"] = (
+            f"Distribution shift in {', '.join(c.upper() for c in drifted)} "
+            f"(report-only) - not a retrain signal on its own; realized "
+            f"performance is not yet measured. Spot-check with /review-labels"
+        )
     elif checked:
         evaluation["recommendation"] = (
             f"No action needed - {', '.join(c.upper() for c in checked)} healthy"
@@ -408,42 +423,30 @@ def _delivered(result: dict[str, bool]) -> bool:
 
 
 def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
-    """Send notifications for detected drift and for checks that produced none."""
+    """Send notifications for checks that produced no verdict.
+
+    A `degraded` drift verdict sends nothing: drift is report-only (#140,
+    D025). Every non-dry-run return below carries `drift_not_alerted` -- the
+    classifiers whose drift this step did not notify on, `[]` when none --
+    and `reason` is `drift_report_only` only when drift was present and no
+    alert was sent. Whether drift was found is `classifiers_with_drift`,
+    written by `evaluate_drift_results`; this is the alert step's record of
+    what it did.
+    """
     if context.get("dry_run"):
         logger.info("Dry run - skipping drift alerts")
         return {"alerts_skipped": True, "reason": "dry_run"}
 
     alerts_sent = []
+    drift_not_alerted = []
 
     for classifier in ("fp", "ep"):
         verdict = _drift_verdict(context, classifier)
 
         if verdict is HealthVerdict.DEGRADED:
-            result = send_drift_notification(
-                classifier_type=classifier,
-                drift_score=context[f"{classifier}_drift_score"],
-                threshold=context[f"{classifier}_threshold"],
-                details={
-                    "recommendation": (
-                        f"Retrain {classifier.upper()} classifier with recent data"
-                    ),
-                    # A verdict over part of the columns is a weaker signal,
-                    # and the person paged is the one who needs to know (#104).
-                    **_partial_coverage(
-                        {
-                            key: context.get(f"{classifier}_{key}")
-                            for key in COVERAGE_KEYS
-                        }
-                    ),
-                },
-            )
-            alerts_sent.append(
-                {
-                    "classifier": classifier,
-                    "kind": "drift",
-                    "result": result,
-                    "delivered": _delivered(result),
-                }
+            drift_not_alerted.append(classifier)
+            logger.info(
+                f"{classifier.upper()} drift is report-only - no notification sent"
             )
 
         elif verdict is HealthVerdict.UNKNOWN:
@@ -466,20 +469,31 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
             )
 
     if not alerts_sent:
+        if drift_not_alerted:
+            return {
+                "alerts_sent": False,
+                "reason": "drift_report_only",
+                "drift_not_alerted": drift_not_alerted,
+            }
         logger.info("No drift and no failed checks - no alerts needed")
-        return {"alerts_sent": False, "reason": "nothing_to_report"}
+        return {
+            "alerts_sent": False,
+            "reason": "nothing_to_report",
+            "drift_not_alerted": drift_not_alerted,
+        }
 
     # `alerts_sent` means DELIVERED, not attempted.
     #
-    # Both notification helpers return `dict[str, bool]` -- one entry per
+    # The notification helper returns `dict[str, bool]` -- one entry per
     # channel -- and no channel need have accepted it: an HTTP error, Resend
     # rejecting the key, or (the default configuration) no channel enabled at
     # all, which returns `{"console": True}`. Any of those left this step
     # reporting `alerts_sent: True`. That is #72's class in the alerting path itself: the
     # step whose whole job is to raise the alarm recording success for an alarm
-    # nobody received. Not escalated to a workflow failure -- an undelivered
-    # alert about drift should not erase the drift finding -- but it is stated,
-    # and the archive #75/#76 will read now carries the difference.
+    # nobody received. Not escalated to a workflow failure here -- every alert
+    # this step sends is for an `unknown` verdict, which `fail_on_unknown_verdict`
+    # already fails the run on -- but it is stated, and the archive #75/#76
+    # read carries the difference.
     undelivered = [a for a in alerts_sent if not a["delivered"]]
     for alert in undelivered:
         logger.error(
@@ -496,6 +510,7 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
         ],
         "alert_count": len(alerts_sent),
         "alert_details": alerts_sent,
+        "drift_not_alerted": drift_not_alerted,
     }
 
 
@@ -653,7 +668,7 @@ def _log_drift_summary(report: dict[str, Any]) -> None:
         print(f"  UNKNOWN: {names} could not be checked - not monitored")
     if overall["any_drift_detected"]:
         names = ", ".join(c.upper() for c in overall["classifiers_with_drift"])
-        print(f"  WARNING: Drift detected in {names}")
+        print(f"  Drift detected in {names} (report-only, no alert sent)")
     if overall["all_checked_healthy"]:
         print("  All checked classifiers healthy")
     if overall["classifiers_skipped"]:
@@ -700,7 +715,7 @@ class DriftMonitoringWorkflow(Workflow):
     1. Check FP classifier drift
     2. Check EP classifier drift
     3. Evaluate drift results
-    4. Send alerts for drift and for failed checks
+    4. Send alerts for checks that produced no verdict (drift is report-only)
     5. Generate summary report
     6. Fail the workflow if any check produced no verdict
     """
@@ -726,7 +741,7 @@ class DriftMonitoringWorkflow(Workflow):
         ),
         StepDefinition(
             name="send_drift_alerts",
-            description="Send notifications for drift and failed checks",
+            description="Send notifications for checks that produced no verdict (drift is report-only)",
             handler=send_drift_alerts,
             skip_on_dry_run=True,
         ),
