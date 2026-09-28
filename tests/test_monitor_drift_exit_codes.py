@@ -145,6 +145,17 @@ class TestPrintReport:
 
         assert "Healthy" in capsys.readouterr().out
 
+    def test_drift_is_reported_without_a_retrain_recommendation(
+        self, monitor_drift, capsys
+    ):
+        """Drift is a distribution shift, not a retrain signal (#140, D025)."""
+        monitor_drift.print_report(make_report(drift_detected=True, score=0.4))
+
+        out = capsys.readouterr().out
+        assert "DRIFT DETECTED" in out
+        assert "retrain" not in out.lower().replace("not a retrain signal", "")
+        assert "ACTION REQUIRED" not in out
+
 
 class TestErrorStream:
     """AC3: the error message must land where the workflow reads it."""

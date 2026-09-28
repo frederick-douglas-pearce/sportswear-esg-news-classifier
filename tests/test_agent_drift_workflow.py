@@ -297,6 +297,21 @@ class TestEvaluateDriftResults:
         assert result["any_drift_detected"] is True
         assert result["classifiers_with_drift"] == ["fp"]
         assert result["all_checked_healthy"] is False
+        # Drift alone is not a retrain signal (#140, D025).
+        assert "retrain" not in result["recommendation"].lower().replace(
+            "not a retrain signal", ""
+        )
+        assert "FP" in result["recommendation"]
+
+    def test_drift_recommendation_names_every_drifted_classifier(self, mock_workflow):
+        context = {
+            "fp_verdict": HealthVerdict.DEGRADED.value,
+            "ep_verdict": HealthVerdict.DEGRADED.value,
+        }
+
+        result = evaluate_drift_results(mock_workflow, context)
+
+        assert "FP, EP" in result["recommendation"]
 
     def test_all_skipped_is_not_healthy(self, mock_workflow):
         """'Every non-skipped check passed' is vacuously true here (issue #95)."""
@@ -330,23 +345,49 @@ class TestSendDriftAlerts:
 
         assert result["alerts_sent"] is False
 
-    def test_alert_sent_on_drift(self, mock_workflow):
+    @pytest.mark.parametrize("classifier", ["fp", "ep"])
+    def test_drift_sends_no_notification(self, mock_workflow, classifier):
+        """Drift is report-only (#140, D025).
+
+        Patched at `NotificationManager.send`, the one path every notification
+        helper goes through, so this fails if ANY helper -- not just the one
+        deleted here -- is re-wired to fire on a drift verdict.
+        """
+        other = "ep" if classifier == "fp" else "fp"
         with patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
-        ) as mock_notify:
-            mock_notify.return_value = {"console": True}
+            "src.agent.notifications.NotificationManager.send"
+        ) as mock_send, patch(
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
+        ) as mock_failed:
             context = {
                 "dry_run": False,
-                "fp_verdict": HealthVerdict.DEGRADED.value,
-                "fp_drift_score": 0.15,
-                "fp_threshold": 0.1,
-                "ep_verdict": HealthVerdict.SKIPPED.value,
+                f"{classifier}_verdict": HealthVerdict.DEGRADED.value,
+                f"{classifier}_drift_score": 0.15,
+                f"{classifier}_threshold": 0.1,
+                f"{other}_verdict": HealthVerdict.SKIPPED.value,
             }
 
             result = send_drift_alerts(mock_workflow, context)
 
-            assert result["alert_count"] == 1
-            mock_notify.assert_called_once()
+        mock_send.assert_not_called()
+        mock_failed.assert_not_called()
+        assert result["alerts_sent"] is False
+        # Not "nothing_to_report": the archive must tell drift from a quiet run.
+        assert result["reason"] == "drift_report_only"
+        assert result["drift_not_alerted"] == [classifier]
+
+    def test_healthy_run_reports_nothing_rather_than_drift(self, mock_workflow):
+        """Control for the above: `drift_report_only` is not the default."""
+        context = {
+            "dry_run": False,
+            "fp_verdict": HealthVerdict.HEALTHY.value,
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+        }
+
+        result = send_drift_alerts(mock_workflow, context)
+
+        assert result["reason"] == "nothing_to_report"
+        assert "drift_not_alerted" not in result
 
     def test_alert_sent_on_failed_check(self, mock_workflow):
         """AC2: an induced check failure produces an alert.
@@ -369,14 +410,25 @@ class TestSendDriftAlerts:
 
             assert result["alert_count"] == 1
             assert result["alert_details"][0]["kind"] == "check_failed"
+            mock_notify.assert_called_once()
             kwargs = mock_notify.call_args.kwargs
             assert kwargs["check_name"] == "FP drift"
             assert kwargs["reason"] == "Insufficient data for drift analysis"
 
+    @staticmethod
+    def _failed_check_context():
+        return {
+            "dry_run": False,
+            "fp_verdict": HealthVerdict.UNKNOWN.value,
+            "fp_error": "boom",
+            "fp_drift_exit_code": EXIT_INDETERMINATE,
+            "ep_verdict": HealthVerdict.SKIPPED.value,
+        }
+
     def test_alerts_sent_is_false_when_no_channel_accepted_it(self, mock_workflow):
         """`alerts_sent` means delivered, not attempted.
 
-        Both helpers return one bool per channel, and none need have accepted
+        The helper returns one bool per channel, and none need have accepted
         it -- an HTTP error, Resend rejecting the key, or no channel enabled at
         all, which returns `{"console": True}`. This step used to record
         `alerts_sent: True` regardless. #72's class in the
@@ -384,40 +436,27 @@ class TestSendDriftAlerts:
         success for an alarm nobody received.
         """
         with patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_notify:
             mock_notify.return_value = {"webhook": False, "email": False}
-            context = {
-                "dry_run": False,
-                "fp_verdict": HealthVerdict.DEGRADED.value,
-                "fp_drift_score": 0.15,
-                "fp_threshold": 0.1,
-                "ep_verdict": HealthVerdict.SKIPPED.value,
-            }
 
-            result = send_drift_alerts(mock_workflow, context)
+            result = send_drift_alerts(mock_workflow, self._failed_check_context())
 
             assert result["alerts_sent"] is False
             assert result["alerts_attempted"] == 1
             assert result["alerts_delivered"] == 0
-            assert result["alerts_undelivered"] == ["fp:drift"]
-            # The finding itself is not erased by a delivery failure.
+            assert result["alerts_undelivered"] == ["fp:check_failed"]
+            # The alert itself is not erased by a delivery failure.
             assert result["alert_count"] == 1
 
     def test_alerts_sent_is_true_only_when_every_alert_landed(self, mock_workflow):
         """One delivered and one not is not a success."""
         with patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
-        ) as mock_drift, patch(
             "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_failed:
-            mock_drift.return_value = {"webhook": True}
-            mock_failed.return_value = {"webhook": False}
+            mock_failed.side_effect = [{"webhook": True}, {"webhook": False}]
             context = {
-                "dry_run": False,
-                "fp_verdict": HealthVerdict.DEGRADED.value,
-                "fp_drift_score": 0.15,
-                "fp_threshold": 0.1,
+                **self._failed_check_context(),
                 "ep_verdict": HealthVerdict.UNKNOWN.value,
                 "ep_error": "boom",
                 "ep_drift_exit_code": EXIT_INDETERMINATE,
@@ -440,38 +479,24 @@ class TestSendDriftAlerts:
         and the agent log is exactly where #71 says nobody was looking.
         """
         with patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_notify:
             mock_notify.return_value = {"console": True}
-            context = {
-                "dry_run": False,
-                "fp_verdict": HealthVerdict.DEGRADED.value,
-                "fp_drift_score": 0.15,
-                "fp_threshold": 0.1,
-                "ep_verdict": HealthVerdict.SKIPPED.value,
-            }
 
-            result = send_drift_alerts(mock_workflow, context)
+            result = send_drift_alerts(mock_workflow, self._failed_check_context())
 
             assert result["alerts_sent"] is False
             assert result["alerts_delivered"] == 0
-            assert result["alerts_undelivered"] == ["fp:drift"]
+            assert result["alerts_undelivered"] == ["fp:check_failed"]
 
     def test_a_real_channel_alongside_console_still_counts(self, mock_workflow):
         """Control: `console` is ignored, not poisonous."""
         with patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_notify:
             mock_notify.return_value = {"console": True, "webhook": True}
-            context = {
-                "dry_run": False,
-                "fp_verdict": HealthVerdict.DEGRADED.value,
-                "fp_drift_score": 0.15,
-                "fp_threshold": 0.1,
-                "ep_verdict": HealthVerdict.SKIPPED.value,
-            }
 
-            result = send_drift_alerts(mock_workflow, context)
+            result = send_drift_alerts(mock_workflow, self._failed_check_context())
 
             assert result["alerts_sent"] is True
             assert result["alerts_delivered"] == 1
@@ -479,18 +504,11 @@ class TestSendDriftAlerts:
     def test_alerts_sent_is_true_when_a_channel_accepted_it(self, mock_workflow):
         """The control for the two above: real delivery still reports True."""
         with patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
+            "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_notify:
             mock_notify.return_value = {"webhook": False, "email": True}
-            context = {
-                "dry_run": False,
-                "fp_verdict": HealthVerdict.DEGRADED.value,
-                "fp_drift_score": 0.15,
-                "fp_threshold": 0.1,
-                "ep_verdict": HealthVerdict.SKIPPED.value,
-            }
 
-            result = send_drift_alerts(mock_workflow, context)
+            result = send_drift_alerts(mock_workflow, self._failed_check_context())
 
             assert result["alerts_sent"] is True
             assert result["alerts_delivered"] == 1
@@ -752,8 +770,8 @@ class TestDriftMonitoringWorkflow:
         ) as mock_run, patch(
             "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_notify, patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
-        ) as mock_drift_notify:
+            "src.agent.notifications.NotificationManager.send"
+        ) as mock_send:
             mock_run.return_value = script_result(exit_code=EXIT_NO_DRIFT)
 
             workflow = DriftMonitoringWorkflow(state_manager=state_manager, dry_run=False)
@@ -761,7 +779,7 @@ class TestDriftMonitoringWorkflow:
 
             assert result.status == WorkflowStatus.COMPLETED
             mock_notify.assert_not_called()
-            mock_drift_notify.assert_not_called()
+            mock_send.assert_not_called()
 
             report = result.steps["generate_drift_report"].result["report"]
             assert report["overall"]["all_checked_healthy"] is True
@@ -930,14 +948,12 @@ class TestSummaryReadsTheVerdictNotTheMetric:
         assert "Status: Healthy" not in out
 
 
-class TestBothVerdictsAlert:
-    def test_drift_and_failed_check_both_alert(self, mock_workflow):
+class TestDriftAlongsideAFailedCheck:
+    def test_only_the_failed_check_alerts(self, mock_workflow):
+        """Drift stays report-only even when another check fails (#140, D025)."""
         with patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
-        ) as mock_drift, patch(
             "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_fail:
-            mock_drift.return_value = {"console": True}
             mock_fail.return_value = {"console": True}
             context = {
                 "dry_run": False,
@@ -950,35 +966,44 @@ class TestBothVerdictsAlert:
 
             result = send_drift_alerts(mock_workflow, context)
 
-            assert result["alert_count"] == 2
-            mock_drift.assert_called_once()
+            assert result["alert_count"] == 1
             mock_fail.assert_called_once()
+            assert mock_fail.call_args.kwargs["check_name"] == "EP drift"
+            assert result["drift_not_alerted"] == ["fp"]
 
 
 class TestDegradedRunEndToEnd:
-    """Drift detected is a RESULT: the workflow completes and alerts."""
+    """Drift detected is a RESULT: the workflow completes and reports it, and
+    sends nothing -- drift is report-only (#140, D025)."""
 
-    def test_degraded_completes_with_a_drift_alert(self, state_manager):
+    def test_degraded_completes_report_only(self, state_manager, isolated_history):
+        from src.agent.archive import iter_runs
+
         with patch(
             "src.agent.workflows.drift_monitoring.run_monitor_drift"
         ) as mock_run, patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
-        ) as mock_drift, patch(
+            "src.agent.notifications.NotificationManager.send"
+        ) as mock_send, patch(
             "src.agent.workflows.drift_monitoring.send_check_failure_notification"
         ) as mock_fail:
             mock_run.return_value = script_result(
                 exit_code=EXIT_DRIFT_DETECTED, drift_detected=True, drift_score=0.4
             )
-            mock_drift.return_value = {"console": True}
 
             workflow = DriftMonitoringWorkflow(state_manager=state_manager, dry_run=False)
             result = workflow.run()
 
             assert result.status == WorkflowStatus.COMPLETED
-            mock_drift.assert_called_once()
+            mock_send.assert_not_called()
             mock_fail.assert_not_called()
             report = result.steps["generate_drift_report"].result["report"]
             assert report["fp_classifier"]["verdict"] == HealthVerdict.DEGRADED.value
+            assert report["overall"]["classifiers_with_drift"] == ["fp"]
+
+        # The archive tells this run from a quiet one.
+        (archived,) = iter_runs(isolated_history, workflows={"drift_monitoring"})
+        assert archived.context["drift_not_alerted"] == ["fp"]
+        assert archived.context["reason"] == "drift_report_only"
 
 
 class TestVerdictsSerialiseSafely:
@@ -1311,33 +1336,25 @@ class TestCoverageReachesTheArchive:
         report = archived.steps["generate_drift_report"]["result"]["report"]
         assert report["fp_classifier"]["columns_skipped"] == self.PARTIAL["columns_skipped"]
 
-    def _drift_alert_details(self, state_manager, coverage):
+    def test_degraded_report_still_names_partial_coverage(self, state_manager):
+        """D022 item 6 put coverage in the drift alert; there is no drift alert
+        any more (#140, D025), so the report is where a degraded verdict's
+        partial coverage must still be found."""
         with patch(
             "src.agent.workflows.drift_monitoring.run_monitor_drift"
         ) as mock_run, patch(
-            "src.agent.workflows.drift_monitoring.send_drift_notification"
-        ) as mock_drift_notify:
+            "src.agent.notifications.NotificationManager.send"
+        ) as mock_send:
             mock_run.return_value = self._result(
-                coverage, exit_code=EXIT_DRIFT_DETECTED, drift_detected=True, drift_score=0.3
+                self.PARTIAL, exit_code=EXIT_DRIFT_DETECTED, drift_detected=True, drift_score=0.3
             )
-            mock_drift_notify.return_value = {"console": True}
-            DriftMonitoringWorkflow(state_manager=state_manager, dry_run=False).run()
+            result = DriftMonitoringWorkflow(state_manager=state_manager, dry_run=False).run()
 
-        mock_drift_notify.assert_called_once()
-        return mock_drift_notify.call_args.kwargs["details"]
-
-    def test_drift_alert_names_partial_coverage(self, state_manager):
-        details = self._drift_alert_details(state_manager, self.PARTIAL)
-
-        assert details["columns_missing_from_reference"] == ["novelty_score"]
-        assert details["columns_skipped"] == self.PARTIAL["columns_skipped"]
-        assert details["metrics_unreadable"] == ["brand_hoka"]
-
-    def test_drift_alert_with_full_coverage_adds_nothing(self, state_manager):
-        details = self._drift_alert_details(state_manager, self.FULL)
-
-        for key in ("columns_missing_from_reference", "columns_skipped", "metrics_unreadable"):
-            assert key not in details
+        mock_send.assert_not_called()
+        section = result.steps["generate_drift_report"].result["report"]["fp_classifier"]
+        assert section["verdict"] == HealthVerdict.DEGRADED.value
+        for key, value in self.PARTIAL.items():
+            assert section[key] == value
 
     def test_absent_from_the_context_never(self, mock_workflow):
         """The two returns before a summary is read archive the same key set,

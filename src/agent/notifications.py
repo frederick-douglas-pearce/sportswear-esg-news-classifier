@@ -659,40 +659,6 @@ def send_labeling_summary(
     return manager.send(notification)
 
 
-def send_drift_notification(
-    classifier_type: str,
-    drift_score: float,
-    threshold: float,
-    details: dict[str, Any] | None = None,
-) -> dict[str, bool]:
-    """Send drift detection notification.
-
-    Args:
-        classifier_type: Type of classifier (fp, ep, esg)
-        drift_score: Measured drift score
-        threshold: Threshold that was exceeded
-        details: Additional details
-
-    Returns:
-        Dict of channel results
-    """
-    notification = Notification(
-        notification_type=NotificationType.DRIFT_DETECTED,
-        subject=f"Drift Detected: {classifier_type.upper()} Classifier",
-        message=f"Data drift detected for {classifier_type} classifier. Score: {drift_score:.4f} exceeds threshold {threshold:.4f}. Consider retraining.",
-        details={
-            "classifier": classifier_type,
-            "drift_score": drift_score,
-            "threshold": threshold,
-            **(details or {}),
-        },
-        severity="warning",
-    )
-
-    manager = NotificationManager()
-    return manager.send(notification)
-
-
 def send_check_failure_notification(
     check_name: str,
     reason: str,
@@ -700,10 +666,9 @@ def send_check_failure_notification(
 ) -> dict[str, bool]:
     """Send notification that a scheduled check produced no verdict.
 
-    Distinct from `send_drift_notification`, which reports a *result*. This one
-    reports that there is no result -- the case that produced no notification at
-    all across 223 failed runs, because a failed check looked identical to a clean one
-    (issue #71).
+    It reports that there is no result -- the case that produced no notification
+    at all, because a failed check looked identical to a clean one (issue #71).
+    A drift *result* sends no notification: drift is report-only (#140, D025).
 
     Args:
         check_name: Which check could not complete (e.g. "FP drift")

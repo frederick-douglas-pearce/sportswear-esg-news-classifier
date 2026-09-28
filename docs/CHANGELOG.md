@@ -4,6 +4,26 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-28: Drift no longer recommends retraining or sends an alert
+
+**Drift is report-only (#140, L1a of #152).** A `degraded` drift verdict recommended "Consider
+retraining affected classifiers" and sent a notification saying "Retrain <C> classifier with recent
+data". Drift measures distribution shift, not whether the classifier got worse, so that
+recommendation had nothing behind it.
+
+- `evaluate_drift_results` now says the shift is not a retrain signal on its own, that realized
+  performance is not yet measured, and to spot-check with `/review-labels`. The drift verdict is
+  still `degraded`, and the vocabulary is unchanged.
+- `send_drift_alerts` sends nothing for drift, on email or webhook. It records the run as
+  `reason: drift_report_only` with `drift_not_alerted: [<classifier>]`, so the archive tells a drift
+  run from a quiet one. The check-failure (`unknown`) alert is unchanged.
+- `send_drift_notification` is deleted. `scripts/monitor_drift.py` no longer prints "consider
+  retraining"; its exit codes and summary are unchanged, and so is `src/mlops/monitoring.py`.
+- **No email no longer means no drift.** Read `classifiers_with_drift` in the archived run. Until
+  #144 adds a realized-performance verdict, a real regression is not emailed either.
+- Recorded as D025, which supersedes D022 item 6 (coverage fields in the drift alert). Coverage still
+  reaches the report, the console and the archive.
+
 ### 2026-09-27: An FP skip reason no longer claims high confidence for a near-threshold call
 
 **Skip wording (#116).** Every FP skip was recorded as a "High-confidence false positive", whatever

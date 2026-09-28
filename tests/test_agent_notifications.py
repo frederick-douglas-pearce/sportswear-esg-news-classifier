@@ -11,7 +11,6 @@ from src.agent.notifications import (
     NotificationManager,
     NotificationType,
     WebhookNotifier,
-    send_drift_notification,
     send_labeling_summary,
     send_workflow_notification,
 )
@@ -373,29 +372,6 @@ class TestConvenienceFunctions:
             notification = call_args[0][0]
             assert notification.severity == "warning"
 
-    def test_send_drift_notification(self):
-        """Test drift notification."""
-        with patch(
-            "src.agent.notifications.NotificationManager"
-        ) as mock_manager_class:
-            mock_manager = MagicMock()
-            mock_manager.send.return_value = {"console": True}
-            mock_manager_class.return_value = mock_manager
-
-            result = send_drift_notification(
-                classifier_type="fp",
-                drift_score=0.15,
-                threshold=0.1,
-                details={"method": "evidently"},
-            )
-
-            call_args = mock_manager.send.call_args
-            notification = call_args[0][0]
-            assert notification.notification_type == NotificationType.DRIFT_DETECTED
-            assert "FP" in notification.subject
-            assert notification.severity == "warning"
-            assert notification.details["drift_score"] == 0.15
-
 
 class TestCheckFailureNotification:
     """The alert that never fired across 223 failed runs (issue #71).
@@ -448,25 +424,10 @@ class TestCheckFailureNotification:
         assert "novelty_score" in notification.message
         assert notification.details["reason"] == "KeyError: 'novelty_score'"
 
-    def test_is_distinct_from_a_drift_notification(self):
-        from unittest.mock import patch
+    def test_drift_notification_helper_is_gone(self):
+        """Drift is report-only (#140, D025): the helper that emailed
+        "Consider retraining" on a drift result is deleted, not left unused,
+        so nothing can re-wire drift to a notification."""
+        import src.agent.notifications as notifications
 
-        from src.agent.notifications import (
-            NotificationType,
-            send_check_failure_notification,
-            send_drift_notification,
-        )
-
-        with patch("src.agent.notifications.NotificationManager") as mock_manager:
-            mock_manager.return_value.send.return_value = {}
-            send_drift_notification(
-                classifier_type="fp", drift_score=0.4, threshold=0.15
-            )
-            drift = mock_manager.return_value.send.call_args.args[0]
-
-            send_check_failure_notification(check_name="FP drift", reason="boom")
-            failure = mock_manager.return_value.send.call_args.args[0]
-
-        assert drift.notification_type is NotificationType.DRIFT_DETECTED
-        assert failure.notification_type is NotificationType.CHECK_FAILED
-        assert drift.severity != failure.severity
+        assert not hasattr(notifications, "send_drift_notification")
