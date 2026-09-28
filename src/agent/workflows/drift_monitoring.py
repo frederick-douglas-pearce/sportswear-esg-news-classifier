@@ -426,8 +426,8 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
     """Send notifications for checks that produced no verdict.
 
     A `degraded` drift verdict sends nothing: drift is report-only (#140,
-    D025). Every return below carries `drift_not_alerted` -- the classifiers
-    whose drift this step did not notify on, `[]` when none -- and `reason` is
+    D025). Every non-dry-run return below carries `drift_not_alerted` -- the
+    classifiers whose drift this step did not notify on, `[]` when none -- and `reason` is
     `drift_report_only` only when drift was present and no alert was sent.
     Whether drift was found is `classifiers_with_drift`, written by
     `evaluate_drift_results`; this is the alert step's record of what it did.

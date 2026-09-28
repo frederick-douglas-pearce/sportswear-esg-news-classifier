@@ -416,9 +416,10 @@ the Evidently path). `_run_drift_check` starts the context with each one as `<cl
 set to `None`, and copies the value in whenever a summary was read, on any verdict.
 `generate_drift_report` puts them in that classifier's section, and the run archive stores both the
 context and the report. When coverage is partial, the console summary prints a NOTE, on any verdict.
-A drift verdict sends no alert (#140), so the report and the archive are where partial coverage is
-read; the drift alert that used to carry these fields (D022 item 6) is gone, superseded by D025. A
-field of an unexpected type is left out of the console NOTE rather than failing the run.
+In the `drift_monitoring` workflow a drift verdict sends no alert (#140; the opt-in
+`monitor_drift.py --alert` webhook is separate), so the report and the archive are where partial
+coverage is read; the drift alert that used to carry these fields (D022 item 6) is gone, superseded
+by D025. A field of an unexpected type is left out of the console NOTE rather than failing the run.
 
 Read `null` as "that measurement did not run on this path, or was not recorded", and an empty value
 as "it ran and found nothing". An archive auditor must not read `null` as zero. The fields are a
