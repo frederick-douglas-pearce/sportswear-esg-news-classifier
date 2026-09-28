@@ -93,7 +93,8 @@ class TestAPIEndpoints:
         assert "model_name" in data
         assert "threshold" in data
         assert "metrics" in data
-        # The response_model must carry the version through; it stripped it before #115.
+        # ModelInfoResponse must declare version/artifact_sha256; before #115 it declared
+        # neither, and the classifier emitted neither.
         assert data["version"] == "v9.8.7"
         assert data["artifact_sha256"] == "0123456789ab"
 

@@ -67,6 +67,14 @@ class TestSentinels:
         assert len(set(values)) == len(values)
         assert NON_VERSION_SENTINELS == frozenset(values)
 
+    def test_sentinel_strings_are_pinned(self):
+        """These are persisted in classifier_predictions and queried later (#145)."""
+        assert UNVERSIONED == "unversioned"
+        assert UNREPORTED == "unreported"
+        assert UNAVAILABLE == "unavailable"
+        assert DISABLED == "disabled"
+        assert UNKNOWN == "unknown"
+
 
 class TestStampArtifactVersion:
     def test_writes_version_and_pipeline_hash(self, artifact):
@@ -106,6 +114,26 @@ class TestLoadedArtifactVersion:
 
         assert info["version"] == UNVERSIONED
 
+    def test_version_without_pipeline_hash_is_unversioned(self, artifact, caplog):
+        pipeline_path, config_path = artifact
+        config_path.write_text(json.dumps({**BASE_CONFIG, "version": "v3.1.0"}))
+
+        with caplog.at_level(logging.ERROR, logger="src.deployment.base"):
+            info = _load_fp_classifier(pipeline_path, config_path).get_model_info()
+
+        assert info["version"] == UNVERSIONED
+        assert "is missing or does not match the loaded pipeline" in caplog.text
+
+    def test_pipeline_hash_without_version_is_unversioned(self, artifact):
+        pipeline_path, config_path = artifact
+        config_path.write_text(
+            json.dumps({**BASE_CONFIG, "pipeline_sha256": file_sha256(pipeline_path)})
+        )
+
+        info = _load_fp_classifier(pipeline_path, config_path).get_model_info()
+
+        assert info["version"] == UNVERSIONED
+
     def test_config_beside_a_different_pipeline_is_unversioned(self, artifact, caplog):
         pipeline_path, config_path = artifact
         stamp_artifact_version(config_path, "v3.1.0", pipeline_path)
@@ -116,10 +144,10 @@ class TestLoadedArtifactVersion:
             info = _load_fp_classifier(pipeline_path, config_path).get_model_info()
 
         assert info["version"] == UNVERSIONED
-        assert "does not match the loaded pipeline" in caplog.text
+        assert "is missing or does not match the loaded pipeline" in caplog.text
 
     def test_model_info_endpoint_carries_loaded_version(self, artifact):
-        """The version must survive /model/info's response_model (the #115 root cause)."""
+        """The version must survive /model/info's response_model (one of the missing links behind #115)."""
         from fastapi.testclient import TestClient
 
         import scripts.predict as predict_module
@@ -186,17 +214,60 @@ class TestRegistryWritersStamp:
 
         assert "version" not in _read(models_dir / "fp_classifier_config.json")
 
-    def test_promote_model_stamps(self, models_dir, monkeypatch):
+    def test_register_model_refuses_when_pipeline_missing(self, models_dir, monkeypatch):
+        (models_dir / "fp_classifier_pipeline.joblib").unlink()
+        registry_before = _read(models_dir / "registry.json")
+
+        with pytest.raises(SystemExit) as exc:
+            self._run_register(monkeypatch, "--version", "v3.1.0", "--update-registry")
+
+        assert exc.value.code != 0
+        assert _read(models_dir / "registry.json") == registry_before
+        assert "version" not in _read(models_dir / "fp_classifier_config.json")
+
+    def _run_promote(self, models_dir, monkeypatch, *extra):
         import scripts.promote_model as promote_model
 
         monkeypatch.setattr(
             sys, "argv",
             ["promote_model.py", "--classifier", "fp", "--version", "v3.1.0",
-             "--models-dir", str(models_dir)],
+             "--models-dir", str(models_dir), *extra],
         )
-        assert promote_model.main() == 0
+        return promote_model.main()
 
-        assert _read(models_dir / "fp_classifier_config.json")["version"] == "v3.1.0"
+    def test_promote_model_stamps(self, models_dir, monkeypatch):
+        assert self._run_promote(models_dir, monkeypatch) == 0
+
+        config = _read(models_dir / "fp_classifier_config.json")
+        assert config["version"] == "v3.1.0"
+        assert config["pipeline_sha256"] == hashlib.sha256(PIPELINE_BYTES).hexdigest()
+        assert "v3.1.0" in _read(models_dir / "registry.json")["fp"]["versions"]
+
+    def test_promote_model_dry_run_does_not_stamp(self, models_dir, monkeypatch):
+        registry_before = _read(models_dir / "registry.json")
+
+        assert self._run_promote(models_dir, monkeypatch, "--dry-run") == 0
+
+        assert "version" not in _read(models_dir / "fp_classifier_config.json")
+        assert _read(models_dir / "registry.json") == registry_before
+
+    def test_promote_model_stamps_only_after_registry_write(self, models_dir, monkeypatch):
+        import scripts.promote_model as promote_model
+
+        with patch.object(promote_model, "save_registry", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
+                self._run_promote(models_dir, monkeypatch)
+
+        assert "version" not in _read(models_dir / "fp_classifier_config.json")
+
+    def test_promote_model_refuses_when_pipeline_missing(self, models_dir, monkeypatch):
+        (models_dir / "fp_classifier_pipeline.joblib").unlink()
+        registry_before = _read(models_dir / "registry.json")
+
+        assert self._run_promote(models_dir, monkeypatch) == 1
+
+        assert _read(models_dir / "registry.json") == registry_before
+        assert "version" not in _read(models_dir / "fp_classifier_config.json")
 
     def test_retrain_promote_version_stamps_the_promoted_copy(self, models_dir, tmp_path):
         import scripts.retrain as retrain
@@ -206,7 +277,20 @@ class TestRegistryWritersStamp:
         (output_dir / "fp_classifier_pipeline.joblib").write_bytes(b"candidate model")
         (output_dir / "fp_classifier_config.json").write_text(json.dumps(BASE_CONFIG))
 
-        with patch.object(retrain, "trigger_deploy_workflow"):
+        registry_path = models_dir / "registry.json"
+        config_path = models_dir / "fp_classifier_config.json"
+        real_stamp = retrain.stamp_artifact_version
+
+        def stamp_after_registry(*args, **kwargs):
+            # The registry entry must already be on disk when the config is stamped.
+            assert "v3.1.0" in _read(registry_path)["fp"]["versions"]
+            return real_stamp(*args, **kwargs)
+
+        def deploy_after_stamp(*args, **kwargs):
+            assert _read(config_path)["version"] == "v3.1.0"
+
+        with patch.object(retrain, "stamp_artifact_version", side_effect=stamp_after_registry) as stamp, \
+                patch.object(retrain, "trigger_deploy_workflow", side_effect=deploy_after_stamp) as deploy:
             retrain.promote_version(
                 classifier="fp",
                 version="v3.1.0",
@@ -214,10 +298,12 @@ class TestRegistryWritersStamp:
                 data_path="data/fp_training_data.jsonl",
                 output_dir=output_dir,
                 models_dir=models_dir,
-                registry_path=models_dir / "registry.json",
+                registry_path=registry_path,
             )
 
-        config = _read(models_dir / "fp_classifier_config.json")
+        assert stamp.call_count == 1
+        assert deploy.call_count == 1
+        config = _read(config_path)
         assert config["version"] == "v3.1.0"
         assert config["pipeline_sha256"] == hashlib.sha256(b"candidate model").hexdigest()
         # The candidate's own config is left as it was.
@@ -283,15 +369,76 @@ class TestPipelineRecordsVersion:
         assert prediction.model_version == UNREPORTED
         assert "reported no model version (unreported)" in caplog.text
 
-    def test_failed_model_info_fetch_is_unavailable(self, article):
-        prediction = self._run(article, model_info={"model_name": "unknown", "version": UNAVAILABLE})
+    def test_failed_model_info_fetch_is_unavailable(self, article, caplog):
+        """A real client whose /model/info request fails while the batch call succeeds."""
+        fp_client = ClassifierClient("http://localhost:1")
+        http = MagicMock()
+        http.get.side_effect = httpx.ConnectError("refused")
+        fp_client._client = http
+
+        with patch("src.labeling.pipeline.db"), patch(
+            "src.labeling.pipeline.labeling_settings"
+        ) as settings, patch.object(
+            fp_client,
+            "predict_fp_batch",
+            return_value=[
+                FPPredictionResult(
+                    is_sportswear=True, probability=0.9, confidence_level="low", threshold=0.3
+                )
+            ],
+        ), caplog.at_level(logging.WARNING):
+            settings.fp_classifier_enabled = True
+            settings.fp_skip_llm_threshold = 0.3
+            pipeline = LabelingPipeline(fp_client=fp_client)
+            _, prediction = pipeline._run_fp_prefilter(article, dry_run=True)
 
         assert prediction.model_version == UNAVAILABLE
+        assert "Failed to get model info" in caplog.text
+        assert f"reported no model version ({UNAVAILABLE})" in caplog.text
 
-    def test_unversioned_artifact_is_recorded_as_such(self, article):
-        prediction = self._run(article, model_info={"version": UNVERSIONED})
+    def test_unversioned_artifact_is_recorded_as_such(self, article, caplog):
+        with caplog.at_level(logging.WARNING, logger="src.labeling.pipeline"):
+            prediction = self._run(article, model_info={"version": UNVERSIONED})
 
         assert prediction.model_version == UNVERSIONED
+        assert f"reported no model version ({UNVERSIONED})" in caplog.text
+
+    def test_one_version_warning_per_batch(self, article, caplog):
+        articles = [dict(article, id=uuid4()) for _ in range(3)]
+        with patch("src.labeling.pipeline.db"), patch(
+            "src.labeling.pipeline.labeling_settings"
+        ) as settings:
+            settings.fp_classifier_enabled = True
+            settings.fp_skip_llm_threshold = 0.3
+            fp_client = MagicMock()
+            fp_client.predict_fp_batch.return_value = [
+                FPPredictionResult(
+                    is_sportswear=True, probability=0.9, confidence_level="low", threshold=0.3
+                )
+                for _ in articles
+            ]
+            fp_client.get_model_info.return_value = {}
+            pipeline = LabelingPipeline(fp_client=fp_client)
+            with caplog.at_level(logging.WARNING, logger="src.labeling.pipeline"):
+                results = pipeline._run_fp_prefilter_batch(articles, dry_run=True)
+
+        warnings = [r for r in caplog.records if "reported no model version" in r.getMessage()]
+        assert len(warnings) == 1
+        assert [results[a["id"]][1].model_version for a in articles] == [UNREPORTED] * 3
+
+    def test_disabled_classifier_records_disabled(self, article):
+        with patch("src.labeling.pipeline.db"), patch(
+            "src.labeling.pipeline.labeling_settings"
+        ) as settings:
+            settings.fp_classifier_enabled = False
+            pipeline = LabelingPipeline()
+            with patch.object(pipeline, "_save_classifier_prediction") as save:
+                pipeline._run_fp_prefilter_batch(
+                    [article], novelty_scores={article["id"]: (0.4, 2)}, dry_run=False
+                )
+
+        assert save.call_count == 1
+        assert save.call_args.args[1].model_version == "disabled"
 
     def test_failed_batch_is_unavailable_not_unknown(self, article):
         prediction = self._run(article, batch_error=RuntimeError("connection refused"))

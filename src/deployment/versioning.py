@@ -19,15 +19,18 @@ from typing import Union
 logger = logging.getLogger(__name__)
 
 # The API loaded an artifact with no valid registered version: the config has
-# no version, or its pipeline_sha256 does not match the loaded joblib.
-# Remedy: register the artifact.
+# no version, or its pipeline_sha256 is missing or does not match the loaded
+# joblib. Remedy: register the artifact, then rebuild the API image from a tree
+# holding the stamped config (deploy.yml builds from the committed tree).
 UNVERSIONED = "unversioned"
 
 # The API responded but its /model/info carries no version field: the image
 # predates this field. Remedy: rebuild the image.
 UNREPORTED = "unreported"
 
-# The model-info fetch failed, or the FP batch call failed. Remedy: look at the API.
+# The model-info fetch failed (the client logs why), or the FP batch step failed
+# (API call, result handling, or saving the prediction; that row is
+# action_taken='failed' and its error_message says which).
 UNAVAILABLE = "unavailable"
 
 # The FP classifier is turned off in configuration.

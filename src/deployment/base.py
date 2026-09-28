@@ -72,7 +72,8 @@ class BaseClassifier(ABC):
         if self.config.get("pipeline_sha256") != self.artifact_sha256:
             logger.error(
                 f"{self.CLASSIFIER_TYPE} config claims version {version}, but its "
-                f"pipeline_sha256 does not match the loaded pipeline; reporting {UNVERSIONED}"
+                f"pipeline_sha256 is missing or does not match the loaded pipeline; "
+                f"reporting {UNVERSIONED}"
             )
             return UNVERSIONED
         return version

@@ -6,22 +6,28 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ### 2026-09-28: Classifier predictions record the loaded model's version
 
-**`model_version` is no longer always `unknown` (#115, D026).** `/model/info` had no `version` field,
-and FastAPI's `response_model` strips keys the schema does not declare, so the pipeline's
+**`model_version` is no longer always `unknown` (#115, D026).** Nothing produced a version: artifact
+configs carried none, `get_model_info()` emitted no `version` key, and `ModelInfoResponse` declared
+none (its `response_model` would have dropped one anyway). So the pipeline's
 `model_info.get("version", "unknown")` could only ever take its default.
 
 - The version describes the artifact the API loaded, not the registry's production pointer (the two
   can differ; see #172). `register_model.py --update-registry`, `retrain.py` promotion and
   `promote_model.py` stamp `version` and `pipeline_sha256` into the artifact's config through
-  `src/deployment/versioning.py`. The API reports that version only when the hash matches the loaded
-  joblib, else `unversioned`.
+  `src/deployment/versioning.py`, after the registry write; `register_model.py` and `promote_model.py`
+  now refuse to write anything when the pipeline file is missing. The API reports the version only
+  when the hash is present and matches the loaded joblib, else `unversioned`.
 - `/model/info` returns `version` and `artifact_sha256`.
 - When no version is known the pipeline records a value naming why: `unversioned`, `unreported` (API
-  image predates the field), `unavailable` (model-info fetch or FP batch failed), or `disabled`.
-  `unknown` is no longer written. Rows written before this change keep `unknown`. A missing version
-  logs a WARNING and does not stop the pre-filter.
-- Recorded rows change only after the `fp-classifier-api` image is rebuilt. No drift-reference
-  regeneration is needed: `model_version` is not a drift column.
+  image predates the field), `unavailable` (model-info fetch or FP batch step failed), or `disabled`.
+  `unknown` is no longer written; rows written before this change are not rewritten. When the API
+  answered without a usable version the pipeline logs a WARNING for the batch; it does not stop the
+  pre-filter.
+- From merge, rows from the currently deployed API image record `unreported`. A rebuild from the
+  current tree reports `unversioned`: a real version needs a registered artifact whose stamped config
+  is in the image's build tree (`deploy.yml` builds from the committed tree).
+- The drift-reference regeneration rule (`docs/MLOPS.md`, `CLAUDE.md`) now names the columns the drift
+  check reads. `model_version` is not one, so this change needs no regeneration.
 
 ### 2026-09-27: The drift workflow no longer recommends retraining or sends a drift alert
 

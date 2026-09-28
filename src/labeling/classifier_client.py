@@ -133,9 +133,6 @@ class ClassifierClient:
         Returns:
             Dictionary with model information including name, version, metrics.
             On a failed fetch, ``version`` is ``UNAVAILABLE`` (not cached).
-
-        Raises:
-            httpx.HTTPError: On API errors.
         """
         if self._model_info is not None:
             return self._model_info
