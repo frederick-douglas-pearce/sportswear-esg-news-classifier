@@ -144,8 +144,7 @@ checks brand columns against the reference first, so its `columns_skipped` recor
 reference lacks (`{}` when there are none; #105). `metrics_unreadable` is `null` wherever no
 Evidently metric snapshot was produced, and `columns_missing_from_reference` is `null` when there is
 no reference to compare against. The agent workflow copies these fields into its context, report and
-run archive. The fields are
-a record: the workflow neither requires them nor rejects a summary over them. What partial coverage
+run archive. The fields are a record: the workflow neither requires them nor rejects a summary over them. What partial coverage
 means for the verdict is decided upstream of them, in the check itself (#105, D023): an offered
 **core** column that was not assessed makes the result indeterminate (exit 2) on both paths. A
 `brand_*` shortfall is recorded and does not change the verdict. When no brand column was assessed
