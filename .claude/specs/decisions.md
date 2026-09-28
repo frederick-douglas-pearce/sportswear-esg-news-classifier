@@ -1857,7 +1857,8 @@ implemented in PR #162. Items 3 to 6 were revised by the human on the code-revie
    operator who is paged sees when a verdict rests on partial coverage. The console summary notes
    partial coverage on any verdict, UNKNOWN included. A field of an unexpected type is left out of
    both rather than rendered. That is tolerance in rendering, not validation of the contract, and
-   it is what keeps a record-only field from failing the run.
+   it is what keeps a record-only field from failing the run. *(First sentence superseded by D025,
+   #140: there is no drift alert. The console-note and rendering-tolerance rules stand.)*
 
 **Approval:** the human approved the plan on 2026-09-25 and ruled that `columns_checked` is included,
 to prepare for #105.
@@ -1951,33 +1952,44 @@ retrain, and a `high`-band or unbanded skip is at least as worth counting as a m
 
 ## D025: A Drift-Only Verdict Is Report-Only — No Retrain Recommendation, No Notification (#140, L1a)
 
-**Date:** 2026-09-28 · **Status:** accepted (architect-reviewed; plan approved by the human) · **Issue:** #140
+**Date:** 2026-09-27 · **Status:** accepted (architect-reviewed; plan approved by the human) · **Issue:** #140
 (Story 4 increment L1a of epic #152)
 
 **Context.** `evaluate_drift_results` recommended "Consider retraining affected classifiers" and
 `send_drift_alerts` sent a notification saying "Retrain <C> classifier with recent data" whenever a
-drift verdict was `degraded`. Drift is a distribution signal, not a performance measure (spec C5),
+drift verdict was `degraded`. Drift is a distribution signal, not a performance measure (C5 in `.claude/specs/prd-eval-calibration-architect-review.md`),
 and nothing yet measures realized performance (that is L1c, #144).
 
 **Decision (architect review of the L1a plan).**
-1. The drift `HealthVerdict` stays `degraded`. No new verdict member: `as_verdict` reads an
-   unrecognised value as `unknown`, which would fail the run at the terminal gate.
-2. A drift-only `degraded` recommends no retrain and sends **no notification on any channel**
-   (email and webhook — "report-only"). The check-failure (`unknown`) notification is unchanged.
-3. The alert step records the action as `reason: "drift_report_only"` plus
-   `drift_not_alerted: [classifiers]`, so a drift run is distinguishable from a quiet one in the
-   archive. No `drift_informational` tier field is written: in L1a it would duplicate
+1. The drift `HealthVerdict` stays `degraded`. No new verdict member: `as_verdict` would recognise
+   it, `unresolved` fails only on `unknown`, and `summarize` would count it as checked but in no
+   bucket — so `all_checked_healthy` would read **true** on a drifted run, which is #71's class
+   (a signal read as healthy). The four published strings (D010) are a second reason.
+2. In the `drift_monitoring` workflow, a drift-only `degraded` recommends no retrain and sends
+   **no notification** on any channel (email and webhook — "report-only"). The check-failure
+   (`unknown`) notification is unchanged. **Out of scope and unchanged:** the opt-in
+   `scripts/monitor_drift.py --alert` drift webhook (`src.mlops.alerts.send_drift_alert`), which
+   `scripts/cron_monitor.sh` passes when `ALERT_WEBHOOK_URL` is set; the workflow keeps it out
+   with `alert=False`. Whether that standalone path should exist is a follow-up.
+3. Every non-dry-run return of the alert step carries `drift_not_alerted: [classifiers]` (`[]`
+   when none) — the step's record of what it did not notify on. `reason: "drift_report_only"` is
+   set only when drift was present and no alert was sent. Whether drift was found is
+   `classifiers_with_drift`, written on every run by `evaluate_drift_results`; in L1a the two
+   lists coincide, and they diverge once L1c alerts on measured degradation. No `drift_informational` tier field is written: in L1a it would duplicate
    `classifiers_with_drift`, and its meaning would narrow when L1c composes perf × drift. L1c adds
    its own composed outcome field and decides its performance email from
    `verdict_of(fp_performance_verdict)`, never from a derived list.
-4. `send_drift_notification` is deleted (its only caller is gone), so nothing can be re-wired to
-   notify "Consider retraining" on drift. `NotificationType.DRIFT_DETECTED` stays.
+4. `send_drift_notification` is deleted (its only caller is gone), so the deleted helper cannot be
+   re-wired. The guard against re-wiring drift to any `src.agent.notifications` helper is
+   `TestSendDriftAlerts.test_drift_sends_no_notification`. `NotificationType.DRIFT_DETECTED` stays.
 5. `scripts/monitor_drift.py`'s status line stops saying "consider retraining". Exit codes, the
    summary JSON and `monitoring.py` are unchanged (C5).
-6. **Supersedes D022 item 6** (the DEGRADED drift alert carried the coverage fields): there is no
-   drift alert to carry them. Partial coverage still reaches the report, the console NOTE and the
+6. **Supersedes the first sentence of D022 item 6** (the DEGRADED drift alert carried the coverage
+   fields): there is no drift alert to carry them. Its console-note and rendering-tolerance rules
+   stand. Partial coverage still reaches the report, the console NOTE and the
    run archive, unchanged. Whether L1c's performance email carries drift coverage is L1c's call.
 
-**Accepted consequence.** After this, no email means either "no drift" or "drift, report-only".
+**Accepted consequence.** After this, no email from the workflow means either "no drift" or
+"drift, report-only".
 Silence is not "no drift"; `classifiers_with_drift` in the run archive says which. Until L1c, a real
 performance regression is not emailed (issue #140 §Risk).

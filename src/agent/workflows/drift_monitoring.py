@@ -175,7 +175,10 @@ def _run_drift_check(classifier: str, context: dict[str, Any]) -> dict[str, Any]
         days=context.get("drift_days", DEFAULT_DRIFT_WINDOW_DAYS),
         from_db=True,
         html_report=context.get("generate_html", False),
-        alert=False,  # We handle alerts in the notification step
+        # Keeps the script's own `--alert` drift webhook out of this workflow:
+        # drift is report-only here (D025), and check-failure alerts are sent
+        # by `send_drift_alerts`.
+        alert=False,
     )
 
     out: dict[str, Any] = {
@@ -423,9 +426,11 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
     """Send notifications for checks that produced no verdict.
 
     A `degraded` drift verdict sends nothing: drift is report-only (#140,
-    D025). It is not silently dropped either -- the classifiers it applied to
-    are returned as `drift_not_alerted`, so the archive can tell a run with
-    drift from a quiet one.
+    D025). Every return below carries `drift_not_alerted` -- the classifiers
+    whose drift this step did not notify on, `[]` when none -- and `reason` is
+    `drift_report_only` only when drift was present and no alert was sent.
+    Whether drift was found is `classifiers_with_drift`, written by
+    `evaluate_drift_results`; this is the alert step's record of what it did.
     """
     if context.get("dry_run"):
         logger.info("Dry run - skipping drift alerts")
@@ -470,7 +475,11 @@ def send_drift_alerts(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
                 "drift_not_alerted": drift_not_alerted,
             }
         logger.info("No drift and no failed checks - no alerts needed")
-        return {"alerts_sent": False, "reason": "nothing_to_report"}
+        return {
+            "alerts_sent": False,
+            "reason": "nothing_to_report",
+            "drift_not_alerted": drift_not_alerted,
+        }
 
     # `alerts_sent` means DELIVERED, not attempted.
     #
@@ -705,7 +714,7 @@ class DriftMonitoringWorkflow(Workflow):
     1. Check FP classifier drift
     2. Check EP classifier drift
     3. Evaluate drift results
-    4. Send alerts for drift and for failed checks
+    4. Send alerts for checks that produced no verdict (drift is report-only)
     5. Generate summary report
     6. Fail the workflow if any check produced no verdict
     """
@@ -731,7 +740,7 @@ class DriftMonitoringWorkflow(Workflow):
         ),
         StepDefinition(
             name="send_drift_alerts",
-            description="Send notifications for drift and failed checks",
+            description="Send notifications for checks that produced no verdict (drift is report-only)",
             handler=send_drift_alerts,
             skip_on_dry_run=True,
         ),

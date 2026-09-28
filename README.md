@@ -89,7 +89,7 @@ The entire system runs autonomously with minimal human intervention through a **
 
 - **Self-maintaining**: Daily workflows handle news collection, article labeling, quality monitoring, and website updates automatically
 - **Intelligent oversight**: Claude Sonnet analyzes labeling results daily to detect errors, identify patterns, and suggest improvements
-- **Proactive monitoring**: ML classifier drift detection triggers alerts before model degradation affects production
+- **Proactive monitoring**: ML classifier drift detection is reported daily; a check that cannot produce a verdict triggers an alert
 - **Time-saving**: Eliminates ~5-10 hours/week of manual maintenance (running scripts, reviewing results, updating website)
 - **Hands-off deployment**: Model training workflow includes human-in-the-loop notebook review, then automatically promotes and deploys improved models
 
@@ -221,7 +221,6 @@ flowchart TB
     pred_logs --> predictions
     predictions --> drift
     drift -->|"drift detected"| alerts
-    drift -->|"retrain signal"| train
 
     %% Website Flow
     labels --> feed_export
@@ -314,7 +313,7 @@ flowchart TB
 ### Phase 8: Agent Orchestrator ✅
 - [x] Hybrid orchestrator for automated maintenance workflows
 - [x] Daily labeling workflow (collection check → labeling → quality metrics → LLM analysis → reports)
-- [x] Drift monitoring workflow (FP/EP classifier drift detection with alerts)
+- [x] Drift monitoring workflow (FP/EP classifier drift detection, report-only; alerts when a check fails)
 - [x] Website export workflow (JSON/Atom feed generation with git integration)
 - [x] Model training workflow (data export → quality check → notify → compare → promote → deploy)
 - [x] LLM intelligence: Claude Sonnet analysis of labeling results for error detection
@@ -701,7 +700,7 @@ Off-the-shelf workflow tools (Airflow, Prefect, Dagster) are powerful but add si
 | Workflow | Schedule | Purpose |
 |----------|----------|---------|
 | `daily_labeling` | 6:30 AM | Process pending articles through ML + LLM pipeline, generate quality reports |
-| `drift_monitoring` | 5:30 AM | Check FP/EP classifier drift, alert if degradation detected |
+| `drift_monitoring` | 5:30 AM | Check FP/EP classifier drift (report-only), alert if a check fails |
 | `website_export` | 7:00 AM | Export labeled articles to Jekyll site, commit and push |
 | `model_training` | Manual | Export data → run notebooks → compare → promote → deploy |
 
@@ -727,7 +726,7 @@ uv run python -m src.agent status
 ### Daily Operation Flow
 
 ```
-5:30 AM  drift_monitoring   → Check classifier health, alert on drift
+5:30 AM  drift_monitoring   → Check classifier drift (report-only), alert if a check fails
 6:30 AM  daily_labeling     → Label articles, quality check, email report
 7:00 AM  website_export     → Update live feed, push to GitHub Pages
 ```

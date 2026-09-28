@@ -349,9 +349,11 @@ class TestSendDriftAlerts:
     def test_drift_sends_no_notification(self, mock_workflow, classifier):
         """Drift is report-only (#140, D025).
 
-        Patched at `NotificationManager.send`, the one path every notification
-        helper goes through, so this fails if ANY helper -- not just the one
-        deleted here -- is re-wired to fire on a drift verdict.
+        Patched at `NotificationManager.send`, which every `src.agent.notifications`
+        helper sends through, so this fails if any of them is re-wired to fire
+        on a drift verdict. The script's own `--alert` webhook is kept out of
+        this workflow by `alert=False`, pinned in `TestCheckFpDrift` and
+        `TestCheckEpDrift` (`assert_called_once_with(..., alert=False)`).
         """
         other = "ep" if classifier == "fp" else "fp"
         with patch(
@@ -387,7 +389,7 @@ class TestSendDriftAlerts:
         result = send_drift_alerts(mock_workflow, context)
 
         assert result["reason"] == "nothing_to_report"
-        assert "drift_not_alerted" not in result
+        assert result["drift_not_alerted"] == []
 
     def test_alert_sent_on_failed_check(self, mock_workflow):
         """AC2: an induced check failure produces an alert.
@@ -410,6 +412,7 @@ class TestSendDriftAlerts:
 
             assert result["alert_count"] == 1
             assert result["alert_details"][0]["kind"] == "check_failed"
+            assert result["drift_not_alerted"] == []
             mock_notify.assert_called_once()
             kwargs = mock_notify.call_args.kwargs
             assert kwargs["check_name"] == "FP drift"

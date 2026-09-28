@@ -48,7 +48,7 @@ The custom agent provides:
 | Metric | Without Agent | With Agent |
 |--------|---------------|------------|
 | Daily maintenance time | ~30 min/day | ~0 min/day |
-| Model drift detection | Manual checks | Automated with alerts |
+| Model drift detection | Manual checks | Automated, report-only (alerts only when a check fails) |
 | Labeling quality assurance | Periodic manual review | Daily LLM analysis |
 | Website updates | Manual export/push | Automated commit/push |
 | Visibility into operations | Check logs manually | Email summaries daily |
@@ -351,16 +351,20 @@ It is gated on `AGENT_EP_DRIFT_ENABLED` (default `false`). While the flag is off
 (default: 0.1).
 
 **Drift is report-only (#140, D025).** Distribution shift is not evidence that the classifier got
-worse, so a `degraded` drift verdict recommends no retraining and sends **no notification** on any
-channel. It is recorded in the report, the console summary and the run archive, and the alert step
-records it as `reason: drift_report_only` with `drift_not_alerted: [<classifier>]`. The one alert
-this workflow sends is for a check that produced no verdict (`unknown`). Recommending a retrain on
-*measured* performance degradation is #144's.
+worse, so in this workflow a `degraded` drift verdict recommends no retraining and sends **no
+notification** on any channel. It is recorded in the report, the console summary and the run
+archive. Every non-dry-run return of the alert step carries `drift_not_alerted` (the classifiers
+whose drift it did not notify on, `[]` when none), and `reason: drift_report_only` is set only when
+drift was present and no alert was sent. The one alert this workflow sends is for a check that
+produced no verdict (`unknown`). Recommending a retrain on *measured* performance degradation is
+#144's. The opt-in `scripts/monitor_drift.py --alert` drift webhook, which `scripts/cron_monitor.sh`
+passes when `ALERT_WEBHOOK_URL` is set, is unchanged and outside this workflow (it runs with
+`alert=False`).
 
-⚠ **So no email does not mean no drift.** Read `classifiers_with_drift` in the archived
-`drift_monitoring_*` run (`uv run python -m src.agent history` lists the files) to see whether drift
-was found. Until #144 lands, a real
-performance regression is not emailed either; the spot-check is `/review-labels`.
+⚠ **So no email does not mean no drift.** Read `classifiers_with_drift` in the archived run,
+`$AGENT_STATE_DIR/history/drift_monitoring_*.yaml` (default `~/.esg-agent/history/`), to see whether
+drift was found. Until #144 lands, a real performance regression is not emailed either; the
+spot-check is `/review-labels`.
 
 That describes the **Evidently** path (`EVIDENTLY_ENABLED=true`). There, core drift is a *count*
 test, not a threshold test -- one core metric drifting is enough -- and the reported `drift_score`
@@ -743,7 +747,8 @@ RESEND_API_KEY=re_...
 
 ### Webhooks (Slack/Discord)
 
-For check-failure alerts (drift itself sends none):
+For check-failure alerts. The `drift_monitoring` workflow sends none for drift itself; the opt-in
+`scripts/monitor_drift.py --alert` path posts its drift webhook to the same URL:
 
 ```bash
 # Slack webhook
@@ -758,7 +763,7 @@ ALERT_WEBHOOK_URL=https://discord.com/api/webhooks/...
 | Type | Trigger | Channels |
 |------|---------|----------|
 | Labeling Summary | Daily after labeling | Email |
-| Drift | Never -- drift is report-only (#140) | None |
+| Drift | Never from the `drift_monitoring` workflow -- drift is report-only (#140) | None |
 | Check Failed | When a scheduled check produces no verdict (severity `error`) | Email + Webhook |
 | Export Error | When website export fails | Email |
 | Training Ready | When data export completes | Email |

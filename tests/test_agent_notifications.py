@@ -427,7 +427,9 @@ class TestCheckFailureNotification:
     def test_drift_notification_helper_is_gone(self):
         """Drift is report-only (#140, D025): the helper that emailed
         "Consider retraining" on a drift result is deleted, not left unused,
-        so nothing can re-wire drift to a notification."""
+        so the deleted helper cannot be re-wired. This pins the name only; the
+        guard against re-wiring drift to any notification is
+        `tests/test_agent_drift_workflow.py::TestSendDriftAlerts::test_drift_sends_no_notification`."""
         import src.agent.notifications as notifications
 
         assert not hasattr(notifications, "send_drift_notification")

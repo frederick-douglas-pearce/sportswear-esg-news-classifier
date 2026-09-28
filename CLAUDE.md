@@ -241,7 +241,7 @@ prompts/labeling/
 - `workflows/` - Workflow definitions:
   - `base.py` - Workflow base class and registry
   - `daily_labeling.py` - Collection check → labeling → quality metrics → reports
-  - `drift_monitoring.py` - FP/EP classifier drift detection with alerts
+  - `drift_monitoring.py` - FP/EP classifier drift detection (report-only; alerts only when a check produces no verdict)
   - `website_export.py` - JSON/Atom feed generation + scorecard history storage
   - `run_audit.py` - Liveness (a workflow that stopped running) and failure streaks (one that runs and fails every time)
   - `model_training.py` - Data export → quality check → pause → comparison → promotion → deploy → experiment finalization
@@ -493,7 +493,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
-- **2026-09-28**: Drift is report-only - a `degraded` drift verdict no longer recommends retraining or sends any notification; the alert step records `drift_report_only` + `drift_not_alerted`, `send_drift_notification` is deleted, and the check-failure alert is unchanged; no email no longer means no drift (#140, D025)
+- **2026-09-27**: Drift is report-only in the `drift_monitoring` workflow - a `degraded` drift verdict no longer recommends retraining or sends any notification; the alert step always records `drift_not_alerted` (`reason: drift_report_only` when drift was the only finding), `send_drift_notification` is deleted, the check-failure alert is unchanged, and the opt-in `monitor_drift.py --alert` webhook is out of scope; no email no longer means no drift (#140, D025)
 - **2026-09-27**: An FP skip reason states the stored risk band instead of always claiming "High-confidence false positive", and the run summary and `daily_labeling` report count skips outside the `low` band (`fp_skipped_not_low`); the skip decision is unchanged (#116, D024)
 - **2026-09-26**: A drift check that could not assess a core column says so - every offered Evidently column is assessed or recorded in `columns_skipped` with a reason (`no metric returned` catches a renamed metric), core columns on both paths share one set of input checks, and an offered core column that was not assessed makes the check indeterminate on both paths; brand shortfall and a core column missing from the reference stay record-only (#105, D023)
 - **2026-09-25**: What a drift check assessed reaches the run archive - `COVERAGE_KEYS` + `columns_checked` are carried by every `DriftReport`, emitted in the machine-readable summary, and copied into the drift workflow's context, report and run archive (a NOTE on partial coverage, and in the `degraded` alert); `null` means not recorded or not applicable, and the fields are a record, not a verdict input (#104, D022)
