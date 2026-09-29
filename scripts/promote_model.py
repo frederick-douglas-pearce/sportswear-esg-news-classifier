@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Promote a trained model to the registry for deployment.
 
-This script reads the model config from the artifacts and updates the registry
-with a new version entry.
+This script reads the model config from the artifacts, updates the registry
+with a new version entry, and stamps `version` and `pipeline_sha256` into the
+artifact config (D026).
 
 Usage:
     # Promote FP classifier to v2
-    python scripts/promote_model.py --classifier fp --version v2
+    uv run python scripts/promote_model.py --classifier fp --version v2
 
     # Promote and set as production
-    python scripts/promote_model.py --classifier fp --version v2 --production
+    uv run python scripts/promote_model.py --classifier fp --version v2 --production
 
     # Dry run to see what would change
-    python scripts/promote_model.py --classifier fp --version v2 --dry-run
+    uv run python scripts/promote_model.py --classifier fp --version v2 --dry-run
 """
 
 import argparse
@@ -20,6 +21,11 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.deployment.versioning import stamp_artifact_version  # noqa: E402
 
 
 def load_model_config(classifier_type: str, models_dir: Path) -> dict:
@@ -130,6 +136,12 @@ def main():
         print(f"\nMake sure you have trained and exported the {args.classifier} classifier.", file=sys.stderr)
         return 1
 
+    # The version stamp hashes the pipeline; check it exists before anything is written.
+    pipeline_path = models_dir / f"{args.classifier}_classifier_pipeline.joblib"
+    if not pipeline_path.exists():
+        print(f"Error: Pipeline not found: {pipeline_path}", file=sys.stderr)
+        return 1
+
     registry = load_registry(models_dir)
 
     # Check if version already exists
@@ -164,6 +176,12 @@ def main():
         registry[args.classifier]["production"] = args.version
 
     save_registry(registry, models_dir)
+    # After the registry write, so the config never claims a version the registry lacks.
+    stamp_artifact_version(
+        models_dir / f"{args.classifier}_classifier_config.json",
+        args.version,
+        pipeline_path,
+    )
 
     print(f"\n✓ Registry updated: models/registry.json")
     print(f"✓ {args.classifier} {args.version} is now registered")
@@ -171,7 +189,11 @@ def main():
         print(f"✓ {args.classifier} production version is now {args.version}")
 
     print("\nNext steps:")
-    print("  1. Commit the registry: git add models/registry.json && git commit -m 'Promote model'")
+    print(
+        "  1. Commit the registry and the stamped config (deploy.yml builds from the committed tree): "
+        f"git add models/registry.json models/{args.classifier}_classifier_config.json "
+        f"models/{args.classifier}_classifier_pipeline.joblib && git commit -m 'Promote model'"
+    )
     print("  2. Build Docker image: docker build -t {}-classifier-api .".format(args.classifier))
     print("  3. The Dockerfile will auto-detect dependencies from the config")
 

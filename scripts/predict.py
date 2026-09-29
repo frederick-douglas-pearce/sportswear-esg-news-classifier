@@ -255,6 +255,16 @@ class ModelInfoResponse(BaseModel):
 
     classifier_type: str
     model_name: str
+    version: str = Field(
+        ...,
+        description=(
+            "Registered version of the loaded artifact, or 'unversioned' when the "
+            "artifact carries no version matching its pipeline hash"
+        ),
+    )
+    artifact_sha256: str = Field(
+        ..., description="Leading 12 hex characters of the loaded pipeline's sha256"
+    )
     threshold: float
     target_recall: float
     transformer_method: str

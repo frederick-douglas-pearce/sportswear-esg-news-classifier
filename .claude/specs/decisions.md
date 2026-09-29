@@ -1993,3 +1993,54 @@ and nothing yet measures realized performance (that is L1c, #144).
 "drift, report-only".
 Silence is not "no drift"; `classifiers_with_drift` in the run archive says which. Until L1c, a real
 performance regression is not emailed (issue #140 §Risk).
+
+## D026: A Model Version Describes the Loaded Artifact, Not the Registry Pointer (#115)
+
+**Date:** 2026-09-28 · **Status:** accepted (architect-reviewed; plan approved by the human) · **Issue:** #115
+(prerequisite of #145, epic #152)
+
+**Context.** `classifier_predictions.model_version` is always `unknown` because nothing produced a
+version: artifact configs carry none, `get_model_info()` emitted no `version` key, and
+`ModelInfoResponse` declared none (its `response_model` would have dropped one anyway). The
+client's error fallback also returned `unknown`.
+The issue proposes populating the version from `models/registry.json`. The registry pointer, the
+committed artifact and the served model are not the same model: the pointer names v2.5.0, the
+committed FP artifact's commit says it was not promoted, and the running API reports a threshold and
+metrics matching v2.4.0 (inferred from those values; nothing recorded confirms it — which is this bug).
+
+**Decision (architect review of the #115 plan).**
+1. The reported version describes **the artifact the API loaded**. Every registry writer
+   (`register_model.py --update-registry`, `retrain.py promote_version`, `promote_model.py`) stamps
+   `version` and `pipeline_sha256` into the artifact's config through one helper in
+   `src/deployment/versioning.py`, after the registry write, and refuse to write anything when the
+   pipeline file is missing. The API reports the version only when `pipeline_sha256` is present and
+   matches the joblib it loaded; otherwise `unversioned`. `/model/info` also returns
+   `artifact_sha256`. A serve-time lookup of the pointer is rejected: it would replace an honest
+   `unknown` with a false version. The hash binds the joblib only, not config fields such as
+   `threshold` (#141).
+2. Non-version values are constants in `src/deployment/versioning.py`, each with a distinct remedy:
+   `unversioned` (register the artifact, then rebuild the image from a tree holding the stamped
+   config — `deploy.yml` builds from the committed tree), `unreported` (the API image predates the
+   field — rebuild), `unavailable` (the model-info fetch failed, or the FP batch step failed — the
+   API call, result handling or the save; such a row's `error_message` says which), `disabled` (FP
+   off), legacy `unknown` (never written now). `NON_VERSION_SENTINELS` is exported for #145's queries.
+3. A missing version does not fail the pre-filter (that would route every article to the LLM while
+   the skip decision does not depend on the version). When the API answered without a usable version
+   the pipeline logs one WARNING for the batch; a failed batch is logged by its own warning, and
+   `disabled` rows are not warned.
+4. The registry pointer is intent, the stamped version is fact. #172 should make the build select the
+   artifact the pointer names and fail when `/model/info.version` differs from the pointer. #141
+   should take the served threshold from the same artifact whose version is reported, never from the
+   pointer at serve time.
+5. `model_version` is not a drift column, so this change needs no drift-reference regeneration. The
+   standing regeneration rule (`docs/MLOPS.md`, `CLAUDE.md`) is narrowed to the columns the drift
+   check reads (human decision at review).
+
+**Accepted consequence.** From merge, the labeling pipeline records `unreported` for the currently
+deployed API image, and logs a WARNING on every batch until the API reports a verified version — an
+artifact registered with this in place, in an image rebuilt from a tree holding its stamped config
+(accepted by the human). A rebuild from the current tree still warns, as `unversioned`, and would
+also swap the served model for the unpromoted artifact. Reconciling served vs pointer vs committed artifact, and making the
+registry pointer decide what is built and deployed, is #172 — the human's direction is that the
+registry must become the source of truth for the deployed model. Narrowing the batch `try` so a
+DB-save failure is not recorded as an FP failure is #174.

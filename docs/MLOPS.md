@@ -192,7 +192,9 @@ and the legacy code paths, and neither removes the need to regenerate:
   construction and so always read as "no drift". Use `--create-reference` to establish a
   baseline.
 
-Regenerate after any change to what is written to `classifier_predictions`:
+Regenerate after any change to a column the drift check reads: `CORE_DRIFT_COLUMNS`
+(`src/mlops/monitoring.py`) from `classifier_predictions`, and the `brand_*` columns derived from
+`articles.brands_mentioned` via `TRACKED_BRANDS`:
 
 ```bash
 uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90
@@ -215,6 +217,55 @@ predictions in the drift window first (issue #96). Below `DRIFT_MIN_SAMPLE_SIZE`
 `unknown` and the drift workflow fails, because EP is running unmonitored. A count that could not
 be taken is `unknown` too; the count runs with a connect and a statement timeout, so a database
 that stops answering fails the check instead of hanging it.
+
+### Model version in `classifier_predictions`
+
+`model_version` records the version of the artifact the classifier API **loaded**, not the
+registry's production pointer (#115, D026). Every script that records a version in
+`models/registry.json` (`register_model.py --update-registry`, `retrain.py` promotion,
+`promote_model.py`) stamps `version` and `pipeline_sha256` into the artifact's
+`<type>_classifier_config.json`. The API reports that version only when `pipeline_sha256` is present
+and matches the joblib it loaded. `/model/info` returns it as `version`, with the loaded joblib's short
+hash as `artifact_sha256`.
+
+The stamp is written to the working tree. An image picks it up only when it is built from a tree that
+holds the stamped config: a local `docker compose build` reads the working tree, while `deploy.yml`
+builds from the committed tree, so commit the stamped config with its joblib before deploying. Making
+the registry pointer decide what is built is #172.
+
+`pipeline_sha256` binds the version to the joblib only. Config fields such as `threshold` are not
+covered (#141). The MLflow run that `register_model.py` logs carries the version as its `version`
+tag, but the config file it logs is the one from before the stamp.
+
+When no version can be reported, one of these is recorded instead. The constants live in
+`src/deployment/versioning.py` (`NON_VERSION_SENTINELS` is the set):
+
+| Value | Meaning | What to do |
+|---|---|---|
+| a registry version string (e.g. `v2.5.0`) | a registered artifact whose hash matched | nothing |
+| `unversioned` | the loaded artifact has no version, or its config's `pipeline_sha256` is missing or does not match the loaded joblib | register the artifact, then rebuild the image from a tree holding the stamped config |
+| `unreported` | the API answered, but its `/model/info` has no `version` field (the image predates it) | rebuild the image |
+| `unavailable` | the model-info fetch failed (the client logs why), or the FP batch step failed — the API call, result handling, or saving the prediction; such a row is `action_taken='failed'` and its `error_message` says which | read the log or `error_message` |
+| `disabled` | the FP classifier is turned off | configuration |
+| `unknown` | legacy value from before #115; never written now | nothing |
+
+When the FP API answered but reported no usable version (`unversioned`, `unreported`, or `unavailable`
+from a failed model-info fetch), the labeling pipeline logs one WARNING for the batch. A batch whose
+API call fails logs only its batch-failure WARNING; a failure after an unusable version was read
+(result handling or the save) logs both; after a verified version, only the batch-failure WARNING. `disabled` rows are written without a warning. A missing version does not stop the pre-filter.
+
+**What changes at merge.** The labeling pipeline runs from the tree, so the first labeling run after
+merge records `unreported` for the currently deployed `fp-classifier-api` image (its `/model/info`
+has no `version` field), and `unavailable` for a failed fetch or batch, where it used to record
+`unknown`. A rebuild from the current tree reports `unversioned`, because the committed
+`models/fp_classifier_config.json` carries no stamp. A real version is recorded only after an
+artifact is registered with this in place and the image is rebuilt from a tree holding its stamped
+config. Which artifact that should be is #172.
+
+`model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
+in the values it records does not require regenerating the drift reference. An EP image rebuilt from
+this tree reports `unversioned` until an EP artifact is registered and the image is rebuilt from a
+tree holding its stamped config.
 
 ### What Gets Monitored
 

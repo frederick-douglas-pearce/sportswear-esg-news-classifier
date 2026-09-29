@@ -205,7 +205,7 @@ class TestClassifierPredictionRecord:
         """Should create prediction with error message."""
         prediction = ClassifierPredictionRecord(
             classifier_type="fp",
-            model_version="unknown",
+            model_version="unavailable",
             probability=0.0,
             prediction=False,
             threshold_used=0.3,

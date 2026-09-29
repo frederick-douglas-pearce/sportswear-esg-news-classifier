@@ -45,6 +45,8 @@ class TestAPIEndpoints:
         classifier.get_model_info.return_value = {
             "classifier_type": "fp",
             "model_name": "TestModel",
+            "version": "v9.8.7",
+            "artifact_sha256": "0123456789ab",
             "threshold": 0.5,
             "target_recall": 0.99,
             "transformer_method": "tfidf",
@@ -91,6 +93,10 @@ class TestAPIEndpoints:
         assert "model_name" in data
         assert "threshold" in data
         assert "metrics" in data
+        # ModelInfoResponse must declare version/artifact_sha256; before #115 it declared
+        # neither, and the classifier emitted neither.
+        assert data["version"] == "v9.8.7"
+        assert data["artifact_sha256"] == "0123456789ab"
 
     def test_predict_endpoint_single_article(self, test_client):
         """Test /predict endpoint with single article."""

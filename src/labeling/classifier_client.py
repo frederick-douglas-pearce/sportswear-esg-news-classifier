@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from src.deployment.versioning import UNAVAILABLE
+
 logger = logging.getLogger(__name__)
 
 
@@ -130,9 +132,7 @@ class ClassifierClient:
 
         Returns:
             Dictionary with model information including name, version, metrics.
-
-        Raises:
-            httpx.HTTPError: On API errors.
+            On a failed fetch, ``version`` is ``UNAVAILABLE`` (not cached).
         """
         if self._model_info is not None:
             return self._model_info
@@ -145,7 +145,7 @@ class ClassifierClient:
             return self._model_info
         except Exception as e:
             logger.warning(f"Failed to get model info: {e}")
-            return {"model_name": "unknown", "version": "unknown"}
+            return {"model_name": "unknown", "version": UNAVAILABLE}
 
     def predict_fp(
         self,

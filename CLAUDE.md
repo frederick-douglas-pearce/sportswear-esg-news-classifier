@@ -122,7 +122,7 @@ uv run python scripts/backfill_rerank_scores.py --batch-size 100  # Custom batch
 # MLOps - Drift Monitoring
 uv run python scripts/monitor_drift.py --classifier fp --from-db              # Production drift check (7 days)
 uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report  # Generate Evidently HTML report
-uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90  # Regenerate reference (do this after any change to what classifier_predictions stores); ends where the comparison window starts
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90  # Regenerate reference (do this after any change to a column the drift check reads: CORE_DRIFT_COLUMNS from classifier_predictions, and brand_* derived from articles.brands_mentioned via TRACKED_BRANDS); ends where the comparison window starts
 
 # MLOps - MLflow (when MLFLOW_ENABLED=true)
 uv run mlflow ui --backend-store-uri sqlite:///mlruns.db  # Start MLflow UI (http://localhost:5000)
@@ -493,6 +493,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-28**: FP predictions record the version of the artifact the API loaded - every registry writer stamps `version` + `pipeline_sha256` into the artifact config (`src/deployment/versioning.py`), the API reports it only when the hash matches the loaded joblib, `/model/info` returns `version` + `artifact_sha256`, and a missing version is recorded as `unversioned`/`unreported`/`unavailable` instead of `unknown`; from merge the running image's rows record `unreported`, a rebuild from the current tree gives `unversioned`, and which artifact to serve is #172; the drift-reference regeneration rule now names drift columns only (#115, D026)
 - **2026-09-27**: Drift is report-only in the `drift_monitoring` workflow - a `degraded` drift verdict no longer recommends retraining or sends any notification; every non-dry-run run of the alert step records `drift_not_alerted` (`reason: drift_report_only` when drift was the only finding), `send_drift_notification` is deleted, the check-failure alert is unchanged, and the opt-in `monitor_drift.py --alert` webhook is out of scope; no email no longer means no drift (#140, D025)
 - **2026-09-27**: An FP skip reason states the stored risk band instead of always claiming "High-confidence false positive", and the run summary and `daily_labeling` report count skips outside the `low` band (`fp_skipped_not_low`); the skip decision is unchanged (#116, D024)
 - **2026-09-26**: A drift check that could not assess a core column says so - every offered Evidently column is assessed or recorded in `columns_skipped` with a reason (`no metric returned` catches a renamed metric), core columns on both paths share one set of input checks, and an offered core column that was not assessed makes the check indeterminate on both paths; brand shortfall and a core column missing from the reference stay record-only (#105, D023)

@@ -42,6 +42,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.mlops import ExperimentTracker, STAGE_PRODUCTION
+from src.deployment.versioning import stamp_artifact_version
 
 
 def trigger_deploy_workflow(
@@ -382,6 +383,9 @@ def promote_version(
 
     with open(registry_path, "w") as f:
         json.dump(registry, f, indent=2)
+
+    # After the registry write, so the config never claims a version the registry lacks.
+    stamp_artifact_version(dst_config, version, dst_pipeline)
 
     print(f"  Copied pipeline to: {dst_pipeline}")
     print(f"  Copied config to: {dst_config}")

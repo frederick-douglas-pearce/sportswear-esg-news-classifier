@@ -10,6 +10,12 @@ from uuid import UUID
 from src.data_collection.database import db
 from src.data_collection.models import Article, ClassifierPrediction
 from src.deployment.novelty import NoveltyScorer
+from src.deployment.versioning import (
+    DISABLED,
+    NON_VERSION_SENTINELS,
+    UNAVAILABLE,
+    UNREPORTED,
+)
 
 from .chunker import ArticleChunker, Chunk
 from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
@@ -372,7 +378,7 @@ class LabelingPipeline:
                     # Save a minimal prediction record just for novelty tracking
                     prediction = ClassifierPredictionRecord(
                         classifier_type="fp",
-                        model_version="disabled",
+                        model_version=DISABLED,
                         probability=1.0,  # Assume positive when disabled
                         prediction=True,
                         threshold_used=0.0,
@@ -417,7 +423,13 @@ class LabelingPipeline:
 
             # Get model info once for all predictions
             model_info = fp_client.get_model_info()
-            model_version = model_info.get("version", "unknown")
+            # An API image built before /model/info carried a version omits the key.
+            model_version = model_info.get("version", UNREPORTED)
+            if model_version in NON_VERSION_SENTINELS:
+                logger.warning(
+                    f"FP classifier reported no model version ({model_version}); "
+                    f"predictions in this batch are recorded as model_version={model_version}"
+                )
             threshold = labeling_settings.fp_skip_llm_threshold
 
             # Process each result
@@ -476,7 +488,7 @@ class LabelingPipeline:
 
                 prediction = ClassifierPredictionRecord(
                     classifier_type="fp",
-                    model_version="unknown",
+                    model_version=UNAVAILABLE,
                     probability=0.0,
                     prediction=False,
                     threshold_used=labeling_settings.fp_skip_llm_threshold,

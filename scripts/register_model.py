@@ -2,7 +2,9 @@
 """Register a trained model in MLflow and optionally update the local registry.
 
 Use this after training via notebooks to register the model without retraining.
-Reads from existing config files (created by notebook's deployment cell).
+Reads from existing config files (created by notebook's deployment cell). With
+--update-registry it also stamps `version` and `pipeline_sha256` into
+models/<classifier>_classifier_config.json (D026).
 
 Usage:
     # Register FP classifier with auto-detected version
@@ -32,6 +34,11 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.deployment.versioning import stamp_artifact_version  # noqa: E402
 
 
 def get_next_version(registry: dict, classifier: str, bump: str = "patch") -> str:
@@ -238,8 +245,15 @@ def main():
 
     # Validate config exists
     if not config_path.exists():
-        print(f"❌ Config not found: {config_path}")
-        print("   Run the notebook's deployment cell first to create the config.")
+        print(f"❌ Config not found: {config_path}", file=sys.stderr)
+        print("   Run the notebook's deployment cell first to create the config.", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate the pipeline exists before anything is written: the version stamp hashes it,
+    # and a registry entry written without it would describe no artifact.
+    if not pipeline_path.exists():
+        print(f"❌ Pipeline not found: {pipeline_path}", file=sys.stderr)
+        print("   Run the notebook's deployment cell first to create the pipeline.", file=sys.stderr)
         sys.exit(1)
 
     # Load config
@@ -309,6 +323,9 @@ def main():
             set_production=args.set_production,
         )
         print(f"   ✅ Added version {version}")
+        # After the registry write, so the config never claims a version the registry lacks.
+        stamp_artifact_version(config_path, version, pipeline_path)
+        print(f"   ✅ Stamped {version} into {config_path}")
         if args.set_production:
             print(f"   ✅ Set as production")
 
