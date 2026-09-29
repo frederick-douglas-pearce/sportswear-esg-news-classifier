@@ -251,8 +251,8 @@ When no version can be reported, one of these is recorded instead. The constants
 
 When the FP API answered but reported no usable version (`unversioned`, `unreported`, or `unavailable`
 from a failed model-info fetch), the labeling pipeline logs one WARNING for the batch. A batch whose
-API call fails logs only its batch-failure WARNING; a failure after the version was read (result
-handling or the save) logs both. `disabled` rows are written without a warning. A missing version does not stop the pre-filter.
+API call fails logs only its batch-failure WARNING; a failure after an unusable version was read
+(result handling or the save) logs both; after a verified version, only the batch-failure WARNING. `disabled` rows are written without a warning. A missing version does not stop the pre-filter.
 
 **What changes at merge.** The labeling pipeline runs from the tree, so the first labeling run after
 merge records `unreported` for the currently deployed `fp-classifier-api` image (its `/model/info`
