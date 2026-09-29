@@ -454,3 +454,23 @@ class TestPipelineRecordsVersion:
 
         assert prediction.action_taken == "failed"
         assert prediction.model_version == UNAVAILABLE
+
+    def test_failed_batch_call_logs_no_version_warning(self, article, caplog):
+        """A batch whose API call fails reads no version, so only the batch-failure WARNING fires."""
+        with patch("src.labeling.pipeline.db"), patch(
+            "src.labeling.pipeline.labeling_settings"
+        ) as settings:
+            settings.fp_classifier_enabled = True
+            settings.fp_skip_llm_threshold = 0.3
+            fp_client = MagicMock()
+            fp_client.predict_fp_batch.side_effect = RuntimeError("connection refused")
+            fp_client.get_model_info.return_value = {}
+            pipeline = LabelingPipeline(fp_client=fp_client)
+            with caplog.at_level(logging.WARNING, logger="src.labeling.pipeline"):
+                _, prediction = pipeline._run_fp_prefilter(article, dry_run=True)
+
+        # The model info is read only after the batch call succeeds.
+        assert fp_client.get_model_info.call_count == 0
+        assert "reported no model version" not in caplog.text
+        assert "FP classifier batch failed" in caplog.text
+        assert prediction.model_version == UNAVAILABLE
