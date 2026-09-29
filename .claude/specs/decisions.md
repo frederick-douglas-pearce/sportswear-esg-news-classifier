@@ -2037,9 +2037,10 @@ metrics matching v2.4.0 (inferred from those values; nothing recorded confirms i
    check reads (human decision at review).
 
 **Accepted consequence.** From merge, the labeling pipeline records `unreported` for the currently
-deployed API image, and logs a WARNING on every batch until the image is rebuilt (accepted by the
-human). A rebuild from the current tree reports `unversioned`, and would also swap the served model
-for the unpromoted artifact. Reconciling served vs pointer vs committed artifact, and making the
+deployed API image, and logs a WARNING on every batch until the API reports a verified version — an
+artifact registered with this in place, in an image rebuilt from a tree holding its stamped config
+(accepted by the human). A rebuild from the current tree still warns, as `unversioned`, and would
+also swap the served model for the unpromoted artifact. Reconciling served vs pointer vs committed artifact, and making the
 registry pointer decide what is built and deployed, is #172 — the human's direction is that the
 registry must become the source of truth for the deployed model. Narrowing the batch `try` so a
 DB-save failure is not recorded as an FP failure is #174.

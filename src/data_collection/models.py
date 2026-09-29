@@ -289,7 +289,7 @@ class ClassifierPrediction(Base):
 
     # Classifier identification
     classifier_type = Column(String(20), nullable=False)  # 'fp', 'ep', 'esg'
-    model_version = Column(String(100))  # 'vX.Y.Z', or a value in src.deployment.versioning.NON_VERSION_SENTINELS
+    model_version = Column(String(100))  # registry version string (e.g. 'v2.5.0'), or a value in src.deployment.versioning.NON_VERSION_SENTINELS
 
     # Prediction result
     probability = Column(Float, nullable=False)  # Raw probability from model (0.0-1.0)

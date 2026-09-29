@@ -192,8 +192,9 @@ and the legacy code paths, and neither removes the need to regenerate:
   construction and so always read as "no drift". Use `--create-reference` to establish a
   baseline.
 
-Regenerate after any change to what is written to a column the drift check reads from
-`classifier_predictions` (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`, and the `brand_*` columns):
+Regenerate after any change to a column the drift check reads: `CORE_DRIFT_COLUMNS`
+(`src/mlops/monitoring.py`) from `classifier_predictions`, and the `brand_*` columns derived from
+`articles.brands_mentioned` via `TRACKED_BRANDS`:
 
 ```bash
 uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90
@@ -241,7 +242,7 @@ When no version can be reported, one of these is recorded instead. The constants
 
 | Value | Meaning | What to do |
 |---|---|---|
-| `vX.Y.Z` | a registered artifact whose hash matched | nothing |
+| a registry version string (e.g. `v2.5.0`) | a registered artifact whose hash matched | nothing |
 | `unversioned` | the loaded artifact has no version, or its config's `pipeline_sha256` is missing or does not match the loaded joblib | register the artifact, then rebuild the image from a tree holding the stamped config |
 | `unreported` | the API answered, but its `/model/info` has no `version` field (the image predates it) | rebuild the image |
 | `unavailable` | the model-info fetch failed (the client logs why), or the FP batch step failed — the API call, result handling, or saving the prediction; such a row is `action_taken='failed'` and its `error_message` says which | read the log or `error_message` |
@@ -249,9 +250,9 @@ When no version can be reported, one of these is recorded instead. The constants
 | `unknown` | legacy value from before #115; never written now | nothing |
 
 When the FP API answered but reported no usable version (`unversioned`, `unreported`, or `unavailable`
-from a failed model-info fetch), the labeling pipeline logs one WARNING for the batch. A failed FP
-batch is logged by its own batch-failure WARNING instead, and `disabled` rows are written without a
-warning. A missing version does not stop the pre-filter.
+from a failed model-info fetch), the labeling pipeline logs one WARNING for the batch. A batch whose
+API call fails logs only its batch-failure WARNING; a failure after the version was read (result
+handling or the save) logs both. `disabled` rows are written without a warning. A missing version does not stop the pre-filter.
 
 **What changes at merge.** The labeling pipeline runs from the tree, so the first labeling run after
 merge records `unreported` for the currently deployed `fp-classifier-api` image (its `/model/info`
@@ -262,8 +263,9 @@ artifact is registered with this in place and the image is rebuilt from a tree h
 config. Which artifact that should be is #172.
 
 `model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
-in the values it records does not require regenerating the drift reference. EP reports `unversioned`
-until an EP artifact is registered with this in place.
+in the values it records does not require regenerating the drift reference. An EP image rebuilt from
+this tree reports `unversioned` until an EP artifact is registered and the image is rebuilt from a
+tree holding its stamped config.
 
 ### What Gets Monitored
 

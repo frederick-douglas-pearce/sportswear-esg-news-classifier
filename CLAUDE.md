@@ -122,7 +122,7 @@ uv run python scripts/backfill_rerank_scores.py --batch-size 100  # Custom batch
 # MLOps - Drift Monitoring
 uv run python scripts/monitor_drift.py --classifier fp --from-db              # Production drift check (7 days)
 uv run python scripts/monitor_drift.py --classifier fp --from-db --html-report  # Generate Evidently HTML report
-uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90  # Regenerate reference (do this after any change to a column the drift check reads from classifier_predictions: CORE_DRIFT_COLUMNS, brand_*); ends where the comparison window starts
+uv run python scripts/monitor_drift.py --classifier fp --from-db --create-reference --days 90  # Regenerate reference (do this after any change to a column the drift check reads: CORE_DRIFT_COLUMNS from classifier_predictions, and brand_* derived from articles.brands_mentioned via TRACKED_BRANDS); ends where the comparison window starts
 
 # MLOps - MLflow (when MLFLOW_ENABLED=true)
 uv run mlflow ui --backend-store-uri sqlite:///mlruns.db  # Start MLflow UI (http://localhost:5000)

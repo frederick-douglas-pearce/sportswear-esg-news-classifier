@@ -181,11 +181,16 @@ class TestRegistryWritersStamp:
         return models
 
     def _run_register(self, monkeypatch, *args):
+        """Run register_model.main(); return the patched register_mlflow mock."""
         import scripts.register_model as register_model
 
         monkeypatch.setattr(sys, "argv", ["register_model.py", "--classifier", "fp", *args])
-        with patch.object(register_model, "register_mlflow", return_value=(None, None)):
-            register_model.main()
+        with patch.object(register_model, "register_mlflow", return_value=(None, None)) as mlflow_reg:
+            try:
+                register_model.main()
+            finally:
+                self.last_mlflow_reg = mlflow_reg
+        return mlflow_reg
 
     def test_register_model_stamps_on_update_registry(self, models_dir, monkeypatch):
         self._run_register(monkeypatch, "--version", "v3.1.0", "--update-registry")
@@ -214,7 +219,7 @@ class TestRegistryWritersStamp:
 
         assert "version" not in _read(models_dir / "fp_classifier_config.json")
 
-    def test_register_model_refuses_when_pipeline_missing(self, models_dir, monkeypatch):
+    def test_register_model_refuses_when_pipeline_missing(self, models_dir, monkeypatch, capsys):
         (models_dir / "fp_classifier_pipeline.joblib").unlink()
         registry_before = _read(models_dir / "registry.json")
 
@@ -222,8 +227,12 @@ class TestRegistryWritersStamp:
             self._run_register(monkeypatch, "--version", "v3.1.0", "--update-registry")
 
         assert exc.value.code != 0
+        # Nothing is written: no MLflow run, no registry entry, no stamp.
+        assert self.last_mlflow_reg.call_count == 0
         assert _read(models_dir / "registry.json") == registry_before
         assert "version" not in _read(models_dir / "fp_classifier_config.json")
+        # The agent's promote step records stderr, so the reason must be there.
+        assert "Pipeline not found" in capsys.readouterr().err
 
     def _run_promote(self, models_dir, monkeypatch, *extra):
         import scripts.promote_model as promote_model

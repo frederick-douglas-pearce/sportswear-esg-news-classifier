@@ -245,15 +245,15 @@ def main():
 
     # Validate config exists
     if not config_path.exists():
-        print(f"❌ Config not found: {config_path}")
-        print("   Run the notebook's deployment cell first to create the config.")
+        print(f"❌ Config not found: {config_path}", file=sys.stderr)
+        print("   Run the notebook's deployment cell first to create the config.", file=sys.stderr)
         sys.exit(1)
 
     # Validate the pipeline exists before anything is written: the version stamp hashes it,
     # and a registry entry written without it would describe no artifact.
     if not pipeline_path.exists():
-        print(f"❌ Pipeline not found: {pipeline_path}")
-        print("   Run the notebook's deployment cell first to create the pipeline.")
+        print(f"❌ Pipeline not found: {pipeline_path}", file=sys.stderr)
+        print("   Run the notebook's deployment cell first to create the pipeline.", file=sys.stderr)
         sys.exit(1)
 
     # Load config
