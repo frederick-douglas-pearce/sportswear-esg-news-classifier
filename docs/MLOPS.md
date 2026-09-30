@@ -275,7 +275,7 @@ and every image must be built from those bytes. This is a target. Nothing enforc
 build guard lands (D027), and the pointer is reconciled with the committed artifact in #176.
 
 The served, registered and committed models are three separate things and can differ. Which ones
-differ today, with evidence, is recorded on #175. The steps where they can come apart, each with a
+differ today, with evidence, is recorded on #175. The steps where they can come apart are listed below, each with a
 proposed fix (or none) and a proposed owner (an issue, or `deferred`). #172's ACs are finalized after #175
 (D027 §1), so a `#172` entry here is a proposal until #172 accepts it:
 
@@ -283,13 +283,13 @@ proposed fix (or none) and a proposed owner (an issue, or `deferred`). #172's AC
 |---|---|---|---|
 | Candidates and production share `models/<clf>_classifier_*`. The fp3/ep3 deployment cells and `train.py` (default `--output-dir models`) overwrite it unstamped, and never write `models/registry.json` | `src/fp3_nb/deployment.py`, `src/ep3_nb/deployment.py`, `scripts/train.py` | the build guard refuses bytes that are not the pointer's registered bytes | #172 |
 | `register_model.py --update-registry` stamps the shared config even without `--set-production`; `promote_model.py` stamps it even without `--production` | `scripts/register_model.py`, `scripts/promote_model.py` | the build guard refuses a config whose stamp does not name the pointer (D027 §2) | #172 |
-| `retrain.py` promotion moves the pointer and dispatches `deploy.yml` with no commit or push, so CI builds whatever `main` holds | `scripts/retrain.py` | dispatch only when the pushed tree holds the pointer's bytes | #172 |
+| `retrain.py` promotion moves the pointer and dispatches `deploy.yml` with no commit or push, so CI builds whatever `main` holds | `scripts/retrain.py` | dispatch only when the ref `deploy.yml` builds (the default branch; no `--ref` is passed) holds the pointer's bytes | #172 |
 | `deploy.yml` skips deploying on a patch bump: the pointer moves, the served image does not | `.github/workflows/deploy.yml` | remove the skip for model changes | #172 |
 | `retrain.py` skips triggering a deploy on a patch bump, with the same effect | `scripts/retrain.py` | remove the skip for model changes | #172 |
 | The `model_training` promote step registers without `--set-production`, so the pointer never moves | `src/agent/workflows/model_training.py` | pass `--set-production` (failure handling stays #79) | #172 |
 | `trigger_deployment` reads a `version` key the registry does not have, so every workflow deploy is tagged `unknown` | `src/agent/workflows/model_training.py` | pass the pointer | #172 |
 | Local `docker compose build` and `scripts/deploy_cloudrun.sh` build from the working tree, so they can serve unregistered bytes | `docker-compose.yml`, `scripts/deploy_cloudrun.sh` | the build guard runs in the Dockerfile's builder stage, which both use | #172 |
-| A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path, and the model it serves today was built this way (#175) | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | decide whether the guard also binds committed state (raised on #172 for its finalization) | deferred |
+| A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | decide whether the guard also binds committed state (raised on #172 for its finalization) | deferred |
 | `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version | `scripts/retrain.py` | immutable registry versions | #172 |
 | A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (after #176 reconciles) | #172 |
 | A commit message can name a version the registry does not record | commit discipline | not checked; git history and the registry remain the evidence | deferred |

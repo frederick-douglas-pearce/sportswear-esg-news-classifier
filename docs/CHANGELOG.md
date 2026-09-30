@@ -8,13 +8,13 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 **Investigation for #172 (#175, D027).** No code changed.
 - **FP.** The local `fp-classifier-api` container, which the labeling pipeline calls, serves registry
-  **v2.4.0's** bytes. The joblib's sha256 matches the file committed in `aa1e589`, whose config's model,
-  threshold and metrics match registry v2.4.0's entry. The `fp.production` pointer names v2.5.0. The committed `models/fp_classifier_*` is an
-  unpromoted candidate (`6246fae`).
+  **v2.4.0's** bytes (evidence on #175). The joblib's sha256 matches the file committed in `aa1e589`.
+  The `fp.production` pointer names v2.5.0. The committed `models/fp_classifier_*` is an unpromoted
+  candidate (`6246fae`).
 - **EP.** Registry v1.0.0's bytes are not in git, the committed EP artifact is a different (SVM) model,
   and nothing serves EP.
 - **Docs.** `docs/MLOPS.md` states the invariant (the registry pointer decides what is built and deployed,
-  enforced once #172 lands) and lists every divergence point with a proposed fix and owner (an issue, or deferred).
+  enforced once #172 lands) and lists every divergence point with a proposed fix (or none) and owner (an issue, or deferred).
   `CLAUDE.md` now states the FP/EP registry pointer and the served model separately.
 - **Records.** The timeline and evidence are in #175's comments. D027 records the architect's ruling on
   splitting #172 into #175, #176, #172 and #177.
