@@ -310,10 +310,12 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 ### ML Classifier Notebooks (`notebooks/`)
 
 **False Positive Classifier (3 notebooks):** fp1_EDA_FE.ipynb → fp2_model_selection_tuning.ipynb → fp3_model_evaluation_deployment.ipynb
-- **Production (v2.5.0):** Random Forest with TF-IDF + LSA + NER + proximity + brand features (Test F2: 0.987, Recall: 99.7%)
+- **Registry pointer (`fp.production`): v2.5.0.** Random Forest with TF-IDF + LSA + NER + proximity + brand features (Test F2: 0.987, Recall: 99.7%)
+- **Served:** the local `fp-classifier-api` container, which is what the labeling pipeline calls, serves **v2.4.0's** bytes (same transformer method, but before v2.5.0 removed the negative_context features; Test F2: 0.986, Recall: 98.8%). The committed `models/fp_classifier_*` is an unpromoted candidate. The three disagree (#175); #176 reconciles them
 
 **ESG Pre-filter Classifier (3 notebooks):** ep1_EDA_FE.ipynb → ep2_model_selection_tuning.ipynb → ep3_model_evaluation_deployment.ipynb
-- **Production (v1.0.0):** Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%) — on hold, insufficient data for significant improvement
+- **Registry pointer (`ep.production`): v1.0.0.** Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%). On hold, insufficient data for significant improvement
+- **Served:** nothing; no EP container or Cloud Run service exists. v1.0.0's bytes are not in git, and the committed `models/ep_classifier_*` is a different model, an unpromoted SVM (#175)
 
 **Notebook Standards:** All imports in Setup section, grouped: stdlib → third-party → project modules
 
@@ -388,8 +390,8 @@ Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
 
 ## ML Classifier Opportunities
 
-1. **False Positive Classifier** ✅ - Filter non-sportswear brand matches (Production v2.5.0, Test F2: 0.987)
-2. **ESG Pre-filter Classifier** ✅ - Identify ESG content before Claude (Production v1.0.0, Test F2: 0.931) — on hold
+1. **False Positive Classifier** ✅ - Filter non-sportswear brand matches (registry pointer v2.5.0, Test F2: 0.987; served to the labeling pipeline: v2.4.0, see #175)
+2. **ESG Pre-filter Classifier** ✅ - Identify ESG content before Claude (registry pointer v1.0.0, Test F2: 0.931; not served) — on hold
 3. **ESG Multi-label Classifier** - Planned
 
 ## Project Phases
@@ -493,6 +495,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-09-29**: Which FP/EP models are served, registered and committed is established (#175). The local FP container the labeling pipeline calls serves registry v2.4.0's bytes, the `fp.production` pointer names v2.5.0, and the committed artifact is an unpromoted candidate. EP v1.0.0's bytes are not in git and nothing serves EP. `docs/MLOPS.md` states the invariant (the pointer decides what is built and deployed, enforced once #172 lands) and lists the divergence points, each with a proposed fix (or none) and owner. The evidence and timeline are in #175's comments. D027 records the #172 split
 - **2026-09-28**: FP predictions record the version of the artifact the API loaded - every registry writer stamps `version` + `pipeline_sha256` into the artifact config (`src/deployment/versioning.py`), the API reports it only when the hash matches the loaded joblib, `/model/info` returns `version` + `artifact_sha256`, and a missing version is recorded as `unversioned`/`unreported`/`unavailable` instead of `unknown`; from merge the running image's rows record `unreported`, a rebuild from the current tree gives `unversioned`, and which artifact to serve is #172; the drift-reference regeneration rule now names drift columns only (#115, D026)
 - **2026-09-27**: Drift is report-only in the `drift_monitoring` workflow - a `degraded` drift verdict no longer recommends retraining or sends any notification; every non-dry-run run of the alert step records `drift_not_alerted` (`reason: drift_report_only` when drift was the only finding), `send_drift_notification` is deleted, the check-failure alert is unchanged, and the opt-in `monitor_drift.py --alert` webhook is out of scope; no email no longer means no drift (#140, D025)
 - **2026-09-27**: An FP skip reason states the stored risk band instead of always claiming "High-confidence false positive", and the run summary and `daily_labeling` report count skips outside the `low` band (`fp_skipped_not_low`); the skip decision is unchanged (#116, D024)

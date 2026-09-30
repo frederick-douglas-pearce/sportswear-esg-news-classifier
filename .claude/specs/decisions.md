@@ -2044,3 +2044,68 @@ also swap the served model for the unpromoted artifact. Reconciling served vs po
 registry pointer decide what is built and deployed, is #172 — the human's direction is that the
 registry must become the source of truth for the deployed model. Narrowing the batch `try` so a
 DB-save failure is not recorded as an FP failure is #174.
+
+## D027: The Registry Pointer Decides What Is Built — a Guard on Registered Bytes, Not a Selector (#172 split)
+
+**Date:** 2026-09-29 · **Status:** accepted (architect-reviewed; split and decisions approved by the human) · **Issues:** #172, #175, #176, #177
+(epic #152)
+
+**Context.** #172 asked for the registry pointer to decide which FP model is built and deployed. #115
+(D026) had shown that the pointer, the committed artifact and the served model are three different
+models. #172 tripped the dev loop's size guard because it bundled a forensic investigation, a process
+write-up, a build/deploy-path change, doc corrections and two unrelated side bugs. The build-path design
+also depends on what the investigation finds.
+
+**Decision (architect review of the scope agent's split).**
+1. **Split four ways.**
+   - #175 investigates: served/registered/committed for FP and EP, the divergence points, and doc
+     corrections.
+   - #176 reconciles the pointer with the committed artifact. A human runs it, before any guard lands.
+   - #172 is re-scoped to the build/deploy-path guard. Its ACs are finalized and re-reviewed after #175.
+     It stays the build-path issue because D026 §4 and the CHANGELOG already name it as that.
+   - #177 excludes `failed` FP predictions from drift data, in the shared loader.
+2. **A guard on registered bytes, not a per-version selector.**
+   - Every registry version written from now on carries `pipeline_sha256`.
+   - Registry writers refuse to overwrite an existing version with different bytes.
+   - No supported build succeeds unless the packaged joblib's sha256 equals the pointer's registered hash
+     and the config stamp names the pointer.
+
+   Rejected alternatives:
+   - A guard checked only against the config's own stamp makes divergence loud, but lets any bytes pass
+     once they are re-registered under the pointer's version.
+   - Per-version artifact storage is machinery ("Keep it lean"); git history already holds the bytes.
+
+   This **narrows #172's AC3 wording**, recorded as an issue amendment.
+3. **Where the guard lives.**
+   - One standard-library function beside `file_sha256` in `src/deployment/versioning.py`.
+   - It runs from a `RUN` step in the Dockerfile's builder stage, the one path `docker build`, compose
+     and `deploy.yml` share.
+   - `registry.json` is copied into the builder only, never the runtime image, because D026 §1 rejected
+     a serve-time pointer lookup.
+   - CI unit-tests the function and runs it against the committed tree.
+   - A local bypass build argument exists for smoke-testing a candidate. It is off by default, and
+     `deploy.yml` and compose never pass it.
+4. **One guard for both classifiers.** EP shares the Dockerfile and has the same divergence, so EP builds
+   stay blocked until EP is reconciled: in #176 if its registered bytes are recoverable, otherwise in a
+   follow-up.
+5. **#172 fixes the paths that move the pointer without changing what is served:**
+   - `deploy.yml`'s patch-bump skip is removed for model changes;
+   - `model_training.promote_model` passes `--set-production`;
+   - `trigger_deployment` passes the pointer.
+
+   #172 changes only these values. Failure handling of those steps stays with #79.
+6. **Post-deploy check.** One reusable script reads `/model/info` and compares it with the pointer.
+   `deploy.yml` runs it, and it is documented for use after `docker compose up`. It is treated as an
+   architect-triggered assertion change (`.claude/loop.config.md` §2), although `deploy.yml` is dispatched, not scheduled.
+7. **Ordering.**
+   - Deploy freeze until #175 closes, because the `deploy.yml` cleanup step deletes older GCR images,
+     which are evidence.
+   - #141's code lands after #176, preferably after #172, extending its guard.
+   - #154 PR1 is independent. PR2's retrain waits for #176, and must not commit
+     `models/fp_classifier_*` unless the same PR registers and promotes it.
+8. #175's timeline and evidence go in an issue comment. Committed docs get only the invariant and the
+   divergence-point list.
+
+**Accepted consequence.** Once #172 merges, a tree whose packaged artifact is not the pointer's registered
+bytes cannot build an FP or EP image. That includes EP until it is reconciled. The joblib hash binds the
+model bytes, not the `src/fp1_nb` transformer code the pickled pipeline imports.
