@@ -275,9 +275,9 @@ and every image must be built from those bytes. This is a target. Nothing enforc
 build guard lands (D027), and the pointer is reconciled with the committed artifact in #176.
 
 The served, registered and committed models are three separate things and can differ. Which ones
-differ today, with evidence, is recorded on #175. The steps where they can come apart are listed below, each with a
-proposed fix (or none) and a proposed owner (an issue, or `deferred`). #172's ACs are finalized after #175
-(D027 §1), so a `#172` entry here is a proposal until #172 accepts it:
+differ today, with evidence, is recorded on #175. The steps where they can come apart are listed
+below, each with a proposed fix (or none) and a proposed owner (an issue, or `deferred`). #172's ACs
+are finalized after #175 (D027 §1), so a `#172` entry here is a proposal until #172 accepts it:
 
 | Divergence point | Where | Proposed fix | Proposed owner |
 |---|---|---|---|
