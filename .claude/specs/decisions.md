@@ -2096,7 +2096,7 @@ also depends on what the investigation finds.
    #172 changes only these values. Failure handling of those steps stays with #79.
 6. **Post-deploy check.** One reusable script reads `/model/info` and compares it with the pointer.
    `deploy.yml` runs it, and it is documented for use after `docker compose up`. It is treated as an
-   architect-triggered assertion change, although `deploy.yml` is dispatched, not scheduled.
+   architect-triggered assertion change (`.claude/loop.config.md` §2), although `deploy.yml` is dispatched, not scheduled.
 7. **Ordering.**
    - Deploy freeze until #175 closes, because the `deploy.yml` cleanup step deletes older GCR images,
      which are evidence.
