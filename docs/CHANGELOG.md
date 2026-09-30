@@ -4,6 +4,26 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-30: The FP registry pointer, committed artifact and served model agree on v2.4.0
+
+**Reconciliation for #172's build guard (#176, D028).**
+- **FP.** `fp.production` moves from v2.5.0 to **v2.4.0**, the bytes the labeling pipeline's local
+  `fp-classifier-api` container serves (#175). The joblib and config from `aa1e589` are committed,
+  re-stamped with `register_model.py --update-registry --set-production`, and committed together with
+  `models/registry.json`. The v2.4.0 entry keeps its original `created_at`; its notes record the
+  re-stamp. v2.5.0 and v2.6.0 stay registered, not production.
+- **Compatibility.** v2.4.0 was pickled before `FPFeatureTransformer` gained `include_negative_context`,
+  so under today's code it failed every prediction. `__setstate__` now sets the flag to `True` when a
+  pickle lacks it, the behaviour every earlier pickle had.
+- **Tests.** `tests/test_fp1_nb_feature_transformer_compat.py` pins the default.
+  `tests/test_committed_model_registry.py` checks that the committed config's stamp names the pointer
+  and hashes the committed joblib, and that the committed FP artifact reproduces probabilities captured
+  from the served container. EP is an expected failure there until #180.
+- **EP.** Not reconciled: registry v1.0.0's bytes are not recoverable. #180 decides between registering
+  the committed EP bytes and retiring the pointer.
+- **Not changed.** No container was rebuilt; that waits for #172. The served model is unchanged, so the
+  drift reference needs no regeneration.
+
 ### 2026-09-29: Which FP and EP models are served, registered and committed
 
 **Investigation for #172 (#175, D027).** No code changed.
