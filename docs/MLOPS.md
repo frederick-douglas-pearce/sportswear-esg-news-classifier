@@ -260,12 +260,38 @@ has no `version` field), and `unavailable` for a failed fetch or batch, where it
 `unknown`. A rebuild from the current tree reports `unversioned`, because the committed
 `models/fp_classifier_config.json` carries no stamp. A real version is recorded only after an
 artifact is registered with this in place and the image is rebuilt from a tree holding its stamped
-config. Which artifact that should be is #172.
+config. Which artifact that should be is decided in #176, from what #175 established.
 
 `model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
 in the values it records does not require regenerating the drift reference. An EP image rebuilt from
 this tree reports `unversioned` until an EP artifact is registered and the image is rebuilt from a
 tree holding its stamped config.
+
+### Served, registered and committed models
+
+**Invariant: the registry pointer (`models/registry.json` → `<clf>.production`) decides which model is
+built and deployed.** The artifact in `models/<clf>_classifier_*` must be the pointer's registered bytes,
+and every image must be built from those bytes. This is a target. Nothing enforces it until #172's
+build guard lands (D027), and the pointer is reconciled with the committed artifact in #176.
+
+The served, registered and committed models are three separate things and can differ. Which ones
+differ today, with evidence, is recorded on #175. The steps where they can come apart, each with the
+issue that owns its fix:
+
+| Divergence point | Where | Fix | Owner |
+|---|---|---|---|
+| Candidates and production share `models/<clf>_classifier_*`. The fp3/ep3 deployment cells and `train.py` (default `--output-dir models`) overwrite it unstamped, and never touch the registry | `src/fp3_nb/deployment.py`, `src/ep3_nb/deployment.py`, `scripts/train.py` | the build guard refuses bytes that are not the pointer's | #172 |
+| `register_model.py --update-registry` stamps the shared config even without `--set-production`; `promote_model.py` stamps it even without `--production` | `scripts/register_model.py`, `scripts/promote_model.py` | stamp the shared config only when production moves; the guard checks the pointer's hash, not the stamp | #172 |
+| `retrain.py` promotion moves the pointer and dispatches `deploy.yml` with no commit or push, so CI builds whatever `main` holds | `scripts/retrain.py` | dispatch only when the pushed tree holds the pointer's bytes | #172 |
+| `deploy.yml` (and `retrain.py`) skip deploying on a patch bump: the pointer moves, the served image does not | `.github/workflows/deploy.yml` | remove the skip for model changes | #172 |
+| The `model_training` promote step registers without `--set-production`, so the pointer never moves | `src/agent/workflows/model_training.py` | pass `--set-production` (failure handling stays #79) | #172 |
+| `trigger_deployment` reads a `version` key the registry does not have, so every workflow deploy is tagged `unknown` | `src/agent/workflows/model_training.py` | pass the pointer | #172 |
+| Local `docker compose build` and `scripts/deploy_cloudrun.sh` build from the working tree, so they can serve uncommitted, unregistered bytes | `docker-compose.yml`, `scripts/deploy_cloudrun.sh` | the guard runs in the Dockerfile's builder stage, which both use | #172 |
+| `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version | `scripts/retrain.py` | immutable registry versions | #172 |
+| A promotion commit can carry `registry.json` without the artifact, or the artifact under a message naming another version | commit discipline | reconcile once, then the guard fails such a tree's first build | #176, then #172 |
+| `pipeline_sha256` binds the joblib bytes only: not the threshold, the `src/fp1_nb`/`src/ep1_nb` transformer code the pickle imports, `BRANDS`, or library versions | `src/deployment/versioning.py` | threshold: #141; the rest deferred (record the code SHA at registration) | #141 / deferred |
+| `deploy.yml`'s cleanup keeps only `:latest` and one other digest, deleting older images that show what was served | `.github/workflows/deploy.yml` | keep images tagged with a registered version | deferred |
+| Cloud Run is not on the labeling path (`FP_CLASSIFIER_URL` points at the local container), so "deployed" there is not what serves labels | `src/labeling/config.py`, `deploy.yml` | decide whether Cloud Run remains a serving target | deferred |
 
 ### What Gets Monitored
 

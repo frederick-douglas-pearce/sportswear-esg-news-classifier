@@ -4,6 +4,21 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-09-29: Which FP and EP models are served, registered and committed
+
+**Investigation for #172 (#175, D027).** No code changed.
+- **FP.** The local `fp-classifier-api` container, which the labeling pipeline calls, serves registry
+  **v2.4.0's** bytes. The joblib's sha256 matches the v2.4.0 MLflow run's artifact and the file committed
+  in `aa1e589`. The `fp.production` pointer names v2.5.0. The committed `models/fp_classifier_*` is an
+  unpromoted candidate (`6246fae`).
+- **EP.** Registry v1.0.0's bytes are not in git, the committed EP artifact is a different (SVM) model,
+  and nothing serves EP.
+- **Docs.** `docs/MLOPS.md` states the invariant (the registry pointer decides what is built and deployed,
+  enforced once #172 lands) and lists every divergence point with the issue that owns its fix.
+  `CLAUDE.md` now states the FP/EP registry pointer and the served model separately.
+- **Records.** The timeline and evidence are in #175's comments. D027 records the architect's ruling on
+  splitting #172 into #175, #176, #172 and #177.
+
 ### 2026-09-28: Classifier predictions record the loaded model's version
 
 **`model_version` is no longer always `unknown` (#115, D026).** Nothing produced a version: artifact
