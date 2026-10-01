@@ -13,7 +13,8 @@ Three checks with different lifetimes:
 - The retired-EP check asserts that EP has no production pointer, keeps its v1.0.0
   record unchanged, and has no tracked artifact (#180, D029). Any change to
   `registry["ep"]` fails it, including registering an EP version that is not promoted,
-  so it is updated when a retrained EP is registered.
+  so it is updated when a retrained EP is registered. A companion check keeps the EP
+  compose service opt-in, so a plain `docker compose up` does not build it.
 """
 
 import json
@@ -21,6 +22,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from src.deployment.fp import FPClassifier
 from src.deployment.versioning import file_sha256
@@ -164,3 +166,10 @@ def test_committed_fp_artifact_reproduces_the_served_probabilities(
     result = committed_fp_classifier.predict_from_fields(**article)
 
     assert result["probability"] == pytest.approx(served_probability, abs=1e-9)
+
+
+def test_ep_compose_service_is_opt_in():
+    with open(REPO_ROOT / "docker-compose.yml") as f:
+        compose = yaml.safe_load(f)
+
+    assert compose["services"]["ep-classifier-api"]["profiles"] == ["ep"]
