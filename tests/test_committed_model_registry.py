@@ -1,6 +1,6 @@
-"""The committed model artifacts against the registry pointer (#176, D028).
+"""The committed model artifacts against the registry pointer (#176, D028, D029).
 
-Two checks with different lifetimes:
+Three checks with different lifetimes:
 
 - The version/hash check asserts the committed config's stamp names the pointer and
   hashes the committed joblib. #176 proposed (handoff comment on #172) that #172's
@@ -10,17 +10,48 @@ Two checks with different lifetimes:
   compares its probabilities with values captured from the served container. The guard
   D027 describes binds the model bytes, not the code the pickle imports (D028), so this
   check is not proposed for replacement.
+- The retired-EP check asserts that EP has no production pointer, keeps its v1.0.0
+  record unchanged, and has no tracked artifact (#180, D029). Any change to
+  `registry["ep"]` fails it, including registering an EP version that is not promoted,
+  so it is updated when a retrained EP is registered. A companion check keeps the EP
+  compose service opt-in, so a plain `docker compose up` does not build it.
 """
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from src.deployment.fp import FPClassifier
 from src.deployment.versioning import file_sha256
 
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MODELS_DIR = REPO_ROOT / "models"
+
+# models/registry.json's EP entry as #180 left it: no pointer, and the v1.0.0 record
+# kept unchanged as the reference for a retrained EP.
+RETIRED_EP_REGISTRY = {
+    "production": None,
+    "versions": {
+        "v1.0.0": {
+            "created_at": "2024-12-23T00:00:00Z",
+            "trained_on": "data/ep_training_data.jsonl",
+            "model_name": "LR_tuned",
+            "transformer_method": "tfidf_lsa",
+            "threshold": 0.7237,
+            "metrics": {
+                "cv_f2": 0.9311,
+                "cv_recall": 1.0,
+                "cv_precision": 0.7299,
+                "test_f2": 0.9311,
+                "test_recall": 1.0,
+                "test_precision": 0.7299,
+            },
+        }
+    },
+}
 
 
 def _read_json(path: Path) -> dict:
@@ -28,20 +59,18 @@ def _read_json(path: Path) -> dict:
         return json.load(f)
 
 
-@pytest.mark.parametrize(
-    "classifier",
-    [
-        "fp",
-        pytest.param(
-            "ep",
-            marks=pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason="#180: EP's registered bytes are not recoverable; the committed EP artifact is unregistered",
-            ),
-        ),
-    ],
-)
+def _git_tracked_files_under(directory: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "--", directory],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return [name for name in result.stdout.split("\0") if name]
+
+
+@pytest.mark.parametrize("classifier", ["fp"])
 def test_committed_config_stamp_names_the_pointer_and_hashes_the_joblib(classifier):
     registry = _read_json(MODELS_DIR / "registry.json")
     config = _read_json(MODELS_DIR / f"{classifier}_classifier_config.json")
@@ -49,6 +78,19 @@ def test_committed_config_stamp_names_the_pointer_and_hashes_the_joblib(classifi
 
     assert config.get("version") == registry[classifier]["production"]
     assert config.get("pipeline_sha256") == file_sha256(pipeline)
+
+
+def test_ep_pointer_is_retired_and_no_ep_artifact_is_committed():
+    registry = _read_json(MODELS_DIR / "registry.json")
+
+    assert registry["ep"] == RETIRED_EP_REGISTRY
+    # What git tracks (the index; HEAD in CI), not the working tree: a local notebook or
+    # train.py run writes models/ep_* without adding it. One listing, filtered here rather
+    # than by a git pathspec, so registry.json's presence in it shows the listing is real
+    # and the empty ep_ selection below is evidence of absence.
+    tracked = _git_tracked_files_under("models")
+    assert "models/registry.json" in tracked
+    assert [name for name in tracked if name.startswith("models/ep_")] == []
 
 
 # Captured 2026-09-30 from the local fp-classifier-api container's /predict/batch
@@ -124,3 +166,10 @@ def test_committed_fp_artifact_reproduces_the_served_probabilities(
     result = committed_fp_classifier.predict_from_fields(**article)
 
     assert result["probability"] == pytest.approx(served_probability, abs=1e-9)
+
+
+def test_ep_compose_service_is_opt_in():
+    with open(REPO_ROOT / "docker-compose.yml") as f:
+        compose = yaml.safe_load(f)
+
+    assert compose["services"]["ep-classifier-api"]["profiles"] == ["ep"]

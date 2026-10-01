@@ -46,9 +46,8 @@ sportswear-esg-news-classifier/
 ├── models/                     # Saved ML models and artifacts
 │   ├── registry.json                 # Model version registry
 │   ├── fp_classifier_pipeline.joblib # FP production model
-│   ├── fp_classifier_config.json     # FP model configuration
-│   ├── ep_classifier_pipeline.joblib # EP production model
-│   └── ep_classifier_config.json     # EP model configuration
+│   └── fp_classifier_config.json     # FP model configuration
+│                                     # (no EP artifact while EP is on hold, #180)
 ├── docs/                       # Detailed documentation
 │   ├── COLLECTION.md           # News collection pipeline details
 │   ├── LABELING.md             # LLM labeling pipeline details

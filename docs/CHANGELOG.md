@@ -4,6 +4,23 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-01: The EP registry pointer is retired while EP is on hold
+
+**Retire, do not register (#180, D029).** v1.0.0's registered bytes are not recoverable (#175), and
+the committed EP artifact was an unpromoted SVM judged unfit for production.
+- **Registry.** `ep.production` is `null`. The v1.0.0 record and its metrics are unchanged, as the
+  reference for a retrained EP.
+- **Artifacts.** The nine `models/ep_*` files from `2a14794` are deleted; recover them with
+  `git checkout 2a14794 -- <path>`. `deploy.yml`'s `deploy-ep` job now fails at its model-file check,
+  and no EP image can be built from the tree.
+- **Compose.** `ep-classifier-api` is behind the `ep` profile, so `docker compose up` does not build it.
+- **Tests.** `tests/test_committed_model_registry.py` no longer expects EP to fail. It pins the retired
+  EP entry and checks that git tracks no `models/ep_*` file.
+- **Open.** With no pointer, `retrain.py` treats a new EP model as an improvement and the
+  `model_training` workflow treats it as no improvement; neither compares it with v1.0.0. The
+  `retrain.py` path is latent while its training step exits early (#186). Proposed to #172 (comment on
+  #172; `docs/MLOPS.md`).
+
 ### 2026-09-30: The FP registry pointer, committed artifact and the model served to the labeling pipeline agree on v2.4.0
 
 **Reconciliation for #172's build guard (#176, D028).**

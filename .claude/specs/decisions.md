@@ -2144,3 +2144,41 @@ hash binds the model bytes, not the `src/fp1_nb` code the pickle imports. With t
 `retrain.py`'s default (`--minor`) next version is v2.5.0, an existing entry that `promote_version`
 overwrites before dispatching a deploy. `retrain.py` cannot name a version, so until #172 an FP model
 is not promoted through it (freeze extension on #176).
+
+## D029: Retire the EP Pointer While EP Is on Hold — Clear the Pointer, Keep the Record, Delete the Unfit Artifact (#180)
+
+**Date:** 2026-10-01 · **Status:** accepted (architect-reviewed; approved by the human at the plan gate) · **Issues:** #180, #172, #175
+(epic #152)
+
+**Context.** #175 found that EP v1.0.0's bytes (LR_tuned) are not in git history or the local MLflow
+artifacts. The committed `models/ep_*` is a different model: an SVM from `2a14794`, committed as "not
+promoted", with test F2 0.46. Three routes could ship it: a `deploy.yml` dispatch with `classifier=ep`
+or `all` (the default), `scripts/deploy_cloudrun.sh ep|all` (builds from the working tree), and
+`docker compose up -d` (the service had no profile). The human chose option (b) on #180: register
+nothing until EP is retrained.
+
+**Decision.**
+1. **Clear `ep.production` and nothing else.** The v1.0.0 record and its metrics stay as the reference
+   for a retrained EP.
+2. **Delete all nine `models/ep_*` files**, not only the deployable pair.
+   `models/ep_training_config.json` is the SVM recipe, and `scripts/train.py --classifier ep` reads it
+   from `models/` and writes the deployable pair back to the paths the Dockerfile copies.
+3. **Put `ep-classifier-api` under a compose profile (`ep`)**, so the documented `docker compose up -d`
+   neither builds the unfit model nor fails on the deleted files. The service definition is kept for
+   a retrained EP. Rejected: commenting the service out, which leaves a block that goes stale.
+4. **Pin the artifact check against what git tracks** (the index; HEAD in CI), not the working tree.
+   The test compares the whole `registry["ep"]` dict, read from the working-tree
+   `models/registry.json`, and checks that no tracked file under `models/` starts with `ep_`, in the
+   same listing that must contain `models/registry.json`. A local notebook or `train.py` run writes
+   `models/ep_*` but not the registry, so it must not turn the suite red, and the risk of building
+   from the working tree is already #172's.
+5. **Document, do not fix, the null-pointer comparison.** With no pointer, `retrain.py` fails open
+   (`compare_versions(None)` returns an improvement) and `model_training` fails closed. So nothing
+   compares a retrained EP with v1.0.0. Owner: #172, chosen by the human (handoff posted on #172).
+   `retrain.py`'s training step exits before training today (#186); fixing #186 first would make its
+   fail-open reachable.
+
+**Consequences.** EP image builds fail at `COPY` until an EP artifact is in the tree; requiring that
+artifact to be registered is #172's guard. This is consistent with D027 §4. A dispatch with the default
+`all` reports a failed `deploy-ep` job; FP still deploys, because `deploy-fp` does not depend on it. The
+squash commit body names `2a14794` so the files can be recovered.
