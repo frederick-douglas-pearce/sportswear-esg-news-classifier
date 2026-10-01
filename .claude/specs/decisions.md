@@ -2175,10 +2175,8 @@ nothing until EP is retrained.
 5. **Document, do not fix, the null-pointer comparison.** With no pointer, `retrain.py` fails open
    (`compare_versions(None)` returns an improvement) and `model_training` fails closed. So nothing
    compares a retrained EP with v1.0.0. Owner: #172, chosen by the human (handoff posted on #172).
-   No comparison-gated path promotes a new EP before #172 today: `retrain.py`'s training step exits
-   before training (#186), and `model_training` promotes nothing without a production version.
-   `register_model.py --update-registry --set-production` sets the pointer without any comparison, as
-   an explicit manual step. Fixing #186 first would make the fail-open reachable.
+   `retrain.py`'s training step exits before training today (#186); fixing #186 first would make its
+   fail-open reachable.
 
 **Consequences.** EP image builds fail at `COPY` until an EP artifact is in the tree; requiring that
 artifact to be registered is #172's guard. This is consistent with D027 §4. A dispatch with the default
