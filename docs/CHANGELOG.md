@@ -8,17 +8,17 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 **Reconciliation for #172's build guard (#176, D028).**
 - **FP.** `fp.production` moves from v2.5.0 to **v2.4.0**, the bytes the labeling pipeline's local
-  `fp-classifier-api` container serves (#175). The joblib and config from `aa1e589` are committed together with
-  `models/registry.json`. The v2.4.0 entry keeps its original `created_at`; its notes record the
-  re-stamp. v2.5.0 and v2.6.0 stay registered, not production.
+  `fp-classifier-api` container serves (#175). The joblib from `aa1e589` and its config, stamped `v2.4.0` with the joblib's hash,
+  are committed together with `models/registry.json`. The v2.4.0 entry keeps its original
+  `created_at`; its notes record the re-stamp. v2.5.0 and v2.6.0 stay registered, not production.
 - **Compatibility.** v2.4.0 was pickled before `FPFeatureTransformer` gained `include_negative_context`,
   so under today's code it failed every prediction. `__setstate__` now sets the flag to `True` when a
   pickle lacks it: earlier pickles computed negative context features unconditionally in every method
   that has them.
 - **Tests.** `tests/test_fp1_nb_feature_transformer_compat.py` pins the default.
   `tests/test_committed_model_registry.py` checks that the committed config's stamp names the pointer
-  and hashes the committed joblib, and that the committed FP artifact reproduces probabilities captured
-  from the served container. EP is an expected failure there until #180.
+  and hashes the committed joblib, and that the committed FP artifact reproduces recorded
+  probabilities. EP is an expected failure there until #180.
 - **EP.** Not reconciled: registry v1.0.0's bytes are not recoverable. #180 decides between registering
   the committed EP bytes and retiring the pointer.
 - **Not changed.** No container was rebuilt; that waits for #172. The drift reference needs no
