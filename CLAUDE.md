@@ -93,9 +93,9 @@ uv run python scripts/export_training_data.py --dataset esg-labels     # Multi-l
 
 # ML Classifier Training & API
 uv run python scripts/train.py --classifier fp                 # Train FP classifier
-uv run python scripts/train.py --classifier ep                 # Train EP classifier
+uv run python scripts/train.py --classifier ep                 # Train EP classifier (needs models/ep_training_config.json from the ep2 notebook; none is committed while EP is on hold, #180)
 CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (port 8000)
-CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000)
+CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000; needs an EP artifact in models/, none is committed while EP is on hold, #180)
 
 # Testing
 uv run pytest                              # Run all tests
@@ -313,8 +313,8 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 - **Registry pointer (`fp.production`), committed artifact and the model served to the labeling pipeline: v2.4.0** (#176). Random Forest with TF-IDF + LSA + NER + proximity + brand features, before v2.5.0 removed the negative_context features (Test F2: 0.986, Recall: 98.8%). The local `fp-classifier-api` container is what the labeling pipeline calls. v2.4.0's pickle needs the `include_negative_context` compatibility default in `FPFeatureTransformer.__setstate__` (D028). v2.5.0 and v2.6.0 stay registered, not production; Cloud Run's last revision is inferred to hold v2.5.0's bytes (#175)
 
 **ESG Pre-filter Classifier (3 notebooks):** ep1_EDA_FE.ipynb → ep2_model_selection_tuning.ipynb → ep3_model_evaluation_deployment.ipynb
-- **Registry pointer (`ep.production`): v1.0.0.** Logistic Regression with TF-IDF + LSA features (Test F2: 0.931, Recall: 100%). On hold, insufficient data for significant improvement
-- **Served:** nothing; no EP container or Cloud Run service exists. v1.0.0's bytes are not in git, and the committed `models/ep_classifier_*` is a different model, an unpromoted SVM (#175)
+- **Registry pointer (`ep.production`): none** (#180, D029). The v1.0.0 record (Logistic Regression with TF-IDF + LSA features, Test F2: 0.931, Recall: 100%) stays in `models/registry.json` as the reference for a retrained EP; its bytes are not in git (#175). On hold, insufficient data for significant improvement
+- **Served and committed:** nothing; no EP container or Cloud Run service exists, and no `models/ep_*` file is committed (the unpromoted SVM from `2a14794` was deleted in #180). `ep-classifier-api` is behind the compose `ep` profile
 
 **Notebook Standards:** All imports in Setup section, grouped: stdlib → third-party → project modules
 
@@ -390,7 +390,7 @@ Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
 ## ML Classifier Opportunities
 
 1. **False Positive Classifier** ✅ - Filter non-sportswear brand matches (registry pointer, committed, and served to the labeling pipeline: v2.4.0, Test F2: 0.986; Cloud Run inferred v2.5.0, see #175/#176)
-2. **ESG Pre-filter Classifier** ✅ - Identify ESG content before Claude (registry pointer v1.0.0, Test F2: 0.931; not served) — on hold
+2. **ESG Pre-filter Classifier** ✅ - Identify ESG content before Claude (no registry pointer since #180; v1.0.0 record Test F2: 0.931; not served) — on hold
 3. **ESG Multi-label Classifier** - Planned
 
 ## Project Phases
@@ -406,7 +406,7 @@ Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
 ```bash
 docker build --build-arg CLASSIFIER_TYPE=fp -t fp-classifier-api .
 docker run -p 8000:8000 -e CLASSIFIER_TYPE=fp fp-classifier-api
-# Or: docker compose up fp-classifier-api ep-classifier-api
+# Or: docker compose up fp-classifier-api   (ep-classifier-api is behind `--profile ep` and has no committed artifact, #180)
 ```
 
 ### API Endpoints
@@ -494,6 +494,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-10-01**: The EP registry pointer is retired while EP is on hold (#180, D029). `ep.production` is `null`; the v1.0.0 record stays as the reference for a retrained EP. The unpromoted SVM artifacts from `2a14794` are deleted (recoverable from that commit), so `deploy.yml`'s `deploy-ep` job fails at its model-file check and an EP image cannot be built from the tree; `ep-classifier-api` is behind the compose `ep` profile. `tests/test_committed_model_registry.py` pins the retired EP entry and checks that git tracks no `models/ep_*` file. With no pointer, nothing compares a retrained EP with v1.0.0; that is proposed to #172
 - **2026-09-30**: The FP registry pointer, committed artifact and the model served to the labeling pipeline agree on v2.4.0 (#176, D028). v2.4.0's bytes (from `aa1e589`) are committed and the pointer moved from v2.5.0; `FPFeatureTransformer.__setstate__` defaults `include_negative_context` to `True` for pickles that predate it, without which v2.4.0 fails every prediction under today's code. `tests/test_committed_model_registry.py` checks the committed stamp against the pointer and joblib, and the committed artifact's probabilities against recorded values; EP is an expected failure until #180. No container was rebuilt, and the drift reference needs no regeneration
 - **2026-09-29**: Which FP/EP models are served, registered and committed is established (#175). The local FP container the labeling pipeline calls serves registry v2.4.0's bytes, the `fp.production` pointer names v2.5.0, and the committed artifact is an unpromoted candidate. EP v1.0.0's bytes are not in git and nothing serves EP. `docs/MLOPS.md` states the invariant (the pointer decides what is built and deployed, enforced once #172 lands) and lists the divergence points, each with a proposed fix (or none) and owner. The evidence and timeline are in #175's comments. D027 records the #172 split
 - **2026-09-28**: FP predictions record the version of the artifact the API loaded - every registry writer stamps `version` + `pipeline_sha256` into the artifact config (`src/deployment/versioning.py`), the API reports it only when the hash matches the loaded joblib, `/model/info` returns `version` + `artifact_sha256`, and a missing version is recorded as `unversioned`/`unreported`/`unavailable` instead of `unknown`; from merge the running image's rows record `unreported`, a rebuild from the current tree gives `unversioned`, and which artifact to serve is #172; the drift-reference regeneration rule now names drift columns only (#115, D026)

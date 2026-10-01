@@ -94,6 +94,8 @@ After deployment, services are available at:
 | FP | `fp-classifier-api` | 2GB | 300s |
 | EP | `ep-classifier-api` | 512MB | 60s |
 
+EP is on hold: it has no production version and no committed artifact (#180), so the EP deploy job fails at its model-file check.
+
 ## Verifying Deployment
 
 Check deployment status:

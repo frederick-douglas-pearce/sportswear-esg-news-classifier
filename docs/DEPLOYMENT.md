@@ -52,7 +52,8 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py
 # Or with uvicorn directly:
 CLASSIFIER_TYPE=fp uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8000
 
-# Start EP API server (different port)
+# Start EP API server (different port). EP is on hold and no EP artifact is
+# committed (#180); this needs one in models/ first.
 CLASSIFIER_TYPE=ep uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8001
 
 # Access API docs

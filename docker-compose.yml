@@ -49,7 +49,10 @@ services:
 
   # EP (ESG Pre-filter) Classifier API
   # Determines if articles contain ESG content
+  # Opt-in (`--profile ep`): EP is on hold with no production version and no committed
+  # artifact (#180), so a plain `docker compose up` must not build it.
   ep-classifier-api:
+    profiles: ["ep"]
     build:
       context: .
       dockerfile: Dockerfile

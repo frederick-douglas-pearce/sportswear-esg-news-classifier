@@ -262,9 +262,8 @@ and committed them with the pointer and
 the stamped config, so an FP image rebuilt from the tree reports `v2.4.0`.
 
 `model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
-in the values it records does not require regenerating the drift reference. An EP image rebuilt from
-this tree reports `unversioned` until an EP artifact is registered and the image is rebuilt from a
-tree holding its stamped config.
+in the values it records does not require regenerating the drift reference. No EP image can be built
+from this tree: EP has no production version and no committed artifact (#180).
 
 ### Served, registered and committed models
 
@@ -273,9 +272,22 @@ built and deployed.** The artifact in `models/<clf>_classifier_*` must be the po
 and every image must be built from those bytes. No build enforces it until #172's build guard lands
 (D027). For FP, #176 reconciled the pointer with the committed artifact (`v2.4.0`, the bytes the
 labeling pipeline is served), and `tests/test_committed_model_registry.py` checks in CI that the
-committed FP config's stamp names the pointer and hashes the committed joblib. EP is not reconciled:
-its registered bytes are not recoverable (#180), and that test marks EP as an expected failure until
-#180 lands.
+committed FP config's stamp names the pointer and hashes the committed joblib.
+
+**EP has no production version while it is on hold** (#180, D029). v1.0.0's registered bytes are not
+recoverable (#175), so `ep.production` is `null`. The v1.0.0 record and its metrics stay in
+`models/registry.json` as the reference for a retrained EP. The unpromoted SVM that was committed as
+`models/ep_*` (from `2a14794`) is deleted and can be recovered from that commit. With no EP artifact in
+the tree:
+
+- `deploy.yml`'s `deploy-ep` job fails at its model-file check. A dispatch with `classifier=all`, the
+  default, still deploys FP, because `deploy-fp` does not depend on `deploy-ep`.
+- `scripts/deploy_cloudrun.sh ep` and `all` fail at the EP image build. `all` deploys FP first.
+- `ep-classifier-api` is behind the compose `ep` profile, so `docker compose up` does not build it.
+- `tests/test_committed_model_registry.py` pins the retired EP entry and checks that git tracks no
+  `models/ep_*` file.
+
+How #172's guard treats a classifier with no production version is #172's to define (raised on #172).
 
 The served, registered and committed models are three separate things and can differ. Which ones
 differ today, with evidence, is recorded on #175. The steps where they can come apart are listed
@@ -295,6 +307,7 @@ are finalized after #175 (D027 §1), so a `#172` entry here is a proposal until 
 | A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | decide whether the guard also binds committed state (raised on #172 for its finalization) | deferred |
 | `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version. With the pointer at `v2.4.0`, its default (`--minor`) next version is `v2.5.0`, which exists, and promotion then dispatches a deploy. `retrain.py` cannot name a version, so until #172 do not promote through it | `scripts/retrain.py` | immutable registry versions | #172 |
 | A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (FP reconciled in #176) | #172 |
+| With no production version, the two promotion paths disagree. `retrain.py`'s `compare_versions` treats a new model as an improvement when there is no production metric (`no_production`), so `--auto-promote` promotes it. The `model_training` workflow records no improvement and promotes nothing. Neither compares a retrained EP with the v1.0.0 record | `scripts/retrain.py`, `src/agent/workflows/model_training.py` | pick one rule for a classifier with no production version | #172 |
 | A commit message can name a version the registry does not record | commit discipline | not checked; git history and the registry remain the evidence | deferred |
 | `pipeline_sha256` does not bind the config's `threshold` | `src/deployment/versioning.py` | one source of truth for the FP threshold | #141 |
 | `pipeline_sha256` does not bind the `src/fp1_nb`/`src/ep1_nb` transformer code the pickle imports, `BRANDS`, or library versions. v2.4.0's pickle predates a transformer attribute and needed a compatibility default to run under today's code (D028); `tests/test_committed_model_registry.py` loads the committed FP artifact and compares its probabilities with values captured from the served container | `src/deployment/versioning.py`, `src/fp1_nb/feature_transformer.py` | record the code SHA at registration | deferred |
