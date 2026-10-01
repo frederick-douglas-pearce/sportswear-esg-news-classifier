@@ -2143,5 +2143,4 @@ that starts, reports healthy, and fails every `/predict`.
 hash binds the model bytes, not the `src/fp1_nb` code the pickle imports. With the pointer at v2.4.0,
 `retrain.py`'s default (`--minor`) next version is v2.5.0, an existing entry that `promote_version`
 overwrites before dispatching a deploy. `retrain.py` cannot name a version, so until #172 an FP model
-is not promoted through it (freeze extension on #176); `register_model.py` numbers from the highest
-existing version or takes `--version`.
+is not promoted through it (freeze extension on #176).

@@ -258,7 +258,7 @@ API call fails logs only its batch-failure WARNING; a failure after an unusable 
 merge records `unreported` for the currently deployed `fp-classifier-api` image (its `/model/info`
 has no `version` field), and `unavailable` for a failed fetch or batch, where it used to record
 `unknown`. #176 re-stamped the FP bytes served to the labeling pipeline as `v2.4.0`
-(`register_model.py --update-registry --set-production`) and committed them with the pointer and
+and committed them with the pointer and
 the stamped config, so an FP image rebuilt from the tree reports `v2.4.0`.
 
 `model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
@@ -293,7 +293,7 @@ are finalized after #175 (D027 §1), so a `#172` entry here is a proposal until 
 | `trigger_deployment` reads a `version` key the registry does not have, so every workflow deploy is tagged `unknown` | `src/agent/workflows/model_training.py` | pass the pointer | #172 |
 | Local `docker compose build` and `scripts/deploy_cloudrun.sh` build from the working tree, so they can serve unregistered bytes | `docker-compose.yml`, `scripts/deploy_cloudrun.sh` | the build guard runs in the Dockerfile's builder stage, which both use | #172 |
 | A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | decide whether the guard also binds committed state (raised on #172 for its finalization) | deferred |
-| `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version. With the pointer at `v2.4.0`, its default (`--minor`) next version is `v2.5.0`, which exists, and promotion then dispatches a deploy. `retrain.py` cannot name a version, so until #172 do not promote through it; register with `register_model.py`, which numbers from the highest existing version or takes `--version` | `scripts/retrain.py` | immutable registry versions | #172 |
+| `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version. With the pointer at `v2.4.0`, its default (`--minor`) next version is `v2.5.0`, which exists, and promotion then dispatches a deploy. `retrain.py` cannot name a version, so until #172 do not promote through it | `scripts/retrain.py` | immutable registry versions | #172 |
 | A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (FP reconciled in #176) | #172 |
 | A commit message can name a version the registry does not record | commit discipline | not checked; git history and the registry remain the evidence | deferred |
 | `pipeline_sha256` does not bind the config's `threshold` | `src/deployment/versioning.py` | one source of truth for the FP threshold | #141 |

@@ -1,7 +1,7 @@
 """Unpickling FPFeatureTransformer objects saved before include_negative_context existed.
 
 The flag arrived in 14f1e69 with default True. A pickle saved before it (registry FP
-v2.4.0, the served model) has no such attribute, and transform() reads it (D028).
+v2.4.0) has no such attribute, and transform() reads it (D028).
 """
 
 import pickle
