@@ -2166,19 +2166,21 @@ nothing until EP is retrained.
 3. **Put `ep-classifier-api` under a compose profile (`ep`)**, so the documented `docker compose up -d`
    neither builds the unfit model nor fails on the deleted files. The service definition is kept for
    a retrained EP. Rejected: commenting the service out, which leaves a block that goes stale.
-4. **Pin the retired state against what git tracks** (the index; HEAD in CI), not the working tree.
-   The test compares the whole `registry["ep"]` dict and checks that no tracked file under `models/`
-   starts with `ep_`, in the same listing that must contain `models/registry.json`. A
-   local notebook or `train.py` run must not turn the suite red, and the risk of building from the
-   working tree is already #172's.
+4. **Pin the artifact check against what git tracks** (the index; HEAD in CI), not the working tree.
+   The test compares the whole `registry["ep"]` dict, read from the working-tree
+   `models/registry.json`, and checks that no tracked file under `models/` starts with `ep_`, in the
+   same listing that must contain `models/registry.json`. A local notebook or `train.py` run writes
+   `models/ep_*` but not the registry, so it must not turn the suite red, and the risk of building
+   from the working tree is already #172's.
 5. **Document, do not fix, the null-pointer comparison.** With no pointer, `retrain.py` fails open
    (`compare_versions(None)` returns an improvement) and `model_training` fails closed. So nothing
    compares a retrained EP with v1.0.0. Owner: #172, chosen by the human (handoff posted on #172).
-   No path promotes a new EP before #172 today: `retrain.py`'s training step exits before training
-   (#186), and `model_training` promotes nothing without a production version. Fixing #186 first
-   would make the fail-open reachable.
+   No comparison-gated path promotes a new EP before #172 today: `retrain.py`'s training step exits
+   before training (#186), and `model_training` promotes nothing without a production version.
+   `register_model.py --update-registry --set-production` sets the pointer without any comparison, as
+   an explicit manual step. Fixing #186 first would make the fail-open reachable.
 
 **Consequences.** EP image builds fail at `COPY` until an EP artifact is in the tree; requiring that
-artifact to be registered is #172's guard. This is consistent with D027 §4. A dispatch with the default `all` reports a failed `deploy-ep` job; FP still
-deploys, because `deploy-fp` does not depend on it. The squash commit body names `2a14794` so the files
-can be recovered.
+artifact to be registered is #172's guard. This is consistent with D027 §4. A dispatch with the default
+`all` reports a failed `deploy-ep` job; FP still deploys, because `deploy-fp` does not depend on it. The
+squash commit body names `2a14794` so the files can be recovered.
