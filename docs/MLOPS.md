@@ -257,10 +257,9 @@ API call fails logs only its batch-failure WARNING; a failure after an unusable 
 **What changes at merge.** The labeling pipeline runs from the tree, so the first labeling run after
 merge records `unreported` for the currently deployed `fp-classifier-api` image (its `/model/info`
 has no `version` field), and `unavailable` for a failed fetch or batch, where it used to record
-`unknown`. A rebuild from the current tree reports `unversioned`, because the committed
-`models/fp_classifier_config.json` carries no stamp. A real version is recorded only after an
-artifact is registered with this in place and the image is rebuilt from a tree holding its stamped
-config. Which artifact that should be is decided in #176, from what #175 established.
+`unknown`. #176 re-stamped the FP bytes served to the labeling pipeline as `v2.4.0`
+and committed them with the pointer and
+the stamped config, so an FP image rebuilt from the tree reports `v2.4.0`.
 
 `model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
 in the values it records does not require regenerating the drift reference. An EP image rebuilt from
@@ -271,8 +270,12 @@ tree holding its stamped config.
 
 **Invariant: the registry pointer (`models/registry.json` → `<clf>.production`) decides which model is
 built and deployed.** The artifact in `models/<clf>_classifier_*` must be the pointer's registered bytes,
-and every image must be built from those bytes. This is a target. Nothing enforces it until #172's
-build guard lands (D027), and the pointer is reconciled with the committed artifact in #176.
+and every image must be built from those bytes. No build enforces it until #172's build guard lands
+(D027). For FP, #176 reconciled the pointer with the committed artifact (`v2.4.0`, the bytes the
+labeling pipeline is served), and `tests/test_committed_model_registry.py` checks in CI that the
+committed FP config's stamp names the pointer and hashes the committed joblib. EP is not reconciled:
+its registered bytes are not recoverable (#180), and that test marks EP as an expected failure until
+#180 lands.
 
 The served, registered and committed models are three separate things and can differ. Which ones
 differ today, with evidence, is recorded on #175. The steps where they can come apart are listed
@@ -290,13 +293,14 @@ are finalized after #175 (D027 §1), so a `#172` entry here is a proposal until 
 | `trigger_deployment` reads a `version` key the registry does not have, so every workflow deploy is tagged `unknown` | `src/agent/workflows/model_training.py` | pass the pointer | #172 |
 | Local `docker compose build` and `scripts/deploy_cloudrun.sh` build from the working tree, so they can serve unregistered bytes | `docker-compose.yml`, `scripts/deploy_cloudrun.sh` | the build guard runs in the Dockerfile's builder stage, which both use | #172 |
 | A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | decide whether the guard also binds committed state (raised on #172 for its finalization) | deferred |
-| `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version | `scripts/retrain.py` | immutable registry versions | #172 |
-| A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (after #176 reconciles) | #172 |
+| `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version. With the pointer at `v2.4.0`, its default (`--minor`) next version is `v2.5.0`, which exists, and promotion then dispatches a deploy. `retrain.py` cannot name a version, so until #172 do not promote through it | `scripts/retrain.py` | immutable registry versions | #172 |
+| A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (FP reconciled in #176) | #172 |
 | A commit message can name a version the registry does not record | commit discipline | not checked; git history and the registry remain the evidence | deferred |
 | `pipeline_sha256` does not bind the config's `threshold` | `src/deployment/versioning.py` | one source of truth for the FP threshold | #141 |
-| `pipeline_sha256` does not bind the `src/fp1_nb`/`src/ep1_nb` transformer code the pickle imports, `BRANDS`, or library versions | `src/deployment/versioning.py` | record the code SHA at registration | deferred |
+| `pipeline_sha256` does not bind the `src/fp1_nb`/`src/ep1_nb` transformer code the pickle imports, `BRANDS`, or library versions. v2.4.0's pickle predates a transformer attribute and needed a compatibility default to run under today's code (D028); `tests/test_committed_model_registry.py` loads the committed FP artifact and compares its probabilities with values captured from the served container | `src/deployment/versioning.py`, `src/fp1_nb/feature_transformer.py` | record the code SHA at registration | deferred |
+| `models/fp_feature_config.json` and `models/fp_training_config.json`, written by the notebooks, describe the last candidate (`6246fae`), not the pointer's artifact. The experiment log's state snapshot pairs the pointer's config with the candidate's `fp_feature_config.json`, and a retrain reads the candidate's `fp_training_config.json` | `src/experiment_log/tracker.py`, `src/deployment/training_config.py` | not decided | deferred |
 | `deploy.yml`'s cleanup keeps only `:latest` and one other digest, deleting older images that show what was served | `.github/workflows/deploy.yml` | keep images tagged with a registered version | deferred |
-| Cloud Run is not on the labeling path (`FP_CLASSIFIER_URL` points at the local container), so "deployed" there is not what serves labels | `src/labeling/config.py`, `deploy.yml` | decide whether Cloud Run remains a serving target | deferred |
+| Cloud Run is not on the labeling path (`FP_CLASSIFIER_URL` points at the local container), so "deployed" there is not what serves labels. Its last revision is inferred (#175) to hold v2.5.0's bytes under an `:unknown` tag, while the pointer names `v2.4.0` | `src/labeling/config.py`, `deploy.yml` | decide whether Cloud Run remains a serving target | deferred |
 
 ### What Gets Monitored
 

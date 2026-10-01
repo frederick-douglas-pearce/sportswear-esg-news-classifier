@@ -1,6 +1,6 @@
 {
   "fp": {
-    "production": "v2.5.0",
+    "production": "v2.4.0",
     "versions": {
       "v1.0.0": {
         "created_at": "2024-12-23T00:00:00Z",
@@ -95,7 +95,7 @@
           "test_recall": 0.9884,
           "test_precision": 0.9771
         },
-        "notes": "Training data expanded to 1634 samples (+99). Test F2 +0.17%, test precision +2.09% vs v2.3.0. Added Columbia Sportswear stock article as FP."
+        "notes": "Training data expanded to 1634 samples (+99). Test F2 +0.17%, test precision +2.09% vs v2.3.0. Added Columbia Sportswear stock article as FP. Re-stamped 2026-09-30 (#176)."
       },
       "v2.5.0": {
         "created_at": "2026-01-25T10:56:16Z",
