@@ -833,11 +833,11 @@ class FPFeatureTransformer(BaseEstimator, TransformerMixin):
         """Restore a pickled transformer, filling attributes older pickles lack.
 
         ``include_negative_context`` arrived in 14f1e69. Pickles saved before it,
-        registry FP v2.4.0 among them, always computed negative context features,
-        so they load with it set to ``True``. The value is fixed here rather than
-        read from ``__init__``'s default, so a later default change cannot alter
-        what an old pickle computes. Remove this once no registered production
-        artifact predates 14f1e69 (D028).
+        registry FP v2.4.0 among them, computed negative context features
+        unconditionally in every method that has them, so they load with it set
+        to ``True``. The value is fixed here rather than read from ``__init__``'s
+        default, so a later default change cannot alter what an old pickle
+        computes (D028).
         """
         super().__setstate__(state)
         if "include_negative_context" not in self.__dict__:

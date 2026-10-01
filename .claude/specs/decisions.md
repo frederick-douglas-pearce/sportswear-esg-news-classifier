@@ -2126,18 +2126,22 @@ that starts, reports healthy, and fails every `/predict`.
    pipeline receives on the next rebuild, which is a model decision rather than a reconciliation.
 2. **Backward-compat `__setstate__`** on `FPFeatureTransformer` sets `include_negative_context = True`
    when a pickle lacks it. The value is hard-coded, not read from the `__init__` default, so a later
-   default change cannot alter legacy pickles. Removable once no registered production artifact
-   predates `14f1e69`. Rejected: per-use-site `getattr` (misses `get_params`/`clone`/`repr`) and a
+   default change cannot alter legacy pickles. It stays while any registered FP version that may be
+   rolled back to predates `14f1e69`; the human keeps those as rollback targets. Rejected: per-use-site `getattr` (misses `get_params`/`clone`/`repr`) and a
    post-load patch in `src/deployment` (couples the deployment layer to `src/fp1_nb` internals).
 3. **Re-stamp with the existing tooling**, then restore the v2.4.0 entry's original `created_at` by
-   hand; the entry's diff is otherwise additive. The registry hash for v2.4.0 is **#172's** to write,
-   as a one-off backfill of an existing entry allowed only when it equals the config stamp's hash.
+   hand; the entry's diff is otherwise additive. The v2.4.0 registry entry carries no hash. Recording
+   it is proposed to #172 (handoff comment), as a one-off backfill of an existing entry allowed only
+   when it equals the config stamp's hash; #172's re-review decides.
 4. **A committed-tree test** checks the FP config stamp against the pointer and the joblib hash (EP
-   `xfail(strict)` until its follow-up lands), and loads the committed artifact and compares its
-   probabilities with golden values captured from the running container. #172's guard supersedes the
-   first half; the second half stays, because the guard binds bytes, not code.
+   `xfail(strict)` until #180 lands), and loads the committed artifact and compares its
+   probabilities with golden values captured from the running container (evidence on #176).
+   Replacing the first half with #172's guard is proposed to #172; the second half is not proposed
+   for replacement, because the guard D027 describes binds bytes, not code.
 
 **Consequences.** This is the first demonstrated instance of D027's accepted consequence: the joblib
 hash binds the model bytes, not the `src/fp1_nb` code the pickle imports. With the pointer at v2.4.0,
-`retrain.py`'s default next version is v2.5.0, an existing entry that `promote_version` overwrites; a
-retrain before #172 must name a version above v2.6.0.
+`retrain.py`'s default (`--minor`) next version is v2.5.0, an existing entry that `promote_version`
+overwrites before dispatching a deploy. `retrain.py` cannot name a version, so until #172 an FP model
+is not promoted through it (freeze extension on #176); `register_model.py` numbers from the highest
+existing version or takes `--version`.

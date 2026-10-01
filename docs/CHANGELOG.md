@@ -4,7 +4,7 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
-### 2026-09-30: The FP registry pointer, committed artifact and served model agree on v2.4.0
+### 2026-09-30: The FP registry pointer, committed artifact and the model served to the labeling pipeline agree on v2.4.0
 
 **Reconciliation for #172's build guard (#176, D028).**
 - **FP.** `fp.production` moves from v2.5.0 to **v2.4.0**, the bytes the labeling pipeline's local
@@ -14,7 +14,8 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
   re-stamp. v2.5.0 and v2.6.0 stay registered, not production.
 - **Compatibility.** v2.4.0 was pickled before `FPFeatureTransformer` gained `include_negative_context`,
   so under today's code it failed every prediction. `__setstate__` now sets the flag to `True` when a
-  pickle lacks it, the behaviour every earlier pickle had.
+  pickle lacks it: earlier pickles computed negative context features unconditionally in every method
+  that has them.
 - **Tests.** `tests/test_fp1_nb_feature_transformer_compat.py` pins the default.
   `tests/test_committed_model_registry.py` checks that the committed config's stamp names the pointer
   and hashes the committed joblib, and that the committed FP artifact reproduces probabilities captured
