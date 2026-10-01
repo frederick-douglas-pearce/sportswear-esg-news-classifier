@@ -94,7 +94,7 @@ After deployment, services are available at:
 | FP | `fp-classifier-api` | 2GB | 300s |
 | EP | `ep-classifier-api` | 512MB | 60s |
 
-EP is on hold: it has no production version and no committed artifact (#180), so the EP deploy job fails at its model-file check.
+EP is on hold with no production version (#180). No EP artifact is committed, so the EP deploy job fails at its model-file check; the deploy does not read the registry pointer.
 
 ## Verifying Deployment
 

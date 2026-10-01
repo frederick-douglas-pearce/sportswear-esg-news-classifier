@@ -167,7 +167,8 @@ curl -X POST http://localhost:8000/predict/batch \
 # Train FP classifier with default settings
 uv run python scripts/train.py --classifier fp --verbose
 
-# Train EP classifier
+# Train EP classifier (needs models/ep_training_config.json from the ep2 notebook;
+# none is committed while EP is on hold, #180)
 uv run python scripts/train.py --classifier ep --verbose
 
 # Train with custom parameters

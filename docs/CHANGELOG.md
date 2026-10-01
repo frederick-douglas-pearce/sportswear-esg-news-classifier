@@ -16,8 +16,10 @@ the committed EP artifact was an unpromoted SVM judged unfit for production.
 - **Compose.** `ep-classifier-api` is behind the `ep` profile, so `docker compose up` does not build it.
 - **Tests.** `tests/test_committed_model_registry.py` no longer expects EP to fail. It pins the retired
   EP entry and checks that git tracks no `models/ep_*` file.
-- **Open.** With no pointer, `retrain.py` and the `model_training` workflow disagree on what a new EP
-  model is compared with, and neither uses v1.0.0. Proposed to #172 (`docs/MLOPS.md`).
+- **Open.** With no pointer, `retrain.py` treats a new EP model as an improvement and the
+  `model_training` workflow treats it as no improvement; neither compares it with v1.0.0. The
+  `retrain.py` path is latent while its training step exits early (#186). Proposed to #172 (comment on
+  #172; `docs/MLOPS.md`).
 
 ### 2026-09-30: The FP registry pointer, committed artifact and the model served to the labeling pipeline agree on v2.4.0
 

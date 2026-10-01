@@ -11,8 +11,9 @@ Three checks with different lifetimes:
   D027 describes binds the model bytes, not the code the pickle imports (D028), so this
   check is not proposed for replacement.
 - The retired-EP check asserts that EP has no production pointer, keeps its v1.0.0
-  record, and has no committed artifact (#180, D029). It is replaced when a retrained
-  EP is registered and promoted.
+  record unchanged, and has no tracked artifact (#180, D029). Any change to
+  `registry["ep"]` fails it, including registering an EP version that is not promoted,
+  so it is updated when a retrained EP is registered.
 """
 
 import json
@@ -56,15 +57,15 @@ def _read_json(path: Path) -> dict:
         return json.load(f)
 
 
-def _git_ls_files(pathspec: str) -> list[str]:
+def _git_tracked_files_under(directory: str) -> list[str]:
     result = subprocess.run(
-        ["git", "ls-files", "--", pathspec],
+        ["git", "ls-files", "-z", "--", directory],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    return result.stdout.split()
+    return [name for name in result.stdout.split("\0") if name]
 
 
 @pytest.mark.parametrize("classifier", ["fp"])
@@ -81,11 +82,13 @@ def test_ep_pointer_is_retired_and_no_ep_artifact_is_committed():
     registry = _read_json(MODELS_DIR / "registry.json")
 
     assert registry["ep"] == RETIRED_EP_REGISTRY
-    # Committed state, not the working tree: a local notebook or train.py run writes
-    # models/ep_* without committing it. The first assertion shows git sees this repo,
-    # so an empty listing below is evidence rather than a git that saw nothing.
-    assert _git_ls_files("models/registry.json") == ["models/registry.json"]
-    assert _git_ls_files("models/ep_*") == []
+    # What git tracks (the index; HEAD in CI), not the working tree: a local notebook or
+    # train.py run writes models/ep_* without adding it. One listing, filtered here rather
+    # than by a git pathspec, so registry.json's presence in it shows the listing is real
+    # and the empty ep_ selection below is evidence of absence.
+    tracked = _git_tracked_files_under("models")
+    assert "models/registry.json" in tracked
+    assert [name for name in tracked if name.startswith("models/ep_")] == []
 
 
 # Captured 2026-09-30 from the local fp-classifier-api container's /predict/batch
