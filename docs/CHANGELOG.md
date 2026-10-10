@@ -15,12 +15,14 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
   Provenance follows #154's design. AC3's wildlife check is reported by provenance, with the served
   model's scores as secondary evidence.
 - **Corrections.** Applied outside git and recorded on #182: template stock and other-entity rows
-  moved from `skipped` to `false_positive`, and two FP-classifier skips of substantive Puma news
-  relabeled through the pipeline with the FP pre-filter off.
+  moved from `skipped` to `false_positive` with `scripts/fix_label.py`, and two FP-classifier skips
+  of substantive Puma news relabeled through the pipeline with the FP pre-filter off. One of the two
+  came back through the unjudged "No ESG content found" path, so it remains an unjudged positive
+  until #192's backfill.
 - **Root cause found.** A "no ESG" reply (an empty `brand_analyses`) never judges whether the brand
-  is the sportswear company, but the FP export counts it as a positive. #154 PR1 now excludes such
-  rows, and #192 changes the prompt so every brand is judged. #182's AC2 moved to #187, and AC4/AC5
-  to #154 PR2's definition of done.
+  is the sportswear company, but the FP export counts it as a positive. #154 PR1 (open) is to exclude
+  such rows from the export, and #192 (open) to change the prompt so every brand is judged. #182's
+  AC2 moved to #187, and AC4/AC5 to #154 PR2's definition of done.
 
 ### 2026-10-01: The EP registry pointer is retired while EP is on hold
 
