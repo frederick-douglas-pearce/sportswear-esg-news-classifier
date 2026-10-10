@@ -7,7 +7,8 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 ### 2026-10-09: Puma label audit for the FP training set
 
 **A read-only triage notebook, and label corrections ruled by the human (#182).**
-`notebooks/fp_label_audit_puma.ipynb` reads the database and the served FP API, and writes nothing.
+`notebooks/fp_label_audit_puma.ipynb` writes nothing to the database: it reads the database and calls
+the served FP API, whose scoring appends to the API's own prediction log inside its container.
 - **What it does.** It lists Puma-brand training rows whose label may be wrong in either direction:
   the served model disagrees, a positive carries another meaning of the name, or a negative carries
   brand vocabulary. Negatives that are `false_positive` by the labeling policy (template stock
