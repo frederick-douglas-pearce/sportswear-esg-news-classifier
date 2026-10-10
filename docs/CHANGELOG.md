@@ -4,6 +4,27 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-09: Puma label audit for the FP training set
+
+**A read-only triage notebook, and label corrections ruled by the human (#182).**
+`notebooks/fp_label_audit_puma.ipynb` writes nothing to the database: it reads the database and calls
+the served FP API, whose scoring appends to the API's own prediction log inside its container.
+- **What it does.** It lists Puma-brand training rows whose label may be wrong in either direction:
+  the served model disagrees, a positive carries another meaning of the name, or a negative carries
+  brand vocabulary. Negatives that are `false_positive` by the labeling policy (template stock
+  articles, `docs/LABELING.md`; another meaning of the name) are set aside in a separate table.
+  Provenance follows #154's design. AC3's wildlife check is reported by provenance, with the served
+  model's scores as secondary evidence.
+- **Corrections.** Applied outside git and recorded on #182: template stock and other-entity rows
+  moved from `skipped` to `false_positive` with `scripts/fix_label.py`, and two FP-classifier skips
+  of substantive Puma news relabeled through the pipeline with the FP pre-filter off. One of the two
+  came back through the unjudged "No ESG content found" path, so it remains an unjudged positive
+  until #192's backfill.
+- **Root cause found.** A "no ESG" reply (an empty `brand_analyses`) never judges whether the brand
+  is the sportswear company, but the FP export counts it as a positive. #154 PR1 (open) is to exclude
+  such rows from the export, and #192 (open) to change the prompt so every brand is judged. #182's
+  AC2 moved to #187, and AC4/AC5 to #154 PR2's definition of done.
+
 ### 2026-10-01: The EP registry pointer is retired while EP is on hold
 
 **Retire, do not register (#180, D029).** v1.0.0's registered bytes are not recoverable (#175), and
