@@ -315,22 +315,18 @@ uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.js
 ## Daily Retraining Workflow
 
 ```bash
-# 1. Export fresh training data (includes new labeled articles) to the file step 2 passes as --data.
+# 1. Export fresh training data (includes new labeled articles).
 #    Since #154 it excludes classifier-only negatives, unjudged skips and keyword-sweep negatives
 #    by default, which shrinks both classes and shifts the class balance: read the printed
 #    by-source breakdown and class ratio before retraining (docs/LABELING.md, FP label provenance).
 uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl
 
-# 2. Retrain and decide on promotion yourself. The Verdict compares against the registry's
-#    production F2, which was measured before #154's exclusion, so it is not like-for-like:
-#    it asks whether to promote only when F2 matches or beats that number. To promote a model you
-#    judge better that it reports as no improvement, rerun with --force-promote, which retrains
-#    and promotes regardless of the comparison. #154 PR2 compares like-for-like.
-uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl
-#    After #154 PR2, the unattended form promotes when F2 improves:
-#    uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --auto-promote
+# 2. Retrain and promote: not available for FP today. retrain.py exits before training (#186),
+#    and its default next version (v2.5.0) would overwrite an existing registry entry, so FP is
+#    not promoted through it until #172 (D028). Its Verdict also compares against a production F2
+#    measured before #154's exclusion; #154 PR2 makes that comparison like-for-like.
 
-# 3. Rebuild and redeploy Docker container (if promoted)
+# 3. Rebuild and redeploy the container after a promotion
 docker compose build fp-classifier-api
 docker compose up -d fp-classifier-api
 ```
