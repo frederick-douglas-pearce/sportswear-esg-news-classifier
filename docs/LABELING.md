@@ -99,15 +99,52 @@ uv run python scripts/export_training_data.py --dataset fp --since 2025-01-01
 
 # Export to specific file
 uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
+
+# FP only: put back a cohort the export excludes by default (see below)
+uv run python scripts/export_training_data.py --dataset fp --include-classifier-labels
+uv run python scripts/export_training_data.py --dataset fp --include-unjudged-skips
+uv run python scripts/export_training_data.py --dataset fp --include-rule-labels
+
+# FP only: owner-attested tier (see below)
+uv run python scripts/export_training_data.py --dataset fp --attested-before YYYY-MM-DD
 ```
 
 **Export Formats (JSONL):**
 
 | Dataset | Fields | Use Case |
 |---------|--------|----------|
-| `fp` | article_id, title, content, brands, is_sportswear | False positive brand classifier |
+| `fp` | article_id, title, content, brands, is_sportswear, source, label_source (+ fp_reason on negatives, attested_cutoff on attested rows) | False positive brand classifier |
 | `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
 | `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
+
+### FP label provenance
+
+Each `fp` record carries `label_source`: who decided its label. It is derived at export time
+from the article's status, its stored reason and its latest FP prediction
+(`src/data_collection/provenance.py`, #154, D030); nothing is stored.
+
+| `label_source` | Meaning | Default |
+|---|---|---|
+| `llm` | The labeling LLM decided it (FP pre-filter running, failed or disabled) | kept |
+| `pre_classifier` | The LLM decided it before the FP classifier existed (no FP prediction) | kept |
+| `human` | A human ruled on it (today: the `HUMAN_RULINGS` list from #182, until #143's audit log; `cleanup_false_positives.py`'s manual marks) | kept |
+| `unattributed` | A `skipped` row whose reason no pipeline path writes (no reason, or one left by a status move) | kept, counted |
+| `fp_classifier` | A `false_positive` the FP classifier decided alone; the LLM never saw it | excluded (`--include-classifier-labels`) |
+| `unjudged` | A `skipped` row from a path that never judged whether a brand is sportswear ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG content") | excluded (`--include-unjudged-skips`) |
+| `rule` | A `false_positive` from `cleanup_false_positives.py`'s keyword sweep (`Auto-detected:`) | excluded (`--include-rule-labels`) |
+
+The exclusions apply to evaluation too: every train/validation/test split (the fp notebooks,
+`scripts/train.py`, `src/deployment/data.py`) is cut from this export. The export prints what it
+excluded (classifier-only negatives by the month of the FP skip, unjudged skips by reason) and
+both classes broken down by `label_source`. Unjudged skips are "no ESG" rows, so excluding them
+shrinks the "sportswear, no ESG" part of the positive class: read the composition, not only the
+class ratio, before retraining (#192 re-judges those rows).
+
+**Owner-attested tier.** `--attested-before YYYY-MM-DD` also keeps classifier-only negatives whose
+FP skip (UTC) predates the date, on the owner's attestation that articles before it were reviewed.
+It is weaker than a per-article human ruling: those rows keep `label_source: fp_classifier` and gain
+an `attested_cutoff` field. There is no default date; the owner has not confirmed one, and #155's
+review tests the attestation. It cannot be combined with `--include-classifier-labels`.
 
 ## ML Classifier Opportunities
 

@@ -315,7 +315,9 @@ uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.js
 ## Daily Retraining Workflow
 
 ```bash
-# 1. Export fresh training data (includes new labeled articles)
+# 1. Export fresh training data (includes new labeled articles).
+#    Since #154 it excludes classifier-only negatives and unjudged skips by default; check the
+#    printed by-source breakdown before retraining (docs/LABELING.md, FP label provenance).
 uv run python scripts/export_training_data.py --dataset fp
 
 # 2. Retrain with auto-promote (promotes if F2 improves)

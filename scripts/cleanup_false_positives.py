@@ -33,7 +33,14 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.types import String
 
 from src.data_collection.database import db
-from src.data_collection.models import Article, ArticleChunk, BrandLabel, LabelEvidence
+from src.data_collection.models import (
+    FP_REASON_AUTO_DETECTED_PREFIX,
+    FP_REASON_MANUAL,
+    Article,
+    ArticleChunk,
+    BrandLabel,
+    LabelEvidence,
+)
 
 
 # Keywords that indicate false positive matches
@@ -147,7 +154,7 @@ def list_potential_false_positives(session, limit: int = 50) -> list[Article]:
 
 
 def mark_articles_as_false_positive(
-    session, article_ids: list[UUID], reason: str = "Manually marked as false positive"
+    session, article_ids: list[UUID], reason: str = FP_REASON_MANUAL
 ) -> int:
     """Mark specific articles as false positives."""
     count = 0
@@ -253,7 +260,9 @@ def auto_detect_false_positives(session, dry_run: bool = False) -> int:
     # Mark them as false positives
     for article, brand, pattern in unique_fps:
         article.labeling_status = "false_positive"
-        article.labeling_error = f"Auto-detected: {brand} matched pattern '{pattern}'"
+        article.labeling_error = (
+            f"{FP_REASON_AUTO_DETECTED_PREFIX} {brand} matched pattern '{pattern}'"
+        )
 
     session.commit()
     print(f"\nMarked {len(unique_fps)} articles as false_positive.")

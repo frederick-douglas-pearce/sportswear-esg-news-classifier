@@ -8,7 +8,19 @@ from typing import Any
 from uuid import UUID
 
 from src.data_collection.database import db
-from src.data_collection.models import Article, ClassifierPrediction
+from src.data_collection.models import (
+    FP_ACTION_CONTINUED_TO_LLM,
+    FP_ACTION_DISABLED,
+    FP_ACTION_FAILED,
+    FP_ACTION_SKIPPED_LLM,
+    SKIP_INSUFFICIENT_CONTENT,
+    SKIP_NO_BRANDS,
+    SKIP_NO_ESG_CATEGORIES,
+    SKIP_NO_ESG_CONTENT,
+    SKIP_NO_SPORTSWEAR_BRAND,
+    Article,
+    ClassifierPrediction,
+)
 from src.deployment.novelty import NoveltyScorer
 from src.deployment.versioning import (
     DISABLED,
@@ -382,7 +394,7 @@ class LabelingPipeline:
                         probability=1.0,  # Assume positive when disabled
                         prediction=True,
                         threshold_used=0.0,
-                        action_taken="fp_classifier_disabled",
+                        action_taken=FP_ACTION_DISABLED,
                         novelty_score=novelty_score,
                         novelty_cluster=novelty_cluster,
                     )
@@ -437,14 +449,14 @@ class LabelingPipeline:
                 should_continue = result.probability >= threshold
 
                 if should_continue:
-                    action = "continued_to_llm"
+                    action = FP_ACTION_CONTINUED_TO_LLM
                     skip_reason = None
                     logger.debug(
                         f"Article {article_id}: FP probability {result.probability:.3f} >= "
                         f"threshold {threshold}, continuing to LLM"
                     )
                 else:
-                    action = "skipped_llm"
+                    action = FP_ACTION_SKIPPED_LLM
                     skip_reason = _fp_skip_reason(
                         result.probability, threshold, result.confidence_level
                     )
@@ -492,7 +504,7 @@ class LabelingPipeline:
                     probability=0.0,
                     prediction=False,
                     threshold_used=labeling_settings.fp_skip_llm_threshold,
-                    action_taken="failed",
+                    action_taken=FP_ACTION_FAILED,
                     error_message=str(e),
                     novelty_score=novelty_score,
                     novelty_cluster=novelty_cluster,
@@ -839,7 +851,7 @@ class LabelingPipeline:
             if not dry_run:
                 with self.database.db.get_session() as session:
                     self.database.update_article_labeling_status(
-                        session, article_id, "skipped", "Insufficient content"
+                        session, article_id, "skipped", SKIP_INSUFFICIENT_CONTENT
                     )
             result["skipped"] = True
             return result
@@ -850,7 +862,7 @@ class LabelingPipeline:
             if not dry_run:
                 with self.database.db.get_session() as session:
                     self.database.update_article_labeling_status(
-                        session, article_id, "skipped", "No brands mentioned"
+                        session, article_id, "skipped", SKIP_NO_BRANDS
                     )
             result["skipped"] = True
             return result
@@ -864,14 +876,14 @@ class LabelingPipeline:
 
         if fp_prediction is not None:
             result["fp_classifier_called"] = True
-            if fp_prediction.action_taken == "skipped_llm":
+            if fp_prediction.action_taken == FP_ACTION_SKIPPED_LLM:
                 result["fp_classifier_skipped"] = True
                 result["fp_classifier_skipped_not_low"] = (
                     fp_prediction.confidence_level != "low"
                 )
-            elif fp_prediction.action_taken == "continued_to_llm":
+            elif fp_prediction.action_taken == FP_ACTION_CONTINUED_TO_LLM:
                 result["fp_classifier_continued"] = True
-            elif fp_prediction.action_taken == "failed":
+            elif fp_prediction.action_taken == FP_ACTION_FAILED:
                 result["fp_classifier_error"] = True
 
         if not should_continue:
@@ -964,7 +976,7 @@ class LabelingPipeline:
             if not dry_run:
                 with self.database.db.get_session() as session:
                     self.database.update_article_labeling_status(
-                        session, article_id, "skipped", "No ESG content found"
+                        session, article_id, "skipped", SKIP_NO_ESG_CONTENT
                     )
             result["skipped"] = True
             return result
@@ -1010,7 +1022,7 @@ class LabelingPipeline:
             if not dry_run:
                 with self.database.db.get_session() as session:
                     self.database.update_article_labeling_status(
-                        session, article_id, "skipped", "No sportswear brand ESG content"
+                        session, article_id, "skipped", SKIP_NO_SPORTSWEAR_BRAND
                     )
             result["skipped"] = True
             return result
@@ -1027,7 +1039,7 @@ class LabelingPipeline:
             if not dry_run:
                 with self.database.db.get_session() as session:
                     self.database.update_article_labeling_status(
-                        session, article_id, "skipped", "No ESG categories apply to sportswear brands"
+                        session, article_id, "skipped", SKIP_NO_ESG_CATEGORIES
                     )
             result["skipped"] = True
             return result

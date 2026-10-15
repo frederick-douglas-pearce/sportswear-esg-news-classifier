@@ -2182,3 +2182,50 @@ nothing until EP is retrained.
 artifact to be registered is #172's guard. This is consistent with D027 §4. A dispatch with the default
 `all` reports a failed `deploy-ep` job; FP still deploys, because `deploy-fp` does not depend on it. The
 squash commit body names `2a14794` so the files can be recovered.
+
+## D030: Label Provenance Is Derived in Its Own Module, and Only Pipeline-Written Reasons Claim `llm` (#154 PR1)
+
+**Date:** 2026-10-15 · **Status:** accepted (architect-reviewed; approved by the human at the plan gate) · **Issues:** #154, #192, #143, #144, #146
+(epic #152)
+
+**Context.** #154 PR1 makes the FP export exclude classifier-only negatives and, after #182, skips that
+never judged whether a brand is sportswear. #154's design (D-9.1) put the provenance predicate in
+`src/data_collection/database.py` and named four sources: `llm`, `pre_classifier`, `fp_classifier`,
+`human`. Reading the writers found two more channels. `skipped` rows can carry a reason no pipeline
+version writes: `fix_label.py` changes the status but never `labeling_error`, so a row moved by hand
+keeps no reason or the old one. And `cleanup_false_positives.py` writes `false_positive` with an
+`Auto-detected:` reason from a keyword sweep. Separately, `src/labeling/__init__.py` imports the whole
+labeling stack (labeler, embedder, reranker), and `src/data_collection/` imports nothing from it.
+
+**Decision.**
+1. **The predicate and the latest-prediction query live in `src/data_collection/provenance.py`**, not in
+   the `Database` CRUD class. `latest_prediction_subquery(classifier_type)` is a composable subquery,
+   so #144 reuses it rather than writing its own.
+2. **The skip-reason, FP `action_taken` and cleanup-script reason strings are constants in
+   `src/data_collection/models.py`.** `pipeline.py` and `cleanup_false_positives.py` import them. Stored
+   rows match only by text, so the stored strings are unchanged and a test pins them.
+3. **`llm` is claimed only for exact pipeline-written strings.** A `skipped` row with any other reason
+   is `unattributed`: kept, and counted separately. The unjudged reasons give `unjudged`, and the
+   keyword sweep gives `rule`; both are excluded by default with `fp_classifier`, each with an
+   `--include-*` flag. "No sportswear brand ESG content" counts as unjudged: it can no longer be
+   written, and it meant no brand was judged sportswear.
+4. **No source is inferred from state.** A `skipped` row whose latest FP action is `skipped_llm` goes
+   through the reason rule. A human moved it there, but another path (an LLM relabel with the
+   pre-filter off and no novelty score) leaves the same state.
+5. **Human rulings with no audit log are an id → ruled-status mapping** (`HUMAN_RULINGS`, from #182's
+   comments), honored only while the article still has the ruled status. #143 backfills it and deletes
+   it. #146's `review_session_sample.was_confirmed` carve-back moves to #146, since its table does not
+   exist yet (issue amendment approved by the human).
+6. **An FP `action_taken` the constants do not name fails the export**, naming the value and the
+   article. A non-zero exit is what the `model_training` workflow's export step records as a failed
+   export.
+7. **The owner-attested cutoff is a tier, not a source.** `--attested-before` keeps classifier-only
+   negatives skipped before the date with `label_source: fp_classifier` and an `attested_cutoff` field.
+
+**Rejected.** An allowlist of positives (drops the `skipped` rows most likely moved by a human);
+treating `unattributed` as `llm` (for a row moved from `false_positive`, the LLM said the opposite) or
+as `human` (overclaims); a data file for the rulings (`data/` holds run output).
+
+**Consequences.** The FP export's positive class is now the labeled rows, the judged skips, the
+unattributed skips and the human rulings. Whether #192's backfill must land before #154 PR2's retrain
+is read from the export's by-source report.

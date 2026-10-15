@@ -4,6 +4,31 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-15: The FP training export records label provenance and excludes classifier-only labels
+
+**The FP classifier no longer trains, or is evaluated, on labels nobody but itself decided (#154 PR1, D030).**
+- **Provenance.** Every `fp` record carries `label_source`, derived at export time from the article's
+  status, its stored reason, its latest FP prediction and the human rulings
+  (`src/data_collection/provenance.py`); nothing is stored. Vocabulary and defaults:
+  `docs/LABELING.md`, FP label provenance.
+- **Exclusions, on by default.** Classifier-only negatives (`false_positive` with latest FP action
+  `skipped_llm`), unjudged skips ("No ESG content found", "Insufficient content", "No brands
+  mentioned", "No sportswear brand ESG content"), and `cleanup_false_positives.py`'s keyword-sweep
+  negatives. Each has an `--include-*` flag. Every train/validation/test split is cut from this
+  export, so evaluation gets the same exclusion.
+- **Human rulings.** #182's corrections and confirmations are a code list (`HUMAN_RULINGS`), honored
+  only while an article keeps the ruled status, until #143's audit log replaces it. The
+  `review_session_sample` carve-back moved to #146, whose table does not exist yet.
+- **Owner-attested tier.** `--attested-before` keeps classifier-only negatives skipped before a date,
+  without making them `human`. No default date.
+- **Report.** The export prints the excluded cohorts (classifier-only negatives by the month of the
+  FP skip) and both classes by `label_source`. The closing `Exported N records` line stays last,
+  because the `model_training` workflow reads the count from it.
+- **Constants.** Skip-reason, FP action and cleanup-script reason strings are named constants in
+  `src/data_collection/models.py`; `pipeline.py` and `cleanup_false_positives.py` use them. The
+  stored text is unchanged.
+- An FP `action_taken` the constants do not name fails the export.
+
 ### 2026-10-09: Puma label audit for the FP training set
 
 **A read-only triage notebook, and label corrections ruled by the human (#182).**
