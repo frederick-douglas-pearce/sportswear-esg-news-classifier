@@ -231,9 +231,11 @@ def export_false_positive_data(
 
     Rows whose label nobody but the FP classifier decided, skips that never judged whether a
     brand is sportswear, and keyword-sweep negatives are excluded by default (#154); see
-    ``build_fp_dataset``. The training splits (the fp notebooks, ``train.py``, ``retrain.py``,
-    ``ablation_study.py``) read ``data/fp_training_data.jsonl``, so the exclusion reaches them
-    only when this export is written there (``-o``, or the ``model_training`` workflow's copy).
+    ``build_fp_dataset``. The fp notebooks and ``ablation_study.py`` read
+    ``data/fp_training_data.jsonl``, ``train.py`` reads it unless ``--data-path`` names another
+    file, and ``retrain.py`` reads whatever ``--data`` names. The exclusion reaches them only
+    when they read this export's output (``-o data/fp_training_data.jsonl``, or the
+    ``model_training`` workflow's copy to that path).
     """
     rows = fp_export_query(session, since).all()
     candidates = [

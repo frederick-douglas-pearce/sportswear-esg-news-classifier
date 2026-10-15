@@ -136,9 +136,10 @@ moved by hand reads as `llm` until #143's audit log records such moves.
 | `unjudged` | A `skipped` row from a path that never judged whether a brand is sportswear ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG content") | excluded (`--include-unjudged-skips`) |
 | `rule` | A `false_positive` from `cleanup_false_positives.py`'s keyword sweep (`Auto-detected:`) | excluded (`--include-rule-labels`) |
 
-The training splits (the fp notebooks, `scripts/train.py`, `scripts/retrain.py`,
-`scripts/ablation_study.py`) read `data/fp_training_data.jsonl`, so the exclusions reach training and
-evaluation only when the export is written there: `-o data/fp_training_data.jsonl`, or the
+The fp notebooks and `scripts/ablation_study.py` read `data/fp_training_data.jsonl`,
+`scripts/train.py` reads it unless `--data-path` names another file, and `scripts/retrain.py` reads
+whatever `--data` names. The exclusions reach training and evaluation only when those read this
+export's output: `-o data/fp_training_data.jsonl` (and `--data` set to it for `retrain.py`), or the
 `model_training` workflow, which copies its export to that path. A file exported before #154 has no
 `label_source` and still holds the excluded rows. The export's rows are ordered by article id, so
 the same data gives the same splits. The export prints what it

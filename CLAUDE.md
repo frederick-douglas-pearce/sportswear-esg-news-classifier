@@ -87,7 +87,7 @@ uv run python scripts/fix_label.py update <id1> <id2> --status skipped  # Batch 
 uv run python scripts/fix_label.py statuses                       # List valid statuses
 
 # Export Training Data
-uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl  # False positive classifier data, to the file train/retrain/notebooks read (excludes classifier-only negatives, unjudged skips and keyword-sweep negatives by default, which shifts the class balance: read the printed by-source breakdown; every record carries label_source, see docs/LABELING.md#fp-label-provenance)
+uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl  # False positive classifier data, to the file the fp notebooks and train.py read by default; retrain.py reads its --data (excludes classifier-only negatives, unjudged skips and keyword-sweep negatives by default, which shifts the class balance: read the printed by-source breakdown; every record carries label_source, see docs/LABELING.md#fp-label-provenance)
 uv run python scripts/export_training_data.py --dataset fp --include-classifier-labels  # Also --include-unjudged-skips, --include-rule-labels: put one excluded cohort back
 uv run python scripts/export_training_data.py --dataset fp --attested-before YYYY-MM-DD  # Owner-attested tier: keep classifier-only negatives skipped before the date; weaker than per-article review, label_source stays fp_classifier
 uv run python scripts/export_training_data.py --dataset esg-prefilter  # ESG pre-filter data
