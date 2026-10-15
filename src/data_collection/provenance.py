@@ -5,10 +5,15 @@ the latest FP prediction for it, and whether a human verified it. A stored colum
 re-synced on every relabel or correction.
 
 Sources:
-- ``llm``: the labeling LLM decided the label (with the FP pre-filter running, failing or disabled).
-- ``pre_classifier``: the LLM decided it before the FP classifier existed (no FP prediction row).
-- ``fp_classifier``: a ``false_positive`` the FP classifier decided alone (latest action
-  ``skipped_llm``). The LLM never saw it. Excluded from training by default.
+- ``llm``: the labeling LLM decided the label. For ``skipped`` rows this rests on the stored reason
+  being one the pipeline writes after a judgment. For ``false_positive`` and ``labeled`` rows it is
+  inferred from the presence of an FP prediction: a status moved by hand (``fix_label.py`` changes
+  the status, never the reason) also reads as ``llm`` until #143's audit log records such moves.
+- ``pre_classifier``: as ``llm``, but no FP prediction is recorded for the article: it was labeled
+  before the FP classifier existed, or with the pre-filter off and no novelty score to record.
+- ``fp_classifier``: a ``false_positive`` whose latest FP prediction is a skip (``skipped_llm``)
+  and whose stored reason is that skip's own reason, so nothing has relabeled it since. Excluded
+  from training by default.
 - ``human``: a human ruled on it.
 - ``unjudged``: a ``skipped`` row from a path that never judged whether a brand is sportswear
   (``UNJUDGED_SKIP_REASONS``). Excluded by default.
@@ -45,6 +50,7 @@ UNATTRIBUTED = "unattributed"
 RULE = "rule"
 
 LABEL_SOURCES = frozenset({LLM, PRE_CLASSIFIER, FP_CLASSIFIER, HUMAN, UNJUDGED, UNATTRIBUTED, RULE})
+# Sources the FP training export leaves out unless asked; the export reads this set.
 EXCLUDED_BY_DEFAULT = frozenset({FP_CLASSIFIER, UNJUDGED, RULE})
 
 # Labeling statuses the FP export reads, and the class each one is.
@@ -93,7 +99,8 @@ def human_verified_ids(candidates: Iterable[tuple[str, str]]) -> set[str]:
     """Ids, among ``(article_id, labeling_status)`` pairs, whose status a human verified.
 
     Today the only source is ``HUMAN_RULINGS``. #143's audit log and #146's confirmed review samples
-    are further sources and join here.
+    are further sources; they need a database query, so this signature takes a session when they
+    land (D030).
     """
     return {
         article_id
@@ -106,13 +113,16 @@ def derive_label_source(
     labeling_status: str,
     labeling_error: str | None,
     latest_fp_action: str | None,
+    latest_fp_skip_reason: str | None = None,
+    *,
     human_verified: bool = False,
     article_id: Any = None,
 ) -> str:
     """Return the source of an FP training label. See the module docstring for the vocabulary.
 
-    ``latest_fp_action`` is the ``action_taken`` of the article's most recent FP prediction, or
-    ``None`` if it has none. Reasons are matched by exact text (prefix for the keyword sweep).
+    ``latest_fp_action`` and ``latest_fp_skip_reason`` are the ``action_taken`` and ``skip_reason``
+    of the article's most recent FP prediction, or ``None`` if it has none. Reasons are matched by
+    exact text (prefix for the keyword sweep).
 
     Raises:
         UnknownFPActionError: ``latest_fp_action`` is not one of ``FP_ACTIONS``.
@@ -120,7 +130,7 @@ def derive_label_source(
     """
     if latest_fp_action is not None and latest_fp_action not in FP_ACTIONS:
         raise UnknownFPActionError(
-            f"Unrecognised FP action_taken {latest_fp_action!r} on article {article_id}"
+            f"Unrecognized FP action_taken {latest_fp_action!r} on article {article_id}"
         )
     llm_era = LLM if latest_fp_action is not None else PRE_CLASSIFIER
 
@@ -132,7 +142,11 @@ def derive_label_source(
             return HUMAN
         if labeling_error and labeling_error.startswith(FP_REASON_AUTO_DETECTED_PREFIX):
             return RULE
-        if latest_fp_action == FP_ACTION_SKIPPED_LLM:
+        # The pipeline stores an FP skip's reason as the prediction's skip_reason. A different
+        # stored reason means something relabeled the article after the skip without recording a
+        # new prediction (an LLM run with the pre-filter off and no novelty score), so the skip
+        # did not decide this label.
+        if latest_fp_action == FP_ACTION_SKIPPED_LLM and labeling_error == latest_fp_skip_reason:
             return FP_CLASSIFIER
         return llm_era
 
@@ -151,21 +165,18 @@ def derive_label_source(
     raise ValueError(f"No FP training label for labeling_status {labeling_status!r}")
 
 
-def is_classifier_only_negative(label_source: str) -> bool:
-    """A false_positive the FP classifier decided with no LLM label and no human ruling."""
-    return label_source == FP_CLASSIFIER
-
-
 def latest_prediction_subquery(classifier_type: str):
     """Subquery of each article's most recent prediction from one classifier.
 
-    Columns: ``article_id``, ``action_taken``, ``created_at``. Outer-join it to ``Article`` on
-    ``article_id``; an article with no prediction gets NULLs.
+    Columns: ``article_id``, ``action_taken``, ``skip_reason``, ``created_at``. Outer-join it to
+    ``Article`` on ``article_id``; an article with no prediction gets NULLs. Ties on ``created_at``
+    are broken by ``id``, which is arbitrary but fixed.
     """
     ranked = (
         select(
             ClassifierPrediction.article_id,
             ClassifierPrediction.action_taken,
+            ClassifierPrediction.skip_reason,
             ClassifierPrediction.created_at,
             func.row_number()
             .over(
@@ -181,7 +192,9 @@ def latest_prediction_subquery(classifier_type: str):
         .subquery()
     )
     return (
-        select(ranked.c.article_id, ranked.c.action_taken, ranked.c.created_at)
+        select(
+            ranked.c.article_id, ranked.c.action_taken, ranked.c.skip_reason, ranked.c.created_at
+        )
         .where(ranked.c.rn == 1)
         .subquery("latest_prediction")
     )

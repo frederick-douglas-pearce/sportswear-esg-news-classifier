@@ -315,10 +315,14 @@ uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.js
 ## Daily Retraining Workflow
 
 ```bash
-# 1. Export fresh training data (includes new labeled articles).
-#    Since #154 it excludes classifier-only negatives and unjudged skips by default; check the
-#    printed by-source breakdown before retraining (docs/LABELING.md, FP label provenance).
-uv run python scripts/export_training_data.py --dataset fp
+# 1. Export fresh training data (includes new labeled articles) to the file retrain.py reads.
+#    Since #154 it excludes classifier-only negatives, unjudged skips and keyword-sweep negatives
+#    by default, which shrinks both classes and shifts the class balance: read the printed
+#    by-source breakdown and class ratio before retraining (docs/LABELING.md, FP label provenance).
+#    The registry's recorded production F2 was measured before that exclusion, so do not
+#    --auto-promote the first retrain on such an export against it; #154 PR2 compares
+#    like-for-like.
+uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl
 
 # 2. Retrain with auto-promote (promotes if F2 improves)
 uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --auto-promote

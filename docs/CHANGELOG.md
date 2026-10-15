@@ -11,13 +11,19 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
   status, its stored reason, its latest FP prediction and the human rulings
   (`src/data_collection/provenance.py`); nothing is stored. Vocabulary and defaults:
   `docs/LABELING.md`, FP label provenance.
-- **Exclusions, on by default.** Classifier-only negatives (`false_positive` with latest FP action
-  `skipped_llm`), unjudged skips ("No ESG content found", "Insufficient content", "No brands
-  mentioned", "No sportswear brand ESG content"), and `cleanup_false_positives.py`'s keyword-sweep
-  negatives. Each has an `--include-*` flag. Every train/validation/test split is cut from this
-  export, so evaluation gets the same exclusion.
+- **Exclusions, on by default.** Classifier-only negatives (`false_positive` whose latest FP
+  prediction is `skipped_llm` and whose stored reason is still that skip's reason), unjudged skips
+  ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG
+  content"), and `cleanup_false_positives.py`'s keyword-sweep negatives. Each has an `--include-*`
+  flag. The training splits read `data/fp_training_data.jsonl`, so the exclusion reaches training and
+  evaluation when the export is written there (`-o`, or the `model_training` workflow's copy); the
+  retrain runbook in `docs/DEPLOYMENT.md` now exports with `-o`.
+- **Row order.** The fp export's rows are ordered by article id (previously positives, then negatives,
+  each unordered), so the same data gives the same `random_state` splits.
+- **Baseline.** The registry's recorded production F2 was measured before the exclusion; #154 PR2's
+  retrain compares like-for-like, and #191 owns the general baseline rule.
 - **Human rulings.** #182's corrections and confirmations are a code list (`HUMAN_RULINGS`), honored
-  only while an article keeps the ruled status, until #143's audit log replaces it. The
+  only while an article keeps the ruled status, until #143's audit log replaces it. D-9.3's
   `review_session_sample` carve-back moved to #146, whose table does not exist yet.
 - **Owner-attested tier.** `--attested-before` keeps classifier-only negatives skipped before a date,
   without making them `human`. No default date.

@@ -75,6 +75,7 @@ class FPCandidate:
     labeling_error: str | None
     fp_action: str | None  # action_taken of the latest FP prediction, None if there is none
     fp_action_at: datetime | None  # created_at of that prediction
+    fp_skip_reason: str | None = None  # skip_reason of that prediction
 
 
 @dataclass
@@ -132,31 +133,40 @@ def build_fp_dataset(
     report = FPExportReport(attested_before=attested_before)
     records: list[dict[str, Any]] = []
     verified = human_verified_ids((c.article_id, c.labeling_status) for c in candidates)
+    # One flag per default-excluded source; a source added to EXCLUDED_BY_DEFAULT without a
+    # flag here raises KeyError rather than being silently kept or dropped.
+    restored = {
+        provenance.FP_CLASSIFIER: include_classifier_labels,
+        provenance.UNJUDGED: include_unjudged_skips,
+        provenance.RULE: include_rule_labels,
+    }
 
     for c in candidates:
         source = derive_label_source(
             c.labeling_status,
             c.labeling_error,
             c.fp_action,
+            c.fp_skip_reason,
             human_verified=c.article_id in verified,
             article_id=c.article_id,
         )
         attested = False
-        if source == provenance.FP_CLASSIFIER and not include_classifier_labels:
-            if attested_before is not None and _before(c.fp_action_at, attested_before):
-                attested = True
-                report.attested_included += 1
-            else:
-                report.excluded_classifier_only += 1
-                report.excluded_classifier_only_by_month[_month(c.fp_action_at)] += 1
+        if source in provenance.EXCLUDED_BY_DEFAULT and not restored[source]:
+            if source == provenance.FP_CLASSIFIER:
+                if attested_before is not None and _before(c.fp_action_at, attested_before):
+                    attested = True
+                    report.attested_included += 1
+                else:
+                    report.excluded_classifier_only += 1
+                    report.excluded_classifier_only_by_month[_month(c.fp_action_at)] += 1
+                    continue
+            elif source == provenance.UNJUDGED:
+                report.excluded_unjudged += 1
+                report.excluded_unjudged_by_reason[c.labeling_error] += 1
                 continue
-        if source == provenance.UNJUDGED and not include_unjudged_skips:
-            report.excluded_unjudged += 1
-            report.excluded_unjudged_by_reason[c.labeling_error] += 1
-            continue
-        if source == provenance.RULE and not include_rule_labels:
-            report.excluded_rule += 1
-            continue
+            else:
+                report.excluded_rule += 1
+                continue
 
         is_negative = c.labeling_status == provenance.FP_NEGATIVE_STATUS
         record = {
@@ -182,6 +192,30 @@ def build_fp_dataset(
     return FPExport(records, report)
 
 
+def fp_export_query(session, since: datetime | None = None):
+    """Articles the FP export reads, each with its latest FP prediction, in a fixed order.
+
+    The order matters: the training splits use ``train_test_split(random_state=42)``, which
+    assigns rows by position, so an unordered query would split the same data differently.
+    """
+    base_filter = Article.scrape_status == "success"
+    if since:
+        base_filter = and_(base_filter, Article.created_at >= since)
+
+    latest = provenance.latest_prediction_subquery("fp")
+    return (
+        session.query(Article, latest.c.action_taken, latest.c.skip_reason, latest.c.created_at)
+        .outerjoin(latest, latest.c.article_id == Article.id)
+        .filter(base_filter)
+        .filter(
+            Article.labeling_status.in_(
+                [*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS]
+            )
+        )
+        .order_by(Article.id)
+    )
+
+
 def export_false_positive_data(
     session,
     since: datetime | None = None,
@@ -197,25 +231,11 @@ def export_false_positive_data(
 
     Rows whose label nobody but the FP classifier decided, skips that never judged whether a
     brand is sportswear, and keyword-sweep negatives are excluded by default (#154); see
-    ``build_fp_dataset``. Every split the notebooks and ``train.py`` make is cut from this export,
-    so the exclusion applies to evaluation as well as training.
+    ``build_fp_dataset``. The training splits (the fp notebooks, ``train.py``, ``retrain.py``,
+    ``ablation_study.py``) read ``data/fp_training_data.jsonl``, so the exclusion reaches them
+    only when this export is written there (``-o``, or the ``model_training`` workflow's copy).
     """
-    base_filter = Article.scrape_status == "success"
-    if since:
-        base_filter = and_(base_filter, Article.created_at >= since)
-
-    latest = provenance.latest_prediction_subquery("fp")
-    rows = (
-        session.query(Article, latest.c.action_taken, latest.c.created_at)
-        .outerjoin(latest, latest.c.article_id == Article.id)
-        .filter(base_filter)
-        .filter(
-            Article.labeling_status.in_(
-                [*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS]
-            )
-        )
-        .all()
-    )
+    rows = fp_export_query(session, since).all()
     candidates = [
         FPCandidate(
             article_id=str(article.id),
@@ -228,8 +248,9 @@ def export_false_positive_data(
             labeling_error=article.labeling_error,
             fp_action=fp_action,
             fp_action_at=fp_action_at,
+            fp_skip_reason=fp_skip_reason,
         )
-        for article, fp_action, fp_action_at in rows
+        for article, fp_action, fp_skip_reason, fp_action_at in rows
     ]
     return build_fp_dataset(
         candidates,
@@ -536,16 +557,16 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             "include_rule_labels",
             "attested_before",
         )
-        if getattr(args, name)
+        if getattr(args, name) not in (None, False)
     ]
     if fp_flags and args.dataset != "fp":
         parser.error(f"--{fp_flags[0].replace('_', '-')} applies only to --dataset fp")
-    if args.attested_before and args.include_classifier_labels:
+    if args.attested_before is not None and args.include_classifier_labels:
         parser.error(
             "--attested-before has no effect with --include-classifier-labels, "
             "which already keeps every classifier-only negative"
         )
-    if args.attested_before:
+    if args.attested_before is not None:
         try:
             args.attested_before = datetime.strptime(args.attested_before, "%Y-%m-%d").date()
         except ValueError:

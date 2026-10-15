@@ -113,28 +113,35 @@ uv run python scripts/export_training_data.py --dataset fp --attested-before YYY
 
 | Dataset | Fields | Use Case |
 |---------|--------|----------|
-| `fp` | article_id, title, content, brands, is_sportswear, source, label_source (+ fp_reason on negatives, attested_cutoff on attested rows) | False positive brand classifier |
+| `fp` | article_id, title, content, brands, source_name, category, is_sportswear, source, label_source (+ fp_reason on negatives, attested_cutoff on attested rows) | False positive brand classifier |
 | `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
 | `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
 
 ### FP label provenance
 
 Each `fp` record carries `label_source`: who decided its label. It is derived at export time
-from the article's status, its stored reason and its latest FP prediction
-(`src/data_collection/provenance.py`, #154, D030); nothing is stored.
+from the article's status, its stored reason, its latest FP prediction and the human rulings
+(`src/data_collection/provenance.py`, #154, D030); nothing is stored. Where the writer stores
+evidence (a `skipped` row's reason, an FP skip's reason) the source rests on it; where it does not
+(`false_positive` and `labeled` rows), the source is inferred from the FP prediction, so a status
+moved by hand reads as `llm` until #143's audit log records such moves.
 
 | `label_source` | Meaning | Default |
 |---|---|---|
-| `llm` | The labeling LLM decided it (FP pre-filter running, failed or disabled) | kept |
-| `pre_classifier` | The LLM decided it before the FP classifier existed (no FP prediction) | kept |
+| `llm` | The labeling LLM decided it, with an FP prediction recorded (pre-filter running, failed, or disabled with a novelty score). Inferred for `false_positive`/`labeled` rows (see above) | kept |
+| `pre_classifier` | As `llm`, but no FP prediction is recorded: labeled before the FP classifier existed, or with the pre-filter off and no novelty score | kept |
 | `human` | A human ruled on it (today: the `HUMAN_RULINGS` list from #182, until #143's audit log; `cleanup_false_positives.py`'s manual marks) | kept |
 | `unattributed` | A `skipped` row whose reason no pipeline path writes (no reason, or one left by a status move) | kept, counted |
-| `fp_classifier` | A `false_positive` the FP classifier decided alone; the LLM never saw it | excluded (`--include-classifier-labels`) |
+| `fp_classifier` | A `false_positive` whose latest FP prediction is a skip and whose stored reason is that skip's own reason, so nothing has relabeled it since | excluded (`--include-classifier-labels`) |
 | `unjudged` | A `skipped` row from a path that never judged whether a brand is sportswear ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG content") | excluded (`--include-unjudged-skips`) |
 | `rule` | A `false_positive` from `cleanup_false_positives.py`'s keyword sweep (`Auto-detected:`) | excluded (`--include-rule-labels`) |
 
-The exclusions apply to evaluation too: every train/validation/test split (the fp notebooks,
-`scripts/train.py`, `src/deployment/data.py`) is cut from this export. The export prints what it
+The training splits (the fp notebooks, `scripts/train.py`, `scripts/retrain.py`,
+`scripts/ablation_study.py`) read `data/fp_training_data.jsonl`, so the exclusions reach training and
+evaluation only when the export is written there: `-o data/fp_training_data.jsonl`, or the
+`model_training` workflow, which copies its export to that path. A file exported before #154 has no
+`label_source` and still holds the excluded rows. The export's rows are ordered by article id, so
+the same data gives the same splits. The export prints what it
 excluded (classifier-only negatives by the month of the FP skip, unjudged skips by reason) and
 both classes broken down by `label_source`. Unjudged skips are "no ESG" rows, so excluding them
 shrinks the "sportswear, no ESG" part of the positive class: read the composition, not only the

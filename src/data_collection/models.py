@@ -49,7 +49,9 @@ SKIP_NO_SPORTSWEAR_BRAND = "No sportswear brand ESG content"
 SKIP_NO_ESG_CATEGORIES = "No ESG categories apply to sportswear brands"
 
 # Skips from paths that never judged whether a brand is sportswear. "No sportswear brand
-# ESG content" belongs here too: it means no brand was judged sportswear (D030).
+# ESG content" is here too: today's pipeline cannot write it (an empty brand_analyses and an
+# all-non-sportswear reply both return before it), and listing it keeps it from ever counting
+# as a judged positive (D030).
 UNJUDGED_SKIP_REASONS = frozenset({
     SKIP_INSUFFICIENT_CONTENT,
     SKIP_NO_BRANDS,
