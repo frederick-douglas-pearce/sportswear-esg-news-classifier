@@ -309,6 +309,21 @@ class TestBuildFpDataset:
         assert ids(records) == {"a", "c"}
         assert report.excluded_classifier_only_by_month == {"2026-02": 1, "unknown": 1}
 
+    def test_month_key_is_utc(self):
+        # 2026-02-01 00:30 in UTC+1 is January in UTC
+        local = datetime(2026, 2, 1, 0, 30, tzinfo=timezone(timedelta(hours=1)))
+        _, report = build_fp_dataset([cand("false_positive", "x", "skipped_llm", local)])
+        assert report.excluded_classifier_only_by_month == {"2026-01": 1}
+
+    def test_naive_timestamp_taken_as_utc(self):
+        cands = [
+            cand("false_positive", "x", "skipped_llm", datetime(2026, 1, 31, 23, 59), article_id="n1"),
+            cand("false_positive", "x", "skipped_llm", datetime(2026, 2, 1), article_id="n2"),
+        ]
+        records, report = build_fp_dataset(cands, attested_before=date(2026, 2, 1))
+        assert ids(records) == {"n1"}
+        assert report.excluded_classifier_only_by_month == {"2026-02": 1}
+
     def test_unknown_action_fails_the_export(self):
         with pytest.raises(UnknownFPActionError):
             build_fp_dataset([cand("labeled", action="rerouted")])
@@ -489,6 +504,55 @@ class TestExportRowMapping:
         assert records[0]["content"] == "d"
         assert records[0]["brands"] == [] and records[0]["category"] == []
 
+    def test_prediction_fields_reach_the_candidate(self):
+        """The latest prediction's action, skip reason and time decide a classifier-only row; the
+        ruled row above returns HUMAN before reading them."""
+        article = SimpleNamespace(
+            id=uuid.uuid4(), title="t", full_content="c", description=None, brands_mentioned=["Puma"],
+            source_name="s", category=None, labeling_status="false_positive", labeling_error=FP_SKIP,
+        )
+        query = MagicMock()
+        query.all.return_value = [(article, "skipped_llm", FP_SKIP, JAN)]
+        with patch.object(export_script, "fp_export_query", return_value=query):
+            records, report = export_false_positive_data("session", None)
+            assert records == []
+            assert report.excluded_classifier_only == 1
+            assert report.excluded_classifier_only_by_month == {"2026-01": 1}
+
+            records, report = export_false_positive_data("session", None, attested_before=date(2026, 2, 1))
+            assert [r["label_source"] for r in records] == [FP_CLASSIFIER]
+            assert report.attested_included == 1
+
+
+class TestCleanupScriptReasons:
+    """cleanup_false_positives.py writes the reasons provenance reads as human and rule."""
+
+    @staticmethod
+    def _article():
+        return SimpleNamespace(id=uuid.uuid4(), title="Puma Biotechnology reports", labeling_status="labeled",
+                               labeling_error=None)
+
+    def test_manual_mark_stores_the_manual_reason(self):
+        from scripts import cleanup_false_positives as cleanup
+
+        article = self._article()
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = article
+        assert cleanup.mark_articles_as_false_positive(session, [article.id]) == 1
+        assert article.labeling_status == "false_positive"
+        assert derive_label_source(article.labeling_status, article.labeling_error, None) == HUMAN
+
+    def test_auto_detect_stores_the_rule_reason(self):
+        from scripts import cleanup_false_positives as cleanup
+
+        article = self._article()
+        with patch.object(
+            cleanup, "list_potential_false_positives", return_value=[(article, "Puma", "puma biotechnology")]
+        ):
+            assert cleanup.auto_detect_false_positives(MagicMock(), dry_run=False) == 1
+        assert article.labeling_status == "false_positive"
+        assert derive_label_source(article.labeling_status, article.labeling_error, None) == RULE
+
 
 class TestExportQuerySql:
     """The query as PostgreSQL sees it; the RUN_DB_TESTS test below runs it for real."""
@@ -516,6 +580,21 @@ class TestExportQuerySql:
 
     def test_selects_skip_reason(self, sql):
         assert "latest_prediction.skip_reason" in sql
+
+    def test_bound_values(self, sql):
+        """Each placeholder above carries the value the export depends on, not just the right shape."""
+        compiled = fp_export_query(Session(), since=datetime(2026, 1, 2)).statement.compile(
+            dialect=postgresql.dialect()
+        )
+
+        def bound(pattern):
+            return compiled.params[re.search(pattern, sql).group(1)]
+
+        assert bound(r"classifier_predictions\.classifier_type = %\((\w+)\)s") == "fp"
+        assert bound(r"\.rn = %\((\w+)\)s") == 1
+        assert bound(r"articles\.labeling_status IN \(__\[POSTCOMPILE_(\w+)\]\)") == [
+            "labeled", "skipped", "false_positive",
+        ]
 
 
 requires_postgres = pytest.mark.skipif(
