@@ -8,6 +8,9 @@
 #   docker run -p 8000:8000 fp-classifier-api
 #   docker run -p 8001:8000 ep-classifier-api
 #
+# EP is on hold, with no production version and no committed artifact (#180),
+# so the EP build fails at COPY models/ep_classifier_config.json.
+#
 # Classifier Types:
 #   fp  - False Positive Brand Classifier (~150MB image)
 #   ep  - ESG Pre-filter Classifier (~150MB image)

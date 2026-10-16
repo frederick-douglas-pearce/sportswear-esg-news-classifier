@@ -4,6 +4,19 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-16: EP usage instructions say EP is on hold
+
+**Instructions that still described EP as deployed or deployable now say it is on hold, with no
+production version and no committed artifact (#185, after #180).**
+- `README.md`: the architecture diagram's EP node is marked on hold and Cloud Run no longer points to
+  it; the Phase 5 checklist and the Classifier Deployment section say FP is deployed and EP is not.
+- `.github/DEPLOYMENT_SETUP.md` and `docs/ML_ZOOMCAMP_GUIDE.md`: the `ep` and `all` dispatch options
+  run the EP job, which fails at its model-file check; `fp` is the option to pick.
+- `Dockerfile`, `scripts/predict.py`, `scripts/train.py`, `prompts/workflow_learning/project_context.md`
+  and the ep3 notebook's Next Steps cell: EP examples carry the on-hold note; the `predict.py`
+  uvicorn and `train.py` verbose examples use FP.
+- No behavior change. `deploy.yml`'s EP job and the compose `ep` profile are unchanged.
+
 ### 2026-10-15: The FP training export records label provenance and excludes classifier-only labels
 
 **The FP classifier no longer trains, or is evaluated, on labels nobody but itself decided (#154 PR1, D030).**

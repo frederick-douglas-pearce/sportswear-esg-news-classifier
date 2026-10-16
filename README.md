@@ -149,7 +149,7 @@ flowchart TB
 
     subgraph prefilter["Phase 2: ML Pre-filters"]
         fp_api["FP Classifier API<br/><i>Cloud Run / Local</i>"]
-        ep_api["EP Classifier API<br/><i>Local only (pending deploy)</i>"]
+        ep_api["EP Classifier API<br/><i>On hold, not served (#180)</i>"]
     end
 
     subgraph labeling["Phase 3: LLM Labeling"]
@@ -167,7 +167,7 @@ flowchart TB
     subgraph deployment["Phase 5: Deployment"]
         registry["Model Registry<br/><i>registry.json + MLflow</i>"]
         docker["Docker Build<br/><i>Auto-detect dependencies</i>"]
-        cloudrun["Google Cloud Run<br/><i>FP API (EP pending)</i>"]
+        cloudrun["Google Cloud Run<br/><i>FP API</i>"]
     end
 
     subgraph monitoring["Phase 6: MLOps Monitoring"]
@@ -213,7 +213,6 @@ flowchart TB
     registry --> docker
     docker --> cloudrun
     cloudrun --> fp_api
-    cloudrun --> ep_api
 
     %% Monitoring Flow
     fp_api --> pred_logs
@@ -290,7 +289,7 @@ flowchart TB
 - [x] Model registry with version tracking (`models/registry.json`)
 - [x] Prediction logging to database for drift monitoring
 - [x] FP classifier deployed and integrated into labeling pipeline
-- [ ] EP classifier deployment and labeling pipeline integration (future)
+- [ ] EP classifier deployment and labeling pipeline integration: EP is on hold, with no production version and no committed artifact (#180), so both wait on a retrained EP
 
 ### Phase 6: MLOps Monitoring ✅
 - [x] MLflow experiment tracking (hyperparameters, metrics, artifacts)
@@ -616,7 +615,7 @@ The EP classifier follows the same 3-notebook structure as FP, with ESG-specific
 
 ## Classifier Deployment
 
-The FP and EP classifiers are deployed as FastAPI REST APIs, integrated with the labeling pipeline as optional pre-filters to reduce LLM costs.
+The FP classifier is deployed as a FastAPI REST API, integrated with the labeling pipeline as an optional pre-filter to reduce LLM costs. The EP classifier is on hold, with no production version and no committed artifact (#180), so it is not deployed.
 
 **Quick Start:**
 

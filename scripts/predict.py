@@ -8,14 +8,15 @@ Usage:
     # FP Classifier (default)
     CLASSIFIER_TYPE=fp uv run python scripts/predict.py
 
-    # EP Classifier
+    # EP Classifier (needs an EP artifact in models/; none is committed while
+    # EP is on hold, #180)
     CLASSIFIER_TYPE=ep uv run python scripts/predict.py
 
     # With custom port
     CLASSIFIER_TYPE=fp PORT=8001 uv run python scripts/predict.py
 
     # With uvicorn directly
-    CLASSIFIER_TYPE=ep uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8001
+    CLASSIFIER_TYPE=fp uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8001
 
 API Documentation:
     http://localhost:8000/docs (Swagger UI)

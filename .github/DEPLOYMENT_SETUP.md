@@ -71,9 +71,9 @@ Examples: us-central1, us-east1, europe-west1
 The workflow deploys via manual trigger or automation:
 
 1. **Manual trigger** - Use "Run workflow" button in Actions tab:
-   - `fp` - Deploy only FP classifier
-   - `ep` - Deploy only EP classifier
-   - `all` - Deploy both classifiers
+   - `fp` - Deploy only FP classifier. Pick this one while EP is on hold.
+   - `ep` - Deploy only EP classifier. EP is on hold, with no production version and no committed artifact (#180), so this job fails at its model-file check.
+   - `all` - Deploy both classifiers. This is the default; while EP is on hold its EP job fails at the model-file check, so the run reports a failure even when FP deploys.
 
 2. **Automated via retrain.py** - After major/minor version promotion:
    ```bash
