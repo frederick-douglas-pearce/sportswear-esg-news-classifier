@@ -9,14 +9,16 @@ Usage:
     # Train FP classifier (uses config from models/fp_training_config.json)
     uv run python scripts/train.py --classifier fp
 
-    # Train EP classifier
+    # Train EP classifier (EP is on hold, with no production version and no
+    # committed artifact, #180; this needs models/ep_training_config.json from
+    # the ep2 notebook, and none is committed)
     uv run python scripts/train.py --classifier ep --target-recall 0.99
 
     # Train with custom data path
     uv run python scripts/train.py --classifier fp --data-path data/custom_data.jsonl
 
     # Verbose output
-    uv run python scripts/train.py --classifier ep --verbose
+    uv run python scripts/train.py --classifier fp --verbose
 """
 
 import argparse

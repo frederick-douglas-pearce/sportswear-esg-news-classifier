@@ -149,7 +149,7 @@ flowchart TB
 
     subgraph prefilter["Phase 2: ML Pre-filters"]
         fp_api["FP Classifier API<br/><i>Cloud Run / Local</i>"]
-        ep_api["EP Classifier API<br/><i>Local only (pending deploy)</i>"]
+        ep_api["EP Classifier API<br/><i>On hold, not served (#180)</i>"]
     end
 
     subgraph labeling["Phase 3: LLM Labeling"]
@@ -167,7 +167,7 @@ flowchart TB
     subgraph deployment["Phase 5: Deployment"]
         registry["Model Registry<br/><i>registry.json + MLflow</i>"]
         docker["Docker Build<br/><i>Auto-detect dependencies</i>"]
-        cloudrun["Google Cloud Run<br/><i>FP API (EP pending)</i>"]
+        cloudrun["Google Cloud Run<br/><i>FP API</i>"]
     end
 
     subgraph monitoring["Phase 6: MLOps Monitoring"]
@@ -191,10 +191,8 @@ flowchart TB
 
     %% Pre-filter Flow
     articles --> fp_api
-    fp_api -->|"sportswear"| ep_api
+    fp_api -->|"sportswear"| chunker
     fp_api -->|"false positive"| predictions
-    ep_api -->|"has ESG"| chunker
-    ep_api -->|"no ESG"| predictions
 
     %% Labeling Flow
     chunker --> chunks
@@ -213,11 +211,9 @@ flowchart TB
     registry --> docker
     docker --> cloudrun
     cloudrun --> fp_api
-    cloudrun --> ep_api
 
     %% Monitoring Flow
     fp_api --> pred_logs
-    ep_api --> pred_logs
     pred_logs --> predictions
     predictions --> drift
     drift -->|"drift detected"| alerts
@@ -229,7 +225,7 @@ flowchart TB
     json_feed --> jekyll
     atom_feed --> jekyll
 
-    %% Styling for pending deployment
+    %% Styling for EP on hold (#180): no edges, not served
     style ep_api stroke-dasharray: 5 5
 ```
 
@@ -290,7 +286,7 @@ flowchart TB
 - [x] Model registry with version tracking (`models/registry.json`)
 - [x] Prediction logging to database for drift monitoring
 - [x] FP classifier deployed and integrated into labeling pipeline
-- [ ] EP classifier deployment and labeling pipeline integration (future)
+- [ ] EP classifier deployment and labeling pipeline integration: EP is on hold, with no production version and no committed artifact (#180), so both wait on a retrained EP
 
 ### Phase 6: MLOps Monitoring ✅
 - [x] MLflow experiment tracking (hyperparameters, metrics, artifacts)
@@ -486,6 +482,8 @@ The project uses a **hybrid LLM + ML approach** for article classification:
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> This diagram shows the target design. Today, articles that pass the FP pre-filter go straight to Claude labeling. The ESG Pre-filter (EP) stage is on hold, with no production version and no committed artifact (#180), and the ESG multi-label classifier is planned.
+
 **How it works:**
 1. **LLM Labeling (Claude Sonnet)**: High-quality labeling into ESG categories with sentiment. Generates training data for ML classifiers (~$15/1000 articles).
 2. **ML Classifiers**: Cost-efficient models filter articles before LLM labeling, reducing costs by 20-30%.
@@ -616,7 +614,7 @@ The EP classifier follows the same 3-notebook structure as FP, with ESG-specific
 
 ## Classifier Deployment
 
-The FP and EP classifiers are deployed as FastAPI REST APIs, integrated with the labeling pipeline as optional pre-filters to reduce LLM costs.
+The FP classifier is deployed as a FastAPI REST API, integrated with the labeling pipeline as an optional pre-filter to reduce LLM costs. The EP classifier is on hold, with no production version and no committed artifact (#180), so it is not deployed.
 
 **Quick Start:**
 
