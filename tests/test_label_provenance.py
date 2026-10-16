@@ -223,6 +223,8 @@ def host_tz():
     def set_zone(zone):
         os.environ["TZ"] = zone
         time.tzset()
+        # an unknown zone falls back to UTC silently, which would make these tests host-blind
+        assert time.timezone != 0, f"{zone} not loaded; is tzdata installed?"
 
     yield set_zone
     if saved is None:
@@ -626,9 +628,15 @@ class TestExportQuerySql:
         assert "latest_prediction.skip_reason" in sql
 
     def test_column_order(self):
-        """export_false_positive_data unpacks rows by position, in this order."""
-        names = [c["name"] for c in fp_export_query(Session()).column_descriptions]
-        assert names == ["Article", "action_taken", "skip_reason", "created_at"]
+        """export_false_positive_data unpacks rows by position, in this order, and the prediction's
+        time is the latest prediction's, not the article's own created_at."""
+        columns = fp_export_query(Session()).column_descriptions
+        assert columns[0]["entity"] is models.Article
+        assert [(c["name"], c["expr"].table.name) for c in columns[1:]] == [
+            ("action_taken", "latest_prediction"),
+            ("skip_reason", "latest_prediction"),
+            ("created_at", "latest_prediction"),
+        ]
 
     def test_bound_values(self, sql):
         """Each placeholder above carries the value the export depends on, not just the right shape."""
