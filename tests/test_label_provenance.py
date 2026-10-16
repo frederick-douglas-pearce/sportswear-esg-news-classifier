@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -214,6 +215,28 @@ COHORTS = {
 DEFAULT_COUNTS = {"excluded_classifier_only": 2, "excluded_unjudged": 1, "excluded_rule": 1}
 
 
+@pytest.fixture
+def host_tz():
+    """Set the host time zone for one test, so a host-local conversion shows on any machine."""
+    saved = os.environ.get("TZ")
+
+    def set_zone(zone):
+        os.environ["TZ"] = zone
+        time.tzset()
+
+    yield set_zone
+    if saved is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = saved
+    time.tzset()
+
+
+def query_row(**values):
+    """A row in the order fp_export_query selects its columns, so a reordered query reaches the mapping."""
+    return tuple(values[c["name"]] for c in fp_export_query(Session()).column_descriptions)
+
+
 def ids(records):
     return {r["article_id"] for r in records}
 
@@ -309,13 +332,30 @@ class TestBuildFpDataset:
         assert ids(records) == {"a", "c"}
         assert report.excluded_classifier_only_by_month == {"2026-02": 1, "unknown": 1}
 
-    def test_month_key_is_utc(self):
-        # 2026-02-01 00:30 in UTC+1 is January in UTC
-        local = datetime(2026, 2, 1, 0, 30, tzinfo=timezone(timedelta(hours=1)))
-        _, report = build_fp_dataset([cand("false_positive", "x", "skipped_llm", local)])
-        assert report.excluded_classifier_only_by_month == {"2026-01": 1}
+    @pytest.mark.parametrize("zone, moment, expected", [
+        # 2026-02-01 00:30 in UTC+1 is January in UTC, and February in Tokyo
+        ("Asia/Tokyo", datetime(2026, 2, 1, 0, 30, tzinfo=timezone(timedelta(hours=1))), "2026-01"),
+        # 2026-02-01 03:00 UTC is January in Los Angeles
+        ("America/Los_Angeles", datetime(2026, 2, 1, 3, tzinfo=timezone.utc), "2026-02"),
+    ])
+    def test_month_key_is_utc(self, host_tz, zone, moment, expected):
+        host_tz(zone)
+        _, report = build_fp_dataset([cand("false_positive", "x", "skipped_llm", moment)])
+        assert report.excluded_classifier_only_by_month == {expected: 1}
 
-    def test_naive_timestamp_taken_as_utc(self):
+    @pytest.mark.parametrize("zone, moment, expected", [
+        ("America/Los_Angeles", datetime(2026, 1, 31, 23, 59), "2026-01"),
+        ("Europe/Berlin", datetime(2026, 2, 1, 0, 30), "2026-02"),
+    ])
+    def test_naive_month_key_is_utc(self, host_tz, zone, moment, expected):
+        """Read as host-local, each of these would land in the other month."""
+        host_tz(zone)
+        _, report = build_fp_dataset([cand("false_positive", "x", "skipped_llm", moment)])
+        assert report.excluded_classifier_only_by_month == {expected: 1}
+
+    @pytest.mark.parametrize("zone", ["America/Los_Angeles", "Europe/Berlin"])
+    def test_naive_timestamp_taken_as_utc(self, host_tz, zone):
+        host_tz(zone)
         cands = [
             cand("false_positive", "x", "skipped_llm", datetime(2026, 1, 31, 23, 59), article_id="n1"),
             cand("false_positive", "x", "skipped_llm", datetime(2026, 2, 1), article_id="n2"),
@@ -495,7 +535,9 @@ class TestExportRowMapping:
             labeling_status="false_positive", labeling_error=FP_SKIP,
         )
         query = MagicMock()
-        query.all.return_value = [(article, "skipped_llm", FP_SKIP, JAN)]
+        query.all.return_value = [
+            query_row(Article=article, action_taken="skipped_llm", skip_reason=FP_SKIP, created_at=JAN)
+        ]
         with patch.object(export_script, "fp_export_query", return_value=query) as built:
             records, report = export_false_positive_data("session", None)
         built.assert_called_once_with("session", None)
@@ -512,7 +554,9 @@ class TestExportRowMapping:
             source_name="s", category=None, labeling_status="false_positive", labeling_error=FP_SKIP,
         )
         query = MagicMock()
-        query.all.return_value = [(article, "skipped_llm", FP_SKIP, JAN)]
+        query.all.return_value = [
+            query_row(Article=article, action_taken="skipped_llm", skip_reason=FP_SKIP, created_at=JAN)
+        ]
         with patch.object(export_script, "fp_export_query", return_value=query):
             records, report = export_false_positive_data("session", None)
             assert records == []
@@ -580,6 +624,11 @@ class TestExportQuerySql:
 
     def test_selects_skip_reason(self, sql):
         assert "latest_prediction.skip_reason" in sql
+
+    def test_column_order(self):
+        """export_false_positive_data unpacks rows by position, in this order."""
+        names = [c["name"] for c in fp_export_query(Session()).column_descriptions]
+        assert names == ["Article", "action_taken", "skip_reason", "created_at"]
 
     def test_bound_values(self, sql):
         """Each placeholder above carries the value the export depends on, not just the right shape."""
