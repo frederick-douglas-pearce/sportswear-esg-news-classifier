@@ -6,16 +6,24 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ### 2026-10-16: EP usage instructions say EP is on hold
 
-**Instructions that still described EP as deployed or deployable now say it is on hold, with no
-production version and no committed artifact (#185, after #180).**
-- `README.md`: the architecture diagram's EP node is marked on hold and Cloud Run no longer points to
-  it; the Phase 5 checklist and the Classifier Deployment section say FP is deployed and EP is not.
+**Instructions that still described EP as deployed or deployable now say it is on hold (#185, after
+#180).**
+- `README.md`: the architecture diagram's EP node is marked on hold with no edges (FP-passing
+  articles go to chunking, and Cloud Run serves FP only); the Phase 5 checklist and the Classifier
+  Deployment section say FP is deployed and EP is not; a note under the Article Classification
+  Pipeline diagram says it shows the target design (redraw deferred).
 - `.github/DEPLOYMENT_SETUP.md` and `docs/ML_ZOOMCAMP_GUIDE.md`: the `ep` and `all` dispatch options
   run the EP job, which fails at its model-file check; `fp` is the option to pick.
-- `Dockerfile`, `scripts/predict.py`, `scripts/train.py`, `prompts/workflow_learning/project_context.md`
-  and the ep3 notebook's Next Steps cell: EP examples carry the on-hold note; the `predict.py`
-  uvicorn and `train.py` verbose examples use FP.
-- No behavior change. `deploy.yml`'s EP job and the compose `ep` profile are unchanged.
+- `scripts/deploy_cloudrun.sh` (header and usage text) and `Dockerfile`: images are built from the
+  working tree, so an EP build fails from a clean checkout, and builds an EP model that is not
+  registered if the ep3 notebook has written EP artifacts to `models/`. `docs/MLOPS.md` says the same.
+- `scripts/predict.py`, `scripts/train.py`, `prompts/workflow_learning/project_context.md` and
+  `docs/DEPLOYMENT.md`: EP examples carry the on-hold note; the `predict.py` uvicorn and `train.py`
+  verbose examples use FP.
+- The ep3 notebook's Next Steps cell: steps 1 and 2 need only the notebook's local artifacts; steps 3
+  (deploy) and 4 (`retrain.py`, #186, #191) are marked not available while EP is on hold.
+- No behavior change. `deploy.yml`'s EP job, the compose `ep` profile and `deploy_cloudrun.sh`'s
+  commands are unchanged.
 
 ### 2026-10-15: The FP training export records label provenance and excludes classifier-only labels
 

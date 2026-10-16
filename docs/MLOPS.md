@@ -282,7 +282,9 @@ the tree:
 
 - `deploy.yml`'s `deploy-ep` job fails at its model-file check. A dispatch with `classifier=all`, the
   default, still deploys FP, because `deploy-fp` does not depend on `deploy-ep`.
-- `scripts/deploy_cloudrun.sh ep` and `all` fail at the EP image build. `all` deploys FP first.
+- `scripts/deploy_cloudrun.sh ep` and `all` fail at the EP image build from a clean checkout. `all`
+  deploys FP first. The script builds from the working tree, so if the ep3 notebook has written EP
+  artifacts to `models/`, `ep` and `all` deploy an EP model that is not registered.
 - `ep-classifier-api` is behind the compose `ep` profile, so `docker compose up` does not build it.
 - `tests/test_committed_model_registry.py` pins the retired EP entry and checks that git tracks no
   `models/ep_*` file.

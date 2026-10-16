@@ -9,8 +9,9 @@ Usage:
     # Train FP classifier (uses config from models/fp_training_config.json)
     uv run python scripts/train.py --classifier fp
 
-    # Train EP classifier (needs models/ep_training_config.json from the ep2
-    # notebook; none is committed while EP is on hold, #180)
+    # Train EP classifier (EP is on hold, with no production version and no
+    # committed artifact, #180; this needs models/ep_training_config.json from
+    # the ep2 notebook, and none is committed)
     uv run python scripts/train.py --classifier ep --target-recall 0.99
 
     # Train with custom data path

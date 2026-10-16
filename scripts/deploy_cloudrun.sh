@@ -14,6 +14,12 @@
 #   ./scripts/deploy_cloudrun.sh ep      # Deploy EP classifier
 #   ./scripts/deploy_cloudrun.sh all     # Deploy all classifiers
 #   ./scripts/deploy_cloudrun.sh status  # Check deployment status
+#
+# EP is on hold, with no production version and no committed artifact (#180).
+# The image is built from the working tree, so from a clean checkout `ep` fails
+# at the EP image build and `all` deploys FP, then fails at EP. If the ep3
+# notebook has written EP artifacts to models/, `ep` and `all` build and deploy
+# an EP model that is not registered. Use `fp`.
 
 set -e
 
@@ -164,9 +170,9 @@ main() {
             echo ""
             echo "Commands:"
             echo "  fp      Deploy FP (False Positive) classifier"
-            echo "  ep      Deploy EP (ESG Pre-filter) classifier"
+            echo "  ep      Deploy EP (ESG Pre-filter) classifier (on hold, #180: no production version, no committed artifact)"
             echo "  esg     Deploy ESG multi-label classifier (not yet implemented)"
-            echo "  all     Deploy all available classifiers"
+            echo "  all     Deploy all available classifiers (includes EP; use fp while EP is on hold, #180)"
             echo "  status  Check deployment status"
             echo ""
             echo "Environment variables:"

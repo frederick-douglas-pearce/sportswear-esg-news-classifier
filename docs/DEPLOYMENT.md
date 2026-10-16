@@ -52,8 +52,8 @@ CLASSIFIER_TYPE=fp uv run python scripts/predict.py
 # Or with uvicorn directly:
 CLASSIFIER_TYPE=fp uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8000
 
-# Start EP API server (different port). EP is on hold and no EP artifact is
-# committed (#180); this needs one in models/ first.
+# Start EP API server (different port). EP is on hold, with no production
+# version and no committed artifact (#180); this needs an EP artifact in models/.
 CLASSIFIER_TYPE=ep uv run uvicorn scripts.predict:app --host 0.0.0.0 --port 8001
 
 # Access API docs
@@ -167,8 +167,9 @@ curl -X POST http://localhost:8000/predict/batch \
 # Train FP classifier with default settings
 uv run python scripts/train.py --classifier fp --verbose
 
-# Train EP classifier (needs models/ep_training_config.json from the ep2 notebook;
-# none is committed while EP is on hold, #180)
+# Train EP classifier (EP is on hold, with no production version and no committed
+# artifact, #180; this needs models/ep_training_config.json from the ep2 notebook,
+# and none is committed)
 uv run python scripts/train.py --classifier ep --verbose
 
 # Train with custom parameters

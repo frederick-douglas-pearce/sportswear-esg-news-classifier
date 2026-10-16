@@ -20,7 +20,7 @@ All commands use `uv run` to execute within the project virtual environment.
 
 ### ML Training & Prediction
 - `uv run python scripts/train.py --classifier fp` - Train FP classifier
-- `uv run python scripts/train.py --classifier ep` - Train EP classifier (needs `models/ep_training_config.json` from the ep2 notebook; none is committed while EP is on hold, #180)
+- `uv run python scripts/train.py --classifier ep` - Train EP classifier (EP is on hold, with no production version and no committed artifact, #180; this needs `models/ep_training_config.json` from the ep2 notebook, and none is committed)
 - `CLASSIFIER_TYPE=fp uv run python scripts/predict.py` - Start classifier API (port 8000)
 
 ### MLOps

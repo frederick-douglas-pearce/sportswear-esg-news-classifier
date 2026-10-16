@@ -191,10 +191,8 @@ flowchart TB
 
     %% Pre-filter Flow
     articles --> fp_api
-    fp_api -->|"sportswear"| ep_api
+    fp_api -->|"sportswear"| chunker
     fp_api -->|"false positive"| predictions
-    ep_api -->|"has ESG"| chunker
-    ep_api -->|"no ESG"| predictions
 
     %% Labeling Flow
     chunker --> chunks
@@ -216,7 +214,6 @@ flowchart TB
 
     %% Monitoring Flow
     fp_api --> pred_logs
-    ep_api --> pred_logs
     pred_logs --> predictions
     predictions --> drift
     drift -->|"drift detected"| alerts
@@ -228,7 +225,7 @@ flowchart TB
     json_feed --> jekyll
     atom_feed --> jekyll
 
-    %% Styling for pending deployment
+    %% Styling for EP on hold (#180): no edges, not served
     style ep_api stroke-dasharray: 5 5
 ```
 
@@ -484,6 +481,8 @@ The project uses a **hybrid LLM + ML approach** for article classification:
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+> This diagram shows the target design. Today, articles that pass the FP pre-filter go straight to Claude labeling. The ESG Pre-filter (EP) stage is on hold, with no production version and no committed artifact (#180), and the ESG multi-label classifier is planned.
 
 **How it works:**
 1. **LLM Labeling (Claude Sonnet)**: High-quality labeling into ESG categories with sentiment. Generates training data for ML classifiers (~$15/1000 articles).

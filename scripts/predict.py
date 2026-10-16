@@ -8,8 +8,8 @@ Usage:
     # FP Classifier (default)
     CLASSIFIER_TYPE=fp uv run python scripts/predict.py
 
-    # EP Classifier (needs an EP artifact in models/; none is committed while
-    # EP is on hold, #180)
+    # EP Classifier (EP is on hold, with no production version and no committed
+    # artifact, #180; this needs an EP artifact in models/)
     CLASSIFIER_TYPE=ep uv run python scripts/predict.py
 
     # With custom port
