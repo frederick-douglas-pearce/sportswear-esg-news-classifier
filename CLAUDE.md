@@ -95,9 +95,9 @@ uv run python scripts/export_training_data.py --dataset esg-labels     # Multi-l
 
 # ML Classifier Training & API
 uv run python scripts/train.py --classifier fp                 # Train FP classifier
-uv run python scripts/train.py --classifier ep                 # Train EP classifier (needs models/ep_training_config.json from the ep2 notebook; none is committed while EP is on hold, #180)
+uv run python scripts/train.py --classifier ep                 # Train EP classifier (EP is on hold, with no production version and no committed artifact, #180; needs models/ep_training_config.json from the ep2 notebook, and none is committed)
 CLASSIFIER_TYPE=fp uv run python scripts/predict.py            # Start FP API (port 8000)
-CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000; needs an EP artifact in models/, none is committed while EP is on hold, #180)
+CLASSIFIER_TYPE=ep uv run python scripts/predict.py            # Start EP API (port 8000; needs an EP artifact in models/; EP is on hold, with no production version and no committed artifact, #180)
 
 # Testing
 uv run pytest                              # Run all tests
@@ -316,7 +316,7 @@ Records user workflows via Screenpipe and generates replayable Agent Skills usin
 
 **ESG Pre-filter Classifier (3 notebooks):** ep1_EDA_FE.ipynb → ep2_model_selection_tuning.ipynb → ep3_model_evaluation_deployment.ipynb
 - **Registry pointer (`ep.production`): none** (#180, D029). The v1.0.0 record (Logistic Regression with TF-IDF + LSA features, Test F2: 0.931, Recall: 100%) stays in `models/registry.json` as the reference for a retrained EP; its bytes are not in git (#175). On hold, insufficient data for significant improvement
-- **Served and committed:** nothing; no EP container or Cloud Run service exists, and no `models/ep_*` file is committed (the unpromoted SVM from `2a14794` was deleted in #180). `ep-classifier-api` is behind the compose `ep` profile
+- **Served and committed:** nothing; no EP container or Cloud Run service exists, and no `models/ep_*` file is committed (the unpromoted SVM from `2a14794` was deleted in #180). `ep-classifier-api` is behind the compose `ep` profile; EP is on hold, with no production version and no committed artifact (#180)
 
 **Notebook Standards:** All imports in Setup section, grouped: stdlib → third-party → project modules
 
@@ -408,7 +408,7 @@ Sentiment values: +1 (positive), 0 (neutral), -1 (negative)
 ```bash
 docker build --build-arg CLASSIFIER_TYPE=fp -t fp-classifier-api .
 docker run -p 8000:8000 -e CLASSIFIER_TYPE=fp fp-classifier-api
-# Or: docker compose up fp-classifier-api   (ep-classifier-api is behind `--profile ep` and has no committed artifact, #180)
+# Or: docker compose up fp-classifier-api   (ep-classifier-api is behind `--profile ep`; EP is on hold, with no production version and no committed artifact, #180)
 ```
 
 ### API Endpoints
