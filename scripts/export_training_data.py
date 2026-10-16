@@ -19,6 +19,14 @@ Usage:
     # Export only new data since a date
     python scripts/export_training_data.py --dataset fp --since 2025-01-01
 
+    # FP: put back rows excluded by default (each flag restores one cohort)
+    python scripts/export_training_data.py --dataset fp --include-classifier-labels
+    python scripts/export_training_data.py --dataset fp --include-unjudged-skips
+    python scripts/export_training_data.py --dataset fp --include-rule-labels
+
+    # FP: owner-attested tier - also keep classifier-only negatives skipped before a date
+    python scripts/export_training_data.py --dataset fp --attested-before YYYY-MM-DD
+
     # Export to specific file
     python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
 """
@@ -27,16 +35,20 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import and_, or_
 
+from src.data_collection import provenance
 from src.data_collection.database import db
 from src.data_collection.models import Article, BrandLabel
+from src.data_collection.provenance import derive_label_source, human_verified_ids
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -49,73 +61,206 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
-def export_false_positive_data(
-    session, since: datetime | None = None
-) -> list[dict[str, Any]]:
-    """Export data for false positive brand classifier.
+@dataclass
+class FPCandidate:
+    """One article the FP export considers, with its latest FP prediction."""
 
-    Returns one record per article with:
-    - article_id, title, content, brands (list), is_sportswear (1/0)
+    article_id: str
+    title: str
+    content: str
+    brands: list[str]
+    source_name: str | None
+    category: list[str]
+    labeling_status: str
+    labeling_error: str | None
+    fp_action: str | None  # action_taken of the latest FP prediction, None if there is none
+    fp_action_at: datetime | None  # created_at of that prediction
+    fp_skip_reason: str | None = None  # skip_reason of that prediction
 
-    Positive class (is_sportswear=1): Articles with labeling_status='labeled' or 'skipped'
-        - labeled: confirmed sportswear with ESG content
-        - skipped: confirmed sportswear but no ESG content
-    Negative class (is_sportswear=0): Articles with labeling_status='false_positive'
 
-    This matches the behavior of Claude's labeling pipeline which receives
-    an article + brands_mentioned and determines if it's about sportswear.
+@dataclass
+class FPExportReport:
+    """What the FP export left out, and the composition of what it wrote."""
+
+    excluded_classifier_only: int = 0
+    excluded_classifier_only_by_month: Counter = field(default_factory=Counter)
+    excluded_unjudged: int = 0
+    excluded_unjudged_by_reason: Counter = field(default_factory=Counter)
+    excluded_rule: int = 0
+    attested_included: int = 0
+    attested_before: date | None = None
+    positives_by_source: Counter = field(default_factory=Counter)
+    negatives_by_source: Counter = field(default_factory=Counter)
+
+
+class FPExport(NamedTuple):
+    records: list[dict[str, Any]]
+    report: FPExportReport
+
+
+def _month(moment: datetime | None) -> str:
+    """UTC year-month of a timestamp; a naive timestamp is taken as UTC."""
+    if moment is None:
+        return "unknown"
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc)
+    return moment.strftime("%Y-%m")
+
+
+def _before(moment: datetime | None, cutoff: date) -> bool:
+    if moment is None:
+        return False
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment < datetime.combine(cutoff, datetime.min.time(), tzinfo=timezone.utc)
+
+
+def build_fp_dataset(
+    candidates: list[FPCandidate],
+    include_classifier_labels: bool = False,
+    include_unjudged_skips: bool = False,
+    include_rule_labels: bool = False,
+    attested_before: date | None = None,
+) -> FPExport:
+    """Build FP training records from candidates, applying the provenance exclusions.
+
+    Every record carries ``label_source`` (see ``src.data_collection.provenance``). By default,
+    classifier-only negatives, unjudged skips and keyword-sweep negatives are left out and counted.
+    Each ``include_*`` flag puts one cohort back. ``attested_before`` puts back only classifier-only
+    negatives whose FP skip predates that date (UTC), marked with ``attested_cutoff``; it does not
+    change their ``label_source``.
     """
-    records = []
+    report = FPExportReport(attested_before=attested_before)
+    records: list[dict[str, Any]] = []
+    verified = human_verified_ids((c.article_id, c.labeling_status) for c in candidates)
+    # One flag per default-excluded source; a source added to EXCLUDED_BY_DEFAULT without a
+    # flag here raises KeyError rather than being silently kept or dropped.
+    restored = {
+        provenance.FP_CLASSIFIER: include_classifier_labels,
+        provenance.UNJUDGED: include_unjudged_skips,
+        provenance.RULE: include_rule_labels,
+    }
 
-    # Query filters
+    for c in candidates:
+        source = derive_label_source(
+            c.labeling_status,
+            c.labeling_error,
+            c.fp_action,
+            c.fp_skip_reason,
+            human_verified=c.article_id in verified,
+            article_id=c.article_id,
+        )
+        attested = False
+        if source in provenance.EXCLUDED_BY_DEFAULT and not restored[source]:
+            if source == provenance.FP_CLASSIFIER:
+                if attested_before is not None and _before(c.fp_action_at, attested_before):
+                    attested = True
+                    report.attested_included += 1
+                else:
+                    report.excluded_classifier_only += 1
+                    report.excluded_classifier_only_by_month[_month(c.fp_action_at)] += 1
+                    continue
+            elif source == provenance.UNJUDGED:
+                report.excluded_unjudged += 1
+                report.excluded_unjudged_by_reason[c.labeling_error] += 1
+                continue
+            else:
+                report.excluded_rule += 1
+                continue
+
+        is_negative = c.labeling_status == provenance.FP_NEGATIVE_STATUS
+        record = {
+            "article_id": c.article_id,
+            "title": c.title,
+            "content": c.content,
+            "brands": c.brands,
+            "source_name": c.source_name,
+            "category": c.category,
+            "is_sportswear": 0 if is_negative else 1,
+            "source": c.labeling_status,
+            "label_source": source,
+        }
+        if is_negative:
+            record["fp_reason"] = c.labeling_error
+            report.negatives_by_source[source] += 1
+        else:
+            report.positives_by_source[source] += 1
+        if attested:
+            record["attested_cutoff"] = attested_before.isoformat()
+        records.append(record)
+
+    return FPExport(records, report)
+
+
+def fp_export_query(session, since: datetime | None = None):
+    """Articles the FP export reads, each with its latest FP prediction, in a fixed order.
+
+    The order matters: the training splits use ``train_test_split(random_state=42)``, which
+    assigns rows by position, so an unordered query would split the same data differently.
+    """
     base_filter = Article.scrape_status == "success"
     if since:
         base_filter = and_(base_filter, Article.created_at >= since)
 
-    # Positive examples: labeled and skipped articles (both confirmed sportswear)
-    # - labeled: has ESG content
-    # - skipped: no ESG content, but still about sportswear brand
-    sportswear_articles = (
-        session.query(Article)
+    latest = provenance.latest_prediction_subquery("fp")
+    return (
+        session.query(Article, latest.c.action_taken, latest.c.skip_reason, latest.c.created_at)
+        .outerjoin(latest, latest.c.article_id == Article.id)
         .filter(base_filter)
-        .filter(Article.labeling_status.in_(["labeled", "skipped"]))
-        .all()
+        .filter(
+            Article.labeling_status.in_(
+                [*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS]
+            )
+        )
+        .order_by(Article.id)
     )
 
-    for article in sportswear_articles:
-        records.append({
-            "article_id": str(article.id),
-            "title": article.title,
-            "content": article.full_content or article.description or "",
-            "brands": article.brands_mentioned or [],
-            "source_name": article.source_name,
-            "category": article.category or [],
-            "is_sportswear": 1,
-            "source": article.labeling_status,
-        })
 
-    # Negative examples: false positive articles
-    fp_articles = (
-        session.query(Article)
-        .filter(base_filter)
-        .filter(Article.labeling_status == "false_positive")
-        .all()
+def export_false_positive_data(
+    session,
+    since: datetime | None = None,
+    include_classifier_labels: bool = False,
+    include_unjudged_skips: bool = False,
+    include_rule_labels: bool = False,
+    attested_before: date | None = None,
+) -> FPExport:
+    """Export data for the false positive brand classifier.
+
+    Positive class (is_sportswear=1): labeling_status 'labeled' or 'skipped'.
+    Negative class (is_sportswear=0): labeling_status 'false_positive'.
+
+    Rows whose label nobody but the FP classifier decided, skips that never judged whether a
+    brand is sportswear, and keyword-sweep negatives are excluded by default (#154); see
+    ``build_fp_dataset``. The fp notebooks and ``ablation_study.py`` read
+    ``data/fp_training_data.jsonl``, ``train.py`` reads it unless ``--data-path`` names another
+    file, and ``retrain.py`` reads whatever ``--data`` names. The exclusion reaches them only
+    when they read this export's output (``-o data/fp_training_data.jsonl``, or the
+    ``model_training`` workflow's copy to that path).
+    """
+    rows = fp_export_query(session, since).all()
+    candidates = [
+        FPCandidate(
+            article_id=str(article.id),
+            title=article.title,
+            content=article.full_content or article.description or "",
+            brands=article.brands_mentioned or [],
+            source_name=article.source_name,
+            category=article.category or [],
+            labeling_status=article.labeling_status,
+            labeling_error=article.labeling_error,
+            fp_action=fp_action,
+            fp_action_at=fp_action_at,
+            fp_skip_reason=fp_skip_reason,
+        )
+        for article, fp_action, fp_skip_reason, fp_action_at in rows
+    ]
+    return build_fp_dataset(
+        candidates,
+        include_classifier_labels=include_classifier_labels,
+        include_unjudged_skips=include_unjudged_skips,
+        include_rule_labels=include_rule_labels,
+        attested_before=attested_before,
     )
-
-    for article in fp_articles:
-        records.append({
-            "article_id": str(article.id),
-            "title": article.title,
-            "content": article.full_content or article.description or "",
-            "brands": article.brands_mentioned or [],
-            "source_name": article.source_name,
-            "category": article.category or [],
-            "is_sportswear": 0,
-            "source": "false_positive",
-            "fp_reason": article.labeling_error,
-        })
-
-    return records
 
 
 def export_esg_prefilter_data(
@@ -264,7 +409,31 @@ def write_jsonl(records: list[dict], filepath: Path) -> None:
             f.write(json.dumps(record, default=str) + "\n")
 
 
-def print_stats(records: list[dict], dataset: str) -> None:
+def print_fp_report(report: FPExportReport) -> None:
+    """Print what the FP export left out and the composition of what it wrote."""
+    print("\nPositives by label source:")
+    for source, count in sorted(report.positives_by_source.items()):
+        print(f"  {source}: {count}")
+    print("Negatives by label source:")
+    for source, count in sorted(report.negatives_by_source.items()):
+        print(f"  {source}: {count}")
+
+    print(f"\nExcluded classifier-only negatives: {report.excluded_classifier_only}")
+    for month, count in sorted(report.excluded_classifier_only_by_month.items()):
+        print(f"  skipped by the FP classifier in {month}: {count}")
+    print(f"Excluded unjudged skips: {report.excluded_unjudged}")
+    for reason, count in report.excluded_unjudged_by_reason.most_common():
+        print(f"  {reason}: {count}")
+    print(f"Excluded keyword-sweep negatives: {report.excluded_rule}")
+    if report.attested_before is not None:
+        print(
+            f"Owner-attested tier (classifier-only negatives skipped before "
+            f"{report.attested_before.isoformat()}, not per-article human review): "
+            f"{report.attested_included} kept"
+        )
+
+
+def print_stats(records: list[dict], dataset: str, report: FPExportReport | None = None) -> None:
     """Print dataset statistics."""
     print(f"\n=== {dataset.upper()} Dataset Statistics ===")
     print(f"Total records: {len(records)}")
@@ -275,6 +444,8 @@ def print_stats(records: list[dict], dataset: str) -> None:
         print(f"Sportswear articles (positive): {sportswear}")
         print(f"False positive articles (negative): {not_sportswear}")
         print(f"Class ratio: {sportswear}:{not_sportswear}")
+        if report is not None:
+            print_fp_report(report)
 
         # Brand distribution for false positives
         from collections import Counter
@@ -319,7 +490,7 @@ def print_stats(records: list[dict], dataset: str) -> None:
             print(f"  {brand}: {count}")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Export training data for ML classifiers",
@@ -343,12 +514,83 @@ def parse_args() -> argparse.Namespace:
         type=str,
         help="Only export data created since this date (YYYY-MM-DD)",
     )
+    fp_group = parser.add_argument_group(
+        "fp dataset provenance",
+        "Rows excluded from the fp dataset by default, and how to put them back (#154)",
+    )
+    fp_group.add_argument(
+        "--include-classifier-labels",
+        action="store_true",
+        help="Keep false_positive rows decided by the FP classifier alone",
+    )
+    fp_group.add_argument(
+        "--include-unjudged-skips",
+        action="store_true",
+        help="Keep skipped rows from paths that never judged sportswear status",
+    )
+    fp_group.add_argument(
+        "--include-rule-labels",
+        action="store_true",
+        help="Keep false_positive rows written by cleanup_false_positives.py's keyword sweep",
+    )
+    fp_group.add_argument(
+        "--attested-before",
+        type=str,
+        metavar="YYYY-MM-DD",
+        help=(
+            "Owner-attested tier: also keep classifier-only negatives skipped before this date "
+            "(UTC). Weaker than per-article human review; their label_source stays fp_classifier"
+        ),
+    )
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
         help="Enable verbose logging",
     )
-    return parser.parse_args()
+    return validate_args(parser, parser.parse_args(argv))
+
+
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> argparse.Namespace:
+    """Reject flag combinations that would not do what they say."""
+    fp_flags = [
+        name for name in (
+            "include_classifier_labels",
+            "include_unjudged_skips",
+            "include_rule_labels",
+            "attested_before",
+        )
+        if getattr(args, name) not in (None, False)
+    ]
+    if fp_flags and args.dataset != "fp":
+        parser.error(f"--{fp_flags[0].replace('_', '-')} applies only to --dataset fp")
+    if args.attested_before is not None and args.include_classifier_labels:
+        parser.error(
+            "--attested-before has no effect with --include-classifier-labels, "
+            "which already keeps every classifier-only negative"
+        )
+    if args.attested_before is not None:
+        try:
+            args.attested_before = datetime.strptime(args.attested_before, "%Y-%m-%d").date()
+        except ValueError:
+            parser.error("--attested-before must be YYYY-MM-DD")
+    return args
+
+
+def write_and_report(
+    records: list[dict],
+    dataset: str,
+    output_path: Path,
+    report: FPExportReport | None = None,
+) -> None:
+    """Print statistics, write the file, and print the closing line.
+
+    The closing ``Exported N records to ...`` line must be the last stdout line containing
+    "records" or "exported": the model_training workflow reads the record count from the last
+    such line (``src/agent/workflows/model_training.py``, ``export_training_data``).
+    """
+    print_stats(records, dataset, report)
+    write_jsonl(records, output_path)
+    print(f"\nExported {len(records)} records to {output_path}")
 
 
 def main() -> int:
@@ -368,9 +610,17 @@ def main() -> int:
     db.init_db()
 
     # Export data based on dataset type
+    report = None
     with db.get_session() as session:
         if args.dataset == "fp":
-            records = export_false_positive_data(session, since)
+            records, report = export_false_positive_data(
+                session,
+                since,
+                include_classifier_labels=args.include_classifier_labels,
+                include_unjudged_skips=args.include_unjudged_skips,
+                include_rule_labels=args.include_rule_labels,
+                attested_before=args.attested_before,
+            )
         elif args.dataset == "esg-prefilter":
             records = export_esg_prefilter_data(session, since)
         elif args.dataset == "esg-labels":
@@ -380,11 +630,10 @@ def main() -> int:
             return 1
 
     if not records:
+        if report is not None:
+            print_fp_report(report)
         logger.warning("No records found to export")
         return 0
-
-    # Print statistics
-    print_stats(records, args.dataset)
 
     # Determine output path
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -395,8 +644,7 @@ def main() -> int:
     else:
         output_path = data_dir / f"{args.dataset}_{timestamp}.jsonl"
 
-    write_jsonl(records, output_path)
-    print(f"\nExported {len(records)} records to {output_path}")
+    write_and_report(records, args.dataset, output_path, report)
 
     return 0
 

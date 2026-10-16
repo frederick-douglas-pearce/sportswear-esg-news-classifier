@@ -244,8 +244,8 @@ uv run python -m src.workflow_learning start "model-training-fp" \
   -d "FP classifier model training: export data, run notebooks, evaluate, deploy"
 
 # 3. Demonstrate the workflow (narrate each step aloud):
-#    a. Export training data
-uv run python scripts/export_training_data.py --dataset fp
+#    a. Export training data to the file the notebooks and train.py read
+uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl
 #    b. Open and run FP notebooks (fp1, fp2, fp3)
 #    c. Train the model
 uv run python scripts/train.py --classifier fp

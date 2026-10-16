@@ -40,6 +40,44 @@ VALID_LABELING_STATUSES = [
     "deduplicated",
 ]
 
+# Reasons the labeling pipeline stores in articles.labeling_error with a 'skipped' status.
+# Stored rows can only be matched by this literal text, so never reword one (#154, #192).
+SKIP_INSUFFICIENT_CONTENT = "Insufficient content"
+SKIP_NO_BRANDS = "No brands mentioned"
+SKIP_NO_ESG_CONTENT = "No ESG content found"  # the LLM returned an empty brand_analyses
+SKIP_NO_SPORTSWEAR_BRAND = "No sportswear brand ESG content"
+SKIP_NO_ESG_CATEGORIES = "No ESG categories apply to sportswear brands"
+
+# Skips from paths that never judged whether a brand is sportswear. "No sportswear brand
+# ESG content" is here too: today's pipeline cannot write it (an empty brand_analyses and an
+# all-non-sportswear reply both return before it), and listing it keeps it from ever counting
+# as a judged positive (D030).
+UNJUDGED_SKIP_REASONS = frozenset({
+    SKIP_INSUFFICIENT_CONTENT,
+    SKIP_NO_BRANDS,
+    SKIP_NO_ESG_CONTENT,
+    SKIP_NO_SPORTSWEAR_BRAND,
+})
+# The one skip that follows an explicit sportswear judgment by the LLM.
+JUDGED_SKIP_REASONS = frozenset({SKIP_NO_ESG_CATEGORIES})
+
+# Reasons scripts/cleanup_false_positives.py stores with a 'false_positive' status: a hand-picked
+# list of ids, and a keyword-pattern sweep (the prefix is followed by the brand and the pattern).
+FP_REASON_MANUAL = "Manually marked as false positive"
+FP_REASON_AUTO_DETECTED_PREFIX = "Auto-detected:"
+
+# classifier_predictions.action_taken values the FP pre-filter writes.
+FP_ACTION_SKIPPED_LLM = "skipped_llm"
+FP_ACTION_CONTINUED_TO_LLM = "continued_to_llm"
+FP_ACTION_FAILED = "failed"
+FP_ACTION_DISABLED = "fp_classifier_disabled"
+FP_ACTIONS = frozenset({
+    FP_ACTION_SKIPPED_LLM,
+    FP_ACTION_CONTINUED_TO_LLM,
+    FP_ACTION_FAILED,
+    FP_ACTION_DISABLED,
+})
+
 
 class Article(Base):
     """News article from NewsData.io API."""
@@ -309,7 +347,7 @@ class ClassifierPrediction(Base):
     novelty_cluster = Column(Integer)  # Nearest cluster centroid index
 
     # Decision tracking
-    action_taken = Column(String(50), nullable=False)  # 'skipped_llm', 'continued_to_llm', 'failed'
+    action_taken = Column(String(50), nullable=False)  # one of FP_ACTIONS for the FP classifier
     skip_reason = Column(String(255))  # Reason for skipping LLM (if applicable)
 
     # Error handling

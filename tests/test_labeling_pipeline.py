@@ -6,6 +6,8 @@ from uuid import uuid4
 
 import pytest
 
+from src.data_collection import models
+from src.labeling.classifier_client import ClassifierPredictionRecord
 from src.labeling.labeler import LabelingResult
 from src.labeling.models import BrandAnalysis, CategoryLabel, LabelingResponse
 from src.labeling.pipeline import (
@@ -718,3 +720,86 @@ class TestEmptyBrandLabelFiltering:
         # Only Anta should be saved
         assert len(labels) == 1
         assert labels[0].brand == "Anta"
+
+
+class TestStoredLabelingReasons:
+    """The reasons the pipeline stores are the shared constants the FP export matches (#154, D030)."""
+
+    def _article(self, **overrides):
+        article = {
+            "id": uuid4(),
+            "title": "Test Article",
+            "full_content": "Test content " * 50,
+            "description": "Test description",
+            "brands_mentioned": ["Nike"],
+            "published_at": datetime.now(),
+            "source_name": "Test Source",
+        }
+        article.update(overrides)
+        return article
+
+    def _stored(self, database):
+        """(status, reason) of every status update the pipeline made."""
+        return [tuple(call.args[2:4]) for call in database.update_article_labeling_status.call_args_list]
+
+    def _labeler_returning(self, brand_analyses):
+        labeler = MagicMock()
+        result = MagicMock()
+        result.success = True
+        result.response = LabelingResponse(brand_analyses=brand_analyses, article_summary="s")
+        result.input_tokens = 1
+        result.output_tokens = 1
+        result.model = "test-model"
+        labeler.label_article.return_value = result
+        return labeler
+
+    def test_insufficient_content(self):
+        database = MagicMock()
+        LabelingPipeline(database=database)._process_article(self._article(full_content="Short", description=None))
+        assert self._stored(database) == [("skipped", models.SKIP_INSUFFICIENT_CONTENT)]
+
+    def test_no_brands(self):
+        database = MagicMock()
+        LabelingPipeline(database=database)._process_article(self._article(brands_mentioned=[]))
+        assert self._stored(database) == [("skipped", models.SKIP_NO_BRANDS)]
+
+    def test_empty_brand_analyses(self):
+        database = MagicMock()
+        pipeline = LabelingPipeline(database=database, labeler=self._labeler_returning([]))
+        pipeline._process_article(self._article(), skip_chunking=True, skip_embedding=True)
+        assert self._stored(database) == [("skipped", models.SKIP_NO_ESG_CONTENT)]
+
+    def test_no_esg_categories(self):
+        database = MagicMock()
+        no_category = CategoryLabel(applies=False, sentiment=None, evidence=[])
+        analyses = [BrandAnalysis(
+            brand="Nike",
+            is_sportswear_brand=True,
+            categories={
+                c: no_category
+                for c in ("environmental", "social", "governance", "digital_transformation")
+            },
+            confidence=0.9,
+            reasoning="Sportswear, no ESG content",
+        )]
+        pipeline = LabelingPipeline(database=database, labeler=self._labeler_returning(analyses))
+        pipeline._process_article(self._article(), skip_chunking=True, skip_embedding=True)
+        assert self._stored(database) == [("skipped", models.SKIP_NO_ESG_CATEGORIES)]
+
+    def test_fp_skip_stores_the_predictions_own_reason(self):
+        """The export recognizes a classifier-only negative by this equality."""
+        database = MagicMock()
+        prediction = ClassifierPredictionRecord(
+            classifier_type="fp",
+            model_version="v2.4.0",
+            probability=0.2,
+            prediction=False,
+            threshold_used=0.5,
+            action_taken=models.FP_ACTION_SKIPPED_LLM,
+            confidence_level="low",
+            skip_reason="High-confidence false positive: probability 0.200 < threshold 0.5",
+        )
+        LabelingPipeline(database=database)._process_article(
+            self._article(), fp_prefilter_result=(False, prediction)
+        )
+        assert self._stored(database) == [("false_positive", prediction.skip_reason)]

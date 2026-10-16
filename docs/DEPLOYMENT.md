@@ -222,8 +222,8 @@ This section describes the complete workflow for developing, training, evaluatin
 ### Phase 1: Development (Notebooks)
 
 ```bash
-# Export new training data
-uv run python scripts/export_training_data.py --dataset fp
+# Export new training data to the file the notebooks read
+uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl
 
 # Run the 3-notebook pipeline
 # 1. fp1_EDA_FE.ipynb - EDA and feature engineering
@@ -315,13 +315,18 @@ uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.js
 ## Daily Retraining Workflow
 
 ```bash
-# 1. Export fresh training data (includes new labeled articles)
-uv run python scripts/export_training_data.py --dataset fp
+# 1. Export fresh training data (includes new labeled articles).
+#    Since #154 it excludes classifier-only negatives, unjudged skips and keyword-sweep negatives
+#    by default, which shrinks both classes and shifts the class balance: read the printed
+#    by-source breakdown and class ratio before retraining (docs/LABELING.md, FP label provenance).
+uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl
 
-# 2. Retrain with auto-promote (promotes if F2 improves)
-uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.jsonl --auto-promote
+# 2. Retrain and promote: not available for FP today. retrain.py exits before training (#186),
+#    and its default next version (v2.5.0) would overwrite an existing registry entry, so FP is
+#    not promoted through it until #172 (D028). Its Verdict also compares against a production F2
+#    measured before #154's exclusion; #154 PR2's retrain compares like-for-like.
 
-# 3. Rebuild and redeploy Docker container (if promoted)
+# 3. Rebuild and redeploy the container after a promotion
 docker compose build fp-classifier-api
 docker compose up -d fp-classifier-api
 ```

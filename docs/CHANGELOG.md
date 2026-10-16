@@ -4,6 +4,41 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-15: The FP training export records label provenance and excludes classifier-only labels
+
+**The FP classifier no longer trains, or is evaluated, on labels nobody but itself decided (#154 PR1, D030).**
+- **Provenance.** Every `fp` record carries `label_source`, derived at export time from the article's
+  status, its stored reason, its latest FP prediction and the human rulings
+  (`src/data_collection/provenance.py`); nothing is stored. Vocabulary and defaults:
+  `docs/LABELING.md`, FP label provenance.
+- **Exclusions, on by default.** Classifier-only negatives (`false_positive` whose latest FP
+  prediction is `skipped_llm` and whose stored reason is still that skip's reason), unjudged skips
+  ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG
+  content"), and `cleanup_false_positives.py`'s keyword-sweep negatives. Each has an `--include-*`
+  flag. The fp notebooks and `train.py` read `data/fp_training_data.jsonl` by default and
+  `retrain.py` reads whatever `--data` names, so the exclusion reaches training and evaluation only
+  when they read this export's output (`-o data/fp_training_data.jsonl`, or the `model_training`
+  workflow's copy to that path); the runbooks in `docs/DEPLOYMENT.md` and `docs/WORKFLOW_LEARNING.md`
+  now export with `-o`.
+- **Row order.** The fp export's rows are ordered by article id (previously positives, then negatives,
+  each unordered), so the same data gives the same `random_state` splits.
+- **Baseline.** The registry's recorded production F2 was measured before the exclusion; #154 PR2's
+  retrain compares like-for-like, and #191 owns the general baseline rule. The daily retrain
+  runbook in `docs/DEPLOYMENT.md` no longer gives a `retrain.py` promotion command for FP:
+  `retrain.py` exits before training (#186), and FP is not promoted through it until #172 (D028).
+- **Human rulings.** #182's corrections and confirmations are a code list (`HUMAN_RULINGS`), honored
+  only while an article keeps the ruled status, until #143's audit log replaces it. D-9.3's
+  `review_session_sample` carve-back moved to #146, whose table does not exist yet.
+- **Owner-attested tier.** `--attested-before` keeps classifier-only negatives skipped before a date,
+  without making them `human`. No default date.
+- **Report.** The export prints the excluded cohorts (classifier-only negatives by the month of the
+  FP skip) and both classes by `label_source`. The closing `Exported N records` line stays last,
+  because the `model_training` workflow reads the count from it.
+- **Constants.** Skip-reason, FP action and cleanup-script reason strings are named constants in
+  `src/data_collection/models.py`; `pipeline.py` and `cleanup_false_positives.py` use them. The
+  stored text is unchanged.
+- An FP `action_taken` the constants do not name fails the export.
+
 ### 2026-10-09: Puma label audit for the FP training set
 
 **A read-only triage notebook, and label corrections ruled by the human (#182).**
