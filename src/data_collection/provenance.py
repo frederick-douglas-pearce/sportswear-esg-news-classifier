@@ -15,8 +15,8 @@ Sources:
   and whose stored reason is that skip's own reason, so nothing has relabeled it since. Excluded
   from training by default.
 - ``human``: a human ruled on it.
-- ``unjudged``: a ``skipped`` row from a path that never judged whether a brand is sportswear
-  (``UNJUDGED_SKIP_REASONS``). Excluded by default.
+- ``unjudged``: a ``skipped`` row whose reply, or lack of one, does not establish whether the
+  article has a sportswear brand (``UNJUDGED_SKIP_REASONS``). Excluded by default.
 - ``unattributed``: a ``skipped`` row whose reason no pipeline path writes (no reason, or a reason
   left behind by a status move). Kept, and counted separately.
 - ``rule``: a ``false_positive`` written by ``cleanup_false_positives.py``'s keyword sweep. Excluded

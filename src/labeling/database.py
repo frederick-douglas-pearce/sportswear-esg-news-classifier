@@ -150,14 +150,8 @@ class LabelingDatabase:
                 )
                 continue
 
-            # Skip if no categories (shouldn't happen for sportswear brands, but just in case)
-            if not analysis.categories:
-                logger.warning(
-                    f"Sportswear brand '{analysis.brand}' has no categories, skipping"
-                )
-                continue
-
-            # Skip brands where all ESG categories are False (no applicable content)
+            # Skip brands with no applicable ESG category: all categories False, or empty
+            # categories, which prompt v1.11.0 asks for when no category applies (#192)
             if not analysis.get_applicable_categories():
                 logger.info(
                     f"Skipping brand '{analysis.brand}': no ESG categories apply"
