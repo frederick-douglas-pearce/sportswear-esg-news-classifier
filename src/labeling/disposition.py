@@ -1,7 +1,8 @@
 """Article-level disposition of a labeling reply (#192, D032).
 
 One pure function decides the status an article gets from the LLM's reply, under every
-prompt version, so the pipeline and a prompt evaluation read a reply the same way.
+prompt version. The pipeline calls it, and #192 PR2's prompt evaluation is to call it too;
+src/migration_eval/compare.py and scripts/eval_model_migration.py do not use it.
 """
 
 from dataclasses import dataclass, field
@@ -36,6 +37,17 @@ class ReplyDisposition:
     unsent: list[str] = field(default_factory=list)
     # Brands returned both as sportswear and as not sportswear; sportswear wins
     conflicting: list[str] = field(default_factory=list)
+    # Brands returned with no is_sportswear_brand and no applicable category; they count
+    # as left out
+    unset: list[str] = field(default_factory=list)
+
+
+def _states_a_verdict(analysis: BrandAnalysis) -> bool:
+    """Whether the reply judged this brand, rather than relying on the field default."""
+    return (
+        "is_sportswear_brand" in analysis.model_fields_set
+        or bool(analysis.get_applicable_categories())
+    )
 
 
 def dispose_reply(sent_brands: list[str], analyses: list[BrandAnalysis]) -> ReplyDisposition:
@@ -49,15 +61,21 @@ def dispose_reply(sent_brands: list[str], analyses: list[BrandAnalysis]) -> Repl
     - Only non-sportswear brands, covering every sent brand: `false_positive`.
 
     Brand names are matched by `normalize_brand`; a name the reply spells differently
-    counts as left out, which fails safe to unjudged.
+    counts as left out, which fails safe to unjudged. An analysis that neither sets
+    `is_sportswear_brand` (the model defaults it to True) nor has an applicable category
+    stated no verdict, so it counts as left out too.
     """
+    unset = [a.brand for a in analyses if not _states_a_verdict(a)]
+    analyses = [a for a in analyses if _states_a_verdict(a)]
     sent_keys = {normalize_brand(b): b for b in sent_brands}
     returned_keys = {normalize_brand(a.brand) for a in analyses}
     omitted = [name for key, name in sent_keys.items() if key not in returned_keys]
     unsent = [a.brand for a in analyses if normalize_brand(a.brand) not in sent_keys]
 
     if not analyses:
-        return ReplyDisposition(SKIPPED, SKIP_NO_ESG_CONTENT, omitted=omitted)
+        return ReplyDisposition(
+            SKIPPED, SKIP_NO_ESG_CONTENT, omitted=omitted, unsent=unsent, unset=unset
+        )
 
     sportswear = [a for a in analyses if a.is_sportswear_brand]
     non_sportswear = [a for a in analyses if not a.is_sportswear_brand]
@@ -71,6 +89,7 @@ def dispose_reply(sent_brands: list[str], analyses: list[BrandAnalysis]) -> Repl
         "omitted": omitted,
         "unsent": unsent,
         "conflicting": conflicting,
+        "unset": unset,
     }
 
     if sportswear:

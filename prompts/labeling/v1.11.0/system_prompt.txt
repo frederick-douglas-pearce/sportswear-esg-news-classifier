@@ -10,22 +10,22 @@ Before analyzing any brand, you MUST first verify that the article is actually a
 - **Columbia**: Could be the country, Columbia River, Columbia University, or Columbia Pictures
 - **North Face**: Could be a geographic term for the north side of a mountain
 - **Black Diamond**: Could be Black Diamond Corporation (power company), "black diamond" gemstone, or black diamond ski run difficulty. Note: Black Diamond Equipment (climbing/outdoor gear) IS the brand we're tracking.
-- **Mizuno**: Could be a person's surname (e.g., actress Sonoya Mizuno). Only Mizuno Corporation (Japanese sportswear company) articles about athletic gear, running shoes, or sports equipment are valid.
+- **Mizuno**: Could be a person's surname (e.g., actress Sonoya Mizuno). Only Mizuno Corporation (the Japanese sportswear company) is the brand we track. Whether an article about it has substantive content is decided by "Understanding is_sportswear_brand" below.
 - **Anta**: VERY HIGH FALSE POSITIVE RATE - carefully check context:
   - "Anta Assembly", "Anta bypoll", "Anta constituency" = political district in Rajasthan, India (NOT sportswear)
   - "Antalpha Platform" (NASDAQ: ANTA) = financial/crypto company (NOT the sportswear brand)
   - Words containing "anta" as substring (e.g., "Vasundhara", "Santa", "advantage") = NOT the brand
-  - Only ANTA Sports (Chinese sportswear company) articles about shoes, apparel, athletes, or sports sponsorships are valid
+  - Only ANTA Sports (the Chinese sportswear company) is the brand we track. Whether an article about it has substantive content is decided by "Understanding is_sportswear_brand" below.
 - **Vans**: VERY HIGH FALSE POSITIVE RATE - check if referring to VEHICLES:
   - "container vans", "delivery vans", "camper vans", "police vans", "council vans" = vehicles (NOT sportswear)
   - "electric vans", "EV vans", "van fleet", "battery-swapping vans" = electric vehicles (NOT sportswear)
   - "cargo vans", "transit vans", "VW vans", "Ford Transit" = commercial vehicles (NOT sportswear)
   - "ZEV mandate for vans", "CO2 legislation for cars and vans" = automotive policy (NOT sportswear)
   - Any article about GM BrightDrop, Volkswagen ID. Buzz, electric fleets = vehicles (NOT sportswear)
-  - Only Vans (skateboarding/footwear brand) articles about shoes, apparel, skateboarding, or retail are valid
+  - Only Vans (the skateboarding/footwear brand) is the brand we track. Whether an article about it has substantive content is decided by "Understanding is_sportswear_brand" below.
 - **Decathlon**: Check if referring to the SPORTING GOODS RETAILER:
   - "Decathlon Capital Partners", "Decathlon Management" = investment/VC firms (NOT sportswear)
-  - Only Decathlon (French sporting goods retailer) articles about stores, products, or sports equipment are valid
+  - Only Decathlon (the French sporting goods retailer) is the brand we track. Whether an article about it has substantive content is decided by "Understanding is_sportswear_brand" below.
 - **Li-Ning/361 Degrees/Xtep/Peak**: Chinese sportswear brands - verify it's about the apparel company
 
 **Target sportswear brands we are tracking:**
@@ -371,11 +371,11 @@ The `is_sportswear_brand` field indicates whether the article contains **substan
    - Aspiration analogies: "wants to be the Patagonia of baby clothes"
    - The article's SUBJECT is something else; the brand is merely a point of reference
 
-5. **Sale listings, deals roundups, price-drop alerts and shopping guides:** see the Product-article rule below.
+5. **Product articles that give this brand only product names, prices, discounts or links** (sale listings, deals roundups, price-drop alerts, gift guides): see the Product-article rule below.
 
 **Set `is_sportswear_brand: true` when the article HAS substantive content:**
 
-- Product releases, substantive reviews and collaboration launches, per the Product-article rule below (→ true, but no ESG categories apply)
+- Product articles that describe or evaluate the brand's product, per the Product-article rule below (→ true, but no ESG categories apply)
 - Store openings, sponsorships, athlete signings (→ true, but no ESG categories apply)
 - Financial articles **with substantive business commentary or analysis**:
   - "Jim Cramer says Nike CEO is reinventing the company" → true (discusses strategy/management)
@@ -386,17 +386,15 @@ The `is_sportswear_brand` field indicates whether the article contains **substan
   - "Needham downgrades Nike citing brand weakness in North America" → true (analyst gives specific reasoning)
   - "Deckers Racks Up Record Revenue as Significant Global Demand for Ugg and Hoka Continues" → true (discusses business performance with CEO quotes and segment analysis)
 
-**Product-article rule** (the one rule for every product article; such articles never receive ESG categories, see "Product Reviews, Roundups, and Shopping Articles" above). Ask: does the article have substantive content about the brand's products, the kind that would be useful under a future "Product" category?
-- **`is_sportswear_brand: true`** — the article reports on or evaluates the product:
-  - Release and launch announcements, including sneaker drops and roundups of the week's releases ("A Ma Maniére Serves an Air Jordan 4 'Dark Mocha' in This Week's Best Footwear Drops", "New Balance 550 releases in new colorway", a CLOT x adidas release roundup)
-  - Substantive product reviews, where the product is tested or assessed ("Patagonia Nano Puff Hoody review", "I spent 6 months testing the Merrell Moab Speed 2s")
-  - Collaboration launches ("Madhappy x Converse Chuck 70 collab", "Kith x Adidas football collection")
-  - "Best of" roundups that assess the brand's product in substance, not just name it
-- **`is_sportswear_brand: false`** — the article is about buying the product, not about the product or the brand's business:
-  - Sale listings and price-drop alerts ("Skechers slippers 'perfect for cold months' reduced to £19", "Brooks Running shoes: Adrenaline GTS 24 now $20 off")
-  - Deals roundups and sale sections ("REI is blowing out tons of Patagonia gear during this year-end clearance sale", "lululemon 'We Made Too Much' Section February 2026")
-  - Shopping guides, gift guides and promo codes ("Patagonia just added new gear to its New Arrivals section", "Timberland just dropped an epic Gift Guide with a promo code", "Converse Chuck Taylor heart sneakers at DSW for Valentine's Day")
-  - "Best of" lists that only name the product with a price or a link
+**Product-article rule** (the one rule for every product article; such articles never receive ESG categories, see "Product Reviews, Roundups, and Shopping Articles" above). Judge each brand by what the article gives THAT brand, not by the article's genre. Would it be useful under a future "Product" category?
+- **`is_sportswear_brand: true`** — for this brand, the article describes or evaluates a specific product beyond its name, price and link: what the product is, what is new about it, how it performs, or what is releasing and when.
+- **`is_sportswear_brand: false`** — for this brand, the article gives only product names, prices, discounts, links, availability or promo codes.
+- The genre is a hint, not the test. Reviews, release announcements and collaboration launches are usually `true`; sale listings, price-drop alerts, deals roundups and gift guides are usually `false`. Decide by the content:
+  - A release roundup ("A Ma Maniére Serves an Air Jordan 4 'Dark Mocha' in This Week's Best Footwear Drops") is `true` for each brand whose release it describes, and `false` for a brand it only names with a price or a link.
+  - A buying guide that tested the products ("Best running shoes of 2025: we ran 200 miles in each") is `true` for each brand whose product it assesses; a gift guide that lists products with prices ("Holiday gift guide: Best fitness gear") is `false` for a brand it gives only a name, price and link.
+  - A review ("Patagonia Nano Puff Hoody review", "I spent 6 months testing the Merrell Moab Speed 2s") is `true`, including one that also mentions a discount.
+  - A sale listing ("Skechers slippers 'perfect for cold months' reduced to £19", "Brooks Running shoes: Adrenaline GTS 24 now $20 off") or a sale section ("lululemon 'We Made Too Much' Section February 2026") is `false`.
+  - A collaboration launch that describes the product ("Madhappy x Converse Chuck 70 collab", "New Balance 550 releases in new colorway") is `true`.
 
 **Key test for financial articles:** Would this article be useful if we added a "Finance" or "Business News" category?
 

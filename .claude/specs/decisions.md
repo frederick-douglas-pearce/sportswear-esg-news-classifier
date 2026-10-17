@@ -2211,7 +2211,8 @@ labeling stack (labeler, embedder, reranker), and `src/data_collection/` imports
    `EXCLUDED_BY_DEFAULT`, which the export reads, each with an `--include-*` flag. "No sportswear
    brand ESG content" is in the unjudged set: today's pipeline cannot write it (an empty
    `brand_analyses` and an all-non-sportswear reply both return first), and listing it keeps it from
-   ever counting as a judged positive.
+   ever counting as a judged positive. *(Control flow amended by D032, #192: `dispose_reply` has no
+   branch that writes it; the reason stays in the unjudged set.)*
 4. **`fp_classifier` needs the skip to still be the label's writer.** A `false_positive` is
    classifier-only when its latest FP prediction is `skipped_llm` **and** its stored reason equals that
    prediction's `skip_reason`, which is what the pipeline stores on an FP skip. An LLM relabel with the
@@ -2247,7 +2248,8 @@ as `human` (overclaims); a data file for the rulings (`data/` holds run output).
 **Consequences.** The FP export's positive class is now the labeled rows, the judged skips and the
 unattributed skips, plus the human rulings whose ruled status is `skipped` or `labeled`; rulings of
 `false_positive` are negatives. Whether #192's backfill must land before #154 PR2's retrain is read
-from the export's by-source report. The splits read `data/fp_training_data.jsonl`, so the exclusion
+from the export's by-source report. *(Superseded by D031: #154 PR2 waits for #192's backfill
+unconditionally.)* The splits read `data/fp_training_data.jsonl`, so the exclusion
 reaches them only when the export is written there. The registry's recorded production metrics were
 measured before the exclusion, so the first retrain compares like-for-like in #154 PR2, and the
 general rule for a promotion's baseline is #191's.
@@ -2294,9 +2296,17 @@ comes from `articles.labeling_status`, and `brands` is the whole `brands_mention
 - Brand matching is strip plus casefold (`normalize_brand`), with no alias table: a name the reply
   spells differently counts as left out, which fails safe to unjudged. Returned brands that were
   never sent are logged and their verdicts still count.
+- An analysis that sets no `is_sportswear_brand` and has no applicable category states no verdict
+  (the reply model defaults the field to true), so it counts as left out. Changing the default to
+  `None` was rejected: `save_brand_labels` and the migration eval read the field by truthiness.
+  (Added after code review round 1, approved by the human.)
 
 **Consequences.**
 - Per-brand persistence of judged-no-ESG brands waits for the ESG multi-label work.
+- Duplicate brand entries in a reply are not collapsed, as before this decision (#201).
+- `src/migration_eval/compare.py` and `scripts/eval_model_migration.py` keep their two-way outcome;
+  #192 PR2's eval calls `dispose_reply`. Storing the incomplete-reply count in `labeling_runs` is
+  decided in #192 PR2.
 - From merge, replies that are all non-sportswear and leave out a brand are stored as unjudged
   `skipped` instead of `false_positive`, before any prompt promotion. Rows already stored on that
   path keep their status until a relabel.

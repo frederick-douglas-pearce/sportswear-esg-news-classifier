@@ -766,8 +766,47 @@ class TestStoredLabelingReasons:
     def test_empty_brand_analyses(self):
         database = MagicMock()
         pipeline = LabelingPipeline(database=database, labeler=self._labeler_returning([]))
-        pipeline._process_article(self._article(), skip_chunking=True, skip_embedding=True)
+        result = pipeline._process_article(self._article(), skip_chunking=True, skip_embedding=True)
         assert self._stored(database) == [("skipped", models.SKIP_NO_ESG_CONTENT)]
+        # An empty reply leaves out every brand sent, so it counts as incomplete (D032)
+        assert result["incomplete_reply"] is True
+
+    @staticmethod
+    def _sportswear(brand, esg):
+        def label(applies):
+            return CategoryLabel(applies=applies, sentiment=1 if applies else None,
+                                 evidence=["q"] if applies else [])
+        categories = (
+            {"environmental": label(True), "social": label(False),
+             "governance": label(False), "digital_transformation": label(False)}
+            if esg else {}
+        )
+        return BrandAnalysis(brand=brand, is_sportswear_brand=True, categories=categories,
+                             confidence=0.9, reasoning="r")
+
+    def test_labeled_reply_counts_saved_labels_and_flags_a_brand_left_out(self):
+        """v1.11.0 shape: a no-ESG sportswear brand rides along with empty categories."""
+        database = MagicMock()
+        database.save_brand_labels.return_value = [MagicMock(brand="Nike")]
+        labeler = self._labeler_returning([self._sportswear("Nike", True), self._sportswear("Adidas", False)])
+        result = LabelingPipeline(database=database, labeler=labeler)._process_article(
+            self._article(brands_mentioned=["Nike", "Adidas", "Puma"]),
+            skip_chunking=True, skip_embedding=True,
+        )
+        assert self._stored(database) == [("labeled",)]
+        assert result["labeled"] is True
+        assert result["brands_count"] == 1
+        assert result["incomplete_reply"] is True
+
+    def test_dry_run_counts_only_brands_with_a_category(self):
+        labeler = self._labeler_returning([self._sportswear("Nike", True), self._sportswear("Adidas", False)])
+        result = LabelingPipeline(database=MagicMock(), labeler=labeler)._process_article(
+            self._article(brands_mentioned=["Nike", "Adidas"]),
+            dry_run=True, skip_chunking=True, skip_embedding=True,
+        )
+        assert result["labeled"] is True
+        assert result["brands_count"] == 1
+        assert result["incomplete_reply"] is False
 
     def test_no_esg_categories(self):
         database = MagicMock()

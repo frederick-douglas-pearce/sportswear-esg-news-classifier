@@ -991,6 +991,11 @@ class LabelingPipeline:
                 f"Article {article_id}: reply analyzed brands that were not sent "
                 f"{disposition.unsent}"
             )
+        if disposition.unset:
+            logger.warning(
+                f"Article {article_id}: reply set no is_sportswear_brand for "
+                f"{disposition.unset}; counted as left out"
+            )
         if disposition.conflicting:
             logger.warning(
                 f"Article {article_id}: reply judged {disposition.conflicting} both "
@@ -1034,10 +1039,13 @@ class LabelingPipeline:
                 reranker,
             )
 
-        # Step 5: Save labels and evidence
+        # Step 5: Save labels and evidence. save_brand_labels saves only sportswear brands
+        # with an applicable category; from v1.11.0 a labeled reply also carries sportswear
+        # brands with empty categories, which are not counted.
         if dry_run:
+            brands_count = len([a for a in sportswear_brands if a.get_applicable_categories()])
             logger.info(
-                f"[DRY RUN] Would save {len(sportswear_brands)} brand labels "
+                f"[DRY RUN] Would save {brands_count} brand labels "
                 f"for article {article_id}"
             )
             for analysis in sportswear_brands:
@@ -1059,6 +1067,7 @@ class LabelingPipeline:
                     model_version=label_result.model,
                     prompt_version=label_result.prompt_version,
                 )
+                brands_count = len(db_labels)
 
                 # Save evidence for each label
                 for db_label in db_labels:
@@ -1074,7 +1083,7 @@ class LabelingPipeline:
                 )
 
         result["labeled"] = True
-        result["brands_count"] = len(sportswear_brands)
+        result["brands_count"] = brands_count
         return result
 
     def get_stats(self) -> dict[str, Any]:

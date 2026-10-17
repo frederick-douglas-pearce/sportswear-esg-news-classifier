@@ -82,8 +82,8 @@ class LabelingResponse(BaseModel):
 
     brand_analyses: list[BrandAnalysis] = Field(
         description=(
-            "Analysis results per brand. From v1.11.0 every brand sent appears; earlier "
-            "versions omit sportswear brands with no ESG content"
+            "Analysis results per brand. Prompt v1.11.0 asks for every brand sent; earlier "
+            "versions ask the model to omit sportswear brands with no ESG content"
         ),
     )
     article_summary: str = Field(

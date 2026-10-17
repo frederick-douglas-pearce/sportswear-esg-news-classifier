@@ -8,21 +8,30 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 **Prompt v1.11.0 asks for every brand's sportswear judgment, and the pipeline no longer stores a
 partial non-sportswear reply as a false positive (#192 PR1, D032).**
-- `prompts/labeling/v1.11.0/`: every brand sent comes back in `brand_analyses` exactly once, with
-  `is_sportswear_brand` set and, when no ESG category applies, empty `categories`; the brand name is
-  to be used exactly as written. The omit instruction (since v1.8.0) and "(or omit the brand)" are
-  removed. The product/shopping guidance is one Product-article rule: release announcements,
-  substantive reviews and collaboration launches are `true`; sale listings, deals roundups,
-  price-drop alerts and shopping guides are `false`. Registered as a `candidate`; production stays
-  v1.10.0 until #192 PR2's contrastive eval.
+- `prompts/labeling/v1.11.0/`: asks for every brand sent in `brand_analyses` exactly once, with
+  `is_sportswear_brand` set and, when no ESG category applies, empty `categories`, and for the brand
+  name exactly as written. The instruction to omit a brand with no ESG content (present since v1.0.0;
+  v1.8.0's CRITICAL wording) and "(or omit the brand)" are removed. The product/shopping guidance is
+  one Product-article rule, judged per brand: `true` if the article describes or evaluates the
+  brand's product beyond its name, price and link, `false` if it gives the brand only names, prices,
+  discounts, links or promo codes. The Mizuno, ANTA, Vans and Decathlon notes say only which company
+  is the brand. Registered as a `candidate`; production stays v1.10.0 until #192 PR2's contrastive
+  eval.
 - `src/labeling/disposition.py`: `dispose_reply` decides an article's status from the brands sent
   and the reply, under every prompt version. A reply that is all non-sportswear and leaves out a
   sent brand is `skipped` / "Some brands not judged; the rest not sportswear" (new, unjudged in the
   FP export) instead of `false_positive`. Brand names match ignoring case and surrounding space
-  (`normalize_brand`, also used by `LabelingResponse.get_analysis_for_brand`).
+  (`normalize_brand`, also used by `LabelingResponse.get_analysis_for_brand`). An analysis that sets
+  no `is_sportswear_brand` and has no applicable category counts as left out.
 - The unreachable "No sportswear brand ESG content" branch is gone from `pipeline.py`; the constant
-  stays, since stored rows carry it.
-- The run summary prints `Incomplete replies`: replies that left out at least one brand.
+  stays in `UNJUDGED_SKIP_REASONS` so the reason can never count as a judged positive (D030).
+- A labeled article's brand count (`labeling_runs.brands_labeled`, "Brand labels created") counts
+  the labels saved, not every sportswear brand in the reply; `save_brand_labels` no longer warns on
+  a sportswear brand with empty categories.
+- The run summary prints `Incomplete replies`: replies that left out at least one brand sent, an
+  empty reply included. It is not stored.
+- `scripts/fix_label.py statuses` and the review-labels skill no longer describe every `skipped`
+  row as a genuine brand article.
 - `docs/LABELING.md` states the Product-article rule and the reply-disposition table.
 
 ### 2026-10-16: EP usage instructions say EP is on hold

@@ -66,7 +66,8 @@ class TestDisposeReply:
         assert d.omitted == []
 
     def test_all_non_sportswear_with_a_brand_left_out_is_unjudged(self):
-        """Under v1.10.0 a left-out brand is sportswear with no ESG by instruction (A1)."""
+        """The reply does not say what the left-out brand was (D032): under v1.10.0 it may be a
+        sportswear brand with no ESG content, which that version tells the model to omit."""
         d = dispose_reply(["Puma", "Nike"], [_analysis("Puma", sportswear=False)])
         assert (d.status, d.reason) == (SKIPPED, models.SKIP_INCOMPLETE_JUDGMENT)
         assert d.omitted == ["Nike"]
@@ -100,9 +101,65 @@ class TestDisposeReply:
         assert len(d.reason) == 500
 
 
+    def test_one_sportswear_brand_with_esg_labels_the_article(self):
+        """v1.11.0 returns every sportswear brand, most with no ESG category."""
+        d = dispose_reply(["Adidas", "Nike"], [_analysis("Adidas"), _analysis("Nike", esg=True)])
+        assert (d.status, d.reason) == (LABELED, None)
+        assert d.omitted == []
+
+    def test_sportswear_with_empty_categories_is_a_judged_skip(self):
+        """The shape v1.11.0 asks for when no ESG category applies."""
+        nike = BrandAnalysis(
+            brand="Nike", is_sportswear_brand=True, categories={}, confidence=0.9, reasoning="r"
+        )
+        d = dispose_reply(["Nike"], [nike])
+        assert (d.status, d.reason) == (SKIPPED, models.SKIP_NO_ESG_CATEGORIES)
+
+    def test_analysis_without_a_verdict_counts_as_left_out(self):
+        """is_sportswear_brand defaults to True; a parsed entry that never set it is no judgment."""
+        response = LabelingResponse.model_validate({
+            "brand_analyses": [{"brand": "Nike", "categories": {}, "confidence": 0.9, "reasoning": "r"}],
+            "article_summary": "s",
+        })
+        assert response.brand_analyses[0].is_sportswear_brand is True
+        d = dispose_reply(["Nike"], response.brand_analyses)
+        assert (d.status, d.reason) == (SKIPPED, models.SKIP_NO_ESG_CONTENT)
+        assert d.omitted == ["Nike"] and d.unset == ["Nike"]
+
+    def test_analysis_without_a_verdict_beside_a_non_sportswear_one_is_unjudged(self):
+        response = LabelingResponse.model_validate({
+            "brand_analyses": [
+                {"brand": "Puma", "is_sportswear_brand": False, "not_sportswear_reason": "the animal",
+                 "categories": {}, "confidence": 0.9, "reasoning": "r"},
+                {"brand": "Nike", "categories": {}, "confidence": 0.9, "reasoning": "r"},
+            ],
+            "article_summary": "s",
+        })
+        d = dispose_reply(["Puma", "Nike"], response.brand_analyses)
+        assert (d.status, d.reason) == (SKIPPED, models.SKIP_INCOMPLETE_JUDGMENT)
+        assert d.omitted == ["Nike"]
+
+    def test_parsed_analysis_with_a_category_but_no_verdict_still_labels(self):
+        """An applicable category is a verdict, as before #192."""
+        category = {"applies": True, "sentiment": 1, "evidence": ["q"]}
+        empty = {"applies": False, "sentiment": None, "evidence": []}
+        response = LabelingResponse.model_validate({
+            "brand_analyses": [{
+                "brand": "Nike",
+                "categories": {"environmental": category, "social": empty,
+                               "governance": empty, "digital_transformation": empty},
+                "confidence": 0.9, "reasoning": "r",
+            }],
+            "article_summary": "s",
+        })
+        assert dispose_reply(["Nike"], response.brand_analyses).status == LABELED
+
+
 class TestNormalizeBrand:
     def test_strips_and_casefolds(self):
         assert normalize_brand("  ASICS ") == "asics"
+        # casefold, not lower: "ß" folds to "ss"
+        assert normalize_brand("STRASSE") == normalize_brand("straße")
 
     def test_get_analysis_for_brand_uses_it(self):
         response = LabelingResponse(brand_analyses=[_analysis("New Balance ")], article_summary="s")

@@ -160,7 +160,7 @@
     "v1.11.0": {
       "created_at": "2026-10-16T00:00:00Z",
       "commit_message": "Judge every brand's sportswear status and state one product-article rule",
-      "description": "Every brand sent appears in the reply with is_sportswear_brand set; a brand with no applicable ESG category comes back with empty categories instead of being omitted (v1.8.0's omit instruction and system_prompt's '(or omit the brand)' are removed). The product/shopping guidance is one rule: release announcements, substantive reviews and collaboration launches are is_sportswear_brand true; sale listings, deals roundups, price-drop alerts and shopping guides are false. Same model settings as v1.10.0. Candidate, not production: the contrastive eval and the production flip are #192 PR2.",
+      "description": "Asks for every brand sent in the reply with is_sportswear_brand set, and for empty categories when no ESG category applies, instead of omitting the brand (v1.8.0's omit instruction and system_prompt's '(or omit the brand)' are removed). The product/shopping guidance is one rule judged per brand: is_sportswear_brand true if the article describes or evaluates the brand's product beyond its name, price and link; false if it gives the brand only names, prices, discounts, links or promo codes. The Mizuno, ANTA, Vans and Decathlon notes say only which company is the brand. Same model settings as v1.10.0. Candidate, not production: the contrastive eval and the production flip are #192 PR2.",
       "model_recommendations": {
         "model": "claude-haiku-4-5-20251001",
         "max_tokens": 2000,

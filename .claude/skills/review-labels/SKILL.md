@@ -299,7 +299,7 @@ After running the queries:
 
 3. **False Positives**: Spot check using the content preview. Remember:
    - `false_positive` = not actually about the sportswear brand (e.g., "Vans" = vehicles)
-   - `skipped` = genuinely about the brand, but no ESG content (e.g., product reviews, analyst articles)
+   - `skipped` = no ESG content for a sportswear brand (e.g., product reviews, analyst articles), OR the reply did not settle whether the article has a sportswear brand: check the stored reason (`labeling_error`). The reasons in `UNJUDGED_SKIP_REASONS` (`src/data_collection/models.py`), e.g. "No ESG content found" and "Some brands not judged; the rest not sportswear", are not evidence that the article is about the brand
    - If an article IS about the brand but was marked `false_positive`, it should be `skipped`
 
 4. **Substantive Analyst Articles**: Per [docs/LABELING.md](../../docs/LABELING.md#stock-article-classification) v1.7.0:

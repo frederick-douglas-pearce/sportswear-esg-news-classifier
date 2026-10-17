@@ -1,10 +1,13 @@
 """Tests for the labeling prompt versions in prompts/labeling/ (#192)."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
+from src.labeling.disposition import LABELED, dispose_reply
+from src.labeling.models import LabelingResponse
 from src.labeling.prompt_manager import PromptManager
 
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts" / "labeling"
@@ -48,28 +51,69 @@ class TestV1_11_0:
         assert '"categories": {}' in user
 
     def test_no_omission_instruction(self, manager):
+        """No line in either prompt tells the model to leave a brand out of the reply."""
         system, user = self._prompts(manager)
-        for phrase in (
-            "DO NOT include that brand",
-            "should be omitted entirely",
-            "Only include brands that have at least one category",
-            "provide ESG analysis only for confirmed sportswear brands",
-        ):
-            assert phrase not in user
-        assert "or omit the brand" not in system
+        omission = re.compile(
+            r"\bomit|\bleave\b.*\bout\b|\bleft out\b|do not include|only include|\bexclude",
+            re.IGNORECASE,
+        )
+        allowed = {"Never leave a brand out of the reply."}
+        hits = []
+        for line in (system + "\n" + user).splitlines():
+            if omission.search(line):
+                rest = line
+                for phrase in allowed:
+                    rest = rest.replace(phrase, "")
+                if omission.search(rest):
+                    hits.append(line.strip())
+        assert hits == []
 
     def test_every_brand_is_judged(self, manager):
         _, user = self._prompts(manager)
         assert "must appear in `brand_analyses` exactly once" in user
         assert "exactly as it is written" in user
 
+    def test_json_example_parses_and_is_disposed_as_labeled(self, manager):
+        """The reply shape the prompt shows is one the parser and dispose_reply accept."""
+        _, user = self._prompts(manager)
+        example = json.loads(re.search(r"```json\n(.*?)\n```", user, re.DOTALL).group(1))
+        response = LabelingResponse.model_validate(example)
+        no_esg = [a for a in response.brand_analyses if a.is_sportswear_brand and not a.categories]
+        assert no_esg, "the example shows a sportswear brand with empty categories"
+        assert all("is_sportswear_brand" in a.model_fields_set for a in response.brand_analyses)
+        sent = [a.brand for a in response.brand_analyses]
+        assert dispose_reply(sent, response.brand_analyses).status == LABELED
+
     def test_one_product_article_rule(self, manager):
         system, _ = self._prompts(manager)
         assert system.count("**Product-article rule** (the one rule for every product article") == 1
         assert "Product announcements, reviews, sales" not in system
-        assert "**Shopping/deals/product promotion articles** → `is_sportswear_brand: false`" not in system
+        assert "Shopping/deals/product promotion articles" not in system
+        # judged per brand by content, not by genre
+        assert "Judge each brand by what the article gives THAT brand" in system
+        assert "beyond its name, price and link" in system
 
-    def test_v1_10_0_is_unchanged_by_this_version(self, manager):
-        """Production still carries v1.8.0's omit instruction until PR2 flips the pointer."""
+    def test_brand_notes_name_the_company_only(self, manager):
+        """The Mizuno, ANTA, Vans and Decathlon notes no longer list the topics that count."""
+        system, _ = self._prompts(manager)
+        assert re.search(r"articles about [^\n]* are valid", system) is None
+        assert system.count("is the brand we track.") == 4
+
+    def test_held_out_eval_case_is_not_a_prompt_example(self, manager):
+        """#192 PR2 evaluates the CLOT/adidas release roundup, so the prompt must not quote it."""
+        system, user = self._prompts(manager)
+        assert "CLOT" not in system + user
+
+    def test_labeling_doc_states_the_same_rule(self):
+        doc = (PROMPTS_DIR.parents[1] / "docs" / "LABELING.md").read_text()
+        rule = doc[doc.index("**Product-article rule** (prompt v1.11.0"):]
+        assert "Judge each brand by what the article gives that brand" in rule
+        assert "beyond its name, price and link" in rule
+        assert "only product names, prices, discounts, links, availability or promo codes" in rule
+
+
+class TestV1_10_0:
+    def test_v1_10_0_still_has_the_omit_instruction(self, manager):
+        """Production keeps v1.8.0's omit wording until #192 PR2 promotes v1.11.0."""
         user = manager.get_formatted_user_prompt(version="v1.10.0", brands="Nike")
         assert "DO NOT include that brand" in user
