@@ -22,6 +22,17 @@ RULE_FALSE_RETAIL = (
 )
 
 
+def _bullet(lines, marker):
+    """The top-level bullet holding marker, with its continuation and indented sub-bullets."""
+    start = next(i for i, line in enumerate(lines) if marker in line)
+    block = [lines[start]]
+    for line in lines[start + 1:]:
+        if not line.strip() or line.startswith("- "):
+            break
+        block.append(line)
+    return "\n".join(block)
+
+
 @pytest.fixture
 def manager():
     return PromptManager(prompts_dir=PROMPTS_DIR)
@@ -149,11 +160,11 @@ class TestV1_11_0:
         for text in (system, doc):
             lines = text.splitlines()
             true_side = next(line for line in lines if "`is_sportswear_brand: true`" in line)
-            false_side = next(line for line in lines if "`is_sportswear_brand: false`" in line)
             assert '"goes on sale November 14" for a product not sold before' in true_side
+            false_side = _bullet(lines, "`is_sportswear_brand: false`")
             assert "the dates a discount or sale event runs" in false_side
             for release_word in ("availab", "launch", "release date", "on sale", "on-sale"):
-                assert release_word not in false_side
+                assert release_word not in false_side.casefold()
 
 
 class TestV1_10_0:
