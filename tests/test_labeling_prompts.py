@@ -134,10 +134,10 @@ class TestV1_11_0:
         """The Stock Article section defers to the Product-article rule instead of a genre rule."""
         doc = (PROMPTS_DIR.parents[1] / "docs" / "LABELING.md").read_text()
         system, _ = self._prompts(manager)
-        assert "**Shopping/deals**" not in doc
+        assert re.search(r"(?i)\*\*shopping/deals", doc + system) is None
         assert "| Shopping/deals |" not in doc
         assert "product promotion, not business news" not in doc + system
-        assert '| Release announcement | "Reebok Angel Reese 1 releases November 14" | Yes |' in doc
+        assert '| Release announcement | "Reebok Angel Reese 1 releases November 14" | Yes | `skipped` |' in doc
 
     def test_release_dates_are_on_the_true_side_in_prompt_and_doc(self, manager):
         """A first sale date is a release (true); the dates a discount runs are retail (false)."""
@@ -152,7 +152,7 @@ class TestV1_11_0:
             false_side = next(line for line in lines if "`is_sportswear_brand: false`" in line)
             assert '"goes on sale November 14" for a product not sold before' in true_side
             assert "the dates a discount or sale event runs" in false_side
-            for release_word in ("availab", "launch", "release date"):
+            for release_word in ("availab", "launch", "release date", "on sale", "on-sale"):
                 assert release_word not in false_side
 
 
