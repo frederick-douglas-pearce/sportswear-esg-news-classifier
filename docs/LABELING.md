@@ -228,7 +228,7 @@ Auto-generated or template content with no human analysis:
 ### is_sportswear_brand Policy
 
 `is_sportswear_brand` is about **substantive content**, not just identity:
-- `true` → Article has substantive content (products, business news, strategy, analyst commentary **with reasoning**)
+- `true` → Article has substantive content (product descriptions, reviews or releases per the Product-article rule below, business news, strategy, analyst commentary **with reasoning**)
 - `false` → Brand refers to something else OR pure stock metrics/template content only
 
 **The critical distinction:** Does the article contain **human-written analysis or commentary** about the brand's business? Or is it **auto-generated/template content** that just plugs financial data into a standard format? Template content = false positive.
@@ -236,8 +236,8 @@ Auto-generated or template content with no human analysis:
 **Finance Category Test:** Would this be useful with a "Finance" category? YES → `is_sportswear_brand: true`. Just raw Yahoo Finance metrics or template 13F data → `false`.
 
 **Product-article rule** (prompt v1.11.0, #192): one rule for every product article, built like the Finance Category Test above. Judge each brand by what the article gives that brand, not by the article's genre: would it be useful under a future "Product" category? Product articles never receive ESG categories either way.
-- `is_sportswear_brand: true` → for this brand, the article describes or evaluates a specific product, or reports its release (what it is made of or does, what is new, how it performs, or that it is releasing or launching and when). A release date counts on its own, including one given as "available from" a date
-- `is_sportswear_brand: false` → for this brand, the article gives only retail details: product names, prices, discounts, links, stock or where to buy, or promo codes. A restock, a sale date or a one-line sales blurb ("perfect for cold months") is a retail detail, not a release or a description
+- `is_sportswear_brand: true` → for this brand, the article describes or evaluates a specific product, or reports its release (what it is made of or does, what is new, how it performs, or that it is releasing or launching and when). A release date counts on its own, however it is phrased: "releases November 14", "available from November 14" or "goes on sale November 14" for a product not sold before
+- `is_sportswear_brand: false` → for this brand, the article gives only retail details: product names, prices, discounts, links, stock or where to buy, or promo codes. A restock, the dates a discount or sale event runs ("20% off until Sunday"), or a one-line sales blurb ("perfect for cold months") is a retail detail, not a release or a description
 
 The genre is a hint, not the test: reviews, release announcements and collaboration launches are usually `true`, and sale listings, price-drop alerts, deals roundups and gift guides usually `false`. A release roundup is `true` for each brand whose release it describes and `false` for a brand it only names with a price or a link; a buying guide that tested the products is `true` for each brand whose product it assesses; a review that also mentions a discount is `true`; a release announcement is `true` even when it gives only the product, the date and a price.
 
