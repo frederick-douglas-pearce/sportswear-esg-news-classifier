@@ -44,7 +44,9 @@ VALID_LABELING_STATUSES = [
 # Stored rows can only be matched by this literal text, so never reword one (#154, #192).
 SKIP_INSUFFICIENT_CONTENT = "Insufficient content"
 SKIP_NO_BRANDS = "No brands mentioned"
-SKIP_NO_ESG_CONTENT = "No ESG content found"  # the LLM returned an empty brand_analyses
+# The reply has no brand analysis that states a verdict: an empty brand_analyses, or entries
+# that set neither is_sportswear_brand nor an applicable category (#192)
+SKIP_NO_ESG_CONTENT = "No ESG content found"
 SKIP_NO_SPORTSWEAR_BRAND = "No sportswear brand ESG content"
 SKIP_NO_ESG_CATEGORIES = "No ESG categories apply to sportswear brands"
 # Every brand the reply judged is not sportswear, but it left out a brand that was sent, so

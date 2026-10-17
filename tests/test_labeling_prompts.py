@@ -11,6 +11,12 @@ from src.labeling.models import LabelingResponse
 from src.labeling.prompt_manager import PromptManager
 
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts" / "labeling"
+# Both sides of the Product-article rule, worded the same in the prompt and docs/LABELING.md
+RULE_TRUE_RELEASE = 'A release date counts on its own, including one given as "available from" a date'
+RULE_FALSE_RETAIL = (
+    "only retail details: product names, prices, discounts, links, stock or where to buy, "
+    "or promo codes"
+)
 
 
 @pytest.fixture
@@ -91,7 +97,20 @@ class TestV1_11_0:
         assert "Shopping/deals/product promotion articles" not in system
         # judged per brand by content, not by genre
         assert "Judge each brand by what the article gives THAT brand" in system
-        assert "beyond its name, price and link" in system
+        assert RULE_TRUE_RELEASE in system
+        assert RULE_FALSE_RETAIL in system
+
+    def test_a_bare_release_is_on_the_true_side_only(self, manager):
+        """A release date is not a retail detail, so the two sides do not overlap on it."""
+        system, _ = self._prompts(manager)
+        rule = system[system.index("**Product-article rule** (the one rule"):]
+        rule = rule[:rule.index("**Key test for financial articles:**")]
+        false_side = next(line for line in rule.splitlines() if "`is_sportswear_brand: false`" in line)
+        retail_list = false_side[false_side.index("only retail details"):].split(".")[0]
+        assert "availability" not in retail_list and "releas" not in retail_list
+        assert "Reebok Angel Reese 1 releases November 14" in rule
+        launch = next(line for line in rule.splitlines() if "A collaboration launch" in line)
+        assert "New Balance 550" not in launch
 
     def test_brand_notes_name_the_company_only(self, manager):
         """The Mizuno, ANTA, Vans and Decathlon notes no longer list the topics that count."""
@@ -108,8 +127,14 @@ class TestV1_11_0:
         doc = (PROMPTS_DIR.parents[1] / "docs" / "LABELING.md").read_text()
         rule = doc[doc.index("**Product-article rule** (prompt v1.11.0"):]
         assert "Judge each brand by what the article gives that brand" in rule
-        assert "beyond its name, price and link" in rule
-        assert "only product names, prices, discounts, links, availability or promo codes" in rule
+        assert RULE_TRUE_RELEASE in rule
+        assert RULE_FALSE_RETAIL in rule
+
+    def test_labeling_doc_has_no_genre_rule_for_shopping(self):
+        """The Stock Article section defers to the Product-article rule instead of a genre rule."""
+        doc = (PROMPTS_DIR.parents[1] / "docs" / "LABELING.md").read_text()
+        assert "**Shopping/deals**" not in doc
+        assert "| Shopping/deals |" not in doc
 
 
 class TestV1_10_0:

@@ -205,7 +205,7 @@ Auto-generated or template content with no human analysis:
 - **Boilerplate analyst roundups**: "Columbia Sportswear Receives Consensus Rating of Hold" — rating lists without reasoning
 - **Stock comparisons**: "Oxford Industries vs. Under Armour Head to Head" — side-by-side financial metrics
 - **Return calculators**: "$100 Invested In Deckers 20 Years Ago" — just math
-- **Shopping/deals**: "Skechers slippers reduced to £19" — product promotion, not business news
+- **Sale listings**: "Skechers slippers reduced to £19" — `false_positive` only when the article gives every brand nothing but retail details; a product article is decided per brand by the Product-article rule below, not by its genre
 
 **Telltale signs of template articles:** "Get Free Report", "according to its most recent 13F filing", "200-day moving average of $X", "Several other research analysts also recently issued reports", "shares of the footwear maker". Sources like MarketBeat, MarketScreener, HoldingsChannel, tickerreport.com, themarketsdaily.com.
 
@@ -218,7 +218,8 @@ Auto-generated or template content with no human analysis:
 | Institutional 13F | "Vontobel Holding Boosts Position in Under Armour" | No | `false_positive` |
 | Boilerplate ratings | "Columbia Sportswear Receives Consensus PT of $60.50" | No | `false_positive` |
 | Stock comparison | "Reviewing Victoria's Secret & Allbirds" (just metrics) | No | `false_positive` |
-| Shopping/deals | "Patagonia winter sale deals — 8 picks" | No | `false_positive` |
+| Sale listing | "Skechers slippers reduced to £19" (name, price and link only) | No | `false_positive` |
+| Release announcement | "Reebok Angel Reese 1 releases November 14" | Yes | `skipped` |
 | Analyst with reasoning | "Needham downgrades Nike citing brand weakness" | Yes | `skipped` |
 | Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | Yes | `skipped` |
 | Investment thesis | "Sinking 48%, Is Lululemon a Buying Opportunity?" | Yes | `skipped` |
@@ -235,10 +236,10 @@ Auto-generated or template content with no human analysis:
 **Finance Category Test:** Would this be useful with a "Finance" category? YES → `is_sportswear_brand: true`. Just raw Yahoo Finance metrics or template 13F data → `false`.
 
 **Product-article rule** (prompt v1.11.0, #192): one rule for every product article, built like the Finance Category Test above. Judge each brand by what the article gives that brand, not by the article's genre: would it be useful under a future "Product" category? Product articles never receive ESG categories either way.
-- `is_sportswear_brand: true` → for this brand, the article describes or evaluates a specific product beyond its name, price and link (what it is, what is new, how it performs, what is releasing and when)
-- `is_sportswear_brand: false` → for this brand, the article gives only product names, prices, discounts, links, availability or promo codes
+- `is_sportswear_brand: true` → for this brand, the article describes or evaluates a specific product, or reports its release (what it is made of or does, what is new, how it performs, or that it is releasing or launching and when). A release date counts on its own, including one given as "available from" a date
+- `is_sportswear_brand: false` → for this brand, the article gives only retail details: product names, prices, discounts, links, stock or where to buy, or promo codes. A restock, a sale date or a one-line sales blurb ("perfect for cold months") is a retail detail, not a release or a description
 
-The genre is a hint, not the test: reviews, release announcements and collaboration launches are usually `true`, and sale listings, price-drop alerts, deals roundups and gift guides usually `false`. A release roundup is `true` for each brand whose release it describes and `false` for a brand it only names with a price or a link; a buying guide that tested the products is `true` for each brand whose product it assesses; a review that also mentions a discount is `true`.
+The genre is a hint, not the test: reviews, release announcements and collaboration launches are usually `true`, and sale listings, price-drop alerts, deals roundups and gift guides usually `false`. A release roundup is `true` for each brand whose release it describes and `false` for a brand it only names with a price or a link; a buying guide that tested the products is `true` for each brand whose product it assesses; a review that also mentions a discount is `true`; a release announcement is `true` even when it gives only the product, the date and a price.
 
 v1.7.0 through v1.10.0 state both "shopping/deals → `false`" and "product announcements, reviews, sales → `true`" (v1.0.0 to v1.6.0 state only the second); v1.11.0 replaces both with this rule. v1.11.0 also rewords the brand-specific notes for Mizuno, ANTA, Vans and Decathlon, which listed the article topics that count ("Only ANTA Sports articles about shoes, apparel, athletes, or sports sponsorships are valid"), so that they say only which company is the brand and leave substantive content to the rules above.
 
@@ -250,7 +251,7 @@ The article's status is decided by `dispose_reply` (`src/labeling/disposition.py
 
 | Reply | Status / reason | Judged? |
 |---|---|---|
-| No analyses | `skipped` / "No ESG content found" | no |
+| No analyses, or none that states a verdict | `skipped` / "No ESG content found" | no |
 | A sportswear brand with an applicable category | `labeled` | yes |
 | Sportswear brands, none with an applicable category | `skipped` / "No ESG categories apply to sportswear brands" | yes |
 | Only non-sportswear brands, a sent brand left out | `skipped` / "Some brands not judged; the rest not sportswear" | no |

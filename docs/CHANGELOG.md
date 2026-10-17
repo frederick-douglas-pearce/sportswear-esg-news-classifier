@@ -13,10 +13,9 @@ partial non-sportswear reply as a false positive (#192 PR1, D032).**
   name exactly as written. The instruction to omit a brand with no ESG content (present since v1.0.0;
   v1.8.0's CRITICAL wording) and "(or omit the brand)" are removed. The product/shopping guidance is
   one Product-article rule, judged per brand: `true` if the article describes or evaluates the
-  brand's product beyond its name, price and link, `false` if it gives the brand only names, prices,
-  discounts, links or promo codes. The Mizuno, ANTA, Vans and Decathlon notes say only which company
-  is the brand. Registered as a `candidate`; production stays v1.10.0 until #192 PR2's contrastive
-  eval.
+  brand's product or reports its release, `false` if it gives the brand only retail details. The
+  Mizuno, ANTA, Vans and Decathlon notes say only which company is the brand. Registered as a
+  `candidate`; production stays v1.10.0 until #192 PR2's contrastive eval.
 - `src/labeling/disposition.py`: `dispose_reply` decides an article's status from the brands sent
   and the reply, under every prompt version. A reply that is all non-sportswear and leaves out a
   sent brand is `skipped` / "Some brands not judged; the rest not sportswear" (new, unjudged in the

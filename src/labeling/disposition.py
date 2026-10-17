@@ -53,7 +53,7 @@ def _states_a_verdict(analysis: BrandAnalysis) -> bool:
 def dispose_reply(sent_brands: list[str], analyses: list[BrandAnalysis]) -> ReplyDisposition:
     """Decide an article's status from the brands sent and the analyses returned.
 
-    - No analyses: `skipped` / SKIP_NO_ESG_CONTENT (unjudged).
+    - No analyses, or none that states a verdict: `skipped` / SKIP_NO_ESG_CONTENT (unjudged).
     - A sportswear brand with an applicable category: `labeled`.
     - Sportswear brands, none with an applicable category: `skipped` / SKIP_NO_ESG_CATEGORIES.
     - Only non-sportswear brands, and a sent brand left out: `skipped` /
