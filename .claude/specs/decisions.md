@@ -2251,3 +2251,53 @@ from the export's by-source report. The splits read `data/fp_training_data.jsonl
 reaches them only when the export is written there. The registry's recorded production metrics were
 measured before the exclusion, so the first retrain compares like-for-like in #154 PR2, and the
 general rule for a promotion's baseline is #191's.
+
+## D031: #154 PR2's Retrain Waits for #192's Backfill, Not for a Positive-Count Test (#154, #192)
+
+**Date:** 2026-10-16 · **Status:** accepted (human decision, after a pm consult) · **Issues:** #154, #192, #152, #189, #172 · **Supersedes:** the sentence in D030's Consequences beginning "Whether #192's backfill must land before #154 PR2's retrain"
+
+**Context.** D030 left the ordering of #192's backfill against #154 PR2's retrain to the export's
+by-source report: if excluding unjudged skips left too few positives, the backfill would land first.
+Unjudged skips are the "sportswear, no ESG" part of the positive class, so excluding them changes the
+class's composition whether or not the remaining count looks adequate.
+
+**Decision.** #154 PR2's retrain waits for #192's backfill unconditionally. PR2 promotes, so it also
+waits for #189 and for #172 (D028). #192 is next in #152's build order (2026-10-16 amendment).
+
+**Alternatives considered.** Keep a measured test, keyed on the unjudged share of would-be positives
+with a human-set cut-off. Not taken: the slice's absence is the concern, and a cut-off would add a
+number to maintain without changing the likely outcome.
+
+**Consequences.** PR2 trains once, on re-judged data, and its like-for-like comparison is taken
+once. The D028 freeze on FP promotion lifts no later than before: #189 can be built while #192's
+backfill runs.
+
+## D032: An Omitted Brand Is Unjudged; Reply Disposition Is Article-Level, Prompt-Independent and Needs No Schema Change (#192 PR1)
+
+**Date:** 2026-10-16 · **Status:** accepted (architect-reviewed; approved by the human at #192's plan gate) · **Issues:** #192, #154, #182
+
+**Context.** #192 AC1 asks that the stored record distinguish a sportswear brand judged to have
+no ESG content from a brand nobody judged. The FP export trains per article: `is_sportswear`
+comes from `articles.labeling_status`, and `brands` is the whole `brands_mentioned` list.
+
+**Decision.**
+- The distinction lives in the article's skip-reason literal. It needs no per-brand records and
+  no migration.
+- A negative needs every sent brand judged non-sportswear. A reply that is all non-sportswear and
+  leaves out a sent brand is `skipped` with `SKIP_INCOMPLETE_JUDGMENT` ("Some brands not judged;
+  the rest not sportswear"), which is in `UNJUDGED_SKIP_REASONS`.
+- The disposition is one pure function, `dispose_reply` in `src/labeling/disposition.py`, shared
+  with #192 PR2's eval.
+- It applies under every prompt version, because v1.10.0 itself instructs the model to omit
+  sportswear brands with no ESG content. A `judges_every_brand` gate on the prompt config was
+  considered and not taken.
+- Brand matching is strip plus casefold (`normalize_brand`), with no alias table: a name the reply
+  spells differently counts as left out, which fails safe to unjudged. Returned brands that were
+  never sent are logged and their verdicts still count.
+
+**Consequences.**
+- Per-brand persistence of judged-no-ESG brands waits for the ESG multi-label work.
+- From merge, replies that are all non-sportswear and leave out a brand are stored as unjudged
+  `skipped` instead of `false_positive`, before any prompt promotion. Rows already stored on that
+  path keep their status until a relabel.
+- #192 takes prompt version v1.11.0; the prompt changes planned under #122 move to v1.12.0.

@@ -786,6 +786,58 @@ class TestStoredLabelingReasons:
         pipeline._process_article(self._article(), skip_chunking=True, skip_embedding=True)
         assert self._stored(database) == [("skipped", models.SKIP_NO_ESG_CATEGORIES)]
 
+    @staticmethod
+    def _not_sportswear(brand):
+        return BrandAnalysis(
+            brand=brand,
+            is_sportswear_brand=False,
+            not_sportswear_reason="the animal",
+            categories={},
+            confidence=0.9,
+            reasoning="r",
+        )
+
+    def test_brand_left_out_of_a_non_sportswear_reply_is_unjudged(self):
+        """The pipeline stores dispose_reply's decision (#192, D032)."""
+        database = MagicMock()
+        labeler = self._labeler_returning([self._not_sportswear("Puma")])
+        result = LabelingPipeline(database=database, labeler=labeler)._process_article(
+            self._article(brands_mentioned=["Puma", "Nike"]), skip_chunking=True, skip_embedding=True
+        )
+        assert self._stored(database) == [("skipped", models.SKIP_INCOMPLETE_JUDGMENT)]
+        assert result["skipped"] is True and result["false_positive"] is False
+        assert result["incomplete_reply"] is True
+
+    def test_non_sportswear_reply_covering_every_brand_is_false_positive(self):
+        database = MagicMock()
+        labeler = self._labeler_returning([self._not_sportswear("Puma")])
+        result = LabelingPipeline(database=database, labeler=labeler)._process_article(
+            self._article(brands_mentioned=["Puma"]), skip_chunking=True, skip_embedding=True
+        )
+        assert self._stored(database) == [("false_positive", "Puma: the animal")]
+        assert result["false_positive"] is True
+        assert result["incomplete_reply"] is False
+
+    def test_incomplete_replies_are_counted(self):
+        results = [
+            {"labeled": False, "skipped": True, "incomplete_reply": True},
+            {"labeled": True, "skipped": False, "brands_count": 1, "incomplete_reply": True},
+            {"labeled": False, "skipped": True, "incomplete_reply": False},
+        ]
+        articles = [{"id": uuid4()} for _ in results]
+        database = MagicMock()
+        database.get_articles_pending_labeling.return_value = []
+        pipeline = LabelingPipeline(database=database)
+        with patch("src.labeling.pipeline.db"), \
+             patch.object(pipeline, "_ensure_labeler"), \
+             patch.object(pipeline, "_deduplicate_by_title", return_value=(articles, [])), \
+             patch.object(pipeline, "_compute_novelty_batch", return_value={}), \
+             patch.object(pipeline, "_run_fp_prefilter_batch", return_value={}), \
+             patch.object(pipeline, "_process_article", side_effect=results):
+            stats = pipeline.label_articles(dry_run=True)
+        assert stats.incomplete_replies == 2
+        assert LabelingStats().incomplete_replies == 0
+
     def test_fp_skip_stores_the_predictions_own_reason(self):
         """The export recognizes a classifier-only negative by this equality."""
         database = MagicMock()

@@ -209,11 +209,11 @@ SQL query examples in `queries/` folder: `collection_queries.sql`, `labeling_que
 ```
 prompts/labeling/
 ├── registry.json          # Version registry with metadata
-├── v1.0.0/ through v1.8.0/
+├── v1.0.0/ through v1.11.0/
     ├── config.json, system_prompt.txt, user_prompt.txt
 ```
 
-**To update prompts:** Create new version directory → Update files → Update registry.json → Update `src/labeling/config.py` (runtime prompt)
+**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.10.0; v1.11.0 is a candidate (#192)
 
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
@@ -496,6 +496,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-10-16**: The labeling prompt judges every brand (#192 PR1, D032). Prompt v1.11.0 (registered as a candidate; production stays v1.10.0 until #192 PR2's eval) asks for every brand sent with `is_sportswear_brand` set, empty `categories` when no ESG category applies, and states one Product-article rule (releases, substantive reviews and collab launches `true`; sale listings, deals roundups and shopping guides `false`). Under every prompt version, `dispose_reply` (`src/labeling/disposition.py`) decides the article's status; a reply that is all non-sportswear and leaves out a sent brand is now `skipped` / "Some brands not judged; the rest not sportswear" (unjudged in the FP export) instead of `false_positive`. The run summary prints `Incomplete replies`
 - **2026-10-16**: EP usage instructions say EP is on hold (#185, after #180). The README diagrams, checklist and Classifier Deployment section, the `ep`/`all` deploy options in `.github/DEPLOYMENT_SETUP.md`, `docs/ML_ZOOMCAMP_GUIDE.md` and `scripts/deploy_cloudrun.sh`, and the EP examples in `Dockerfile`, `scripts/predict.py`, `scripts/train.py`, `prompts/workflow_learning/project_context.md`, `docs/DEPLOYMENT.md` and the ep3 notebook's Next Steps cell now say EP is on hold. Images build from the working tree, so with ep3's output in `models/` an EP build or `deploy_cloudrun.sh ep` uses an EP model that is not registered (`docs/MLOPS.md`). No behavior change
 - **2026-10-15**: The FP training export records where each label came from and leaves out labels nobody but the classifier decided (#154 PR1, D030). `label_source` is derived at export time in `src/data_collection/provenance.py` (`llm`, `pre_classifier`, `human`, `unattributed`, plus the default-excluded `fp_classifier`, `unjudged` and `rule`). The export excludes classifier-only negatives (latest FP prediction a skip, stored reason still that skip's), skips that never judged sportswear status, and `cleanup_false_positives.py`'s keyword-sweep negatives, with one `--include-*` flag per cohort and an opt-in `--attested-before` tier. The exclusion shifts the class balance; the export prints what it excluded and both classes by source. Rows are ordered by article id so splits are reproducible. Skip-reason and FP action strings are named constants in `src/data_collection/models.py`, shared with `pipeline.py`. The human rulings from #182 are a code list until #143's audit log; D-9.3's confirmed-sample carve-back moved to #146. The registry's production F2 predates the exclusion, so #154 PR2 (retrain, still open) compares like-for-like
 - **2026-10-09**: Puma label audit for the FP training set (#182). `notebooks/fp_label_audit_puma.ipynb` is a read-only triage of Puma-brand training rows in both directions, with policy-correct negatives (template stock articles, another meaning of the name) set aside. Human-ruled corrections are applied outside git and recorded on #182. Root cause found: a "no ESG" reply never judges sportswear status, but the FP export counts it as a positive; #154 PR1 (open) is to exclude such rows, and #192 (open) to fix the prompt

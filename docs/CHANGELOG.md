@@ -4,6 +4,27 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-16: The labeling prompt judges every brand; a reply that leaves one out is unjudged
+
+**Prompt v1.11.0 asks for every brand's sportswear judgment, and the pipeline no longer stores a
+partial non-sportswear reply as a false positive (#192 PR1, D032).**
+- `prompts/labeling/v1.11.0/`: every brand sent comes back in `brand_analyses` exactly once, with
+  `is_sportswear_brand` set and, when no ESG category applies, empty `categories`; the brand name is
+  to be used exactly as written. The omit instruction (since v1.8.0) and "(or omit the brand)" are
+  removed. The product/shopping guidance is one Product-article rule: release announcements,
+  substantive reviews and collaboration launches are `true`; sale listings, deals roundups,
+  price-drop alerts and shopping guides are `false`. Registered as a `candidate`; production stays
+  v1.10.0 until #192 PR2's contrastive eval.
+- `src/labeling/disposition.py`: `dispose_reply` decides an article's status from the brands sent
+  and the reply, under every prompt version. A reply that is all non-sportswear and leaves out a
+  sent brand is `skipped` / "Some brands not judged; the rest not sportswear" (new, unjudged in the
+  FP export) instead of `false_positive`. Brand names match ignoring case and surrounding space
+  (`normalize_brand`, also used by `LabelingResponse.get_analysis_for_brand`).
+- The unreachable "No sportswear brand ESG content" branch is gone from `pipeline.py`; the constant
+  stays, since stored rows carry it.
+- The run summary prints `Incomplete replies`: replies that left out at least one brand.
+- `docs/LABELING.md` states the Product-article rule and the reply-disposition table.
+
 ### 2026-10-16: EP usage instructions say EP is on hold
 
 **Instructions that still described EP as deployed or deployable now say it is on hold (#185, after

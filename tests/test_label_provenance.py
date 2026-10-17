@@ -54,6 +54,7 @@ class TestStoredLiterals:
         assert models.SKIP_NO_ESG_CONTENT == "No ESG content found"
         assert models.SKIP_NO_SPORTSWEAR_BRAND == "No sportswear brand ESG content"
         assert models.SKIP_NO_ESG_CATEGORIES == "No ESG categories apply to sportswear brands"
+        assert models.SKIP_INCOMPLETE_JUDGMENT == "Some brands not judged; the rest not sportswear"
 
     def test_unjudged_and_judged_sets(self):
         assert models.UNJUDGED_SKIP_REASONS == {
@@ -61,6 +62,7 @@ class TestStoredLiterals:
             "No brands mentioned",
             "No ESG content found",
             "No sportswear brand ESG content",
+            "Some brands not judged; the rest not sportswear",
         }
         assert models.JUDGED_SKIP_REASONS == {"No ESG categories apply to sportswear brands"}
 
@@ -105,6 +107,7 @@ class TestDeriveLabelSource:
             ("skipped", "Insufficient content", None, None, UNJUDGED),
             ("skipped", "No brands mentioned", None, None, UNJUDGED),
             ("skipped", "No sportswear brand ESG content", "continued_to_llm", None, UNJUDGED),
+            ("skipped", "Some brands not judged; the rest not sportswear", "continued_to_llm", None, UNJUDGED),
             ("skipped", "No ESG categories apply to sportswear brands", "continued_to_llm", None, LLM),
             ("skipped", "No ESG categories apply to sportswear brands", None, None, PRE_CLASSIFIER),
             ("skipped", None, "continued_to_llm", None, UNATTRIBUTED),

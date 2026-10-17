@@ -133,7 +133,7 @@ moved by hand reads as `llm` until #143's audit log records such moves.
 | `human` | A human ruled on it (today: the `HUMAN_RULINGS` list from #182, until #143's audit log; `cleanup_false_positives.py`'s manual marks) | kept |
 | `unattributed` | A `skipped` row whose reason no pipeline path writes (no reason, or one left by a status move) | kept, counted |
 | `fp_classifier` | A `false_positive` whose latest FP prediction is a skip and whose stored reason is that skip's own reason, so nothing has relabeled it since | excluded (`--include-classifier-labels`) |
-| `unjudged` | A `skipped` row from a path that never judged whether a brand is sportswear ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG content") | excluded (`--include-unjudged-skips`) |
+| `unjudged` | A `skipped` row from a path that never judged whether a brand is sportswear ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG content", "Some brands not judged; the rest not sportswear") | excluded (`--include-unjudged-skips`) |
 | `rule` | A `false_positive` from `cleanup_false_positives.py`'s keyword sweep (`Auto-detected:`) | excluded (`--include-rule-labels`) |
 
 The fp notebooks and `scripts/ablation_study.py` read `data/fp_training_data.jsonl`,
@@ -233,6 +233,28 @@ Auto-generated or template content with no human analysis:
 **The critical distinction:** Does the article contain **human-written analysis or commentary** about the brand's business? Or is it **auto-generated/template content** that just plugs financial data into a standard format? Template content = false positive.
 
 **Finance Category Test:** Would this be useful with a "Finance" category? YES → `is_sportswear_brand: true`. Just raw Yahoo Finance metrics or template 13F data → `false`.
+
+**Product-article rule** (prompt v1.11.0, #192): one rule for every product article, on the same boundary. Would the article be useful under a future "Product" category? Product articles never receive ESG categories either way.
+- `is_sportswear_brand: true` → release and launch announcements (including sneaker drops and roundups of the week's releases), substantive product reviews, collaboration launches, and "best of" roundups that assess the brand's product in substance
+- `is_sportswear_brand: false` → sale listings, price-drop alerts, deals roundups and sale sections, shopping guides, gift guides and promo codes, and "best of" lists that only name the product with a price or a link
+
+v1.10.0 and earlier state both "shopping/deals → `false`" and "product announcements, reviews, sales → `true`"; v1.11.0 replaces both with this rule.
+
+### Every brand judged (reply disposition)
+
+From prompt v1.11.0, every brand in the prompt's brand list comes back in `brand_analyses` exactly once, with `is_sportswear_brand` set; a brand with no applicable ESG category comes back with empty `categories`. Earlier versions (production is still v1.10.0) tell the model to leave out a sportswear brand with no ESG content, so a reply that leaves a brand out cannot say whether anyone judged it.
+
+The article's status is decided by `dispose_reply` (`src/labeling/disposition.py`, D032) under every prompt version. Brand names are matched ignoring case and surrounding space; a name the reply spells differently counts as left out.
+
+| Reply | Status / reason | Judged? |
+|---|---|---|
+| No analyses | `skipped` / "No ESG content found" | no |
+| A sportswear brand with an applicable category | `labeled` | yes |
+| Sportswear brands, none with an applicable category | `skipped` / "No ESG categories apply to sportswear brands" | yes |
+| Only non-sportswear brands, a sent brand left out | `skipped` / "Some brands not judged; the rest not sportswear" | no |
+| Only non-sportswear brands, covering every sent brand | `false_positive` | yes |
+
+The fourth row is a change for every prompt version: until #192 such a reply was stored as `false_positive`, although under v1.10.0 the brand left out is, by the prompt's own instruction, sportswear with no ESG content. Rows already stored that way keep their status until they are relabeled. The rows the fourth row writes are `unjudged` in the FP export, so they are left out by default, and `--include-unjudged-skips` would put them back as positives. The `esg-prefilter` export reads every `skipped` row as `has_esg=0`, these included (EP is on hold). The run summary's `Incomplete replies` line counts replies that left out at least one brand.
 
 ### FP Classifier Limitation
 
