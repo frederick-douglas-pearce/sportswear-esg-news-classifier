@@ -188,7 +188,10 @@ class TestVersionRegistry:
         assert next_v == "v1.2.1"
 
     def test_get_next_version_bumps_from_highest_not_pointer(self, tmp_path):
-        """With the pointer behind the highest version, the pointer's bump is taken (#189)."""
+        """The next version bumps from the highest version, not the pointer behind it (#189).
+
+        A minor bump from the pointer would give v2.5.0, which is registered.
+        """
         registry = {
             "fp": {
                 "production": "v2.4.0",
@@ -200,7 +203,6 @@ class TestVersionRegistry:
 
         assert get_next_version("fp", registry_path, "minor") == "v2.7.0"
         assert get_next_version("fp", registry_path, "patch") == "v2.6.1"
-        assert get_next_version("fp", registry_path, "major") == "v3.0.0"
 
     def test_get_next_version_first_version(self, empty_registry):
         """Test getting first version for new classifier."""

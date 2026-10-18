@@ -9,13 +9,14 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 **Every registry writer refuses an existing version name, numbers new versions from the highest
 registered version, and records `pipeline_sha256` in the entry (#189, D033).**
 - `src/deployment/registry.py` (new): `write_version` is the one function that writes a registry
-  entry. It refuses a name already registered, or one that is not `vMAJOR.MINOR.PATCH`, hashes the
+  entry. It refuses a name already registered, or one that is not canonical `vMAJOR.MINOR.PATCH`
+  (no leading zeros, MAJOR at least 1), hashes the
   joblib once, saves the entry with `pipeline_sha256`, then stamps the config with the same hash.
   `next_version` numbers from the highest registered version. `check_pointer_move` and `move_pointer`
   move `production` alone.
 - `scripts/register_model.py`, `scripts/promote_model.py`, `scripts/retrain.py`: refuse an existing
-  name before any side effect (before files are copied into `models/`, before training, before MLflow
-  registration), with a message naming the next free version. `promote_model.py`'s
+  name before any side effect (before files are copied into `models/`, before training, and with
+  `--update-registry` before MLflow registration), with a message naming the next free version. `promote_model.py`'s
   `Overwrite? [y/N]` prompt is gone; a refusal exits 1. `register_model.py`'s "Use --update-registry
   to overwrite" message now says the registry is not written and names the next free version.
   `retrain.py` no longer numbers from the pointer, so its default next version is no longer the
@@ -26,8 +27,8 @@ registered version, and records `pipeline_sha256` in the entry (#189, D033).**
 - `stamp_artifact_version` takes the hash instead of the pipeline path.
 - `models/registry.json`: `fp.versions["v2.4.0"]` gains `pipeline_sha256` by hand, the same hash as
   the config stamp, the committed joblib, the joblib at `aa1e589` and the served container (#176). No
-  other entry records a hash, so a pointer move to any other version is refused until that version
-  is reconciled.
+  other entry registered before #189 records a hash, so a pointer move to any of them is refused
+  until that version is reconciled.
 
 ### 2026-10-16: The labeling prompt judges every brand; a reply that leaves one out is unjudged
 

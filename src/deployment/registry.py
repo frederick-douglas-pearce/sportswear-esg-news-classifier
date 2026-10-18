@@ -5,7 +5,10 @@ registry writer goes through :func:`write_version`, which refuses an existing na
 records the pipeline's ``pipeline_sha256`` in the entry, and stamps the same hash
 into the artifact config (D026). A new version is numbered from the highest
 registered version, never from the ``production`` pointer. The pointer moves on its
-own through :func:`move_pointer`, which leaves every entry as it was.
+own through :func:`move_pointer`, which changes only ``production``.
+
+The tooling assumes one writer at a time. Nothing locks the registry between a load
+and a save, so concurrent writers are unsupported (D033).
 """
 
 import json
@@ -17,7 +20,9 @@ from .versioning import file_sha256, stamp_artifact_version
 
 BUMPS = ("major", "minor", "patch")
 
-_VERSION_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
+# Canonical names only: ASCII digits, no leading zeros, MAJOR at least 1. Each version
+# then has one spelling, so ``v02.4.0`` cannot register a second key for ``v2.4.0``.
+_VERSION_RE = re.compile(r"v([1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", re.ASCII)
 
 
 class VersionExistsError(ValueError):
@@ -32,12 +37,14 @@ def parse_version(name: str) -> tuple[int, int, int]:
     """Parse a registry version name of the form ``vMAJOR.MINOR.PATCH``.
 
     Raises:
-        ValueError: ``name`` is not of that form (``v2`` and ``2.1.0`` are not).
+        ValueError: ``name`` is not of that form in canonical spelling (``v2``,
+            ``2.1.0``, ``v02.4.0`` and ``v0.1.0`` are not).
     """
     match = _VERSION_RE.fullmatch(name) if isinstance(name, str) else None
     if match is None:
         raise ValueError(
-            f"Invalid version name {name!r}: expected vMAJOR.MINOR.PATCH, e.g. v2.7.0"
+            f"Invalid version name {name!r}: expected vMAJOR.MINOR.PATCH with no leading "
+            "zeros and MAJOR at least 1, e.g. v2.7.0"
         )
     major, minor, patch = (int(part) for part in match.groups())
     return major, minor, patch
@@ -145,8 +152,9 @@ def write_version(
         VersionExistsError: ``version`` is already registered. Nothing is written.
     """
     registry = load_registry(registry_path)
-    # Checked again on the registry as loaded here: a caller's earlier check read a
-    # copy that another writer may have changed since.
+    # Checked again on the registry as loaded here. This narrows, and does not close,
+    # the window between a caller's check and this write; concurrent writers are
+    # unsupported (D033).
     require_new_version(registry, classifier, version, bump)
 
     pipeline_sha256 = file_sha256(pipeline_path)
@@ -222,7 +230,9 @@ def move_pointer(
 ) -> str | None:
     """Point ``production`` at an existing version without rewriting any entry.
 
-    Runs :func:`check_pointer_move` first and never re-stamps the config.
+    Runs :func:`check_pointer_move` first and never re-stamps the config. It saves the
+    registry as loaded here, so an entry another writer added since the load would be
+    lost; concurrent writers are unsupported (D033).
 
     Returns:
         The previous ``production`` value.

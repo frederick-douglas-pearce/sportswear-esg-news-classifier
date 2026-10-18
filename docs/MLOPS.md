@@ -231,7 +231,9 @@ hash as `artifact_sha256`.
 All three write through `write_version` in `src/deployment/registry.py`, which hashes the joblib once
 and records that hash both in the version's registry entry, as `pipeline_sha256`, and in the config
 stamp (#189, D033). A version name already in the registry is refused before anything is written:
-before files are copied into `models/`, before training, and before MLflow registration. A new version
+before files are copied into `models/`, before training, and, for `register_model.py --update-registry`,
+before MLflow registration. A name that is not canonical `vMAJOR.MINOR.PATCH` (no leading zeros, MAJOR
+at least 1) is refused too. A new version
 is numbered from the highest registered version, not from the pointer.
 `promote_model.py --version <vX.Y.Z> --pointer-only` moves `production` to an existing version
 without rewriting its entry or re-stamping the config. It refuses unless the entry records a

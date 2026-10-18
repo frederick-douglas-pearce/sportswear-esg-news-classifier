@@ -348,7 +348,10 @@ def promote_version(
         True if promotion succeeded
 
     Raises:
-        VersionExistsError: ``version`` is already registered; nothing is written.
+        VersionExistsError: ``version`` is already registered. The first check refuses
+            before anything is copied. If another writer registers the name after it,
+            ``write_version`` refuses after the copy into ``models_dir``; concurrent
+            writers are unsupported (D033).
     """
     require_new_version(load_registry(registry_path), classifier, version, bump_type)
 
@@ -496,21 +499,21 @@ Examples:
 
     # Get current and next version
     current_version = get_current_version(args.classifier, registry_path)
-    version = get_next_version(args.classifier, registry_path, bump_type)
-    output_dir = args.models_dir / args.classifier / version
 
     # Before training, which writes into output_dir and may log to MLflow.
     try:
+        version = get_next_version(args.classifier, registry_path, bump_type)
         require_new_version(load_registry(registry_path), args.classifier, version, bump_type)
     except ValueError as e:
         print(f"Refused: {e}", file=sys.stderr)
         return 1
+    output_dir = args.models_dir / args.classifier / version
 
     print(f"=" * 60)
     print(f"Retraining {args.classifier.upper()} Classifier")
     print(f"=" * 60)
-    print(f"Current version: {current_version or 'None'}")
-    print(f"New version:     {version} ({bump_type} bump)")
+    print(f"Production version: {current_version or 'None'}")
+    print(f"New version:        {version} ({bump_type} bump from the highest registered version)")
 
     # Train new version
     training_result = train_new_version(

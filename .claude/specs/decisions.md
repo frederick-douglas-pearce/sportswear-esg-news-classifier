@@ -2066,7 +2066,8 @@ also depends on what the investigation finds.
    - #177 excludes `failed` FP predictions from drift data, in the shared loader.
 2. **A guard on registered bytes, not a per-version selector.**
    - Every registry version written from now on carries `pipeline_sha256`.
-   - Registry writers refuse to overwrite an existing version with different bytes.
+   - Registry writers refuse to overwrite an existing version with different bytes. *(Superseded by
+     D033 §1: refusal keys on the name.)*
    - No supported build succeeds unless the packaged joblib's sha256 equals the pointer's registered hash
      and the config stamp names the pointer.
 
@@ -2132,7 +2133,8 @@ that starts, reports healthy, and fails every `/predict`.
 3. **Re-stamp with the existing tooling**, then restore the v2.4.0 entry's original `created_at` by
    hand; the entry's diff is otherwise additive. The v2.4.0 registry entry carries no hash. Recording
    it is proposed to #172 (handoff comment), as a one-off backfill of an existing entry allowed only
-   when it equals the config stamp's hash; #172's re-review decides.
+   when it equals the config stamp's hash; #172's re-review decides. *(Settled by D033 §6: backfilled
+   by hand in #189.)*
 4. **A committed-tree test** checks the FP config stamp against the pointer and the joblib hash (EP
    `xfail(strict)` until #180 lands), and loads the committed artifact and compares its
    probabilities with golden values captured from the running container (evidence on #176).
@@ -2143,7 +2145,8 @@ that starts, reports healthy, and fails every `/predict`.
 hash binds the model bytes, not the `src/fp1_nb` code the pickle imports. With the pointer at v2.4.0,
 `retrain.py`'s default (`--minor`) next version is v2.5.0, an existing entry that `promote_version`
 overwrites before dispatching a deploy. `retrain.py` cannot name a version, so until #172 an FP model
-is not promoted through it (freeze extension on #176).
+is not promoted through it (freeze extension on #176). *(The overwrite is fixed by D033 §3; the
+freeze's remaining reasons are in docs/DEPLOYMENT.md.)*
 
 ## D029: Retire the EP Pointer While EP Is on Hold — Clear the Pointer, Keep the Record, Delete the Unfit Artifact (#180)
 
@@ -2330,27 +2333,37 @@ rollback target. #172's build guard needs a recorded hash to compare against. #1
 1. **A version name is immutable.** Every registry writer refuses a name already in the registry,
    whether or not its entry records a hash. This replaces D027 §2's "refuse to overwrite an existing
    version with different bytes": the bytes behind a hashless entry cannot be compared, so the rule
-   keys on the name. A name that is not `vMAJOR.MINOR.PATCH` is refused too, because one such name
-   would break numbering for every writer. The refusal comes before any side effect (before files
-   are copied into `models/`, before training, before MLflow registration) and names the next free
+   keys on the name. A name that is not canonical `vMAJOR.MINOR.PATCH` (ASCII digits, no leading
+   zeros, MAJOR at least 1) is refused too: one unparseable name would break numbering for every
+   writer, and a second spelling such as `v02.4.0` would register another key for `v2.4.0`. `v0` is
+   refused because nothing uses it (the human's call). The refusal comes before any side effect (before files are copied into `models/`, before
+   training, and with `--update-registry` before MLflow registration) and names the next free
    version for the caller's own bump; `promote_model.py`, which has no bump flag, names the next
    minor.
 2. **One writer.** `write_version` in `src/deployment/registry.py` is the only code that writes a
    registry entry. It hashes the joblib once and writes the hash into the entry as `pipeline_sha256`
    and into the config stamp, so the two cannot differ (D026). It checks the name again on the
-   registry it loads, saves the registry, and only then stamps the config (D026 §1). If the stamp
-   fails after the save, the name is spent; recovering is a hand edit.
+   registry it loads, which narrows, and does not close, the window after a caller's check; saves the
+   registry; and only then stamps the config (D026 §1). If the stamp fails after the save, the name is
+   spent and, with `set_production` (always the case in `retrain.py`), the pointer has already moved
+   to a version whose config is not stamped; recovering is a hand edit.
 3. **Numbering starts from the highest registered version**, not the pointer, in one shared function
-   (`next_version`) that all three writers use.
+   (`next_version`). `retrain.py` and `register_model.py` number with it; `promote_model.py` takes
+   the version from the caller and uses it only to name the next free version in a refusal.
 4. **The pointer moves alone.** `promote_model.py --version <vX.Y.Z> --pointer-only` sets `production`
    to an existing version without rewriting its entry or re-stamping the config. It refuses an
    unknown version, an entry with no recorded hash, a joblib in `models/` whose hash differs from the
-   entry's, and a config stamp that does not name the version with that hash. The last refusal goes
-   beyond #189's AC5; it was put to the human at the plan gate and kept, because a move that left the
-   stamp naming another version would fail the committed-tree test and D027 §2's guard. The check is
-   one function, `check_pointer_move`, for #172's guard to reuse.
+   entry's, and a config stamp that does not name the version with that hash. The hashless refusal
+   and the stamp refusal both go beyond #189's AC5, and both were in the plan the human approved. The
+   stamp refusal was put to the human by name and kept, because a move that left the stamp naming
+   another version would fail the committed-tree test
+   (`tests/test_committed_model_registry.py::test_committed_config_stamp_names_the_pointer_and_hashes_the_joblib`)
+   and #172's build guard (D027 §2–3) once it exists. The check is one function, `check_pointer_move`.
+   Whether #172's guard reuses it is #172's call: reusing it would amend D027 §3, which places the
+   guard beside `file_sha256` in `src/deployment/versioning.py`, a module `registry.py` imports.
 5. **A hashless version cannot be rolled back to, at two layers.** The tooling refuses the move now
-   (§4). Any other route, such as a hand edit of `production`, is for #172's guard to block. A
+   (§4). Any other route, such as a hand edit of `production`, is for #172's build guard (D027 §2–3)
+   to block. A
    version's hash is recorded **through its own reconciliation**: a one-off hand edit of that one
    entry, with its own byte evidence and its own D-entry. No tool path writes a hash into an existing
    entry.
@@ -2368,7 +2381,14 @@ rollback target. #172's build guard needs a recorded hash to compare against. #1
   reads it.
 
 **Consequences.**
-- Until each is reconciled, the tooling refuses a pointer move to any version other than FP `v2.4.0`.
+- Until each is reconciled, the tooling refuses a pointer move to any version registered before #189
+  other than FP `v2.4.0`.
+- The tooling assumes one writer at a time; nothing locks the registry, and concurrent writers are
+  unsupported. `write_version`'s second check narrows the window after a caller's check without
+  closing it. `retrain.py`'s `promote_version` copies the artifact into `models/` before
+  `write_version` runs, so a writer that takes the name in between leaves `models/` holding bytes the
+  registry does not record under it. `move_pointer` saves the registry it loaded, so an entry added
+  in between is lost. Locking was not taken.
 - `register_model.py` without `--update-registry` still logs an MLflow run under an existing name.
   The registry is not written, and the message says the run's bytes may not be that version's: the
   registry, not MLflow, is the record.

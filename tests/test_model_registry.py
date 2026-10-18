@@ -39,9 +39,18 @@ def _registry(production="v1.0.0", versions=("v1.0.0", "v1.2.0", "v1.1.0")):
 class TestParseVersion:
     def test_parses_semantic_name(self):
         assert parse_version("v2.10.3") == (2, 10, 3)
+        assert parse_version("v1.0.0") == (1, 0, 0)
 
     @pytest.mark.parametrize("name", ["v2", "2.1.0", "v2.1", "v2.1.0-rc1", "v2.1.0\n", "", None])
     def test_rejects_anything_else(self, name):
+        with pytest.raises(ValueError, match="vMAJOR.MINOR.PATCH"):
+            parse_version(name)
+
+    # A second spelling of a registered version would be a second registry key for it.
+    @pytest.mark.parametrize(
+        "name", ["v02.4.0", "v2.04.0", "v2.4.00", "v\uff12.4.0", "v0.0.0", "v0.1.0"]
+    )
+    def test_rejects_non_canonical_spellings_and_major_zero(self, name):
         with pytest.raises(ValueError, match="vMAJOR.MINOR.PATCH"):
             parse_version(name)
 
@@ -221,11 +230,13 @@ class TestMovePointer:
     def _assert_refused(self, promotable, version, match):
         registry_path, config_path, pipeline_path = promotable
         registry_bytes = registry_path.read_bytes()
+        config_bytes = config_path.read_bytes() if config_path.exists() else None
 
         with pytest.raises(PointerMoveRefused, match=match):
             move_pointer(registry_path, "fp", version, pipeline_path, config_path)
 
         assert registry_path.read_bytes() == registry_bytes
+        assert (config_path.read_bytes() if config_path.exists() else None) == config_bytes
 
     def test_refuses_unknown_version(self, promotable):
         self._assert_refused(promotable, "v9.0.0", "not a registered version")
@@ -269,7 +280,11 @@ WRITER_CONFIG = {"threshold": 0.6, "model_name": "TestModel", "transformer_metho
 
 
 class TestWritersRefuseExistingNames:
-    """Each registry writer refuses an existing or malformed name before any side effect."""
+    """Each registry writer refuses an existing name before any side effect.
+
+    The malformed-name refusals are tested for register_model.py and promote_model.py; retrain.py
+    numbers its own names with ``next_version``.
+    """
 
     @pytest.fixture
     def models_dir(self, tmp_path, monkeypatch):

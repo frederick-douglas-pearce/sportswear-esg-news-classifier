@@ -31,7 +31,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.deployment.registry import (  # noqa: E402
-    PointerMoveRefused,
     check_pointer_move,
     move_pointer,
     require_new_version,
@@ -235,7 +234,7 @@ def pointer_only(args: argparse.Namespace, models_dir: Path) -> int:
         previous = move_pointer(
             registry_path, args.classifier, args.version, pipeline_path, config_path
         )
-    except PointerMoveRefused as e:
+    except ValueError as e:  # PointerMoveRefused, or a registry or config that is not valid JSON
         print(f"Error: {e}", file=sys.stderr)
         return 1
 

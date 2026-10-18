@@ -252,28 +252,28 @@ def main():
     with open(registry_path) as f:
         registry = json.load(f)
 
-    # Determine version
-    if args.version:
-        version = args.version
-    else:
-        version = next_version(registry, args.classifier, args.bump)
-        print(f"Auto-detected version: {version}")
-
-    # A registered version name is never rewritten (D033). With --update-registry, refuse
-    # here, before the dry-run summary and before the MLflow run.
     existing_versions = registry.get(args.classifier, {}).get("versions", {})
-    if args.update_registry:
-        try:
+    try:
+        # Determine version
+        if args.version:
+            version = args.version
+        else:
+            version = next_version(registry, args.classifier, args.bump)
+            print(f"Auto-detected version: {version}")
+
+        # A registered version name is never rewritten (D033). With --update-registry,
+        # refuse here, before the dry-run summary and before the MLflow run.
+        if args.update_registry:
             require_new_version(registry, args.classifier, version, args.bump)
-        except ValueError as e:
-            print(f"❌ {e}", file=sys.stderr)
-            sys.exit(1)
-    elif version in existing_versions:
-        free = next_version(registry, args.classifier, args.bump)
-        print(f"⚠️  Version {version} is already in the registry; the registry is not written.")
-        print(f"   --update-registry refuses an existing name (D033); the next free version is {free}.")
-        print(f"   The MLflow run is tagged {version} over the bytes now in {models_dir}/, which may")
-        print(f"   not be {version}'s. The registry, not MLflow, records which bytes {version} names.")
+        elif version in existing_versions:
+            free = next_version(registry, args.classifier, args.bump)
+            print(f"⚠️  Version {version} is already in the registry; the registry is not written.")
+            print(f"   --update-registry refuses an existing name (D033); the next free version is {free}.")
+            print(f"   The MLflow run is tagged {version} over the bytes now in {models_dir}/, which may")
+            print(f"   not be {version}'s. The registry, not MLflow, records which bytes {version} names.")
+    except ValueError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
 
     if args.dry_run:
         print(f"\n🔍 Dry run - would register:")

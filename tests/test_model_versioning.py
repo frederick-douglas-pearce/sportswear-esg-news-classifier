@@ -211,9 +211,9 @@ class TestRegistryWritersStamp:
         assert "version" not in _read(models_dir / "fp_classifier_config.json")
 
     def test_register_model_stamps_only_after_registry_write(self, models_dir, monkeypatch):
-        import scripts.register_model as register_model
+        import src.deployment.registry as registry_module
 
-        with patch.object(register_model, "update_registry", side_effect=OSError("disk full")):
+        with patch.object(registry_module, "save_registry", side_effect=OSError("disk full")):
             with pytest.raises(OSError):
                 self._run_register(monkeypatch, "--version", "v3.1.0", "--update-registry")
 
