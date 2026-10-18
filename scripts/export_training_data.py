@@ -229,9 +229,9 @@ def export_false_positive_data(
     Positive class (is_sportswear=1): labeling_status 'labeled' or 'skipped'.
     Negative class (is_sportswear=0): labeling_status 'false_positive'.
 
-    Rows whose label nobody but the FP classifier decided, skips that never judged whether a
-    brand is sportswear, and keyword-sweep negatives are excluded by default (#154); see
-    ``build_fp_dataset``. The fp notebooks and ``ablation_study.py`` read
+    Rows whose label nobody but the FP classifier decided, skips that do not establish whether
+    the article has a sportswear brand, and keyword-sweep negatives are excluded by default
+    (#154); see ``build_fp_dataset``. The fp notebooks and ``ablation_study.py`` read
     ``data/fp_training_data.jsonl``, ``train.py`` reads it unless ``--data-path`` names another
     file, and ``retrain.py`` reads whatever ``--data`` names. The exclusion reaches them only
     when they read this export's output (``-o data/fp_training_data.jsonl``, or the
@@ -526,7 +526,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     fp_group.add_argument(
         "--include-unjudged-skips",
         action="store_true",
-        help="Keep skipped rows from paths that never judged sportswear status",
+        help="Keep skipped rows that did not establish sportswear status (no reply, or an incomplete one)",
     )
     fp_group.add_argument(
         "--include-rule-labels",

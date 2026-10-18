@@ -316,6 +316,7 @@ def main() -> int:
         print(f"Brand labels created:   {stats.brands_labeled}")
         if stats.false_positive_brands > 0:
             print(f"Non-sportswear brands:  {stats.false_positive_brands}")
+        print(f"Incomplete replies:     {stats.incomplete_replies}")
         print(f"Chunks created:         {stats.chunks_created}")
         print(f"Embeddings generated:   {stats.embeddings_generated}")
         print(f"LLM API calls:          {stats.llm_calls}")

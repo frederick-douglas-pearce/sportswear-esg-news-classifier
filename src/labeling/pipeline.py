@@ -15,9 +15,6 @@ from src.data_collection.models import (
     FP_ACTION_SKIPPED_LLM,
     SKIP_INSUFFICIENT_CONTENT,
     SKIP_NO_BRANDS,
-    SKIP_NO_ESG_CATEGORIES,
-    SKIP_NO_ESG_CONTENT,
-    SKIP_NO_SPORTSWEAR_BRAND,
     Article,
     ClassifierPrediction,
 )
@@ -33,6 +30,7 @@ from .chunker import ArticleChunker, Chunk
 from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
 from .config import labeling_settings
 from .database import LabelingDatabase, labeling_db
+from .disposition import FALSE_POSITIVE, LABELED, dispose_reply
 from .embedder import OpenAIEmbedder
 from .evidence_matcher import EvidenceMatcher, match_all_evidence
 from .labeler import ArticleLabeler, classify_api_error
@@ -89,6 +87,8 @@ class LabelingStats:
     llm_calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    # LLM replies that left out at least one brand that was sent (#192)
+    incomplete_replies: int = 0
     errors: list[str] = field(default_factory=list)
     # Error type breakdown for diagnostics
     errors_by_type: dict[str, int] = field(default_factory=dict)
@@ -706,6 +706,8 @@ class LabelingPipeline:
                     stats.llm_calls += result.get("llm_calls", 0)
                     stats.input_tokens += result.get("input_tokens", 0)
                     stats.output_tokens += result.get("output_tokens", 0)
+                    if result.get("incomplete_reply"):
+                        stats.incomplete_replies += 1
 
                     # FP classifier stats
                     if result.get("fp_classifier_called"):
@@ -843,6 +845,8 @@ class LabelingPipeline:
             "fp_classifier_skipped_not_low": False,
             "fp_classifier_continued": False,
             "fp_classifier_error": False,
+            # The LLM reply left out a brand that was sent (#192)
+            "incomplete_reply": False,
         }
 
         # Check for content
@@ -971,25 +975,32 @@ class LabelingPipeline:
             return result
 
         response = label_result.response
-        if not response or not response.brand_analyses:
-            logger.warning(f"No brand analyses returned for article {article_id}")
-            if not dry_run:
-                with self.database.db.get_session() as session:
-                    self.database.update_article_labeling_status(
-                        session, article_id, "skipped", SKIP_NO_ESG_CONTENT
-                    )
-            result["skipped"] = True
-            return result
-
-        # Check for false positive brands (non-sportswear matches)
-        sportswear_brands = [
-            a for a in response.brand_analyses if a.is_sportswear_brand
-        ]
-        non_sportswear_brands = [
-            a for a in response.brand_analyses if not a.is_sportswear_brand
-        ]
+        disposition = dispose_reply(brands, response.brand_analyses if response else [])
+        sportswear_brands = disposition.sportswear
+        non_sportswear_brands = disposition.non_sportswear
 
         result["false_positive_brands"] = len(non_sportswear_brands)
+        result["incomplete_reply"] = bool(disposition.omitted)
+
+        if disposition.omitted:
+            logger.info(
+                f"Article {article_id}: reply left out brands {disposition.omitted}"
+            )
+        if disposition.unsent:
+            logger.warning(
+                f"Article {article_id}: reply analyzed brands that were not sent "
+                f"{disposition.unsent}"
+            )
+        if disposition.unset:
+            logger.warning(
+                f"Article {article_id}: reply set no is_sportswear_brand for "
+                f"{disposition.unset}; counted as left out"
+            )
+        if disposition.conflicting:
+            logger.warning(
+                f"Article {article_id}: reply judged {disposition.conflicting} both "
+                f"sportswear and not; sportswear wins"
+            )
 
         # Log any false positives detected
         for analysis in non_sportswear_brands:
@@ -998,50 +1009,19 @@ class LabelingPipeline:
                 f"{analysis.not_sportswear_reason}"
             )
 
-        # If ALL brands are false positives, mark article as false_positive
-        if non_sportswear_brands and not sportswear_brands:
-            reasons = [
-                f"{a.brand}: {a.not_sportswear_reason}" for a in non_sportswear_brands
-            ]
-            reason_str = "; ".join(reasons)
+        if disposition.status != LABELED:
             logger.info(
-                f"Article {article_id} marked as false positive - "
-                f"all brands are non-sportswear: {reason_str}"
+                f"Article {article_id} marked {disposition.status}: {disposition.reason}"
             )
             if not dry_run:
                 with self.database.db.get_session() as session:
                     self.database.update_article_labeling_status(
-                        session, article_id, "false_positive", reason_str[:500]
+                        session, article_id, disposition.status, disposition.reason
                     )
-            result["false_positive"] = True
-            return result
-
-        # If no sportswear brands have ESG content, skip
-        if not sportswear_brands:
-            logger.warning(f"No sportswear brand ESG content for article {article_id}")
-            if not dry_run:
-                with self.database.db.get_session() as session:
-                    self.database.update_article_labeling_status(
-                        session, article_id, "skipped", SKIP_NO_SPORTSWEAR_BRAND
-                    )
-            result["skipped"] = True
-            return result
-
-        # Check if any sportswear brand has actual ESG categories
-        # (not just brand analysis with all categories = False)
-        brands_with_esg = [
-            a for a in sportswear_brands if a.get_applicable_categories()
-        ]
-        if not brands_with_esg:
-            logger.info(
-                f"Article {article_id}: sportswear brands found but no ESG categories apply"
-            )
-            if not dry_run:
-                with self.database.db.get_session() as session:
-                    self.database.update_article_labeling_status(
-                        session, article_id, "skipped", SKIP_NO_ESG_CATEGORIES
-                    )
-            result["skipped"] = True
+            if disposition.status == FALSE_POSITIVE:
+                result["false_positive"] = True
+            else:
+                result["skipped"] = True
             return result
 
         # Step 4: Match evidence to chunks (if we have chunks)
@@ -1059,10 +1039,13 @@ class LabelingPipeline:
                 reranker,
             )
 
-        # Step 5: Save labels and evidence
+        # Step 5: Save labels and evidence. save_brand_labels saves only sportswear brands
+        # with an applicable category; from v1.11.0 a labeled reply also carries sportswear
+        # brands with empty categories, which are not counted.
         if dry_run:
+            brands_count = len([a for a in sportswear_brands if a.get_applicable_categories()])
             logger.info(
-                f"[DRY RUN] Would save {len(sportswear_brands)} brand labels "
+                f"[DRY RUN] Would save {brands_count} brand labels "
                 f"for article {article_id}"
             )
             for analysis in sportswear_brands:
@@ -1084,6 +1067,7 @@ class LabelingPipeline:
                     model_version=label_result.model,
                     prompt_version=label_result.prompt_version,
                 )
+                brands_count = len(db_labels)
 
                 # Save evidence for each label
                 for db_label in db_labels:
@@ -1099,7 +1083,7 @@ class LabelingPipeline:
                 )
 
         result["labeled"] = True
-        result["brands_count"] = len(sportswear_brands)
+        result["brands_count"] = brands_count
         return result
 
     def get_stats(self) -> dict[str, Any]:

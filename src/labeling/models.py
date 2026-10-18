@@ -5,6 +5,11 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
+def normalize_brand(name: str) -> str:
+    """Key for matching a brand name in a reply to one sent in the prompt."""
+    return name.strip().casefold()
+
+
 class CategoryLabel(BaseModel):
     """Label for a single ESG category."""
 
@@ -76,7 +81,10 @@ class LabelingResponse(BaseModel):
     """Complete response from the labeling LLM."""
 
     brand_analyses: list[BrandAnalysis] = Field(
-        description="Analysis results for each brand with substantive ESG content",
+        description=(
+            "Analysis results per brand. Prompt v1.11.0 asks for every brand sent; earlier "
+            "versions ask the model to omit sportswear brands with no ESG content"
+        ),
     )
     article_summary: str = Field(
         description="1-2 sentence summary of the article's ESG themes",
@@ -88,8 +96,9 @@ class LabelingResponse(BaseModel):
 
     def get_analysis_for_brand(self, brand: str) -> BrandAnalysis | None:
         """Get analysis for a specific brand."""
+        key = normalize_brand(brand)
         for analysis in self.brand_analyses:
-            if analysis.brand.lower() == brand.lower():
+            if normalize_brand(analysis.brand) == key:
                 return analysis
         return None
 

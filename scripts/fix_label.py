@@ -166,7 +166,7 @@ def list_statuses() -> None:
         "chunked": "Text chunked, awaiting embedding",
         "embedded": "Embeddings generated, awaiting labeling",
         "labeled": "Successfully labeled with ESG categories",
-        "skipped": "Genuine brand article, no ESG content (e.g., product reviews, analyst articles)",
+        "skipped": "No ESG content for a sportswear brand, or not established (no LLM reply, or one that did not settle the brand); see labeling_error (UNJUDGED_SKIP_REASONS)",
         "false_positive": "Not actually about the sportswear brand (e.g., 'Vans' = vehicles)",
         "unlabelable": "Could not be labeled (insufficient content, language issues)",
         "deduplicated": "Duplicate of another article",
