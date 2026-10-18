@@ -69,6 +69,12 @@ class TestNextVersion:
         assert next_version(registry, "fp", "minor") == "v1.3.0"
         assert next_version(registry, "fp", "patch") == "v1.2.1"
 
+    def test_each_bump_resets_the_lower_parts(self):
+        registry = _registry(versions=("v1.0.0", "v1.2.3"))
+        assert next_version(registry, "fp", "major") == "v2.0.0"
+        assert next_version(registry, "fp", "minor") == "v1.3.0"
+        assert next_version(registry, "fp", "patch") == "v1.2.4"
+
     def test_compares_numerically_not_as_strings(self):
         registry = _registry(versions=("v1.9.0", "v1.10.0"))
         assert next_version(registry, "fp", "minor") == "v1.11.0"
@@ -268,6 +274,18 @@ class TestMovePointer:
         config_path.write_text(json.dumps({"threshold": 0.6, **stamp}))
 
         self._assert_refused(promotable, "v1.1.0", "is stamped")
+
+    def test_refuses_missing_pipeline(self, promotable):
+        _, _, pipeline_path = promotable
+        pipeline_path.unlink()
+
+        self._assert_refused(promotable, "v1.1.0", "Pipeline not found")
+
+    def test_refuses_missing_config(self, promotable):
+        _, config_path, _ = promotable
+        config_path.unlink()
+
+        self._assert_refused(promotable, "v1.1.0", "Config not found")
 
     def test_check_alone_writes_nothing(self, promotable):
         registry_path, config_path, pipeline_path = promotable
@@ -504,3 +522,20 @@ class TestWritersRefuseExistingNames:
 
         assert train.call_count == 0
         assert "fp v3.0.0 is already registered" in capsys.readouterr().err
+
+    def test_retrain_main_prints_the_pointer_not_the_highest_version(self, models_dir, monkeypatch, capsys):
+        import scripts.retrain as retrain
+
+        registry_path = models_dir / "registry.json"
+        registry = _read(registry_path)
+        registry["fp"]["production"] = None
+        registry_path.write_text(json.dumps(registry))
+        monkeypatch.setattr(
+            "sys.argv",
+            ["retrain.py", "--classifier", "fp", "--data", "data/x.jsonl", "--models-dir", str(models_dir)],
+        )
+        with patch.object(retrain, "train_new_version", return_value={"success": False, "error": "stop"}):
+            assert retrain.main() == 1
+
+        # get_current_version would report v3.0.0, the highest version, as production.
+        assert "Production version: None" in capsys.readouterr().out

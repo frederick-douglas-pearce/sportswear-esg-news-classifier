@@ -316,8 +316,10 @@ class TestRegistryWritersStamp:
         config = _read(config_path)
         assert config["version"] == "v3.1.0"
         assert config["pipeline_sha256"] == hashlib.sha256(b"candidate model").hexdigest()
-        entry = _read(registry_path)["fp"]["versions"]["v3.1.0"]
+        registry = _read(registry_path)
+        entry = registry["fp"]["versions"]["v3.1.0"]
         assert entry["pipeline_sha256"] == config["pipeline_sha256"]
+        assert registry["fp"]["production"] == "v3.1.0"
         # The candidate's own config is left as it was.
         assert "version" not in _read(output_dir / "fp_classifier_config.json")
 
