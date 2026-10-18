@@ -497,7 +497,6 @@ Examples:
 
     registry_path = args.models_dir / "registry.json"
 
-    # Get current and next version
     # The pointer itself; get_current_version falls back to the highest version when it is null.
     production_version = load_registry(registry_path).get(args.classifier, {}).get("production")
 
