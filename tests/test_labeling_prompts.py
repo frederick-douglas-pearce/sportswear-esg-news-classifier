@@ -20,6 +20,13 @@ RULE_FALSE_RETAIL = (
     "only retail details: product names, prices, discounts, links, stock or where to buy, "
     "or promo codes"
 )
+# The whole false side, pinned: any added clause (a synonym for a release date) fails the test
+RULE_FALSE_SIDE = (
+    "for this brand, the article gives only retail details: product names, prices, discounts, "
+    "links, stock or where to buy, or promo codes. A restock, the dates a discount or sale event "
+    'runs ("20% off until Sunday"), or a one-line sales blurb ("perfect for cold months") is a '
+    "retail detail, not a release or a description"
+)
 
 
 def _bullet(lines, marker):
@@ -157,14 +164,15 @@ class TestV1_11_0:
         assert "a sale date" not in doc + system
         doc = doc[doc.index("**Product-article rule** (prompt v1.11.0"):]
         system = system[system.index("**Product-article rule** (the one rule"):]
-        for text in (system, doc):
+        false_bullets = (
+            f"- **`is_sportswear_brand: false`** — {RULE_FALSE_SIDE}.",
+            f"- `is_sportswear_brand: false` → {RULE_FALSE_SIDE}",
+        )
+        for text, false_bullet in zip((system, doc), false_bullets):
             lines = text.splitlines()
             true_side = next(line for line in lines if "`is_sportswear_brand: true`" in line)
             assert '"goes on sale November 14" for a product not sold before' in true_side
-            false_side = _bullet(lines, "`is_sportswear_brand: false`")
-            assert "the dates a discount or sale event runs" in false_side
-            for release_word in ("availab", "launch", "release date", "on sale", "on-sale"):
-                assert release_word not in false_side.casefold()
+            assert _bullet(lines, "`is_sportswear_brand: false`") == false_bullet
 
 
 class TestV1_10_0:
