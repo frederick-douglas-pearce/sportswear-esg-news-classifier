@@ -42,7 +42,13 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.mlops import ExperimentTracker, STAGE_PRODUCTION
-from src.deployment.versioning import stamp_artifact_version
+from src.deployment.registry import (
+    VersionExistsError,
+    load_registry,
+    next_version,
+    require_new_version,
+    write_version,
+)
 
 
 def trigger_deploy_workflow(
@@ -190,6 +196,9 @@ def get_next_version(
 ) -> str:
     """Get the next version number for a classifier.
 
+    Bumps from the highest registered version, not the production pointer, so the
+    result is never a registered name (D033).
+
     Args:
         classifier: Classifier type (fp, ep, esg)
         registry_path: Path to the registry JSON file
@@ -198,18 +207,7 @@ def get_next_version(
     Returns:
         Next version string (e.g., 'v1.1.0')
     """
-    current = get_current_version(classifier, registry_path)
-
-    if current is None:
-        # First version
-        return "v1.0.0"
-
-    if bump_type == "major":
-        return str(current.bump_major())
-    elif bump_type == "patch":
-        return str(current.bump_patch())
-    else:  # minor (default)
-        return str(current.bump_minor())
+    return next_version(load_registry(registry_path), classifier, bump_type)
 
 
 def train_new_version(
@@ -333,9 +331,11 @@ def promote_version(
 ) -> bool:
     """Promote new version to production.
 
+    Refuses a version already in the registry before anything is copied (D033).
+
     Args:
         classifier: Classifier type (fp, ep, esg)
-        version: Version string (e.g., 'v1', 'v2')
+        version: Version string (e.g., 'v2.7.0')
         new_metrics: Performance metrics from training
         data_path: Path to training data used
         output_dir: Directory containing trained artifacts
@@ -346,7 +346,12 @@ def promote_version(
 
     Returns:
         True if promotion succeeded
+
+    Raises:
+        VersionExistsError: ``version`` is already registered; nothing is written.
     """
+    require_new_version(load_registry(registry_path), classifier, version, bump_type)
+
     print(f"\nPromoting {classifier.upper()} {version} to production...")
 
     # Copy model files to production location
@@ -358,34 +363,27 @@ def promote_version(
     shutil.copy(src_pipeline, dst_pipeline)
     shutil.copy(src_config, dst_config)
 
-    # Update JSON registry
-    if registry_path.exists():
-        with open(registry_path) as f:
-            registry = json.load(f)
-    else:
-        registry = {}
-
-    if classifier not in registry:
-        registry[classifier] = {"production": None, "versions": {}}
-
-    registry[classifier]["production"] = version
-    registry[classifier]["versions"][version] = {
-        "created_at": datetime.utcnow().isoformat(),
-        "trained_on": data_path,
-        "threshold": new_metrics.get("threshold"),
-        "metrics": {
-            "test_f2": new_metrics.get("test_f2"),
-            "test_recall": new_metrics.get("test_recall"),
-            "test_precision": new_metrics.get("test_precision"),
+    # Hashes the copy in models/, the bytes the version names.
+    write_version(
+        registry_path,
+        classifier,
+        version,
+        {
+            "created_at": datetime.utcnow().isoformat(),
+            "trained_on": data_path,
+            "threshold": new_metrics.get("threshold"),
+            "metrics": {
+                "test_f2": new_metrics.get("test_f2"),
+                "test_recall": new_metrics.get("test_recall"),
+                "test_precision": new_metrics.get("test_precision"),
+            },
+            "mlflow_version": mlflow_version,
         },
-        "mlflow_version": mlflow_version,
-    }
-
-    with open(registry_path, "w") as f:
-        json.dump(registry, f, indent=2)
-
-    # After the registry write, so the config never claims a version the registry lacks.
-    stamp_artifact_version(dst_config, version, dst_pipeline)
+        dst_config,
+        dst_pipeline,
+        bump_type,
+        set_production=True,
+    )
 
     print(f"  Copied pipeline to: {dst_pipeline}")
     print(f"  Copied config to: {dst_config}")
@@ -501,6 +499,13 @@ Examples:
     version = get_next_version(args.classifier, registry_path, bump_type)
     output_dir = args.models_dir / args.classifier / version
 
+    # Before training, which writes into output_dir and may log to MLflow.
+    try:
+        require_new_version(load_registry(registry_path), args.classifier, version, bump_type)
+    except ValueError as e:
+        print(f"Refused: {e}", file=sys.stderr)
+        return 1
+
     print(f"=" * 60)
     print(f"Retraining {args.classifier.upper()} Classifier")
     print(f"=" * 60)
@@ -557,17 +562,22 @@ Examples:
             should_promote = response.lower() in ("y", "yes")
 
     if should_promote:
-        promote_version(
-            args.classifier,
-            version,
-            training_result["metrics"],
-            str(args.data),
-            output_dir,
-            args.models_dir,
-            registry_path,
-            mlflow_version=training_result.get("mlflow_version"),
-            bump_type=bump_type,
-        )
+        try:
+            promote_version(
+                args.classifier,
+                version,
+                training_result["metrics"],
+                str(args.data),
+                output_dir,
+                args.models_dir,
+                registry_path,
+                mlflow_version=training_result.get("mlflow_version"),
+                bump_type=bump_type,
+            )
+        except VersionExistsError as e:
+            print(f"\nPromotion refused: {e}", file=sys.stderr)
+            print(f"New version saved to: {output_dir}")
+            return 1
     else:
         print(f"\nNew version saved to: {output_dir}")
         if training_result.get("mlflow_version"):

@@ -1,9 +1,11 @@
 """Model version stamping and the values recorded when no version is known.
 
 A classifier's version describes the artifact the API actually loaded (D026).
-Every registry writer stamps ``version`` and ``pipeline_sha256`` into the
-artifact's config via :func:`stamp_artifact_version`; the API reports that
-version only when the hash matches the joblib it loaded.
+Every registry write (``src.deployment.registry.write_version``) stamps
+``version`` and ``pipeline_sha256`` into the artifact's config via
+:func:`stamp_artifact_version`, with the same hash it records in the registry
+entry; the API reports that version only when the hash matches the joblib it
+loaded.
 
 When no version can be reported, ``classifier_predictions.model_version``
 records one of the values below. Each points at a different remedy, so they
@@ -54,17 +56,17 @@ def file_sha256(path: Union[str, Path]) -> str:
 def stamp_artifact_version(
     config_path: Union[str, Path],
     version: str,
-    pipeline_path: Union[str, Path],
+    pipeline_sha256: str,
 ) -> None:
     """Write ``version`` and the pipeline's sha256 into an artifact config.
 
-    Call this only where a registry entry for ``version`` is written for the
-    artifact at ``pipeline_path``/``config_path``.
+    Called by ``src.deployment.registry.write_version`` after it saves the
+    registry entry for ``version``, with the hash it recorded in that entry.
 
     Args:
         config_path: The artifact's ``<type>_classifier_config.json``.
         version: The registry version string recorded for this artifact.
-        pipeline_path: The artifact's joblib, whose hash binds the version to it.
+        pipeline_sha256: The artifact joblib's sha256, which binds the version to it.
     """
     config_path = Path(config_path)
     with open(config_path) as f:
@@ -77,7 +79,7 @@ def stamp_artifact_version(
         )
 
     config["version"] = version
-    config["pipeline_sha256"] = file_sha256(pipeline_path)
+    config["pipeline_sha256"] = pipeline_sha256
 
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)

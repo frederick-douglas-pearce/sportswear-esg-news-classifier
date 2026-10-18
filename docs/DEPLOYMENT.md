@@ -323,9 +323,8 @@ uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.js
 uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl
 
 # 2. Retrain and promote: not available for FP today. retrain.py exits before training (#186),
-#    and its default next version (v2.5.0) would overwrite an existing registry entry, so FP is
-#    not promoted through it until #172 (D028). Its Verdict also compares against a production F2
-#    measured before #154's exclusion; #154 PR2's retrain compares like-for-like.
+#    and FP is not promoted through it until #172 (D028). Its Verdict also compares against a
+#    production F2 measured before #154's exclusion; #154 PR2's retrain compares like-for-like.
 
 # 3. Rebuild and redeploy the container after a promotion
 docker compose build fp-classifier-api

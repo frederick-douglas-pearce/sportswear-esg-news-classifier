@@ -79,7 +79,7 @@ class TestSentinels:
 class TestStampArtifactVersion:
     def test_writes_version_and_pipeline_hash(self, artifact):
         pipeline_path, config_path = artifact
-        stamp_artifact_version(config_path, "v3.1.0", pipeline_path)
+        stamp_artifact_version(config_path, "v3.1.0", file_sha256(pipeline_path))
 
         config = _read(config_path)
         assert config["version"] == "v3.1.0"
@@ -89,9 +89,9 @@ class TestStampArtifactVersion:
 
     def test_warns_when_restamping_a_different_version(self, artifact, caplog):
         pipeline_path, config_path = artifact
-        stamp_artifact_version(config_path, "v3.1.0", pipeline_path)
+        stamp_artifact_version(config_path, "v3.1.0", file_sha256(pipeline_path))
         with caplog.at_level(logging.WARNING, logger="src.deployment.versioning"):
-            stamp_artifact_version(config_path, "v3.2.0", pipeline_path)
+            stamp_artifact_version(config_path, "v3.2.0", file_sha256(pipeline_path))
 
         assert "already carried version v3.1.0" in caplog.text
         assert _read(config_path)["version"] == "v3.2.0"
@@ -100,7 +100,7 @@ class TestStampArtifactVersion:
 class TestLoadedArtifactVersion:
     def test_reports_stamped_version_when_hash_matches(self, artifact):
         pipeline_path, config_path = artifact
-        stamp_artifact_version(config_path, "v3.1.0", pipeline_path)
+        stamp_artifact_version(config_path, "v3.1.0", file_sha256(pipeline_path))
 
         info = _load_fp_classifier(pipeline_path, config_path).get_model_info()
 
@@ -136,7 +136,7 @@ class TestLoadedArtifactVersion:
 
     def test_config_beside_a_different_pipeline_is_unversioned(self, artifact, caplog):
         pipeline_path, config_path = artifact
-        stamp_artifact_version(config_path, "v3.1.0", pipeline_path)
+        stamp_artifact_version(config_path, "v3.1.0", file_sha256(pipeline_path))
         # A new pipeline lands beside the old, stamped config (e.g. an interrupted notebook save).
         pipeline_path.write_bytes(b"a different model")
 
@@ -153,7 +153,7 @@ class TestLoadedArtifactVersion:
         import scripts.predict as predict_module
 
         pipeline_path, config_path = artifact
-        stamp_artifact_version(config_path, "v3.1.0", pipeline_path)
+        stamp_artifact_version(config_path, "v3.1.0", file_sha256(pipeline_path))
         classifier = _load_fp_classifier(pipeline_path, config_path)
 
         with patch("scripts.predict.create_classifier", return_value=classifier), patch(
@@ -261,9 +261,9 @@ class TestRegistryWritersStamp:
         assert _read(models_dir / "registry.json") == registry_before
 
     def test_promote_model_stamps_only_after_registry_write(self, models_dir, monkeypatch):
-        import scripts.promote_model as promote_model
+        import src.deployment.registry as registry_module
 
-        with patch.object(promote_model, "save_registry", side_effect=OSError("disk full")):
+        with patch.object(registry_module, "save_registry", side_effect=OSError("disk full")):
             with pytest.raises(OSError):
                 self._run_promote(models_dir, monkeypatch)
 
@@ -280,6 +280,7 @@ class TestRegistryWritersStamp:
 
     def test_retrain_promote_version_stamps_the_promoted_copy(self, models_dir, tmp_path):
         import scripts.retrain as retrain
+        import src.deployment.registry as registry_module
 
         output_dir = tmp_path / "candidate"
         output_dir.mkdir()
@@ -288,7 +289,7 @@ class TestRegistryWritersStamp:
 
         registry_path = models_dir / "registry.json"
         config_path = models_dir / "fp_classifier_config.json"
-        real_stamp = retrain.stamp_artifact_version
+        real_stamp = registry_module.stamp_artifact_version
 
         def stamp_after_registry(*args, **kwargs):
             # The registry entry must already be on disk when the config is stamped.
@@ -298,7 +299,7 @@ class TestRegistryWritersStamp:
         def deploy_after_stamp(*args, **kwargs):
             assert _read(config_path)["version"] == "v3.1.0"
 
-        with patch.object(retrain, "stamp_artifact_version", side_effect=stamp_after_registry) as stamp, \
+        with patch.object(registry_module, "stamp_artifact_version", side_effect=stamp_after_registry) as stamp, \
                 patch.object(retrain, "trigger_deploy_workflow", side_effect=deploy_after_stamp) as deploy:
             retrain.promote_version(
                 classifier="fp",
@@ -315,6 +316,8 @@ class TestRegistryWritersStamp:
         config = _read(config_path)
         assert config["version"] == "v3.1.0"
         assert config["pipeline_sha256"] == hashlib.sha256(b"candidate model").hexdigest()
+        entry = _read(registry_path)["fp"]["versions"]["v3.1.0"]
+        assert entry["pipeline_sha256"] == config["pipeline_sha256"]
         # The candidate's own config is left as it was.
         assert "version" not in _read(output_dir / "fp_classifier_config.json")
 

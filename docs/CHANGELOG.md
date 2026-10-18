@@ -4,6 +4,31 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-18: Registry version names are immutable, and each new entry records its bytes' hash
+
+**Every registry writer refuses an existing version name, numbers new versions from the highest
+registered version, and records `pipeline_sha256` in the entry (#189, D033).**
+- `src/deployment/registry.py` (new): `write_version` is the one function that writes a registry
+  entry. It refuses a name already registered, or one that is not `vMAJOR.MINOR.PATCH`, hashes the
+  joblib once, saves the entry with `pipeline_sha256`, then stamps the config with the same hash.
+  `next_version` numbers from the highest registered version. `check_pointer_move` and `move_pointer`
+  move `production` alone.
+- `scripts/register_model.py`, `scripts/promote_model.py`, `scripts/retrain.py`: refuse an existing
+  name before any side effect (before files are copied into `models/`, before training, before MLflow
+  registration), with a message naming the next free version. `promote_model.py`'s
+  `Overwrite? [y/N]` prompt is gone; a refusal exits 1. `register_model.py`'s "Use --update-registry
+  to overwrite" message now says the registry is not written and names the next free version.
+  `retrain.py` no longer numbers from the pointer, so its default next version is no longer the
+  registered `v2.5.0`.
+- `promote_model.py --version <vX.Y.Z> --pointer-only` moves the pointer to an existing version
+  without rewriting its entry. It refuses an unknown version, an entry with no recorded hash, a
+  `models/` joblib with another hash, and a config stamp that does not name that version and hash.
+- `stamp_artifact_version` takes the hash instead of the pipeline path.
+- `models/registry.json`: `fp.versions["v2.4.0"]` gains `pipeline_sha256` by hand, the same hash as
+  the config stamp, the committed joblib, the joblib at `aa1e589` and the served container (#176). No
+  other entry records a hash, so a pointer move to any other version is refused until that version
+  is reconciled.
+
 ### 2026-10-16: The labeling prompt judges every brand; a reply that leaves one out is unjudged
 
 **Prompt v1.11.0 asks for every brand's sportswear judgment, and the pipeline no longer stores a

@@ -187,6 +187,21 @@ class TestVersionRegistry:
         next_v = get_next_version("fp", registry_with_versions, "patch")
         assert next_v == "v1.2.1"
 
+    def test_get_next_version_bumps_from_highest_not_pointer(self, tmp_path):
+        """With the pointer behind the highest version, the pointer's bump is taken (#189)."""
+        registry = {
+            "fp": {
+                "production": "v2.4.0",
+                "versions": {"v2.4.0": {}, "v2.5.0": {}, "v2.6.0": {}},
+            }
+        }
+        registry_path = tmp_path / "registry.json"
+        registry_path.write_text(json.dumps(registry))
+
+        assert get_next_version("fp", registry_path, "minor") == "v2.7.0"
+        assert get_next_version("fp", registry_path, "patch") == "v2.6.1"
+        assert get_next_version("fp", registry_path, "major") == "v3.0.0"
+
     def test_get_next_version_first_version(self, empty_registry):
         """Test getting first version for new classifier."""
         next_v = get_next_version("fp", empty_registry, "minor")

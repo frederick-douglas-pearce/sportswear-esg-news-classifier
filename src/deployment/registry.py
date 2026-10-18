@@ -1,0 +1,239 @@
+"""Registry version rules: immutable names, numbering, and the pointer (#189, D033).
+
+A version name in ``models/registry.json`` names one set of bytes for good. Every
+registry writer goes through :func:`write_version`, which refuses an existing name,
+records the pipeline's ``pipeline_sha256`` in the entry, and stamps the same hash
+into the artifact config (D026). A new version is numbered from the highest
+registered version, never from the ``production`` pointer. The pointer moves on its
+own through :func:`move_pointer`, which leaves every entry as it was.
+"""
+
+import json
+import re
+from pathlib import Path
+from typing import Union
+
+from .versioning import file_sha256, stamp_artifact_version
+
+BUMPS = ("major", "minor", "patch")
+
+_VERSION_RE = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
+
+
+class VersionExistsError(ValueError):
+    """The version name is already in the registry, so it cannot be written again."""
+
+
+class PointerMoveRefused(ValueError):
+    """The ``production`` pointer cannot be moved to the requested version."""
+
+
+def parse_version(name: str) -> tuple[int, int, int]:
+    """Parse a registry version name of the form ``vMAJOR.MINOR.PATCH``.
+
+    Raises:
+        ValueError: ``name`` is not of that form (``v2`` and ``2.1.0`` are not).
+    """
+    match = _VERSION_RE.fullmatch(name) if isinstance(name, str) else None
+    if match is None:
+        raise ValueError(
+            f"Invalid version name {name!r}: expected vMAJOR.MINOR.PATCH, e.g. v2.7.0"
+        )
+    major, minor, patch = (int(part) for part in match.groups())
+    return major, minor, patch
+
+
+def next_version(registry: dict, classifier: str, bump: str) -> str:
+    """Return the next version name for ``classifier``, bumped from its highest version.
+
+    The highest registered version is the base, not the ``production`` pointer, so
+    the result is never a name already in the registry. A classifier with no
+    versions gets ``v1.0.0``.
+
+    Raises:
+        ValueError: ``bump`` is not one of :data:`BUMPS`, or a registered name does
+            not parse (the highest version cannot then be known).
+    """
+    if bump not in BUMPS:
+        raise ValueError(f"Invalid bump {bump!r}: expected one of {', '.join(BUMPS)}")
+
+    versions = registry.get(classifier, {}).get("versions", {})
+    if not versions:
+        return "v1.0.0"
+
+    major, minor, patch = max(parse_version(name) for name in versions)
+    if bump == "major":
+        return f"v{major + 1}.0.0"
+    if bump == "minor":
+        return f"v{major}.{minor + 1}.0"
+    return f"v{major}.{minor}.{patch + 1}"
+
+
+def require_new_version(registry: dict, classifier: str, version: str, bump: str) -> None:
+    """Refuse a version name that is malformed or already registered.
+
+    Callers run this before any side effect: before files are copied into
+    ``models/``, before training, and before MLflow registration.
+
+    Args:
+        registry: The loaded registry.
+        classifier: Classifier type (fp, ep, esg).
+        version: The version name about to be written.
+        bump: The caller's bump, used to name the next free version in the refusal.
+
+    Raises:
+        ValueError: ``version`` is not ``vMAJOR.MINOR.PATCH``.
+        VersionExistsError: ``version`` is already registered for ``classifier``.
+    """
+    parse_version(version)
+    if version in registry.get(classifier, {}).get("versions", {}):
+        free = next_version(registry, classifier, bump)
+        raise VersionExistsError(
+            f"{classifier} {version} is already registered, and a registered version "
+            f"is never rewritten (D033). The next free version is {free} ({bump} bump "
+            "from the highest registered version), or use any higher unregistered version."
+        )
+
+
+def load_registry(registry_path: Union[str, Path]) -> dict:
+    """Load the registry, or return an empty one if the file does not exist."""
+    registry_path = Path(registry_path)
+    if not registry_path.exists():
+        return {}
+    with open(registry_path) as f:
+        return json.load(f)
+
+
+def save_registry(registry_path: Union[str, Path], registry: dict) -> None:
+    """Write the registry as indented JSON with a trailing newline."""
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+
+def write_version(
+    registry_path: Union[str, Path],
+    classifier: str,
+    version: str,
+    entry: dict,
+    config_path: Union[str, Path],
+    pipeline_path: Union[str, Path],
+    bump: str,
+    set_production: bool = False,
+) -> str:
+    """Add a new version entry to the registry and stamp the artifact config.
+
+    This is the only code that writes a registry entry. The pipeline is hashed once,
+    and that hash is written both into the entry as ``pipeline_sha256`` and into the
+    config stamp, so the two cannot differ.
+
+    Args:
+        registry_path: The registry JSON file.
+        classifier: Classifier type (fp, ep, esg).
+        version: The new version name.
+        entry: The entry's other fields; the caller decides its shape.
+        config_path: The artifact config to stamp.
+        pipeline_path: The artifact joblib whose bytes the version names.
+        bump: The caller's bump, for the refusal message.
+        set_production: Also point ``production`` at the new version.
+
+    Returns:
+        The recorded ``pipeline_sha256``.
+
+    Raises:
+        ValueError: ``version`` is malformed.
+        VersionExistsError: ``version`` is already registered. Nothing is written.
+    """
+    registry = load_registry(registry_path)
+    # Checked again on the registry as loaded here: a caller's earlier check read a
+    # copy that another writer may have changed since.
+    require_new_version(registry, classifier, version, bump)
+
+    pipeline_sha256 = file_sha256(pipeline_path)
+    record = registry.setdefault(classifier, {"production": None, "versions": {}})
+    record.setdefault("versions", {})[version] = {**entry, "pipeline_sha256": pipeline_sha256}
+    if set_production:
+        record["production"] = version
+
+    save_registry(registry_path, registry)
+    # After the registry save, so the config never claims a version the registry
+    # lacks (D026). If the stamp fails, the name is already spent; recovering is a
+    # hand edit (D033).
+    stamp_artifact_version(config_path, version, pipeline_sha256)
+    return pipeline_sha256
+
+
+def check_pointer_move(
+    registry: dict,
+    classifier: str,
+    version: str,
+    pipeline_path: Union[str, Path],
+    config_path: Union[str, Path],
+) -> None:
+    """Refuse a pointer move unless ``models/`` already holds ``version``'s bytes.
+
+    The move is allowed only when the entry records a ``pipeline_sha256``, the joblib
+    at ``pipeline_path`` has that hash, and the config at ``config_path`` is stamped
+    with ``version`` and that hash.
+
+    Raises:
+        PointerMoveRefused: with the reason.
+    """
+    versions = registry.get(classifier, {}).get("versions", {})
+    if version not in versions:
+        raise PointerMoveRefused(f"{classifier} {version} is not a registered version.")
+
+    recorded = versions[version].get("pipeline_sha256")
+    if not recorded:
+        raise PointerMoveRefused(
+            f"{classifier} {version} has no recorded pipeline_sha256, so its bytes cannot "
+            "be checked. Record its hash through its own reconciliation first (D033)."
+        )
+
+    pipeline_path = Path(pipeline_path)
+    if not pipeline_path.exists():
+        raise PointerMoveRefused(f"Pipeline not found: {pipeline_path}")
+    actual = file_sha256(pipeline_path)
+    if actual != recorded:
+        raise PointerMoveRefused(
+            f"{pipeline_path} is not {classifier} {version}'s bytes: its sha256 is "
+            f"{actual}, and the registry records {recorded}."
+        )
+
+    config_path = Path(config_path)
+    if not config_path.exists():
+        raise PointerMoveRefused(f"Config not found: {config_path}")
+    with open(config_path) as f:
+        config = json.load(f)
+    if config.get("version") != version or config.get("pipeline_sha256") != recorded:
+        raise PointerMoveRefused(
+            f"{config_path} is stamped version={config.get('version')!r}, "
+            f"pipeline_sha256={config.get('pipeline_sha256')!r}; a move to {version} needs "
+            f"version={version!r} and pipeline_sha256={recorded!r}."
+        )
+
+
+def move_pointer(
+    registry_path: Union[str, Path],
+    classifier: str,
+    version: str,
+    pipeline_path: Union[str, Path],
+    config_path: Union[str, Path],
+) -> str | None:
+    """Point ``production`` at an existing version without rewriting any entry.
+
+    Runs :func:`check_pointer_move` first and never re-stamps the config.
+
+    Returns:
+        The previous ``production`` value.
+
+    Raises:
+        PointerMoveRefused: the move is refused; nothing is written.
+    """
+    registry = load_registry(registry_path)
+    check_pointer_move(registry, classifier, version, pipeline_path, config_path)
+
+    previous = registry[classifier].get("production")
+    registry[classifier]["production"] = version
+    save_registry(registry_path, registry)
+    return previous

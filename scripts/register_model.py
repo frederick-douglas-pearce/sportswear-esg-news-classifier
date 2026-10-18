@@ -3,25 +3,27 @@
 
 Use this after training via notebooks to register the model without retraining.
 Reads from existing config files (created by notebook's deployment cell). With
---update-registry it also stamps `version` and `pipeline_sha256` into
-models/<classifier>_classifier_config.json (D026).
+--update-registry it also adds the version to models/registry.json, recording its
+`pipeline_sha256`, and stamps `version` and the same hash into
+models/<classifier>_classifier_config.json (D026). A version name already in the
+registry is refused before anything is written (D033).
 
 Usage:
     # Register FP classifier with auto-detected version
     uv run python scripts/register_model.py --classifier fp
 
     # Register with specific version
-    uv run python scripts/register_model.py --classifier fp --version v2.1.0
+    uv run python scripts/register_model.py --classifier fp --version v2.7.0
 
     # Also update local registry.json (e.g., after notebook training)
-    uv run python scripts/register_model.py --classifier fp --version v2.2.0 --update-registry
+    uv run python scripts/register_model.py --classifier fp --version v2.7.0 --update-registry
 
     # Add notes for the version
-    uv run python scripts/register_model.py --classifier fp --version v2.2.0 --update-registry \
+    uv run python scripts/register_model.py --classifier fp --version v2.7.0 --update-registry \
         --notes "Added new feature X"
 
     # Register and add to MLflow Model Registry
-    uv run python scripts/register_model.py --classifier fp --version v2.2.0 --register-model
+    uv run python scripts/register_model.py --classifier fp --version v2.7.0 --register-model
 
 Note:
     MLflow uses SQLite backend (mlruns.db) by default. The file-based backend
@@ -38,25 +40,11 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.deployment.versioning import stamp_artifact_version  # noqa: E402
-
-
-def get_next_version(registry: dict, classifier: str, bump: str = "patch") -> str:
-    """Calculate next semantic version."""
-    versions = list(registry.get(classifier, {}).get("versions", {}).keys())
-    if not versions:
-        return "v1.0.0"
-
-    # Parse latest version
-    latest = sorted(versions, key=lambda v: [int(x) for x in v[1:].split(".")])[-1]
-    major, minor, patch = [int(x) for x in latest[1:].split(".")]
-
-    if bump == "major":
-        return f"v{major + 1}.0.0"
-    elif bump == "minor":
-        return f"v{major}.{minor + 1}.0"
-    else:
-        return f"v{major}.{minor}.{patch + 1}"
+from src.deployment.registry import (  # noqa: E402
+    next_version,
+    require_new_version,
+    write_version,
+)
 
 
 def register_mlflow(
@@ -155,18 +143,14 @@ def update_registry(
     classifier: str,
     version: str,
     config: dict,
+    config_path: Path,
+    pipeline_path: Path,
     notes: str = "",
     set_production: bool = False,
+    bump: str = "patch",
 ) -> None:
-    """Update local registry.json with new version."""
-    with open(registry_path) as f:
-        registry = json.load(f)
-
-    if classifier not in registry:
-        registry[classifier] = {"production": None, "versions": {}}
-
-    # Add version entry
-    registry[classifier]["versions"][version] = {
+    """Add a new version to registry.json and stamp the config (refuses an existing name)."""
+    entry = {
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "trained_on": f"data/{classifier}_training_data.jsonl",
         "model_name": config.get("model_name"),
@@ -182,14 +166,18 @@ def update_registry(
         },
     }
     if notes:
-        registry[classifier]["versions"][version]["notes"] = notes
+        entry["notes"] = notes
 
-    if set_production:
-        registry[classifier]["production"] = version
-
-    with open(registry_path, "w") as f:
-        json.dump(registry, f, indent=2)
-        f.write("\n")
+    write_version(
+        registry_path,
+        classifier,
+        version,
+        entry,
+        config_path,
+        pipeline_path,
+        bump,
+        set_production=set_production,
+    )
 
 
 def main():
@@ -268,14 +256,24 @@ def main():
     if args.version:
         version = args.version
     else:
-        version = get_next_version(registry, args.classifier, args.bump)
+        version = next_version(registry, args.classifier, args.bump)
         print(f"Auto-detected version: {version}")
 
-    # Check if version already exists
+    # A registered version name is never rewritten (D033). With --update-registry, refuse
+    # here, before the dry-run summary and before the MLflow run.
     existing_versions = registry.get(args.classifier, {}).get("versions", {})
-    if version in existing_versions and not args.update_registry:
-        print(f"⚠️  Version {version} already exists in registry.")
-        print("   Use --update-registry to overwrite, or specify a different --version")
+    if args.update_registry:
+        try:
+            require_new_version(registry, args.classifier, version, args.bump)
+        except ValueError as e:
+            print(f"❌ {e}", file=sys.stderr)
+            sys.exit(1)
+    elif version in existing_versions:
+        free = next_version(registry, args.classifier, args.bump)
+        print(f"⚠️  Version {version} is already in the registry; the registry is not written.")
+        print(f"   --update-registry refuses an existing name (D033); the next free version is {free}.")
+        print(f"   The MLflow run is tagged {version} over the bytes now in {models_dir}/, which may")
+        print(f"   not be {version}'s. The registry, not MLflow, records which bytes {version} names.")
 
     if args.dry_run:
         print(f"\n🔍 Dry run - would register:")
@@ -311,7 +309,9 @@ def main():
     if model_version:
         print(f"   ✅ Model Registry: {args.classifier}-classifier version {model_version}")
 
-    # Update registry if requested
+    # Update registry if requested. write_version checks the name again; that check can
+    # refuse only if another writer registered the name since the check above, and by then
+    # the MLflow run exists.
     if args.update_registry:
         print(f"\n📝 Updating {registry_path}...")
         update_registry(
@@ -319,12 +319,13 @@ def main():
             classifier=args.classifier,
             version=version,
             config=config,
+            config_path=config_path,
+            pipeline_path=pipeline_path,
             notes=args.notes,
             set_production=args.set_production,
+            bump=args.bump,
         )
         print(f"   ✅ Added version {version}")
-        # After the registry write, so the config never claims a version the registry lacks.
-        stamp_artifact_version(config_path, version, pipeline_path)
         print(f"   ✅ Stamped {version} into {config_path}")
         if args.set_production:
             print(f"   ✅ Set as production")
