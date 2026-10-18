@@ -80,7 +80,8 @@ def require_new_version(registry: dict, classifier: str, version: str, bump: str
     """Refuse a version name that is malformed or already registered.
 
     Callers run this before any side effect: before files are copied into
-    ``models/``, before training, and before MLflow registration.
+    ``models/``, before training, and, for ``register_model.py --update-registry``,
+    before MLflow registration.
 
     Args:
         registry: The loaded registry.
@@ -89,7 +90,8 @@ def require_new_version(registry: dict, classifier: str, version: str, bump: str
         bump: The caller's bump, used to name the next free version in the refusal.
 
     Raises:
-        ValueError: ``version`` is not ``vMAJOR.MINOR.PATCH``.
+        ValueError: ``version`` is not canonical ``vMAJOR.MINOR.PATCH`` (see
+            :func:`parse_version`).
         VersionExistsError: ``version`` is already registered for ``classifier``.
     """
     parse_version(version)

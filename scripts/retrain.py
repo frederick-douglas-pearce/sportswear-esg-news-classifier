@@ -498,7 +498,8 @@ Examples:
     registry_path = args.models_dir / "registry.json"
 
     # Get current and next version
-    current_version = get_current_version(args.classifier, registry_path)
+    # The pointer itself; get_current_version falls back to the highest version when it is null.
+    production_version = load_registry(registry_path).get(args.classifier, {}).get("production")
 
     # Before training, which writes into output_dir and may log to MLflow.
     try:
@@ -512,7 +513,7 @@ Examples:
     print(f"=" * 60)
     print(f"Retraining {args.classifier.upper()} Classifier")
     print(f"=" * 60)
-    print(f"Production version: {current_version or 'None'}")
+    print(f"Production version: {production_version or 'None'}")
     print(f"New version:        {version} ({bump_type} bump from the highest registered version)")
 
     # Train new version

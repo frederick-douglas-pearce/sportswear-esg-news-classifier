@@ -2336,10 +2336,10 @@ rollback target. #172's build guard needs a recorded hash to compare against. #1
    keys on the name. A name that is not canonical `vMAJOR.MINOR.PATCH` (ASCII digits, no leading
    zeros, MAJOR at least 1) is refused too: one unparseable name would break numbering for every
    writer, and a second spelling such as `v02.4.0` would register another key for `v2.4.0`. `v0` is
-   refused because nothing uses it (the human's call). The refusal comes before any side effect (before files are copied into `models/`, before
-   training, and with `--update-registry` before MLflow registration) and names the next free
-   version for the caller's own bump; `promote_model.py`, which has no bump flag, names the next
-   minor.
+   refused because nothing uses it (the human's call). The refusal comes before any side effect
+   (before files are copied into `models/`, before training, and with `--update-registry` before
+   MLflow registration) and names the next free version for the caller's own bump;
+   `promote_model.py`, which has no bump flag, names the next minor.
 2. **One writer.** `write_version` in `src/deployment/registry.py` is the only code that writes a
    registry entry. It hashes the joblib once and writes the hash into the entry as `pipeline_sha256`
    and into the config stamp, so the two cannot differ (D026). It checks the name again on the

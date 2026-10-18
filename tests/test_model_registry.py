@@ -47,8 +47,11 @@ class TestParseVersion:
             parse_version(name)
 
     # A second spelling of a registered version would be a second registry key for it.
+    # Fullwidth digits after the first position are rejected only by re.ASCII.
     @pytest.mark.parametrize(
-        "name", ["v02.4.0", "v2.04.0", "v2.4.00", "v\uff12.4.0", "v0.0.0", "v0.1.0"]
+        "name",
+        ["v02.4.0", "v2.04.0", "v2.4.00", "v\uff12.4.0", "v1\uff10.0.0", "v2.1\uff10.0",
+         "v0.0.0", "v0.1.0"],
     )
     def test_rejects_non_canonical_spellings_and_major_zero(self, name):
         with pytest.raises(ValueError, match="vMAJOR.MINOR.PATCH"):
