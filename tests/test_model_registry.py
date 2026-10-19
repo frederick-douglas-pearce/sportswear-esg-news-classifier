@@ -23,6 +23,7 @@ from src.deployment.registry import (
     require_new_version,
     write_version,
 )
+from src.deployment.versioning import ArtifactRefused, check_build_artifact
 
 PIPELINE_BYTES = b"pretend joblib bytes"
 PIPELINE_SHA256 = hashlib.sha256(PIPELINE_BYTES).hexdigest()
@@ -309,6 +310,42 @@ class TestMovePointer:
         check_pointer_move(_read(registry_path), "fp", "v1.1.0", pipeline_path, config_path)
 
         assert registry_path.read_bytes() == registry_bytes
+
+    @pytest.mark.parametrize(
+        "break_tree",
+        [
+            None,
+            lambda registry, config, pipeline: pipeline.write_bytes(b"a different model"),
+            lambda registry, config, pipeline: config.write_text(json.dumps({"version": "v1.0.0"})),
+            lambda registry, config, pipeline: (pipeline.unlink(), pipeline.mkdir()),
+            lambda registry, config, pipeline: config.write_text("[]"),
+            lambda registry, config, pipeline: config.write_bytes(b"\xff\xfe binary"),
+            lambda registry, config, pipeline: registry["fp"]["versions"].update({"v1.1.0": None}),
+        ],
+        ids=["intact", "other-bytes", "other-stamp", "directory", "config-not-object", "config-binary", "entry-not-object"],
+    )
+    def test_allows_a_move_exactly_where_the_build_guard_passes(self, promotable, break_tree):
+        """A move is allowed exactly when the build guard would then pass on these files (D034)."""
+        registry_path, config_path, pipeline_path = promotable
+        registry = _read(registry_path)
+        if break_tree is not None:
+            break_tree(registry, config_path, pipeline_path)
+        # The registry as the move would leave it, for the guard to read.
+        guarded = json.loads(json.dumps(registry))
+        guarded["fp"]["production"] = "v1.1.0"
+        registry_path.write_text(json.dumps(guarded))
+
+        if break_tree is None:
+            assert check_build_artifact(registry_path, "fp", pipeline_path, config_path) == "v1.1.0"
+            check_pointer_move(registry, "fp", "v1.1.0", pipeline_path, config_path)
+            return
+
+        with pytest.raises(ArtifactRefused) as guard:
+            check_build_artifact(registry_path, "fp", pipeline_path, config_path)
+        with pytest.raises(PointerMoveRefused) as move:
+            check_pointer_move(registry, "fp", "v1.1.0", pipeline_path, config_path)
+        # Same refusal: the guard's message is the move's, prefixed with the pointer.
+        assert str(guard.value) == f"fp production pointer is v1.1.0: {move.value}"
 
 
 # The fields the writer scripts print from an artifact config.
