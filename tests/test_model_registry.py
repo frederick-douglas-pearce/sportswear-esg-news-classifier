@@ -256,6 +256,21 @@ class TestMovePointer:
 
         self._assert_refused(promotable, "v1.1.0", "is not fp v1.1.0's bytes")
 
+    def test_refuses_bytes_and_stamp_that_agree_on_a_hash_the_entry_does_not_record(
+        self, promotable
+    ):
+        # Same case as the build guard's (tests/test_build_guard.py): the joblib and
+        # stamp agree, the entry records another hash.
+        registry_path, config_path, _ = promotable
+        registry = _read(registry_path)
+        registry["fp"]["versions"]["v1.0.0"]["pipeline_sha256"] = "0" * 64
+        registry_path.write_text(json.dumps(registry, indent=2) + "\n")
+        config_path.write_text(
+            json.dumps({"threshold": 0.6, "version": "v1.0.0", "pipeline_sha256": PIPELINE_SHA256})
+        )
+
+        self._assert_refused(promotable, "v1.0.0", "is not fp v1.0.0's bytes")
+
     def test_refuses_hashless_entry(self, promotable):
         # v1.2.0 records no hash, even though the bytes in models/ could be anything.
         self._assert_refused(promotable, "v1.2.0", "no recorded pipeline_sha256")

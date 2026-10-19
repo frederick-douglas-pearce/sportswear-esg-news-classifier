@@ -4,20 +4,20 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
-### 2026-10-18: Images are built only from the registry pointer's registered bytes
+### 2026-10-18: Supported image builds use only the registry pointer's registered bytes
 
-**The Dockerfile's builder stage runs a build guard: no build succeeds unless `models/` holds the
+**The Dockerfile's builder stage runs a build guard: no supported build succeeds unless `models/` holds the
 registered, stamped bytes of the version the registry pointer names (#172, D034).**
 - `src/deployment/versioning.py`: `check_build_artifact` refuses, by name, a classifier whose pointer
   is `null` (before looking at any file), a pointer with no registry entry, an entry with no
   `pipeline_sha256`, a joblib whose sha256 differs from the entry's, and a config not stamped with the
-  pointer and that hash. Each refusal names the pointer and what was found; a registry or config that
-  is not valid JSON is refused naming the file. Run as a script (`python -I
+  pointer and that hash. Each refusal after the pointer is read names it and what was found; a
+  missing, malformed or unreadable registry, config or joblib is refused naming the file. Run as a script (`python -I
   src/deployment/versioning.py --classifier fp --models-dir models`) it exits 0 to build and 1 to
   refuse, importing only the standard library.
 - `check_registered_bytes` is the byte check for a named version, shared by the guard and
-  `registry.check_pointer_move`, so a pointer move is allowed exactly when an image could then be
-  built. `PointerMoveRefused` is unchanged for callers; its messages say "fp v1.1.0 needs …" where
+  `registry.check_pointer_move`, so a pointer move is allowed exactly when the build guard would
+  then pass on those files. `PointerMoveRefused` is unchanged for callers; its messages say "fp v1.1.0 needs …" where
   they said "a move to v1.1.0 needs …".
 - `Dockerfile`: the builder copies `models/registry.json` and the classifier's two artifact files
   (absent files match nothing, so a classifier with none still reaches the guard's refusal), runs the
@@ -25,8 +25,9 @@ registered, stamped bytes of the version the registry pointer names (#172, D034)
   detection. The runtime stage copies the two files the guard checked from the builder;
   `registry.json` is not in the runtime image. `--build-arg SKIP_MODEL_GUARD=true` (exactly) skips the
   guard for a local smoke test of a candidate, under another image name and port, never through
-  compose; such an image reports `unversioned` unless its files are a registered version's stamped
-  bytes.
+  compose; such an image reports the version its config is stamped with only when the stamp's hash matches the packaged joblib (as a registered version's files are), and `unversioned` otherwise. A change to `registry.json`, either
+  artifact or `versioning.py` re-runs the guard and the model-download step after it, on a local
+  rebuild.
 - `.github/workflows/deploy.yml`: the "Verify model file exists" steps are deleted; each image build
   runs the guard. EP's deploy job now fails at the guard's refusal.
 - `tests/test_committed_model_registry.py`: the stamp check calls the guard on the committed tree,

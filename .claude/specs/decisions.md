@@ -2099,8 +2099,8 @@ also depends on what the investigation finds.
    - `model_training.promote_model` passes `--set-production`;
    - `trigger_deployment` passes the pointer.
 
-   #172 changes only these values. Failure handling of those steps stays with #79. *(Moved to #191
-   in the 2026-10-08 split, D034.)*
+   #172 changes only these values. Failure handling of those steps stays with #79. *(§5's three
+   changes moved to #191 in the 2026-10-08 split, D034; failure handling stays with #79.)*
 6. **Post-deploy check.** One reusable script reads `/model/info` and compares it with the pointer.
    `deploy.yml` runs it, and it is documented for use after `docker compose up`. It is treated as an
    architect-triggered assertion change (`.claude/loop.config.md` §2), although `deploy.yml` is dispatched, not scheduled.
@@ -2146,7 +2146,9 @@ that starts, reports healthy, and fails every `/predict`.
    `xfail(strict)` until #180 lands), and loads the committed artifact and compares its
    probabilities with golden values captured from the running container (evidence on #176).
    Replacing the first half with #172's guard is proposed to #172; the second half is not proposed
-   for replacement, because the guard D027 describes binds bytes, not code.
+   for replacement, because the guard D027 describes binds bytes, not code. *(Done in D034: the stamp
+   half is a guard call on the committed tree; the load-and-predict half stays, with probabilities
+   keyed by version.)*
 
 **Consequences.** This is the first demonstrated instance of D027's accepted consequence: the joblib
 hash binds the model bytes, not the `src/fp1_nb` code the pickle imports. With the pointer at v2.4.0,
@@ -2419,17 +2421,17 @@ promotion paths to #191.
 **Decision.**
 1. **The guard.** `check_build_artifact` in `src/deployment/versioning.py` refuses, by name: a
    classifier whose `production` is `null`, before it looks at any file (so EP artifacts in `models/`
-   never make EP buildable, D029); a pointer with no registry entry; an entry with no
-   `pipeline_sha256`; a joblib whose sha256 differs from the entry's; a config not stamped with the
-   pointer's `version`; and a registry or config that is not valid JSON. Each refusal names the pointer
-   and what was found.
+   never make EP buildable by a supported build, D029); a pointer with no registry entry; an entry
+   with no `pipeline_sha256`; a joblib whose sha256 differs from the entry's; a config not stamped with
+   the pointer's `version`; a missing `production` key or a malformed registry; and a missing,
+   unreadable or malformed file. Each refusal after the pointer is read names it and what was found.
 2. **Beyond AC1, kept by the human:** the guard also requires the stamp's `pipeline_sha256` to equal
    the entry's. Without it an image could pass the guard and report `unversioned`
    (`BaseClassifier._verified_version`).
 3. **D027 §3 holds as written.** The byte check for a named version (entry hash, joblib, config
    stamp) is one function, `check_registered_bytes`, in `versioning.py`. Both `check_build_artifact`
-   and `registry.check_pointer_move` call it, so a pointer move is allowed exactly when an image could
-   then be built. The check moved down into the guard's module; the guard did not move up into
+   and `registry.check_pointer_move` call it, so a pointer move is allowed exactly when the build guard
+   would then pass on those files. The check moved down into the guard's module; the guard did not move up into
    `registry.py`. #189's reading, that reusing its check would amend D027 §3 (D033 §4), was considered
    and not taken. One exception, `ArtifactRefused` (a `ValueError`), serves both;
    `check_pointer_move` re-raises it as `PointerMoveRefused`.
@@ -2439,13 +2441,18 @@ promotion paths to #191.
    detection reads the guarded config.
 5. **What the builder copies.** `models/registry.json` and the classifier's two artifact files, named,
    with bracket globs so an absent file matches nothing and the build reaches the guard's refusal.
-   Not the whole `models/`: notebook outputs there no longer invalidate the build cache. The runtime
+   Not the whole `models/`, so other files there do not invalidate the build cache. The four guard
+   inputs (`registry.json`, the two artifacts, `versioning.py`) do: a change to any of them re-runs the
+   guard and the detection step after it, which re-downloads en_core_web_sm (and all-MiniLM-L6-v2 for
+   sentence_transformer methods). That is the price of failing before that download (§4); a separate
+   guard stage that would let detection stay cached was offered at review as a follow-up and not
+   taken (human decision, 2026-10-19). The runtime
    stage copies the two checked files with `COPY --from=builder`; `registry.json` is never in the
    runtime image (D026 §1).
 6. **The bypass packages the files as they are** (human ruling on an AC4 reinterpretation, recorded on
    #172). `SKIP_MODEL_GUARD=true`, exactly, skips the guard; any other value runs it. Such an image
-   reports `unversioned` unless its files are a registered version's stamped bytes, in which case it
-   reports that version. AC4's "reports `unversioned`" is read as "claims no version it does not
+   reports the version its config is stamped with only when the stamp's hash matches the packaged
+   joblib (as a registered version's files are), and `unversioned` otherwise. AC4's "reports `unversioned`" is read as "claims no version it does not
    have". Smoke tests use another image name and port, never `docker compose build`, which would
    replace the image the labeling pipeline calls.
 7. **`deploy.yml`'s "Verify model file exists" steps are deleted**, not kept beside the guard.
@@ -2468,8 +2475,9 @@ promotion paths to #191.
   tree.
 - Stripping the stamp under the bypass so it always reports `unversioned`: it would hide a registered
   version's true identity.
-- Copying the whole `models/` into the builder: cache churn from notebook outputs, and a missing EP
-  file would fail at `COPY` instead of at the guard's refusal by name.
+- Copying the whole `models/` into the builder: any notebook output written there would invalidate
+  the guard's layer and every layer after it. (Naming the two files without bracket globs was also
+  rejected: a missing file would fail at `COPY` instead of at the guard's refusal by name.)
 - A test that the deleted `deploy.yml` step stays deleted: it pins an absence nothing reintroduces.
 
 **Consequences.**

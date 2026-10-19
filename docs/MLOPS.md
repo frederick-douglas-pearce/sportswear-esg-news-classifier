@@ -245,7 +245,8 @@ D-entry (D033).
 The stamp is written to the working tree. An image picks it up only when it is built from a tree that
 holds the stamped config: a local `docker compose build` reads the working tree, while `deploy.yml`
 builds from the committed tree, so commit the stamped config with its joblib before deploying. Every
-build runs the Dockerfile's build guard (#172, D034), which refuses an artifact that is not the
+supported build (all but a local `SKIP_MODEL_GUARD=true` smoke test) runs the Dockerfile's build guard
+(#172, D034), which refuses an artifact that is not the
 pointer's registered, stamped bytes ([DEPLOYMENT.md](DEPLOYMENT.md#the-registry-pointer-decides-what-is-built)).
 
 `pipeline_sha256` binds the version to the joblib only. Config fields such as `threshold` are not
@@ -308,7 +309,8 @@ the tree:
   `models/ep_*` file.
 
 The build guard refuses a classifier whose pointer is `null` before it looks at any file, so EP
-artifacts written to `models/` (by the ep3 notebook, say) never make EP buildable (#172). Which rule
+artifacts written to `models/` (by the ep3 notebook, say) never make EP buildable by a supported build
+(#172). Which rule
 the promotion paths use for a classifier with no production version is #191's.
 
 The served, registered and committed models are three separate things and can differ. Which ones

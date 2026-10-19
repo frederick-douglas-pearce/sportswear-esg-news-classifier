@@ -95,8 +95,9 @@ The model registry (`models/registry.json`) tracks all model versions. When depl
 
 The production pointer in `models/registry.json` (`<clf>.production`) decides which model an image
 packages (#172, D034). The Dockerfile's builder stage runs a build guard
-(`check_build_artifact` in `src/deployment/versioning.py`) before it downloads anything, and the build
-fails unless:
+(`check_build_artifact` in `src/deployment/versioning.py`) after installing the Python dependencies
+and before the step that may download spaCy or sentence-transformers models, and the build fails
+unless:
 
 1. the pointer is not `null`;
 2. the pointer names a version registered in `models/registry.json`, and that entry records a
@@ -115,16 +116,19 @@ builder; nothing reads the pointer at serve time. To run the same check without 
 python -I src/deployment/versioning.py --classifier fp --models-dir models   # exit 0 build, 1 refused
 ```
 
-**When the guard refuses.** The message names the classifier, the pointer and what it found:
+**When the guard refuses.** The message names the classifier and what it found, and the pointer once
+it has been read:
 
 | Refusal | Meaning | Reconcile |
 |---|---|---|
+| `Registry not found` / `<clf> is not in …registry.json` / `<clf> in … has no production key` / `<clf>'s record … is not an object` / `… production pointer … is …, not a version name` | the registry is missing, has no usable entry for the classifier, or is malformed | restore `models/registry.json` from git; build only a classifier the registry lists |
 | `<clf> has no production version (its pointer is null …)` | the classifier has no production version (EP while it is on hold, #180) | nothing may be built until a version is registered and promoted; files in `models/` do not change this |
 | `… is not a registered version` | the pointer names a version with no entry | point `production` at a registered version (`promote_model.py --pointer-only`) |
 | `… has no recorded pipeline_sha256` | the pointer's entry predates #189 | record that version's hash through its own reconciliation, with byte evidence and a D-entry (D033), or move the pointer to a version that records one |
 | `… is not <clf> <version>'s bytes: its sha256 is …, and the registry records …` | `models/` holds other bytes, such as a notebook or `train.py` output | to ship them, register and promote them (`register_model.py --classifier <clf> --bump <major|minor|patch> --update-registry --set-production`) and commit the registry, joblib and config together; otherwise restore the pointer's bytes from git |
 | `… is stamped version=…, pipeline_sha256=…` | the config is not the pointer's stamped config | restore the pointer's config from git, or register and promote the artifact as above |
-| `Pipeline not found` / `Config not found` / `… is not valid JSON` | a file is missing or unreadable | restore it from git |
+| `… registry record has no versions object` / `… registry entry is not an object` | the registry's entries for the classifier are malformed | restore `models/registry.json` from git |
+| `Pipeline not found` / `Config not found` / `… is not valid JSON` / `… does not hold a JSON object` / `… cannot be read` | a file is missing, unreadable or malformed | restore it from git |
 
 To restore the committed bytes, run
 `git checkout HEAD -- models/<clf>_classifier_pipeline.joblib models/<clf>_classifier_config.json`.
@@ -140,8 +144,8 @@ docker run -p 8002:8000 fp-candidate
 
 Use another image name and port. Never build a candidate through `docker compose build`: that replaces
 `fp-classifier-api`, the image the labeling pipeline calls. `deploy.yml`, `docker-compose.yml` and
-`scripts/deploy_cloudrun.sh` never pass the argument. Such an image reports `unversioned` unless its
-files are a registered version's stamped bytes, in which case it reports that version.
+`scripts/deploy_cloudrun.sh` never pass the argument. Such an image claims no version it does not have:
+it reports the version its config is stamped with only when the stamp's hash matches the packaged joblib (as a registered version's files are), and `unversioned` otherwise.
 
 **Recording served probabilities after a promotion.** `tests/test_committed_model_registry.py`
 compares the committed FP artifact's probabilities with values recorded for the pointer's version,

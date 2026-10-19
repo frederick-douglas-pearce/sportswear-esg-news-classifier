@@ -191,7 +191,7 @@ def check_pointer_move(
     at ``pipeline_path`` has that hash, and the config at ``config_path`` is stamped
     with ``version`` and that hash. The check is the build guard's
     (``versioning.check_registered_bytes``, D034), so a move is allowed exactly
-    when an image could then be built.
+    when the build guard would then pass on these files.
 
     Raises:
         PointerMoveRefused: with the reason.

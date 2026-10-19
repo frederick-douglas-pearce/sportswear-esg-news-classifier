@@ -90,7 +90,9 @@ class TestCheckBuildArtifact:
         # report `unversioned` from an image the guard let through.
         _write_stamp(models_dir, {"version": "v1.1.0", "pipeline_sha256": OTHER_SHA256})
 
-        with pytest.raises(ArtifactRefused, match=f"pipeline_sha256='{OTHER_SHA256}'"):
+        with pytest.raises(
+            ArtifactRefused, match=rf"pointer is v1\.1\.0: .*pipeline_sha256='{OTHER_SHA256}'"
+        ):
             _check(models_dir)
 
     def test_refuses_a_joblib_that_is_not_the_pointers_bytes(self, models_dir):
@@ -104,6 +106,23 @@ class TestCheckBuildArtifact:
         assert "pointer is v1.1.0" in message
         assert actual in message
         assert PIPELINE_SHA256 in message
+
+    def test_refuses_a_joblib_and_stamp_that_agree_on_a_hash_the_entry_does_not_record(
+        self, models_dir
+    ):
+        # The joblib and the stamp agree with each other, but not with the registry
+        # entry, so only a check against the entry's recorded hash refuses this.
+        _set_registry(models_dir, lambda r: r["fp"].update(production="v1.0.0"))
+        _write_stamp(models_dir, {"version": "v1.0.0", "pipeline_sha256": PIPELINE_SHA256})
+
+        with pytest.raises(ArtifactRefused) as refused:
+            _check(models_dir)
+
+        message = str(refused.value)
+        assert "pointer is v1.0.0: " in message
+        assert "is not fp v1.0.0's bytes" in message
+        assert PIPELINE_SHA256 in message
+        assert OTHER_SHA256 in message
 
     def test_refuses_a_pointer_entry_without_a_hash(self, models_dir):
         _set_registry(models_dir, lambda r: r["fp"].update(production="v0.9.0"))
@@ -138,13 +157,13 @@ class TestCheckBuildArtifact:
     def test_refuses_a_missing_joblib(self, models_dir):
         (models_dir / "fp_classifier_pipeline.joblib").unlink()
 
-        with pytest.raises(ArtifactRefused, match="Pipeline not found"):
+        with pytest.raises(ArtifactRefused, match=r"pointer is v1\.1\.0: Pipeline not found"):
             _check(models_dir)
 
     def test_refuses_a_missing_config(self, models_dir):
         (models_dir / "fp_classifier_config.json").unlink()
 
-        with pytest.raises(ArtifactRefused, match="Config not found"):
+        with pytest.raises(ArtifactRefused, match=r"pointer is v1\.1\.0: Config not found"):
             _check(models_dir)
 
     def test_refuses_a_missing_registry(self, models_dir):
@@ -153,11 +172,54 @@ class TestCheckBuildArtifact:
         with pytest.raises(ArtifactRefused, match="Registry not found"):
             _check(models_dir)
 
-    @pytest.mark.parametrize("name", ["registry.json", "fp_classifier_config.json"])
-    def test_refuses_a_file_that_is_not_valid_json(self, models_dir, name):
-        (models_dir / name).write_text("{not json")
+    @pytest.mark.parametrize(
+        ("name", "prefix"),
+        [("registry.json", ""), ("fp_classifier_config.json", r"pointer is v1\.1\.0: .*")],
+    )
+    @pytest.mark.parametrize("content", [b"{not json", b"\xff\xfe\x00binary"], ids=["text", "binary"])
+    def test_refuses_a_file_that_is_not_valid_json(self, models_dir, name, prefix, content):
+        (models_dir / name).write_bytes(content)
 
-        with pytest.raises(ArtifactRefused, match=f"{name} is not valid JSON"):
+        with pytest.raises(ArtifactRefused, match=f"{prefix}{name} is not valid JSON"):
+            _check(models_dir)
+
+    @pytest.mark.parametrize("name", ["registry.json", "fp_classifier_config.json"])
+    def test_refuses_a_file_that_is_not_a_json_object(self, models_dir, name):
+        (models_dir / name).write_text("[]")
+
+        with pytest.raises(ArtifactRefused, match=f"{name} does not hold a JSON object"):
+            _check(models_dir)
+
+    def test_refuses_a_directory_where_the_joblib_should_be(self, models_dir):
+        (models_dir / "fp_classifier_pipeline.joblib").unlink()
+        (models_dir / "fp_classifier_pipeline.joblib").mkdir()
+
+        with pytest.raises(ArtifactRefused, match=r"pointer is v1\.1\.0: Pipeline not found"):
+            _check(models_dir)
+
+    def test_refuses_a_record_with_no_production_key(self, models_dir):
+        _set_registry(models_dir, lambda r: r["fp"].pop("production"))
+
+        with pytest.raises(ArtifactRefused, match="fp in .* has no production key"):
+            _check(models_dir)
+
+    @pytest.mark.parametrize(
+        ("update", "match"),
+        [
+            (lambda r: r.update(fp=["v1.1.0"]), "fp's record in .* is not an object"),
+            (lambda r: r["fp"].update(production=["v1.1.0"]), r"pointer in .* is \['v1\.1\.0'\], not a version name"),
+            (lambda r: r["fp"].update(production=110), "pointer in .* is 110, not a version name"),
+            (lambda r: r["fp"].update(versions=None), r"pointer is v1\.1\.0: fp's registry record has no versions object"),
+            (lambda r: r["fp"].update(versions=["v1.1.0"]), r"pointer is v1\.1\.0: fp's registry record has no versions object"),
+            (lambda r: r["fp"]["versions"].update({"v1.1.0": None}), r"pointer is v1\.1\.0: fp v1\.1\.0's registry entry is not an object"),
+            (lambda r: r["fp"]["versions"].update({"v1.1.0": "abc"}), r"pointer is v1\.1\.0: fp v1\.1\.0's registry entry is not an object"),
+        ],
+        ids=["record-list", "pointer-list", "pointer-int", "versions-null", "versions-list", "entry-null", "entry-string"],
+    )
+    def test_refuses_a_malformed_registry_by_name(self, models_dir, update, match):
+        _set_registry(models_dir, update)
+
+        with pytest.raises(ArtifactRefused, match=match):
             _check(models_dir)
 
 
@@ -165,12 +227,13 @@ class TestCli:
     """The CLI as the Dockerfile runs it: this one file, by path, under ``python -I``."""
 
     def _run(self, tmp_path, *args):
-        # A lone copy, run from a directory with no src/, shows the guard needs
-        # nothing but the standard library.
+        # A lone copy, run from a directory with no src/ and with -S (no
+        # site-packages), as the builder's bare python runs it: an import of
+        # anything outside the standard library fails here.
         script = tmp_path / "versioning.py"
         shutil.copy(VERSIONING_PY, script)
         return subprocess.run(
-            [sys.executable, "-I", str(script), *args],
+            [sys.executable, "-I", "-S", str(script), *args],
             cwd=tmp_path,
             capture_output=True,
             text=True,
@@ -230,7 +293,7 @@ def _guard_run(builder):
 
 
 class TestDockerfileWiring:
-    def test_the_builder_runs_the_guard_before_it_downloads_anything(self):
+    def test_the_builder_runs_the_guard_before_dependency_detection(self):
         builder, _ = _dockerfile_stages()
 
         guard = _index(
@@ -271,10 +334,14 @@ class TestDockerfileWiring:
                 assert "models/" not in instruction, instruction
 
     def test_the_bypass_is_off_by_default(self):
-        builder, _ = _dockerfile_stages()
+        builder, runtime = _dockerfile_stages()
 
         assert "ARG SKIP_MODEL_GUARD=false" in builder
         assert builder.index("ARG SKIP_MODEL_GUARD=false") < builder.index(_guard_run(builder))
+        # Nothing else sets it: an ENV (or a second ARG default) would turn it on for
+        # every build.
+        mentions = [i for i in builder + runtime if "SKIP_MODEL_GUARD" in i]
+        assert mentions == ["ARG SKIP_MODEL_GUARD=false", _guard_run(builder)]
 
     @pytest.mark.parametrize(
         ("value", "guard_runs"),

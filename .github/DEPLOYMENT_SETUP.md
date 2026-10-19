@@ -94,7 +94,7 @@ After deployment, services are available at:
 | FP | `fp-classifier-api` | 2GB | 300s |
 | EP | `ep-classifier-api` | 512MB | 60s |
 
-EP is on hold with no production version (#180). Every image build runs the Dockerfile's build guard, which fails unless `models/` holds the registry pointer's registered bytes (#172, [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md#the-registry-pointer-decides-what-is-built)), so the EP deploy job fails at its image build.
+EP is on hold with no production version (#180). Every supported image build runs the Dockerfile's build guard, which fails unless `models/` holds the registry pointer's registered bytes (#172, [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md#the-registry-pointer-decides-what-is-built)), so the EP deploy job fails at its image build.
 
 ## Verifying Deployment
 

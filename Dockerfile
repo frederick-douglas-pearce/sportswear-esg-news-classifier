@@ -2,13 +2,13 @@
 #
 # Build:
 #   docker build -t fp-classifier-api .                              # FP (default)
-#   docker build --build-arg CLASSIFIER_TYPE=ep -t ep-classifier-api .  # EP
+#   docker build --build-arg CLASSIFIER_TYPE=ep -t ep-classifier-api .  # EP (refused
+#                                                       # while EP has no production version)
 #
 # Run:
 #   docker run -p 8000:8000 fp-classifier-api
-#   docker run -p 8001:8000 ep-classifier-api
 #
-# Build guard (#172, D034): the builder stage refuses to build unless
+# Build guard (#172, D034): in every supported build, the builder stage refuses unless
 # models/<type>_classifier_pipeline.joblib and _config.json are the registered,
 # stamped bytes of the version models/registry.json's production pointer names.
 # The refusal names the pointer and what it found; docs/DEPLOYMENT.md says how
@@ -23,8 +23,9 @@
 # replace the image the labeling pipeline calls):
 #   docker build --build-arg SKIP_MODEL_GUARD=true -t fp-candidate .
 #   docker run -p 8002:8000 fp-candidate
-# The bypass packages the files as they are. The API reports `unversioned`
-# unless they are a registered version's stamped bytes.
+# The bypass packages the files as they are. The API reports the version the
+# config is stamped with only when the stamp's hash matches the packaged joblib
+# (as a registered version's files are), and `unversioned` otherwise.
 #
 # Classifier Types:
 #   fp  - False Positive Brand Classifier (~150MB image)
@@ -67,9 +68,13 @@ COPY pyproject.toml uv.lock ./
 # Create virtual environment and install production dependencies
 RUN uv sync --frozen --no-dev --no-editable
 
-# Build guard inputs (after uv sync, so a model change does not invalidate the
-# dependency layers). The bracket globs let an absent artifact match nothing, so
-# a classifier with no files still reaches the guard and its refusal by name.
+# Build guard inputs. After uv sync, so the uv sync layer stays cached across
+# model and registry changes. A change to registry.json, either artifact or
+# versioning.py re-runs the guard and the detection step below, which re-downloads
+# en_core_web_sm (and all-MiniLM-L6-v2 for sentence_transformer methods): the
+# price of failing before that download (D034). The bracket globs let an absent
+# artifact match nothing, so a classifier with no files still reaches the guard
+# and its refusal by name.
 COPY models/registry.json models/${CLASSIFIER_TYPE}_classifier_pipeline.jobli[b] models/${CLASSIFIER_TYPE}_classifier_config.jso[n] /build/models/
 COPY src/deployment/versioning.py /build/versioning.py
 

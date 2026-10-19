@@ -98,12 +98,14 @@ class ArtifactRefused(ValueError):
 
 
 def _load_json_object(path: Path) -> dict:
-    """Load a JSON object, refusing a file that is not valid JSON or not an object."""
+    """Load a JSON object, refusing a file that is unreadable, not JSON, or not an object."""
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise ArtifactRefused(f"{path} is not valid JSON: {e}") from e
+    except OSError as e:
+        raise ArtifactRefused(f"{path} cannot be read: {e}") from e
     if not isinstance(data, dict):
         raise ArtifactRefused(f"{path} does not hold a JSON object.")
     return data
@@ -129,11 +131,17 @@ def check_registered_bytes(
     Raises:
         ArtifactRefused: with the reason.
     """
-    versions = registry.get(classifier, {}).get("versions", {})
-    if version not in versions:
-        raise ArtifactRefused(f"{classifier} {version} is not a registered version.")
+    record = registry.get(classifier, {}) if isinstance(registry, dict) else None
+    versions = record.get("versions", {}) if isinstance(record, dict) else None
+    if not isinstance(versions, dict):
+        raise ArtifactRefused(f"{classifier}'s registry record has no versions object.")
+    if not isinstance(version, str) or version not in versions:
+        raise ArtifactRefused(f"{classifier} {version!r} is not a registered version.")
+    entry = versions[version]
+    if not isinstance(entry, dict):
+        raise ArtifactRefused(f"{classifier} {version}'s registry entry is not an object.")
 
-    recorded = versions[version].get("pipeline_sha256")
+    recorded = entry.get("pipeline_sha256")
     if not recorded:
         raise ArtifactRefused(
             f"{classifier} {version} has no recorded pipeline_sha256, so its bytes cannot "
@@ -141,9 +149,12 @@ def check_registered_bytes(
         )
 
     pipeline_path = Path(pipeline_path)
-    if not pipeline_path.exists():
+    if not pipeline_path.is_file():
         raise ArtifactRefused(f"Pipeline not found: {pipeline_path}")
-    actual = file_sha256(pipeline_path)
+    try:
+        actual = file_sha256(pipeline_path)
+    except OSError as e:
+        raise ArtifactRefused(f"{pipeline_path} cannot be read: {e}") from e
     if actual != recorded:
         raise ArtifactRefused(
             f"{pipeline_path} is not {classifier} {version}'s bytes: its sha256 is "
@@ -151,7 +162,7 @@ def check_registered_bytes(
         )
 
     config_path = Path(config_path)
-    if not config_path.exists():
+    if not config_path.is_file():
         raise ArtifactRefused(f"Config not found: {config_path}")
     config = _load_json_object(config_path)
     if config.get("version") != version or config.get("pipeline_sha256") != recorded:
@@ -172,30 +183,41 @@ def check_build_artifact(
     """Refuse to build unless the files are the registry pointer's registered bytes.
 
     A classifier whose ``production`` pointer is null is refused before any file is
-    looked at, so artifacts present in ``models/`` never make it buildable (D029).
+    looked at, so artifacts present in ``models/`` never let it pass (D029).
 
     Returns:
         The pointer (the version the files are).
 
     Raises:
-        ArtifactRefused: with the reason, naming the pointer.
+        ArtifactRefused: with the reason, naming the pointer once it has been read.
     """
     registry_path = Path(registry_path)
-    if not registry_path.exists():
+    if not registry_path.is_file():
         raise ArtifactRefused(f"Registry not found: {registry_path}")
     registry = _load_json_object(registry_path)
 
-    record = registry.get(classifier)
-    if not isinstance(record, dict):
+    if classifier not in registry:
         raise ArtifactRefused(
             f"{classifier} is not in {registry_path}; nothing may be built for it."
         )
-    pointer = record.get("production")
+    record = registry[classifier]
+    if not isinstance(record, dict):
+        raise ArtifactRefused(f"{classifier}'s record in {registry_path} is not an object.")
+    if "production" not in record:
+        raise ArtifactRefused(
+            f"{classifier} in {registry_path} has no production key; nothing may be built for it."
+        )
+    pointer = record["production"]
     if pointer is None:
         raise ArtifactRefused(
             f"{classifier} has no production version (its pointer is null in "
             f"{registry_path}); nothing may be built for it, whatever "
             f"{classifier}_classifier_* files are present."
+        )
+    if not isinstance(pointer, str):
+        raise ArtifactRefused(
+            f"{classifier}'s production pointer in {registry_path} is {pointer!r}, not a "
+            "version name."
         )
 
     try:
