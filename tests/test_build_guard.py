@@ -140,15 +140,15 @@ class TestCheckBuildArtifact:
         "entry_threshold, config_threshold, passes",
         [
             (0.4911488614341085, 0.4911488614341085, True),
-            # Entries written before #141 recorded the config's value rounded to 4 places.
-            (0.4911, 0.4911488614341085, True),
-            (0.4911, 0.4912, False),
-            # The config is rounded to the entry's precision, never the entry to the config's.
+            (0.6, 0.6, True),
+            # No tolerance: an entry rounded to 4 places does not match its config.
+            (0.4911, 0.4911488614341085, False),
             (0.4911488614341085, 0.4911, False),
+            (0.6, 0.60004, False),
         ],
-        ids=["exact", "entry-rounded", "near-miss", "config-rounded"],
+        ids=["exact", "exact-short", "entry-rounded", "config-rounded", "in-band"],
     )
-    def test_matches_a_threshold_exactly_or_rounded_to_four_places(
+    def test_matches_a_threshold_only_exactly(
         self, models_dir, entry_threshold, config_threshold, passes
     ):
         _set_registry(
@@ -167,7 +167,11 @@ class TestCheckBuildArtifact:
             with pytest.raises(ArtifactRefused, match="has threshold"):
                 _check(models_dir)
 
-    @pytest.mark.parametrize("value", [None, "0.6", True, float("nan")], ids=["null", "string", "bool", "nan"])
+    @pytest.mark.parametrize(
+        "value",
+        [None, "0.6", True, float("nan"), float("inf"), float("-inf"), 10**400],
+        ids=["null", "string", "bool", "nan", "inf", "-inf", "int-overflow"],
+    )
     @pytest.mark.parametrize("side", ["entry", "config"])
     def test_refuses_a_threshold_that_is_not_a_number(self, models_dir, side, value):
         if side == "entry":

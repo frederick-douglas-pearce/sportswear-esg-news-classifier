@@ -353,8 +353,8 @@ def promote_version(
             before anything is copied. If another writer registers the name after it,
             ``write_version`` refuses after the copy into ``models_dir``; concurrent
             writers are unsupported (D033).
-        ArtifactRefused: the trained config holds no numeric threshold. Refused before
-            anything is copied (D035).
+        ArtifactRefused: the trained config cannot be read as a JSON object, or holds no
+            numeric threshold. Refused before anything is copied (D035).
     """
     require_new_version(load_registry(registry_path), classifier, version, bump_type)
     # Before the copy: write_version records this config's threshold in the entry (D035).

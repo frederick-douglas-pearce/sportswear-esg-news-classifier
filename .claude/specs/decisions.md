@@ -2506,18 +2506,24 @@ thresholds stated.
 
 **Decision.**
 1. **The registry entry binds the model threshold.** `check_registered_bytes` (D034 §3) also
-   refuses unless the config's `threshold` is a finite number (not a bool) and matches the entry's
-   `threshold`: equal, or equal to the config's value rounded to 4 decimal places
-   (`threshold_matches`). The build guard and pointer moves both run it. The served threshold still
+   refuses unless the config's `threshold` is a finite number (not a bool) and equals the entry's
+   `threshold` exactly. The build guard and pointer moves both run it. The served threshold still
    comes from the loaded config at serve time (D026 §4).
 2. **Writers record the config's threshold.** `write_version` reads the threshold from the config it
    stamps, refuses a config without a numeric one before anything is written, and records it in the
    entry at full precision, replacing any value the caller passed. `register_model.py`
    (`--update-registry`, before MLflow), `promote_model.py` and `retrain.py`'s `promote_version`
    (before the copy into `models/`) refuse such a config before their own side effects.
-3. **The 4-place branch is for entries written before #141**, which `register_model.py` and
-   `promote_model.py` rounded; a version name is never rewritten (D033). Entries written since match
-   only exactly.
+3. **FP `v2.4.0`'s entry threshold is reconciled to full precision** (a one-off hand edit, approved by
+   the human at #141's review, like #189's hash backfill under D033 §5–6). `v2.4.0`'s entry read
+   `0.4911`, its config's `0.4911488614341085` rounded to 4 places (the precision `register_model.py`
+   and `promote_model.py` recorded before #141). Evidence: that config is stamped `v2.4.0` with
+   the entry's `pipeline_sha256` (the build guard passed on it before the edit), and its threshold
+   rounded to 4 places is the entry's value. The entry now records `0.4911488614341085`, and its
+   `notes` say so. `v2.4.0` is the only entry that records a `pipeline_sha256`, so it was the only
+   one the check could reach; any other version registered before #141 is reconciled, threshold
+   included, by its own hand edit before it can be promoted (D033). With no rounded entry left in
+   reach, the match is exact, with no tolerance.
 4. **The LLM-skip threshold derives from the served model by default.** The pipeline applies the
    per-result `threshold` the FP API returns, read from the same loaded artifact as the probability
    (D026 §4), so a retrain carries its fp3-tuned value to production with no hand edit.
@@ -2528,8 +2534,9 @@ thresholds stated.
 5. **#166's medium-band routing is an override** (lowering the skip threshold), so `threshold_used`
    records it and #142's cohort predicate `probability < threshold_used` excludes such rows by
    construction. #142 should key or filter its realized-recall baseline on `threshold_used`.
-6. **A pointer move does not move an override.** Promotion re-checks any override set against the new
-   model's threshold.
+6. **A pointer move does not move an override.** Whoever promotes a model re-checks any override set
+   against the new model's threshold; #141 PR2 adds that step to the promotion checklist in
+   `docs/MLOPS.md`. No tool checks it.
 
 **Rejected.**
 - **An operating point independent of the model, as a committed literal** (the plan's first fork B).
@@ -2544,8 +2551,8 @@ thresholds stated.
   existing guard test on the committed tree checks the relation instead.
 
 **Consequences.**
-- A config edit within the 4-place band of a pre-#141 entry still passes, and a hand edit of both the
-  entry and the config is caught only by review (D033's immutability is a rule, not a lock).
+- A hand edit of both the entry and the config is caught only by review (D033's immutability is a
+  rule, not a lock).
 - Once #141 PR2 merges, `prediction` (`is_sportswear`) and the skip decision agree whenever no
   override is set; with one set they may disagree between the two thresholds, by design.
 - Out of scope: the unused `default_threshold` constants in `src/deployment/config.py`, and

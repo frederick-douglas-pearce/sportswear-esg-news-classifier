@@ -161,7 +161,8 @@ def write_version(
     Raises:
         ValueError: ``version`` is malformed.
         VersionExistsError: ``version`` is already registered. Nothing is written.
-        ArtifactRefused: the config holds no numeric threshold. Nothing is written.
+        ArtifactRefused: the config cannot be read as a JSON object, or holds no numeric
+            threshold. Nothing is written.
     """
     registry = load_registry(registry_path)
     # Checked again on the registry as loaded here. This narrows, and does not close,
@@ -199,7 +200,7 @@ def check_pointer_move(
 
     The move is allowed only when the entry records a ``pipeline_sha256``, the joblib
     at ``pipeline_path`` has that hash, and the config at ``config_path`` is stamped
-    with ``version`` and that hash, and its ``threshold`` matches the entry's (D035).
+    with ``version`` and that hash, and its ``threshold`` equals the entry's (D035).
     The check is the build guard's
     (``versioning.check_registered_bytes``, D034), so a move is allowed exactly
     when the build guard would then pass on these files.

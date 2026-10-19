@@ -8,6 +8,7 @@ the pointer moves alone only onto bytes it can check.
 
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -179,8 +180,16 @@ class TestWriteVersion:
 
     @pytest.mark.parametrize(
         "config",
-        [{}, {"threshold": None}, {"threshold": "0.6"}, {"threshold": True}, {"threshold": float("nan")}],
-        ids=["missing", "null", "string", "bool", "nan"],
+        [
+            {},
+            {"threshold": None},
+            {"threshold": "0.6"},
+            {"threshold": True},
+            {"threshold": float("nan")},
+            {"threshold": float("inf")},
+            {"threshold": 10**400},
+        ],
+        ids=["missing", "null", "string", "bool", "nan", "inf", "int-overflow"],
     )
     def test_refuses_a_config_without_a_numeric_threshold_and_writes_nothing(self, artifact, config):
         registry_path, config_path, pipeline_path = artifact
@@ -502,23 +511,31 @@ class TestWritersRefuseExistingNames:
         config = {k: v for k, v in WRITER_CONFIG.items() if k != "threshold"}
         (models_dir / "fp_classifier_config.json").write_text(json.dumps(config))
 
-    def test_register_model_refuses_a_config_without_a_threshold(self, models_dir, monkeypatch, capsys):
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry-run"])
+    def test_register_model_refuses_a_config_without_a_threshold(
+        self, models_dir, monkeypatch, capsys, dry_run
+    ):
         self._drop_config_threshold(models_dir)
         before = self._snapshot(models_dir)
+        extra = ["--dry-run"] if dry_run else []
 
         with pytest.raises(SystemExit) as exc:
-            self._run_register(monkeypatch, "--version", "v3.1.0", "--update-registry")
+            self._run_register(monkeypatch, "--version", "v3.1.0", "--update-registry", *extra)
 
         assert exc.value.code == 1
         assert self.mlflow_reg.call_count == 0
         assert self._snapshot(models_dir) == before
         assert "has no numeric threshold" in capsys.readouterr().err
 
-    def test_promote_model_refuses_a_config_without_a_threshold(self, models_dir, monkeypatch, capsys):
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["write", "dry-run"])
+    def test_promote_model_refuses_a_config_without_a_threshold(
+        self, models_dir, monkeypatch, capsys, dry_run
+    ):
         self._drop_config_threshold(models_dir)
         before = self._snapshot(models_dir)
+        extra = ["--dry-run"] if dry_run else []
 
-        assert self._run_promote(models_dir, monkeypatch, "--version", "v3.1.0") == 1
+        assert self._run_promote(models_dir, monkeypatch, "--version", "v3.1.0", *extra) == 1
 
         assert self._snapshot(models_dir) == before
         assert "has no numeric threshold" in capsys.readouterr().err
@@ -633,6 +650,7 @@ class TestWritersRefuseExistingNames:
 
         assert copy.call_count == 0
         assert deploy.call_count == 0
+        assert self._snapshot(models_dir) == before
 
     def test_retrain_promote_version_refuses_a_config_without_a_threshold(self, models_dir, tmp_path):
         import scripts.retrain as retrain
@@ -659,7 +677,6 @@ class TestWritersRefuseExistingNames:
         assert copy.call_count == 0
         assert deploy.call_count == 0
         assert self._snapshot(models_dir) == before
-        assert self._snapshot(models_dir) == before
 
     def test_retrain_main_refuses_before_training(self, models_dir, monkeypatch, capsys):
         import scripts.retrain as retrain
@@ -675,6 +692,45 @@ class TestWritersRefuseExistingNames:
 
         assert train.call_count == 0
         assert "fp v3.0.0 is already registered" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("refusal", ["no-threshold", "name-taken"])
+    def test_retrain_main_reports_a_refused_promotion(self, models_dir, monkeypatch, capsys, refusal):
+        import scripts.retrain as retrain
+
+        registry_bytes = (models_dir / "registry.json").read_bytes()
+        config_bytes = (models_dir / "fp_classifier_config.json").read_bytes()
+
+        def train(classifier, data, output_dir, target_recall):
+            output_dir.mkdir(parents=True)
+            (output_dir / "fp_classifier_pipeline.joblib").write_bytes(b"candidate model")
+            (output_dir / "fp_classifier_config.json").write_text(json.dumps({"test_f2": 0.9}))
+            return {"success": True, "metrics": {"test_f2": 0.9}}
+
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "retrain.py", "--classifier", "fp", "--data", "data/x.jsonl",
+                "--models-dir", str(models_dir), "--force-promote",
+            ],
+        )
+        # name-taken: another writer registered the name after main's own check (D033).
+        taken = (
+            patch.object(retrain, "promote_version", side_effect=VersionExistsError("taken"))
+            if refusal == "name-taken"
+            else nullcontext()
+        )
+        with patch.object(retrain, "train_new_version", side_effect=train), \
+                patch.object(retrain.shutil, "copy") as copy, \
+                patch.object(retrain, "trigger_deploy_workflow"), taken:
+            assert retrain.main() == 1
+
+        err = capsys.readouterr().err
+        assert "Promotion refused" in err
+        if refusal == "no-threshold":
+            assert "has no numeric threshold" in err
+            assert copy.call_count == 0
+        assert (models_dir / "registry.json").read_bytes() == registry_bytes
+        assert (models_dir / "fp_classifier_config.json").read_bytes() == config_bytes
 
     def test_retrain_main_prints_the_pointer_not_the_highest_version(self, models_dir, monkeypatch, capsys):
         import scripts.retrain as retrain
