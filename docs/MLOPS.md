@@ -228,6 +228,20 @@ registry's production pointer (#115, D026). Every script that records a version 
 and matches the joblib it loaded. `/model/info` returns it as `version`, with the loaded joblib's short
 hash as `artifact_sha256`.
 
+All three write through `write_version` in `src/deployment/registry.py`, which hashes the joblib once
+and records that hash both in the version's registry entry, as `pipeline_sha256`, and in the config
+stamp (#189, D033). A version name already in the registry is refused before anything is written:
+before files are copied into `models/`, before training, and, for `register_model.py --update-registry`,
+before MLflow registration. A name that is not canonical `vMAJOR.MINOR.PATCH` (no leading zeros, MAJOR
+at least 1) is refused too. A new version
+is numbered from the highest registered version, not from the pointer.
+`promote_model.py --version <vX.Y.Z> --pointer-only` moves `production` to an existing version
+without rewriting its entry or re-stamping the config. It refuses unless the entry records a
+`pipeline_sha256`, the joblib in `models/` has that hash, and the config is stamped with that version
+and hash. FP `v2.4.0`'s hash was recorded by hand in #189; a move to a version with no recorded hash
+is refused until that version is reconciled by its own hand edit, with its own byte evidence and
+D-entry (D033).
+
 The stamp is written to the working tree. An image picks it up only when it is built from a tree that
 holds the stamped config: a local `docker compose build` reads the working tree, while `deploy.yml`
 builds from the committed tree, so commit the stamped config with its joblib before deploying. Making
@@ -307,7 +321,7 @@ are finalized after #175 (D027 §1), so a `#172` entry here is a proposal until 
 | `trigger_deployment` reads a `version` key the registry does not have, so every workflow deploy is tagged `unknown` | `src/agent/workflows/model_training.py` | pass the pointer | #172 |
 | Local `docker compose build` and `scripts/deploy_cloudrun.sh` build from the working tree, so they can serve unregistered bytes | `docker-compose.yml`, `scripts/deploy_cloudrun.sh` | the build guard runs in the Dockerfile's builder stage, which both use | #172 |
 | A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | decide whether the guard also binds committed state (raised on #172 for its finalization) | deferred |
-| `retrain.py` numbers the next version from the production pointer, so it can collide with, and overwrite, an existing non-production version. With the pointer at `v2.4.0`, its default (`--minor`) next version is `v2.5.0`, which exists, and promotion then dispatches a deploy. `retrain.py` cannot name a version, so until #172 do not promote through it | `scripts/retrain.py` | immutable registry versions | #172 |
+| `retrain.py` numbered the next version from the production pointer, so it could collide with, and overwrite, an existing non-production version | `scripts/retrain.py` | fixed in #189: every registry writer numbers from the highest registered version and refuses an existing name before any side effect (D033) | #189 (done) |
 | A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (FP reconciled in #176) | #172 |
 | With no production version, the two promotion paths disagree. `retrain.py`'s `compare_versions` treats a new model as an improvement when there is no production metric (`no_production`), so `--auto-promote` would promote it. That path is latent today: `retrain.py`'s training step exits before training (#186), and fixing #186 first makes it reachable. The `model_training` workflow records no improvement and promotes nothing. Neither compares a retrained EP with the v1.0.0 record | `scripts/retrain.py`, `src/agent/workflows/model_training.py` | pick one rule for a classifier with no production version | #172 |
 | A commit message can name a version the registry does not record | commit discipline | not checked; git history and the registry remain the evidence | deferred |

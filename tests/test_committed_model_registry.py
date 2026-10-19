@@ -80,6 +80,19 @@ def test_committed_config_stamp_names_the_pointer_and_hashes_the_joblib(classifi
     assert config.get("pipeline_sha256") == file_sha256(pipeline)
 
 
+@pytest.mark.parametrize("classifier", ["fp"])
+def test_pointer_entry_records_the_committed_joblib_hash(classifier):
+    """The pointer's entry records the bytes it names (#189, D033), and the stamp agrees."""
+    registry = _read_json(MODELS_DIR / "registry.json")
+    config = _read_json(MODELS_DIR / f"{classifier}_classifier_config.json")
+    entry = registry[classifier]["versions"][registry[classifier]["production"]]
+
+    assert entry.get("pipeline_sha256") == file_sha256(
+        MODELS_DIR / f"{classifier}_classifier_pipeline.joblib"
+    )
+    assert entry["pipeline_sha256"] == config.get("pipeline_sha256")
+
+
 def test_ep_pointer_is_retired_and_no_ep_artifact_is_committed():
     registry = _read_json(MODELS_DIR / "registry.json")
 

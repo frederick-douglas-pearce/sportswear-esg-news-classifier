@@ -95,7 +95,8 @@
           "test_recall": 0.9884,
           "test_precision": 0.9771
         },
-        "notes": "Training data expanded to 1634 samples (+99). Test F2 +0.17%, test precision +2.09% vs v2.3.0. Added Columbia Sportswear stock article as FP. Re-stamped 2026-09-30 (#176)."
+        "notes": "Training data expanded to 1634 samples (+99). Test F2 +0.17%, test precision +2.09% vs v2.3.0. Added Columbia Sportswear stock article as FP. Re-stamped 2026-09-30 (#176).",
+        "pipeline_sha256": "7206983a27748f2aa8b10e640fe88296716c5977154fe271cd2788c74c69badb"
       },
       "v2.5.0": {
         "created_at": "2026-01-25T10:56:16Z",

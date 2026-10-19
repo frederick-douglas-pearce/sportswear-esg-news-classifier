@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """Promote a trained model to the registry for deployment.
 
-This script reads the model config from the artifacts, updates the registry
-with a new version entry, and stamps `version` and `pipeline_sha256` into the
-artifact config (D026).
+This script reads the model config from the artifacts, adds a new version entry
+to the registry recording its `pipeline_sha256`, and stamps `version` and the same
+hash into the artifact config (D026). A version name already in the registry is
+refused (D033). `--pointer-only` instead moves the `production` pointer to an
+existing version whose bytes are already in models/, and writes no entry.
 
 Usage:
-    # Promote FP classifier to v2
-    uv run python scripts/promote_model.py --classifier fp --version v2
+    # Promote FP classifier to v2.7.0
+    uv run python scripts/promote_model.py --classifier fp --version v2.7.0
 
     # Promote and set as production
-    uv run python scripts/promote_model.py --classifier fp --version v2 --production
+    uv run python scripts/promote_model.py --classifier fp --version v2.7.0 --production
 
     # Dry run to see what would change
-    uv run python scripts/promote_model.py --classifier fp --version v2 --dry-run
+    uv run python scripts/promote_model.py --classifier fp --version v2.7.0 --dry-run
+
+    # Move the production pointer to an existing version (e.g. a rollback)
+    uv run python scripts/promote_model.py --classifier fp --version v2.4.0 --pointer-only
 """
 
 import argparse
@@ -25,7 +30,15 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.deployment.versioning import stamp_artifact_version  # noqa: E402
+from src.deployment.registry import (  # noqa: E402
+    check_pointer_move,
+    move_pointer,
+    require_new_version,
+    write_version,
+)
+
+# promote_model.py has no bump flag; a refusal names the next free minor version.
+REFUSAL_BUMP = "minor"
 
 
 def load_model_config(classifier_type: str, models_dir: Path) -> dict:
@@ -48,14 +61,6 @@ def load_registry(models_dir: Path) -> dict:
 
     with open(registry_path) as f:
         return json.load(f)
-
-
-def save_registry(registry: dict, models_dir: Path) -> None:
-    """Save the model registry."""
-    registry_path = models_dir / "registry.json"
-    with open(registry_path, "w") as f:
-        json.dump(registry, f, indent=2)
-        f.write("\n")
 
 
 def create_version_entry(config: dict, data_path: str | None = None) -> dict:
@@ -103,7 +108,7 @@ def main():
     parser.add_argument(
         "--version", "-v",
         required=True,
-        help="Version string (e.g., v2, v3)"
+        help="Version string, vMAJOR.MINOR.PATCH (e.g., v2.7.0)"
     )
     parser.add_argument(
         "--production", "-p",
@@ -124,9 +129,17 @@ def main():
         action="store_true",
         help="Show what would change without saving"
     )
+    parser.add_argument(
+        "--pointer-only",
+        action="store_true",
+        help="Move the production pointer to an existing version; write no entry",
+    )
 
     args = parser.parse_args()
     models_dir = Path(args.models_dir)
+
+    if args.pointer_only:
+        return pointer_only(args, models_dir)
 
     # Load current state
     try:
@@ -144,13 +157,12 @@ def main():
 
     registry = load_registry(models_dir)
 
-    # Check if version already exists
-    if args.version in registry[args.classifier]["versions"]:
-        print(f"Warning: Version {args.version} already exists for {args.classifier}")
-        response = input("Overwrite? [y/N]: ")
-        if response.lower() != "y":
-            print("Aborted.")
-            return 0
+    # A registered version name is never rewritten (D033).
+    try:
+        require_new_version(registry, args.classifier, args.version, REFUSAL_BUMP)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
     # Create new version entry
     entry = create_version_entry(config, args.data_path)
@@ -170,17 +182,15 @@ def main():
         print("\n[DRY RUN] No changes saved.")
         return 0
 
-    # Update registry
-    registry[args.classifier]["versions"][args.version] = entry
-    if args.production:
-        registry[args.classifier]["production"] = args.version
-
-    save_registry(registry, models_dir)
-    # After the registry write, so the config never claims a version the registry lacks.
-    stamp_artifact_version(
-        models_dir / f"{args.classifier}_classifier_config.json",
+    write_version(
+        models_dir / "registry.json",
+        args.classifier,
         args.version,
+        entry,
+        models_dir / f"{args.classifier}_classifier_config.json",
         pipeline_path,
+        REFUSAL_BUMP,
+        set_production=args.production,
     )
 
     print(f"\n✓ Registry updated: models/registry.json")
@@ -197,6 +207,39 @@ def main():
     print("  2. Build Docker image: docker build -t {}-classifier-api .".format(args.classifier))
     print("  3. The Dockerfile will auto-detect dependencies from the config")
 
+    return 0
+
+
+def pointer_only(args: argparse.Namespace, models_dir: Path) -> int:
+    """Move the production pointer to an existing version, writing no entry."""
+    if args.data_path or args.production:
+        print(
+            "Error: --pointer-only writes no entry, so it takes neither --data-path nor "
+            "--production (the move itself sets production).",
+            file=sys.stderr,
+        )
+        return 1
+
+    registry_path = models_dir / "registry.json"
+    pipeline_path = models_dir / f"{args.classifier}_classifier_pipeline.joblib"
+    config_path = models_dir / f"{args.classifier}_classifier_config.json"
+
+    try:
+        if args.dry_run:
+            check_pointer_move(
+                load_registry(models_dir), args.classifier, args.version, pipeline_path, config_path
+            )
+            print(f"[DRY RUN] Would point {args.classifier} production at {args.version}.")
+            return 0
+        previous = move_pointer(
+            registry_path, args.classifier, args.version, pipeline_path, config_path
+        )
+    except ValueError as e:  # PointerMoveRefused, or a registry or config that is not valid JSON
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    print(f"✓ {args.classifier} production: {previous} → {args.version}")
+    print(f"  Commit {registry_path}; deploy.yml builds from the committed tree.")
     return 0
 
 
