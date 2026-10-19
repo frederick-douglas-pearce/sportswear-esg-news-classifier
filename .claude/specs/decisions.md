@@ -2441,12 +2441,10 @@ promotion paths to #191.
    detection reads the guarded config.
 5. **What the builder copies.** `models/registry.json` and the classifier's two artifact files, named,
    with bracket globs so an absent file matches nothing and the build reaches the guard's refusal.
-   Not the whole `models/`, so other files there do not invalidate the build cache. The four guard
-   inputs (`registry.json`, the two artifacts, `versioning.py`) do: a change to any of them re-runs the
-   guard and the detection step after it, which re-downloads en_core_web_sm (and all-MiniLM-L6-v2 for
-   sentence_transformer methods). That is the price of failing before that download (§4); a separate
-   guard stage that would let detection stay cached was offered at review as a follow-up and not
-   taken (human decision, 2026-10-19). The runtime
+   Not the whole `models/`, so other files there do not invalidate the build cache. A change to any of
+   the four guard inputs (`registry.json`, the two artifacts, `versioning.py`) re-runs the guard and
+   every step after it, the price of the guard-before-detection order in §4 (kept by the human at
+   review, 2026-10-19). The runtime
    stage copies the two checked files with `COPY --from=builder`; `registry.json` is never in the
    runtime image (D026 §1).
 6. **The bypass packages the files as they are** (human ruling on an AC4 reinterpretation, recorded on

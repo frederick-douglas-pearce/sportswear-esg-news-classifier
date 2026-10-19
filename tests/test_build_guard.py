@@ -1,4 +1,4 @@
-"""Tests for the build guard: an image is built only from the pointer's registered bytes (#172, D034).
+"""Tests for the build guard (#172, D034).
 
 The guard function and its CLI are tested on temporary registries and artifacts. The
 Dockerfile wiring is checked by reading the Dockerfile: the guard runs in the builder
@@ -197,6 +197,23 @@ class TestCheckBuildArtifact:
         with pytest.raises(ArtifactRefused, match=r"pointer is v1\.1\.0: Pipeline not found"):
             _check(models_dir)
 
+    @pytest.mark.parametrize(
+        ("name", "prefix"),
+        [("registry.json", ""), ("fp_classifier_pipeline.joblib", r"pointer is v1\.1\.0: .*")],
+    )
+    def test_refuses_a_path_that_cannot_be_checked(self, models_dir, monkeypatch, name, prefix):
+        is_file = Path.is_file
+
+        def denied(path):
+            if path.name == name:
+                raise PermissionError(13, "Permission denied", str(path))
+            return is_file(path)
+
+        monkeypatch.setattr(Path, "is_file", denied)
+
+        with pytest.raises(ArtifactRefused, match=f"{prefix}{name} cannot be read: .*Permission denied"):
+            _check(models_dir)
+
     def test_refuses_a_record_with_no_production_key(self, models_dir):
         _set_registry(models_dir, lambda r: r["fp"].pop("production"))
 
@@ -228,8 +245,7 @@ class TestCli:
 
     def _run(self, tmp_path, *args):
         # A lone copy, run from a directory with no src/ and with -S (no
-        # site-packages), as the builder's bare python runs it: an import of
-        # anything outside the standard library fails here.
+        # site-packages): an import of anything outside the standard library fails here.
         script = tmp_path / "versioning.py"
         shutil.copy(VERSIONING_PY, script)
         return subprocess.run(

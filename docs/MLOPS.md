@@ -278,8 +278,7 @@ and committed them with the pointer and
 the stamped config, so an FP image rebuilt from the tree reports `v2.4.0`.
 
 `model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
-in the values it records does not require regenerating the drift reference. No EP image can be built:
-`ep.production` is `null` (#180), and the build guard refuses EP by name (#172).
+in the values it records does not require regenerating the drift reference.
 
 ### Served, registered and committed models
 

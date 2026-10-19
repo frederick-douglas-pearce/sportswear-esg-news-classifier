@@ -25,9 +25,8 @@ registered, stamped bytes of the version the registry pointer names (#172, D034)
   detection. The runtime stage copies the two files the guard checked from the builder;
   `registry.json` is not in the runtime image. `--build-arg SKIP_MODEL_GUARD=true` (exactly) skips the
   guard for a local smoke test of a candidate, under another image name and port, never through
-  compose; such an image reports the version its config is stamped with only when the stamp's hash matches the packaged joblib (as a registered version's files are), and `unversioned` otherwise. A change to `registry.json`, either
-  artifact or `versioning.py` re-runs the guard and the model-download step after it, on a local
-  rebuild.
+  compose; such an image reports the version its config is stamped with only when the stamp's hash
+  matches the packaged joblib (as a registered version's files are), and `unversioned` otherwise.
 - `.github/workflows/deploy.yml`: the "Verify model file exists" steps are deleted; each image build
   runs the guard. EP's deploy job now fails at the guard's refusal.
 - `tests/test_committed_model_registry.py`: the stamp check calls the guard on the committed tree,

@@ -11,8 +11,7 @@ When no version can be reported, ``classifier_predictions.model_version``
 records one of the values below. Each points at a different remedy, so they
 are never merged.
 
-The build guard (#172, D034) is :func:`check_build_artifact`: an image is built
-only from the registry pointer's registered bytes. The Dockerfile's builder stage
+The build guard (#172, D034) is :func:`check_build_artifact`. The Dockerfile's builder stage
 runs this file by path (``python -I /build/versioning.py``), so it imports only
 the standard library and nothing from ``src``.
 """
@@ -111,6 +110,14 @@ def _load_json_object(path: Path) -> dict:
     return data
 
 
+def _is_file(path: Path) -> bool:
+    """``path.is_file()``, refusing a path that cannot be checked (e.g. a permission error)."""
+    try:
+        return path.is_file()
+    except OSError as e:
+        raise ArtifactRefused(f"{path} cannot be read: {e}") from e
+
+
 def check_registered_bytes(
     registry: dict,
     classifier: str,
@@ -149,7 +156,7 @@ def check_registered_bytes(
         )
 
     pipeline_path = Path(pipeline_path)
-    if not pipeline_path.is_file():
+    if not _is_file(pipeline_path):
         raise ArtifactRefused(f"Pipeline not found: {pipeline_path}")
     try:
         actual = file_sha256(pipeline_path)
@@ -162,7 +169,7 @@ def check_registered_bytes(
         )
 
     config_path = Path(config_path)
-    if not config_path.is_file():
+    if not _is_file(config_path):
         raise ArtifactRefused(f"Config not found: {config_path}")
     config = _load_json_object(config_path)
     if config.get("version") != version or config.get("pipeline_sha256") != recorded:
@@ -192,7 +199,7 @@ def check_build_artifact(
         ArtifactRefused: with the reason, naming the pointer once it has been read.
     """
     registry_path = Path(registry_path)
-    if not registry_path.is_file():
+    if not _is_file(registry_path):
         raise ArtifactRefused(f"Registry not found: {registry_path}")
     registry = _load_json_object(registry_path)
 

@@ -11,8 +11,7 @@
 # Build guard (#172, D034): in every supported build, the builder stage refuses unless
 # models/<type>_classifier_pipeline.joblib and _config.json are the registered,
 # stamped bytes of the version models/registry.json's production pointer names.
-# The refusal names the pointer and what it found; docs/DEPLOYMENT.md says how
-# to reconcile. registry.json is copied into the builder only, never into the
+# docs/DEPLOYMENT.md says how to reconcile a refusal. registry.json is copied into the builder only, never into the
 # runtime image.
 #
 # EP is on hold, with no production version and no committed artifact (#180).
@@ -69,10 +68,8 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-editable
 
 # Build guard inputs. After uv sync, so the uv sync layer stays cached across
-# model and registry changes. A change to registry.json, either artifact or
-# versioning.py re-runs the guard and the detection step below, which re-downloads
-# en_core_web_sm (and all-MiniLM-L6-v2 for sentence_transformer methods): the
-# price of failing before that download (D034). The bracket globs let an absent
+# model and registry changes; a change to any of them re-runs the guard and every
+# step after it (D034). The bracket globs let an absent
 # artifact match nothing, so a classifier with no files still reaches the guard
 # and its refusal by name.
 COPY models/registry.json models/${CLASSIFIER_TYPE}_classifier_pipeline.jobli[b] models/${CLASSIFIER_TYPE}_classifier_config.jso[n] /build/models/
