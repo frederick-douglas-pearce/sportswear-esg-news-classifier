@@ -1,9 +1,10 @@
-"""The committed model artifacts against the registry pointer (#176, D028, D029, D034).
+"""The committed model artifacts against the registry pointer (#176, D028, D029, D034, D035).
 
 Three checks with different lifetimes:
 
 - The build guard (#172, D034) runs on the committed tree: FP's files are the pointer's
-  registered, stamped bytes, and EP, whose pointer is null, is refused by name. So a
+  registered, stamped bytes, its config's threshold is the one the pointer's entry
+  records (#141, D035), and EP, whose pointer is null, is refused by name. So a
   `docker build` from a clean checkout builds FP and refuses EP.
 - The load-and-predict check loads the committed FP artifact under today's code and
   compares its probabilities with values captured for the pointer's version. The guard
@@ -82,8 +83,10 @@ def _check_committed(classifier: str) -> str:
 def test_committed_config_stamp_names_the_pointer_and_hashes_the_joblib(classifier):
     """The build guard passes on the committed tree (#172, D034).
 
-    It checks that the pointer's entry records the committed joblib's hash and that the
-    config is stamped with the pointer and that hash.
+    It checks that the pointer's entry records the committed joblib's hash, that the
+    config is stamped with the pointer and that hash, and that the config's threshold is
+    the one the entry records (#141, D035). So a change to the served threshold fails
+    here without a threshold value being written into this test.
     """
     registry = _read_json(MODELS_DIR / "registry.json")
 

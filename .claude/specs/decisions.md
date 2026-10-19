@@ -2485,6 +2485,70 @@ promotion paths to #191.
 - **Correction to D033's last Consequence:** `retrain.py`'s deploy dispatch is #190's, and the paths
   that move the pointer without changing what is served are #191's, not #172's.
 - The guard binds the joblib's bytes and the config stamp, not the code the pickle imports (D028) or
-  the config's `threshold` (#141).
+  the config's `threshold` (#141). *(D035 adds the threshold.)*
 - A main that agrees with itself passes the guard even when a local promotion was never pushed; #190
   is what fails that deploy.
+
+## D035: The Registry Entry Binds the Served FP Threshold; the LLM-Skip Threshold Derives From the Served Model, With an Override on Purpose (#141)
+
+**Date:** 2026-10-19 · **Status:** accepted (architect-reviewed 2026-10-19; approved by the human at #141's plan gate) · **Issues:** #141, #166, #142, #176
+(epic #152)
+
+**Context.** `pipeline_sha256` binds a version to its joblib only, so the threshold in the artifact
+config, which decides the API's `is_sportswear`, could change without the build guard (D034) or any
+test noticing (#176's acceptance gate, handed to #141). Separately, the labeling pipeline decides LLM
+skips with `FP_SKIP_LLM_THRESHOLD` (`src/labeling/pipeline.py`), a value set by hand in the
+deployment's environment and unrelated to the model being served. fp3
+(`src/fp3_nb/threshold_optimization.py::find_optimal_threshold`) picks the highest threshold that
+still reaches recall ≥ `TARGET_RECALL` and saves it as the config's `threshold`; that is the boundary
+below which articles do not reach the LLM. #166 and #142 both need the relation between the two
+thresholds stated.
+
+**Decision.**
+1. **The registry entry binds the model threshold.** `check_registered_bytes` (D034 §3) also
+   refuses unless the config's `threshold` is a finite number (not a bool) and matches the entry's
+   `threshold`: equal, or equal to the config's value rounded to 4 decimal places
+   (`threshold_matches`). The build guard and pointer moves both run it. The served threshold still
+   comes from the loaded config at serve time (D026 §4).
+2. **Writers record the config's threshold.** `write_version` reads the threshold from the config it
+   stamps, refuses a config without a numeric one before anything is written, and records it in the
+   entry at full precision, replacing any value the caller passed. `register_model.py`
+   (`--update-registry`, before MLflow), `promote_model.py` and `retrain.py`'s `promote_version`
+   (before the copy into `models/`) refuse such a config before their own side effects.
+3. **The 4-place branch is for entries written before #141**, which `register_model.py` and
+   `promote_model.py` rounded; a version name is never rewritten (D033). Entries written since match
+   only exactly.
+4. **The LLM-skip threshold derives from the served model by default.** The pipeline applies the
+   per-result `threshold` the FP API returns, read from the same loaded artifact as the probability
+   (D026 §4), so a retrain carries its fp3-tuned value to production with no hand edit.
+   `FP_SKIP_LLM_THRESHOLD` becomes an optional override for deliberate departures. `threshold_used`
+   records the value applied. The code default 0.5 applies only where no served threshold exists (a
+   failed batch, whose `threshold_used` is NOT NULL). #141 PR2 implements this paragraph; until it
+   merges, the pipeline still applies the environment value.
+5. **#166's medium-band routing is an override** (lowering the skip threshold), so `threshold_used`
+   records it and #142's cohort predicate `probability < threshold_used` excludes such rows by
+   construction. #142 should key or filter its realized-recall baseline on `threshold_used`.
+6. **A pointer move does not move an override.** Promotion re-checks any override set against the new
+   model's threshold.
+
+**Rejected.**
+- **An operating point independent of the model, as a committed literal** (the plan's first fork B).
+  It is the hand-maintained value the issue describes, and fp3 already tunes the skip boundary.
+- **A second operating point tuned by fp3 and versioned with the artifact.** Its objective is
+  undefined (`TARGET_RECALL` is already the knob), and under D033 every change to it would need a new
+  model version, which works against #166.
+- **The pipeline reading the registry pointer at labeling time.** The pointer records intent, not the
+  served artifact (D026 §1, §4).
+- **fp3 writing the value into the environment file.** It keeps the value out of git.
+- **A committed-tree test pinning the threshold value** (the human's 2026-09-30 decision on #176): the
+  existing guard test on the committed tree checks the relation instead.
+
+**Consequences.**
+- A config edit within the 4-place band of a pre-#141 entry still passes, and a hand edit of both the
+  entry and the config is caught only by review (D033's immutability is a rule, not a lock).
+- Once #141 PR2 merges, `prediction` (`is_sportswear`) and the skip decision agree whenever no
+  override is set; with one set they may disagree between the two thresholds, by design.
+- Out of scope: the unused `default_threshold` constants in `src/deployment/config.py`, and
+  `BaseClassifier`'s 0.5 fallback for a config without a threshold, which a supported build can no
+  longer reach.
+- After #141 PR2 merges, the owner removes the override from the production environment.

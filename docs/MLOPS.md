@@ -230,15 +230,16 @@ hash as `artifact_sha256`.
 
 All three write through `write_version` in `src/deployment/registry.py`, which hashes the joblib once
 and records that hash both in the version's registry entry, as `pipeline_sha256`, and in the config
-stamp (#189, D033). A version name already in the registry is refused before anything is written:
+stamp (#189, D033). It also records the config's `threshold` in the entry, and refuses a config without
+a numeric one before anything is written (#141, D035). A version name already in the registry is refused before anything is written:
 before files are copied into `models/`, before training, and, for `register_model.py --update-registry`,
 before MLflow registration. A name that is not canonical `vMAJOR.MINOR.PATCH` (no leading zeros, MAJOR
 at least 1) is refused too. A new version
 is numbered from the highest registered version, not from the pointer.
 `promote_model.py --version <vX.Y.Z> --pointer-only` moves `production` to an existing version
 without rewriting its entry or re-stamping the config. It refuses unless the entry records a
-`pipeline_sha256`, the joblib in `models/` has that hash, and the config is stamped with that version
-and hash. FP `v2.4.0`'s hash was recorded by hand in #189; a move to a version with no recorded hash
+`pipeline_sha256`, the joblib in `models/` has that hash, the config is stamped with that version
+and hash, and the config's `threshold` matches the entry's (D035). FP `v2.4.0`'s hash was recorded by hand in #189; a move to a version with no recorded hash
 is refused until that version is reconciled by its own hand edit, with its own byte evidence and
 D-entry (D033).
 
@@ -249,8 +250,10 @@ supported build (all but a local `SKIP_MODEL_GUARD=true` smoke test) runs the Do
 (#172, D034), which refuses an artifact that is not the
 pointer's registered, stamped bytes ([DEPLOYMENT.md](DEPLOYMENT.md#the-registry-pointer-decides-what-is-built)).
 
-`pipeline_sha256` binds the version to the joblib only. Config fields such as `threshold` are not
-covered (#141). The MLflow run that `register_model.py` logs carries the version as its `version`
+`pipeline_sha256` binds the version to the joblib only. The config's `threshold` is bound separately:
+the build guard and pointer moves refuse a config whose `threshold` differs from the entry's (equal, or
+equal to the config's value rounded to 4 places for entries written before #141; D035). Other config
+fields are not covered. The MLflow run that `register_model.py` logs carries the version as its `version`
 tag, but the config file it logs is the one from before the stamp.
 
 When no version can be reported, one of these is recorded instead. The constants live in
@@ -333,7 +336,7 @@ is a proposal until that issue settles it:
 | A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (FP reconciled in #176) | #172 (done) |
 | With no production version, the two promotion paths disagree. `retrain.py`'s `compare_versions` treats a new model as an improvement when there is no production metric (`no_production`), so `--auto-promote` would promote it. That path is latent today: `retrain.py`'s training step exits before training (#186), and fixing #186 first makes it reachable. The `model_training` workflow records no improvement and promotes nothing. Neither compares a retrained EP with the v1.0.0 record | `scripts/retrain.py`, `src/agent/workflows/model_training.py` | pick one rule for a classifier with no production version | #191 |
 | A commit message can name a version the registry does not record | commit discipline | not checked; git history and the registry remain the evidence | deferred |
-| `pipeline_sha256` does not bind the config's `threshold` | `src/deployment/versioning.py` | one source of truth for the FP threshold | #141 |
+| `pipeline_sha256` does not bind the config's `threshold` | `src/deployment/versioning.py` | the build guard and pointer moves refuse a config whose threshold differs from the entry's, and `write_version` records the config's threshold (D035) | #141 (done) |
 | `pipeline_sha256` does not bind the `src/fp1_nb`/`src/ep1_nb` transformer code the pickle imports, `BRANDS`, or library versions. v2.4.0's pickle predates a transformer attribute and needed a compatibility default to run under today's code (D028); `tests/test_committed_model_registry.py` loads the committed FP artifact and compares its probabilities with values captured from the served container | `src/deployment/versioning.py`, `src/fp1_nb/feature_transformer.py` | record the code SHA at registration | deferred |
 | `models/fp_feature_config.json` and `models/fp_training_config.json`, written by the notebooks, describe the last candidate (`6246fae`), not the pointer's artifact. The experiment log's state snapshot pairs the pointer's config with the candidate's `fp_feature_config.json`, and a retrain reads the candidate's `fp_training_config.json` | `src/experiment_log/tracker.py`, `src/deployment/training_config.py` | not decided | deferred |
 | `deploy.yml`'s cleanup keeps only `:latest` and one other digest, deleting older images that show what was served | `.github/workflows/deploy.yml` | keep images tagged with a registered version | deferred |

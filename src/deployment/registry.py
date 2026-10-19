@@ -2,10 +2,11 @@
 
 A version name in ``models/registry.json`` names one set of bytes for good. Every
 registry writer goes through :func:`write_version`, which refuses an existing name,
-records the pipeline's ``pipeline_sha256`` in the entry, and stamps the same hash
-into the artifact config (D026). A new version is numbered from the highest
-registered version, never from the ``production`` pointer. The pointer moves on its
-own through :func:`move_pointer`, which changes only ``production``.
+records the pipeline's ``pipeline_sha256`` and the config's ``threshold`` in the entry,
+and stamps the same hash into the artifact config (D026, D035). A new version is
+numbered from the highest registered version, never from the ``production`` pointer.
+The pointer moves on its own through :func:`move_pointer`, which changes only
+``production``.
 
 The tooling assumes one writer at a time. Nothing locks the registry between a load
 and a save, so concurrent writers are unsupported (D033).
@@ -20,6 +21,7 @@ from .versioning import (
     ArtifactRefused,
     check_registered_bytes,
     file_sha256,
+    read_config_threshold,
     stamp_artifact_version,
 )
 
@@ -139,7 +141,9 @@ def write_version(
 
     This is the only code that writes a registry entry. The pipeline is hashed once,
     and that hash is written both into the entry as ``pipeline_sha256`` and into the
-    config stamp, so the two cannot differ.
+    config stamp, so the two cannot differ. The entry's ``threshold`` is read from the
+    config being stamped, replacing any ``threshold`` in ``entry``, so the build guard's
+    threshold check passes on what this writes (D035).
 
     Args:
         registry_path: The registry JSON file.
@@ -157,16 +161,22 @@ def write_version(
     Raises:
         ValueError: ``version`` is malformed.
         VersionExistsError: ``version`` is already registered. Nothing is written.
+        ArtifactRefused: the config holds no numeric threshold. Nothing is written.
     """
     registry = load_registry(registry_path)
     # Checked again on the registry as loaded here. This narrows, and does not close,
     # the window between a caller's check and this write; concurrent writers are
     # unsupported (D033).
     require_new_version(registry, classifier, version, bump)
+    threshold = read_config_threshold(config_path)
 
     pipeline_sha256 = file_sha256(pipeline_path)
     record = registry.setdefault(classifier, {"production": None, "versions": {}})
-    record.setdefault("versions", {})[version] = {**entry, "pipeline_sha256": pipeline_sha256}
+    record.setdefault("versions", {})[version] = {
+        **entry,
+        "threshold": threshold,
+        "pipeline_sha256": pipeline_sha256,
+    }
     if set_production:
         record["production"] = version
 
@@ -189,7 +199,8 @@ def check_pointer_move(
 
     The move is allowed only when the entry records a ``pipeline_sha256``, the joblib
     at ``pipeline_path`` has that hash, and the config at ``config_path`` is stamped
-    with ``version`` and that hash. The check is the build guard's
+    with ``version`` and that hash, and its ``threshold`` matches the entry's (D035).
+    The check is the build guard's
     (``versioning.check_registered_bytes``, D034), so a move is allowed exactly
     when the build guard would then pass on these files.
 

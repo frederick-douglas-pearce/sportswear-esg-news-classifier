@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import Union
@@ -110,6 +111,34 @@ def _load_json_object(path: Path) -> dict:
     return data
 
 
+def threshold_of(value: object, where: str) -> float:
+    """Return ``value`` as a threshold, refusing anything but a finite number.
+
+    A bool is refused although Python treats it as an int. ``where`` names the file
+    or entry the value came from, for the refusal message.
+    """
+    numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if not numeric or not math.isfinite(value):
+        raise ArtifactRefused(f"{where} has no numeric threshold: it holds {value!r}.")
+    return float(value)
+
+
+def read_config_threshold(config_path: Union[str, Path]) -> float:
+    """Return the artifact config's threshold, refusing one that is not a number."""
+    config_path = Path(config_path)
+    return threshold_of(_load_json_object(config_path).get("threshold"), str(config_path))
+
+
+def threshold_matches(entry_threshold: float, config_threshold: float) -> bool:
+    """Whether a registry entry's threshold records the config's threshold (D035).
+
+    Entries written through ``write_version`` since #141 record the config's value
+    exactly. Earlier entries recorded it rounded to 4 decimal places, and a version
+    name is never rewritten (D033), so the rounded value also matches.
+    """
+    return entry_threshold == config_threshold or entry_threshold == round(config_threshold, 4)
+
+
 def _is_file(path: Path) -> bool:
     """``path.is_file()``, refusing a path that cannot be checked (e.g. a permission error)."""
     try:
@@ -129,8 +158,11 @@ def check_registered_bytes(
 
     The entry must record a ``pipeline_sha256``, the joblib at ``pipeline_path`` must
     have that hash, and the config at ``config_path`` must be stamped with ``version``
-    and that hash. Both the build guard (:func:`check_build_artifact`) and a pointer
-    move (``src.deployment.registry.check_pointer_move``) use this check (D034).
+    and that hash. The config's ``threshold`` must match the entry's
+    (:func:`threshold_matches`): the hash does not cover the config, so this is what
+    binds the threshold the API serves to the version (D035). Both the build guard
+    (:func:`check_build_artifact`) and a pointer move
+    (``src.deployment.registry.check_pointer_move``) use this check (D034).
 
     Returns:
         The entry's recorded ``pipeline_sha256``.
@@ -177,6 +209,16 @@ def check_registered_bytes(
             f"{config_path} is stamped version={config.get('version')!r}, "
             f"pipeline_sha256={config.get('pipeline_sha256')!r}; {classifier} {version} "
             f"needs version={version!r} and pipeline_sha256={recorded!r}."
+        )
+
+    entry_threshold = threshold_of(
+        entry.get("threshold"), f"{classifier} {version}'s registry entry"
+    )
+    config_threshold = threshold_of(config.get("threshold"), str(config_path))
+    if not threshold_matches(entry_threshold, config_threshold):
+        raise ArtifactRefused(
+            f"{config_path} has threshold {config_threshold!r}, and {classifier} {version}'s "
+            f"registry entry records {entry_threshold!r}."
         )
     return recorded
 

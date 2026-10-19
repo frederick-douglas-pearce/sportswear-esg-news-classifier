@@ -1,4 +1,4 @@
-"""Tests for the build guard (#172, D034).
+"""Tests for the build guard (#172, D034; threshold binding #141, D035).
 
 The guard function and its CLI are tested on temporary registries and artifacts. The
 Dockerfile wiring is checked by reading the Dockerfile: the guard runs in the builder
@@ -49,8 +49,8 @@ def models_dir(tmp_path):
     return models
 
 
-def _write_stamp(models, stamp, classifier="fp"):
-    config = {"threshold": 0.6, "transformer_method": "tfidf", **stamp}
+def _write_stamp(models, stamp, classifier="fp", threshold=0.6):
+    config = {"threshold": threshold, "transformer_method": "tfidf", **stamp}
     (models / f"{classifier}_classifier_config.json").write_text(json.dumps(config))
 
 
@@ -123,6 +123,77 @@ class TestCheckBuildArtifact:
         assert "is not fp v1.0.0's bytes" in message
         assert PIPELINE_SHA256 in message
         assert OTHER_SHA256 in message
+
+    def test_refuses_a_config_threshold_the_entry_does_not_record(self, models_dir):
+        # The hash covers the joblib only; this check binds the served threshold (D035).
+        _write_stamp(models_dir, {"version": "v1.1.0", "pipeline_sha256": PIPELINE_SHA256}, threshold=0.65)
+
+        with pytest.raises(ArtifactRefused) as refused:
+            _check(models_dir)
+
+        message = str(refused.value)
+        assert "pointer is v1.1.0: " in message
+        assert "has threshold 0.65" in message
+        assert "fp v1.1.0's registry entry records 0.6" in message
+
+    @pytest.mark.parametrize(
+        "entry_threshold, config_threshold, passes",
+        [
+            (0.4911488614341085, 0.4911488614341085, True),
+            # Entries written before #141 recorded the config's value rounded to 4 places.
+            (0.4911, 0.4911488614341085, True),
+            (0.4911, 0.4912, False),
+            # The config is rounded to the entry's precision, never the entry to the config's.
+            (0.4911488614341085, 0.4911, False),
+        ],
+        ids=["exact", "entry-rounded", "near-miss", "config-rounded"],
+    )
+    def test_matches_a_threshold_exactly_or_rounded_to_four_places(
+        self, models_dir, entry_threshold, config_threshold, passes
+    ):
+        _set_registry(
+            models_dir,
+            lambda r: r["fp"]["versions"]["v1.1.0"].update(threshold=entry_threshold),
+        )
+        _write_stamp(
+            models_dir,
+            {"version": "v1.1.0", "pipeline_sha256": PIPELINE_SHA256},
+            threshold=config_threshold,
+        )
+
+        if passes:
+            assert _check(models_dir) == "v1.1.0"
+        else:
+            with pytest.raises(ArtifactRefused, match="has threshold"):
+                _check(models_dir)
+
+    @pytest.mark.parametrize("value", [None, "0.6", True, float("nan")], ids=["null", "string", "bool", "nan"])
+    @pytest.mark.parametrize("side", ["entry", "config"])
+    def test_refuses_a_threshold_that_is_not_a_number(self, models_dir, side, value):
+        if side == "entry":
+            _set_registry(models_dir, lambda r: r["fp"]["versions"]["v1.1.0"].update(threshold=value))
+            where = "fp v1.1.0's registry entry"
+        else:
+            _write_stamp(
+                models_dir, {"version": "v1.1.0", "pipeline_sha256": PIPELINE_SHA256}, threshold=value
+            )
+            where = "fp_classifier_config.json"
+
+        with pytest.raises(ArtifactRefused, match=f"{re.escape(where)} has no numeric threshold"):
+            _check(models_dir)
+
+    @pytest.mark.parametrize("side", ["entry", "config"])
+    def test_refuses_a_missing_threshold(self, models_dir, side):
+        if side == "entry":
+            _set_registry(models_dir, lambda r: r["fp"]["versions"]["v1.1.0"].pop("threshold"))
+        else:
+            config_path = models_dir / "fp_classifier_config.json"
+            config = json.loads(config_path.read_text())
+            del config["threshold"]
+            config_path.write_text(json.dumps(config))
+
+        with pytest.raises(ArtifactRefused, match="has no numeric threshold: it holds None"):
+            _check(models_dir)
 
     def test_refuses_a_pointer_entry_without_a_hash(self, models_dir):
         _set_registry(models_dir, lambda r: r["fp"].update(production="v0.9.0"))

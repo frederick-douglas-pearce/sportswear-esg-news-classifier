@@ -4,6 +4,31 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-19: The registry entry binds the served FP threshold
+
+**The build guard and pointer moves refuse a config whose `threshold` differs from the one the
+version's registry entry records, and every registry write takes the entry's threshold from the
+config it stamps (#141 PR1, D035).**
+- `src/deployment/versioning.py`: `check_registered_bytes` also refuses unless the config's
+  `threshold` is a finite number (not a bool) and matches the entry's: equal, or equal to the config's
+  value rounded to 4 places (`threshold_matches`; entries written before #141 were rounded and are
+  never rewritten, D033). A missing or non-numeric threshold on either side is refused by name. The
+  build guard and `registry.check_pointer_move` both run it.
+- `src/deployment/registry.py`: `write_version` reads the threshold from the config it stamps,
+  refuses a config without a numeric one before anything is written, and records it at full
+  precision, replacing any value the caller passed. `register_model.py` (`--update-registry`, before
+  MLflow), `promote_model.py` and `retrain.py`'s `promote_version` (before the copy into `models/`)
+  refuse such a config before their own side effects, and no longer supply the entry's threshold
+  themselves.
+- Tests: threshold cases in `tests/test_build_guard.py` (mismatch, the 4-place rule and its near
+  misses, missing or non-numeric values) and `tests/test_model_registry.py` (the move/guard
+  equivalence, `write_version`, each writer); the existing committed-tree guard test now covers the
+  committed config's threshold without naming a value. Fixtures whose entry and config disagreed on
+  the threshold now agree.
+- D035 also records the operating-point decision: the LLM-skip threshold will derive from the served
+  model's threshold, with `FP_SKIP_LLM_THRESHOLD` as an optional override (#141 PR2). The pipeline is
+  unchanged in this PR.
+
 ### 2026-10-18: Supported image builds use only the registry pointer's registered bytes
 
 **The Dockerfile's builder stage runs a build guard: no supported build succeeds unless `models/` holds the

@@ -36,6 +36,7 @@ from src.deployment.registry import (  # noqa: E402
     require_new_version,
     write_version,
 )
+from src.deployment.versioning import read_config_threshold  # noqa: E402
 
 # promote_model.py has no bump flag; a refusal names the next free minor version.
 REFUSAL_BUMP = "minor"
@@ -70,7 +71,6 @@ def create_version_entry(config: dict, data_path: str | None = None) -> dict:
         "trained_on": data_path or f"data/{config.get('classifier_type', 'unknown')}_training_data.jsonl",
         "model_name": config.get("model_name", "unknown"),
         "transformer_method": config.get("transformer_method", "unknown"),
-        "threshold": round(config.get("threshold", 0.5), 4),
         "metrics": {
             "cv_f2": round(config.get("cv_f2", 0), 4),
             "cv_recall": round(config.get("cv_recall", 0), 4),
@@ -160,6 +160,10 @@ def main():
     # A registered version name is never rewritten (D033).
     try:
         require_new_version(registry, args.classifier, args.version, REFUSAL_BUMP)
+        # write_version records the config's threshold in the entry (D035).
+        threshold = read_config_threshold(
+            models_dir / f"{args.classifier}_classifier_config.json"
+        )
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -170,7 +174,7 @@ def main():
     print(f"\n=== Promoting {args.classifier} classifier to {args.version} ===")
     print(f"Model: {entry['model_name']}")
     print(f"Transformer: {entry['transformer_method']}")
-    print(f"Threshold: {entry['threshold']}")
+    print(f"Threshold: {threshold}")
     print(f"Test F2: {entry['metrics']['test_f2']}")
     print(f"Test Recall: {entry['metrics']['test_recall']}")
     print(f"Notes: {entry.get('notes', 'N/A')}")

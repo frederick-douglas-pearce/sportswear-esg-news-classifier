@@ -2,7 +2,8 @@
 
 A registered version name is never rewritten, a new version is numbered from the
 highest registered version, every write records the pipeline's hash once in both the
-entry and the config stamp, and the pointer moves alone only onto bytes it can check.
+entry and the config stamp and records the config's threshold in the entry (D035), and
+the pointer moves alone only onto bytes it can check.
 """
 
 import hashlib
@@ -158,8 +159,40 @@ class TestWriteVersion:
         write_version(registry_path, "ep", "v1.0.0", {}, config_path, pipeline_path, "minor")
 
         assert _read(registry_path) == {
-            "ep": {"production": None, "versions": {"v1.0.0": {"pipeline_sha256": PIPELINE_SHA256}}}
+            "ep": {
+                "production": None,
+                "versions": {"v1.0.0": {"threshold": 0.6, "pipeline_sha256": PIPELINE_SHA256}},
+            }
         }
+
+    def test_records_the_configs_threshold_over_the_callers(self, artifact):
+        # The entry takes the config's threshold at full precision, whatever the caller
+        # passed, so the build guard's threshold check passes on what was written (D035).
+        registry_path, config_path, pipeline_path = artifact
+        config_path.write_text(json.dumps({"threshold": 0.4911488614341085}))
+
+        write_version(
+            registry_path, "fp", "v1.3.0", {"threshold": 0.4911}, config_path, pipeline_path, "minor"
+        )
+
+        assert _read(registry_path)["fp"]["versions"]["v1.3.0"]["threshold"] == 0.4911488614341085
+
+    @pytest.mark.parametrize(
+        "config",
+        [{}, {"threshold": None}, {"threshold": "0.6"}, {"threshold": True}, {"threshold": float("nan")}],
+        ids=["missing", "null", "string", "bool", "nan"],
+    )
+    def test_refuses_a_config_without_a_numeric_threshold_and_writes_nothing(self, artifact, config):
+        registry_path, config_path, pipeline_path = artifact
+        config_path.write_text(json.dumps(config))
+        registry_bytes = registry_path.read_bytes()
+        config_bytes = config_path.read_bytes()
+
+        with pytest.raises(ArtifactRefused, match="has no numeric threshold"):
+            write_version(registry_path, "fp", "v1.3.0", {}, config_path, pipeline_path, "minor")
+
+        assert registry_path.read_bytes() == registry_bytes
+        assert config_path.read_bytes() == config_bytes
 
     @pytest.mark.parametrize("hashed", [False, True], ids=["hashless", "hashed"])
     def test_refuses_an_existing_name_and_writes_nothing(self, artifact, hashed):
@@ -210,13 +243,16 @@ class TestWriteVersion:
 
 @pytest.fixture
 def promotable(artifact):
-    """A registry whose v1.1.0 records the hash of the bytes in models/, with a matching stamp."""
+    """A registry whose v1.1.0 records the hash of the bytes in models/, with a matching stamp.
+
+    The config's threshold is the one the v1.1.0 entry records (D035).
+    """
     registry_path, config_path, pipeline_path = artifact
     registry = _registry()
     registry["fp"]["versions"]["v1.1.0"]["pipeline_sha256"] = PIPELINE_SHA256
     registry_path.write_text(json.dumps(registry, indent=2) + "\n")
     config_path.write_text(
-        json.dumps({"threshold": 0.6, "version": "v1.1.0", "pipeline_sha256": PIPELINE_SHA256})
+        json.dumps({"threshold": 0.5, "version": "v1.1.0", "pipeline_sha256": PIPELINE_SHA256})
     )
     return registry_path, config_path, pipeline_path
 
@@ -291,6 +327,12 @@ class TestMovePointer:
 
         self._assert_refused(promotable, "v1.1.0", "is stamped")
 
+    def test_refuses_a_config_threshold_the_entry_does_not_record(self, promotable):
+        _, config_path, _ = promotable
+        config_path.write_text(json.dumps({**_read(config_path), "threshold": 0.65}))
+
+        self._assert_refused(promotable, "v1.1.0", "has threshold 0.65, .* records 0.5")
+
     def test_refuses_missing_pipeline(self, promotable):
         _, _, pipeline_path = promotable
         pipeline_path.unlink()
@@ -321,8 +363,15 @@ class TestMovePointer:
             lambda registry, config, pipeline: config.write_text("[]"),
             lambda registry, config, pipeline: config.write_bytes(b"\xff\xfe binary"),
             lambda registry, config, pipeline: registry["fp"]["versions"].update({"v1.1.0": None}),
+            lambda registry, config, pipeline: config.write_text(
+                json.dumps({**_read(config), "threshold": 0.65})
+            ),
+            lambda registry, config, pipeline: registry["fp"]["versions"]["v1.1.0"].pop("threshold"),
         ],
-        ids=["intact", "other-bytes", "other-stamp", "directory", "config-not-object", "config-binary", "entry-not-object"],
+        ids=[
+            "intact", "other-bytes", "other-stamp", "directory", "config-not-object", "config-binary",
+            "entry-not-object", "threshold-mismatch", "entry-threshold-missing",
+        ],
     )
     def test_allows_a_move_exactly_where_the_build_guard_passes(self, promotable, break_tree):
         """A move is allowed exactly when the build guard would then pass on these files (D034)."""
@@ -446,7 +495,33 @@ class TestWritersRefuseExistingNames:
         written = _read(models_dir / "registry.json")["fp"]["versions"]
         assert sorted(written) == ["v3.0.0", "v3.1.0", "v3.2.0"]
         assert written["v3.2.0"]["pipeline_sha256"] == PIPELINE_SHA256
+        assert written["v3.2.0"]["threshold"] == WRITER_CONFIG["threshold"]
         assert _read(models_dir / "fp_classifier_config.json")["version"] == "v3.2.0"
+
+    def _drop_config_threshold(self, models_dir):
+        config = {k: v for k, v in WRITER_CONFIG.items() if k != "threshold"}
+        (models_dir / "fp_classifier_config.json").write_text(json.dumps(config))
+
+    def test_register_model_refuses_a_config_without_a_threshold(self, models_dir, monkeypatch, capsys):
+        self._drop_config_threshold(models_dir)
+        before = self._snapshot(models_dir)
+
+        with pytest.raises(SystemExit) as exc:
+            self._run_register(monkeypatch, "--version", "v3.1.0", "--update-registry")
+
+        assert exc.value.code == 1
+        assert self.mlflow_reg.call_count == 0
+        assert self._snapshot(models_dir) == before
+        assert "has no numeric threshold" in capsys.readouterr().err
+
+    def test_promote_model_refuses_a_config_without_a_threshold(self, models_dir, monkeypatch, capsys):
+        self._drop_config_threshold(models_dir)
+        before = self._snapshot(models_dir)
+
+        assert self._run_promote(models_dir, monkeypatch, "--version", "v3.1.0") == 1
+
+        assert self._snapshot(models_dir) == before
+        assert "has no numeric threshold" in capsys.readouterr().err
 
     def _run_promote(self, models_dir, monkeypatch, *args):
         import scripts.promote_model as promote_model
@@ -486,7 +561,7 @@ class TestWritersRefuseExistingNames:
             "fp": {
                 "production": "v3.1.0",
                 "versions": {
-                    "v3.0.0": {"threshold": 0.5, "pipeline_sha256": PIPELINE_SHA256},
+                    "v3.0.0": {"threshold": WRITER_CONFIG["threshold"], "pipeline_sha256": PIPELINE_SHA256},
                     "v3.1.0": {"threshold": 0.5},
                 },
             }
@@ -558,6 +633,32 @@ class TestWritersRefuseExistingNames:
 
         assert copy.call_count == 0
         assert deploy.call_count == 0
+
+    def test_retrain_promote_version_refuses_a_config_without_a_threshold(self, models_dir, tmp_path):
+        import scripts.retrain as retrain
+
+        output_dir = tmp_path / "candidate"
+        output_dir.mkdir()
+        (output_dir / "fp_classifier_pipeline.joblib").write_bytes(b"candidate model")
+        (output_dir / "fp_classifier_config.json").write_text(json.dumps({"test_f2": 0.9}))
+        before = self._snapshot(models_dir)
+
+        with patch.object(retrain.shutil, "copy") as copy, \
+                patch.object(retrain, "trigger_deploy_workflow") as deploy:
+            with pytest.raises(ArtifactRefused, match="has no numeric threshold"):
+                retrain.promote_version(
+                    classifier="fp",
+                    version="v3.1.0",
+                    new_metrics={"threshold": 0.5},
+                    data_path="data/fp_training_data.jsonl",
+                    output_dir=output_dir,
+                    models_dir=models_dir,
+                    registry_path=models_dir / "registry.json",
+                )
+
+        assert copy.call_count == 0
+        assert deploy.call_count == 0
+        assert self._snapshot(models_dir) == before
         assert self._snapshot(models_dir) == before
 
     def test_retrain_main_refuses_before_training(self, models_dir, monkeypatch, capsys):

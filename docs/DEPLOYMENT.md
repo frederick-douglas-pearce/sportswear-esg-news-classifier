@@ -104,7 +104,9 @@ unless:
    `pipeline_sha256`;
 3. `models/<clf>_classifier_pipeline.joblib` has that sha256;
 4. `models/<clf>_classifier_config.json` is stamped with the pointer's `version` and that
-   `pipeline_sha256`.
+   `pipeline_sha256`;
+5. that config's `threshold` matches the entry's `threshold` (equal, or equal to the config's value
+   rounded to 4 places for entries written before #141; #141, D035).
 
 Check 4's hash half makes the image report the pointer's version from `/model/info` rather than
 `unversioned`. Every supported build runs the guard, because each builds the same Dockerfile:
@@ -127,6 +129,8 @@ it has been read:
 | `… has no recorded pipeline_sha256` | the pointer's entry predates #189 | record that version's hash through its own reconciliation, with byte evidence and a D-entry (D033), or move the pointer to a version that records one |
 | `… is not <clf> <version>'s bytes: its sha256 is …, and the registry records …` | `models/` holds other bytes, such as a notebook or `train.py` output | to ship them, register and promote them (`register_model.py --classifier <clf> --bump <major|minor|patch> --update-registry --set-production`) and commit the registry, joblib and config together; otherwise restore the pointer's bytes from git |
 | `… is stamped version=…, pipeline_sha256=…` | the config is not the pointer's stamped config | restore the pointer's config from git, or register and promote the artifact as above |
+| `… has threshold …, and <clf> <version>'s registry entry records …` | the config's threshold is not the one registered for the pointer's version | restore the pointer's config from git; to ship a new threshold, register and promote the artifact as above (a registered version's threshold is never rewritten, D033) |
+| `… has no numeric threshold: it holds …` | the config or the pointer's entry has no usable `threshold` | restore the file from git; an entry without one predates the registry tooling and needs its own reconciliation (D033) |
 | `… registry record has no versions object` / `… registry entry is not an object` | the registry's entries for the classifier are malformed | restore `models/registry.json` from git |
 | `Pipeline not found` / `Config not found` / `… is not valid JSON` / `… does not hold a JSON object` / `… cannot be read` | a file is missing, unreadable or malformed | restore it from git |
 
