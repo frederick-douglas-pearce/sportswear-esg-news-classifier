@@ -16,7 +16,12 @@ import re
 from pathlib import Path
 from typing import Union
 
-from .versioning import file_sha256, stamp_artifact_version
+from .versioning import (
+    ArtifactRefused,
+    check_registered_bytes,
+    file_sha256,
+    stamp_artifact_version,
+)
 
 BUMPS = ("major", "minor", "patch")
 
@@ -184,43 +189,17 @@ def check_pointer_move(
 
     The move is allowed only when the entry records a ``pipeline_sha256``, the joblib
     at ``pipeline_path`` has that hash, and the config at ``config_path`` is stamped
-    with ``version`` and that hash.
+    with ``version`` and that hash. The check is the build guard's
+    (``versioning.check_registered_bytes``, D034), so a move is allowed exactly
+    when the build guard would then pass on these files.
 
     Raises:
         PointerMoveRefused: with the reason.
     """
-    versions = registry.get(classifier, {}).get("versions", {})
-    if version not in versions:
-        raise PointerMoveRefused(f"{classifier} {version} is not a registered version.")
-
-    recorded = versions[version].get("pipeline_sha256")
-    if not recorded:
-        raise PointerMoveRefused(
-            f"{classifier} {version} has no recorded pipeline_sha256, so its bytes cannot "
-            "be checked. Record its hash through its own reconciliation first (D033)."
-        )
-
-    pipeline_path = Path(pipeline_path)
-    if not pipeline_path.exists():
-        raise PointerMoveRefused(f"Pipeline not found: {pipeline_path}")
-    actual = file_sha256(pipeline_path)
-    if actual != recorded:
-        raise PointerMoveRefused(
-            f"{pipeline_path} is not {classifier} {version}'s bytes: its sha256 is "
-            f"{actual}, and the registry records {recorded}."
-        )
-
-    config_path = Path(config_path)
-    if not config_path.exists():
-        raise PointerMoveRefused(f"Config not found: {config_path}")
-    with open(config_path) as f:
-        config = json.load(f)
-    if config.get("version") != version or config.get("pipeline_sha256") != recorded:
-        raise PointerMoveRefused(
-            f"{config_path} is stamped version={config.get('version')!r}, "
-            f"pipeline_sha256={config.get('pipeline_sha256')!r}; a move to {version} needs "
-            f"version={version!r} and pipeline_sha256={recorded!r}."
-        )
+    try:
+        check_registered_bytes(registry, classifier, version, pipeline_path, config_path)
+    except ArtifactRefused as e:
+        raise PointerMoveRefused(str(e)) from e
 
 
 def move_pointer(

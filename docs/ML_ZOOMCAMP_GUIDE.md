@@ -204,6 +204,6 @@ For detailed CI/CD setup instructions, see [`.github/DEPLOYMENT_SETUP.md`](../.g
 **GitHub Actions Workflow:**
 
 Deployment is managed via `.github/workflows/deploy.yml`:
-- **Manual trigger**: Use "Run workflow" in GitHub Actions UI to deploy `fp`. The `ep` and `all` options run the EP job, which fails at its model-file check while EP is on hold, with no production version and no committed artifact (#180)
+- **Manual trigger**: Use "Run workflow" in GitHub Actions UI to deploy `fp`. The `ep` and `all` options run the EP job, which fails at its image build while EP is on hold: EP has no production version and no committed artifact (#180), and the Dockerfile's build guard refuses it by name (#172)
 - **Automated via retrain.py**: After major/minor version promotion, `retrain.py --auto-promote` triggers deployment
 - **Patch versions skipped**: Only major/minor versions trigger redeployment (patches update model files only)

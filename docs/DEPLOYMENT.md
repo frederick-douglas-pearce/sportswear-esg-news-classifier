@@ -91,6 +91,78 @@ The model registry (`models/registry.json`) tracks all model versions. When depl
 | `*_ner*` | spaCy (en_core_web_sm) | ~150MB |
 | `sentence_transformer*` | spaCy + sentence-transformers | ~1GB |
 
+### The registry pointer decides what is built
+
+The production pointer in `models/registry.json` (`<clf>.production`) decides which model an image
+packages (#172, D034). The Dockerfile's builder stage runs a build guard
+(`check_build_artifact` in `src/deployment/versioning.py`) after installing the Python dependencies
+and before the step that may download spaCy or sentence-transformers models, and the build fails
+unless:
+
+1. the pointer is not `null`;
+2. the pointer names a version registered in `models/registry.json`, and that entry records a
+   `pipeline_sha256`;
+3. `models/<clf>_classifier_pipeline.joblib` has that sha256;
+4. `models/<clf>_classifier_config.json` is stamped with the pointer's `version` and that
+   `pipeline_sha256`.
+
+Check 4's hash half makes the image report the pointer's version from `/model/info` rather than
+`unversioned`. Every supported build runs the guard, because each builds the same Dockerfile:
+`docker build`, `docker compose build`, `deploy.yml` and `scripts/deploy_cloudrun.sh`. The runtime stage
+copies the two files the guard checked from the builder stage, and `registry.json` stays in the
+builder; nothing reads the pointer at serve time. To run the same check without Docker:
+
+```bash
+python -I src/deployment/versioning.py --classifier fp --models-dir models   # exit 0 build, 1 refused
+```
+
+**When the guard refuses.** The message names the classifier and what it found, and the pointer once
+it has been read:
+
+| Refusal | Meaning | Reconcile |
+|---|---|---|
+| `Registry not found` / `<clf> is not in …registry.json` / `<clf> in … has no production key` / `<clf>'s record … is not an object` / `… production pointer … is …, not a version name` | the registry is missing, has no usable entry for the classifier, or is malformed | restore `models/registry.json` from git; build only a classifier the registry lists |
+| `<clf> has no production version (its pointer is null …)` | the classifier has no production version (EP while it is on hold, #180) | nothing may be built until a version is registered and promoted; files in `models/` do not change this |
+| `… is not a registered version` | the pointer names a version with no entry | point `production` at a registered version (`promote_model.py --pointer-only`) |
+| `… has no recorded pipeline_sha256` | the pointer's entry predates #189 | record that version's hash through its own reconciliation, with byte evidence and a D-entry (D033), or move the pointer to a version that records one |
+| `… is not <clf> <version>'s bytes: its sha256 is …, and the registry records …` | `models/` holds other bytes, such as a notebook or `train.py` output | to ship them, register and promote them (`register_model.py --classifier <clf> --bump <major|minor|patch> --update-registry --set-production`) and commit the registry, joblib and config together; otherwise restore the pointer's bytes from git |
+| `… is stamped version=…, pipeline_sha256=…` | the config is not the pointer's stamped config | restore the pointer's config from git, or register and promote the artifact as above |
+| `… registry record has no versions object` / `… registry entry is not an object` | the registry's entries for the classifier are malformed | restore `models/registry.json` from git |
+| `Pipeline not found` / `Config not found` / `… is not valid JSON` / `… does not hold a JSON object` / `… cannot be read` | a file is missing, unreadable or malformed | restore it from git |
+
+To restore the committed bytes, run
+`git checkout HEAD -- models/<clf>_classifier_pipeline.joblib models/<clf>_classifier_config.json`.
+This overwrites whatever candidate is in `models/`, so copy it elsewhere first if you want to keep it.
+
+**Smoke-testing a candidate locally.** `SKIP_MODEL_GUARD=true` (exactly; any other value runs the
+guard) skips the guard and packages the files as they are:
+
+```bash
+docker build --build-arg SKIP_MODEL_GUARD=true -t fp-candidate .
+docker run -p 8002:8000 fp-candidate
+```
+
+Use another image name and port. Never build a candidate through `docker compose build`: that replaces
+`fp-classifier-api`, the image the labeling pipeline calls. `deploy.yml`, `docker-compose.yml` and
+`scripts/deploy_cloudrun.sh` never pass the argument. Such an image claims no version it does not have:
+it reports the version its config is stamped with only when the stamp's hash matches the packaged joblib (as a registered version's files are), and `unversioned` otherwise.
+
+**Recording served probabilities after a promotion.** `tests/test_committed_model_registry.py`
+compares the committed FP artifact's probabilities with values recorded for the pointer's version,
+and fails by name when the pointer has none. In the promotion PR, build the guarded image from the
+promotion tree, send the test's four articles to its `/predict/batch`, record the probabilities under
+the new version in `SERVED_FP_PROBABILITIES`, and post the request and response on the issue (as on
+#176). Keep the old version's values, so a rollback stays covered.
+
+**What the guard does not check.** It binds the joblib's bytes and the config stamp, not:
+- **committed state.** A pointer and artifact registered locally but not committed agree with each
+  other, so a working-tree build passes. What remains is a reproducibility gap, not a wrong model,
+  and checking git state would need `.git` in the build context (D034). `deploy.yml` builds the
+  committed tree.
+- **the code the pickle imports** (`src/fp1_nb`, library versions; D028). The load-and-predict test
+  covers that for the committed FP artifact.
+- **the config's `threshold`** beyond the stamp (#141).
+
 ## Labeling Pipeline Integration
 
 Enable the FP classifier as a pre-filter in the labeling pipeline to reduce LLM costs:
@@ -323,8 +395,9 @@ uv run python scripts/retrain.py --classifier fp --data data/fp_training_data.js
 uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl
 
 # 2. Retrain and promote: not available for FP today. retrain.py exits before training (#186),
-#    and FP is not promoted through it until #172: promotion moves the pointer and dispatches
-#    deploy.yml with no commit, so CI builds whatever main holds (docs/MLOPS.md). Its Verdict also
+#    and its promotion moves the pointer and dispatches deploy.yml with no commit, so CI builds
+#    whatever main holds. The build guard passes when main agrees with itself; failing a deploy
+#    whose served version is not the new pointer is #190 (docs/MLOPS.md). Its Verdict also
 #    compares against a production F2 measured before #154's exclusion; #154 PR2's retrain
 #    compares like-for-like.
 

@@ -244,8 +244,10 @@ D-entry (D033).
 
 The stamp is written to the working tree. An image picks it up only when it is built from a tree that
 holds the stamped config: a local `docker compose build` reads the working tree, while `deploy.yml`
-builds from the committed tree, so commit the stamped config with its joblib before deploying. Making
-the registry pointer decide what is built is #172.
+builds from the committed tree, so commit the stamped config with its joblib before deploying. Every
+supported build (all but a local `SKIP_MODEL_GUARD=true` smoke test) runs the Dockerfile's build guard
+(#172, D034), which refuses an artifact that is not the
+pointer's registered, stamped bytes ([DEPLOYMENT.md](DEPLOYMENT.md#the-registry-pointer-decides-what-is-built)).
 
 `pipeline_sha256` binds the version to the joblib only. Config fields such as `threshold` are not
 covered (#141). The MLflow run that `register_model.py` logs carries the version as its `version`
@@ -276,17 +278,19 @@ and committed them with the pointer and
 the stamped config, so an FP image rebuilt from the tree reports `v2.4.0`.
 
 `model_version` is not a drift column (`CORE_DRIFT_COLUMNS` in `src/mlops/monitoring.py`), so a change
-in the values it records does not require regenerating the drift reference. No EP image can be built
-from this tree, because no EP artifact is committed (#180). The build does not read `ep.production`.
+in the values it records does not require regenerating the drift reference.
 
 ### Served, registered and committed models
 
 **Invariant: the registry pointer (`models/registry.json` → `<clf>.production`) decides which model is
 built and deployed.** The artifact in `models/<clf>_classifier_*` must be the pointer's registered bytes,
-and every image must be built from those bytes. No build enforces it until #172's build guard lands
-(D027). For FP, #176 reconciled the pointer with the committed artifact (`v2.4.0`, the bytes the
-labeling pipeline is served), and `tests/test_committed_model_registry.py` checks in CI that the
-committed FP config's stamp names the pointer and hashes the committed joblib.
+and every image must be built from those bytes. The Dockerfile's build guard enforces it for every
+supported build (#172, D034): `docker build`, `docker compose build`, `deploy.yml` and
+`scripts/deploy_cloudrun.sh` all fail unless the packaged joblib's sha256 equals the pointer entry's
+`pipeline_sha256` and the config is stamped with the pointer and that hash
+([DEPLOYMENT.md](DEPLOYMENT.md#the-registry-pointer-decides-what-is-built)). For FP, #176 reconciled the
+pointer with the committed artifact (`v2.4.0`, the bytes the labeling pipeline is served), and
+`tests/test_committed_model_registry.py` runs the guard on the committed tree in CI.
 
 **EP has no production version while it is on hold** (#180, D029). v1.0.0's registered bytes are not
 recoverable (#175), so `ep.production` is `null`. The v1.0.0 record and its metrics stay in
@@ -294,36 +298,40 @@ recoverable (#175), so `ep.production` is `null`. The v1.0.0 record and its metr
 `models/ep_*` (from `2a14794`) is deleted and can be recovered from that commit. With no EP artifact in
 the tree:
 
-- `deploy.yml`'s `deploy-ep` job fails at its model-file check. A dispatch with `classifier=all`, the
-  default, still deploys FP, because `deploy-fp` does not depend on `deploy-ep`.
-- `scripts/deploy_cloudrun.sh ep` and `all` fail at the EP image build from a clean checkout. `all`
-  deploys FP first. The script builds from the working tree, so if the ep3 notebook has written EP
-  artifacts to `models/`, `ep` and `all` deploy an EP model that is not registered.
+- `deploy.yml`'s `deploy-ep` job fails at its image build, where the build guard refuses EP by name.
+  A dispatch with `classifier=all`, the default, still deploys FP, because `deploy-fp` does not depend
+  on `deploy-ep`.
+- `scripts/deploy_cloudrun.sh ep` and `all` fail at the EP image build for the same reason, whatever
+  `models/ep_*` files the working tree holds. `all` deploys FP first.
 - `ep-classifier-api` is behind the compose `ep` profile, so `docker compose up` does not build it.
 - `tests/test_committed_model_registry.py` pins the retired EP entry and checks that git tracks no
   `models/ep_*` file.
 
-How #172's guard treats a classifier with no production version is #172's to define (raised on #172).
+The build guard refuses a classifier whose pointer is `null` before it looks at any file, so EP
+artifacts written to `models/` (by the ep3 notebook, say) never make EP buildable by a supported build
+(#172). Which rule
+the promotion paths use for a classifier with no production version is #191's.
 
 The served, registered and committed models are three separate things and can differ. Which ones
 differ today, with evidence, is recorded on #175. The steps where they can come apart are listed
-below, each with a proposed fix (or none) and a proposed owner (an issue, or `deferred`). #172's ACs
-are finalized after #175 (D027 §1), so a `#172` entry here is a proposal until #172 accepts it:
+below, each with a fix (or none) and an owner (an issue, `deferred`, or `rejected`). The owners follow
+the 2026-10-08 split of #172 into #189, #172, #190 and #191 (D033, D034); a fix owned by an open issue
+is a proposal until that issue settles it:
 
-| Divergence point | Where | Proposed fix | Proposed owner |
+| Divergence point | Where | Fix | Owner |
 |---|---|---|---|
-| Candidates and production share `models/<clf>_classifier_*`. The fp3/ep3 deployment cells and `train.py` (default `--output-dir models`) overwrite it unstamped, and never write `models/registry.json` | `src/fp3_nb/deployment.py`, `src/ep3_nb/deployment.py`, `scripts/train.py` | the build guard refuses bytes that are not the pointer's registered bytes | #172 |
-| `register_model.py --update-registry` stamps the shared config even without `--set-production`; `promote_model.py` stamps it even without `--production` | `scripts/register_model.py`, `scripts/promote_model.py` | the build guard refuses a config whose stamp does not name the pointer (D027 §2) | #172 |
-| `retrain.py` promotion moves the pointer and dispatches `deploy.yml` with no commit or push, so CI builds whatever `main` holds | `scripts/retrain.py` | dispatch only when the ref `deploy.yml` builds (the default branch; no `--ref` is passed) holds the pointer's bytes | #172 |
-| `deploy.yml` skips deploying on a patch bump: the pointer moves, the served image does not | `.github/workflows/deploy.yml` | remove the skip for model changes | #172 |
-| `retrain.py` skips triggering a deploy on a patch bump, with the same effect | `scripts/retrain.py` | remove the skip for model changes | #172 |
-| The `model_training` promote step registers without `--set-production`, so the pointer never moves | `src/agent/workflows/model_training.py` | pass `--set-production` (failure handling stays #79) | #172 |
-| `trigger_deployment` reads a `version` key the registry does not have, so every workflow deploy is tagged `unknown` | `src/agent/workflows/model_training.py` | pass the pointer | #172 |
-| Local `docker compose build` and `scripts/deploy_cloudrun.sh` build from the working tree, so they can serve unregistered bytes | `docker-compose.yml`, `scripts/deploy_cloudrun.sh` | the build guard runs in the Dockerfile's builder stage, which both use | #172 |
-| A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | decide whether the guard also binds committed state (raised on #172 for its finalization) | deferred |
+| Candidates and production share `models/<clf>_classifier_*`. The fp3/ep3 deployment cells and `train.py` (default `--output-dir models`) overwrite it unstamped, and never write `models/registry.json` | `src/fp3_nb/deployment.py`, `src/ep3_nb/deployment.py`, `scripts/train.py` | the build guard refuses bytes that are not the pointer's registered bytes | #172 (done) |
+| `register_model.py --update-registry` stamps the shared config even without `--set-production`; `promote_model.py` stamps it even without `--production` | `scripts/register_model.py`, `scripts/promote_model.py` | the build guard refuses a config whose stamp does not name the pointer (D027 §2) | #172 (done) |
+| `retrain.py` promotion moves the pointer and dispatches `deploy.yml` with no commit or push, so CI builds whatever `main` holds | `scripts/retrain.py` | fail a deploy whose served version differs from the pointer, which makes a dispatch-time check unnecessary (D034) | #190 |
+| `deploy.yml` skips deploying on a patch bump: the pointer moves, the served image does not | `.github/workflows/deploy.yml` | remove the skip for model changes | #191 |
+| `retrain.py` skips triggering a deploy on a patch bump, with the same effect | `scripts/retrain.py` | remove the skip for model changes | #191 |
+| The `model_training` promote step registers without `--set-production`, so the pointer never moves | `src/agent/workflows/model_training.py` | pass `--set-production` (failure handling stays #79) | #191 |
+| `trigger_deployment` reads a `version` key the registry does not have, so every workflow deploy is tagged `unknown` | `src/agent/workflows/model_training.py` | pass the pointer | #191 |
+| Local `docker compose build` and `scripts/deploy_cloudrun.sh` build from the working tree, so they can serve unregistered bytes | `docker-compose.yml`, `scripts/deploy_cloudrun.sh` | the build guard runs in the Dockerfile's builder stage, which both use | #172 (done) |
+| A locally registered but uncommitted pointer and artifact agree with each other, so a working-tree build passes the guard. The local compose container is the labeling pipeline's serving path | `docker-compose.yml`, `scripts/deploy_cloudrun.sh`, `models/registry.json` | the guard does not bind committed state: the pointer and artifact agree, so what remains is a reproducibility gap, not a wrong-model risk | rejected (D034) |
 | `retrain.py` numbered the next version from the production pointer, so it could collide with, and overwrite, an existing non-production version | `scripts/retrain.py` | fixed in #189: every registry writer numbers from the highest registered version and refuses an existing name before any side effect (D033) | #189 (done) |
-| A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (FP reconciled in #176) | #172 |
-| With no production version, the two promotion paths disagree. `retrain.py`'s `compare_versions` treats a new model as an improvement when there is no production metric (`no_production`), so `--auto-promote` would promote it. That path is latent today: `retrain.py`'s training step exits before training (#186), and fixing #186 first makes it reachable. The `model_training` workflow records no improvement and promotes nothing. Neither compares a retrained EP with the v1.0.0 record | `scripts/retrain.py`, `src/agent/workflows/model_training.py` | pick one rule for a classifier with no production version | #172 |
+| A promotion commit can carry `registry.json` without the artifact, or the artifact without the pointer | commit discipline | the build guard fails a tree whose artifact is not the pointer's registered bytes (FP reconciled in #176) | #172 (done) |
+| With no production version, the two promotion paths disagree. `retrain.py`'s `compare_versions` treats a new model as an improvement when there is no production metric (`no_production`), so `--auto-promote` would promote it. That path is latent today: `retrain.py`'s training step exits before training (#186), and fixing #186 first makes it reachable. The `model_training` workflow records no improvement and promotes nothing. Neither compares a retrained EP with the v1.0.0 record | `scripts/retrain.py`, `src/agent/workflows/model_training.py` | pick one rule for a classifier with no production version | #191 |
 | A commit message can name a version the registry does not record | commit discipline | not checked; git history and the registry remain the evidence | deferred |
 | `pipeline_sha256` does not bind the config's `threshold` | `src/deployment/versioning.py` | one source of truth for the FP threshold | #141 |
 | `pipeline_sha256` does not bind the `src/fp1_nb`/`src/ep1_nb` transformer code the pickle imports, `BRANDS`, or library versions. v2.4.0's pickle predates a transformer attribute and needed a compatibility default to run under today's code (D028); `tests/test_committed_model_registry.py` loads the committed FP artifact and compares its probabilities with values captured from the served container | `src/deployment/versioning.py`, `src/fp1_nb/feature_transformer.py` | record the code SHA at registration | deferred |

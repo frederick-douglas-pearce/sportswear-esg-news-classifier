@@ -2031,7 +2031,8 @@ metrics matching v2.4.0 (inferred from those values; nothing recorded confirms i
 4. The registry pointer is intent, the stamped version is fact. #172 should make the build select the
    artifact the pointer names and fail when `/model/info.version` differs from the pointer. #141
    should take the served threshold from the same artifact whose version is reported, never from the
-   pointer at serve time.
+   pointer at serve time. *(The build half is D034's guard on registered bytes; failing when the
+   served version differs from the pointer is #190.)*
 5. `model_version` is not a drift column, so this change needs no drift-reference regeneration. The
    standing regeneration rule (`docs/MLOPS.md`, `CLAUDE.md`) is narrowed to the columns the drift
    check reads (human decision at review).
@@ -2086,18 +2087,24 @@ also depends on what the investigation finds.
    - CI unit-tests the function and runs it against the committed tree.
    - A local bypass build argument exists for smoke-testing a candidate. It is off by default, and
      `deploy.yml` and compose never pass it.
+
+   *(Built as written in D034, which shares the byte check with `registry.check_pointer_move` and
+   has the bypass package the files as they are.)*
 4. **One guard for both classifiers.** EP shares the Dockerfile and has the same divergence, so EP builds
    stay blocked until EP is reconciled: in #176 if its registered bytes are recoverable, otherwise in a
-   follow-up.
+   follow-up. *(EP's pointer was retired instead (D029); D034's guard refuses a null pointer by
+   name.)*
 5. **#172 fixes the paths that move the pointer without changing what is served:**
    - `deploy.yml`'s patch-bump skip is removed for model changes;
    - `model_training.promote_model` passes `--set-production`;
    - `trigger_deployment` passes the pointer.
 
-   #172 changes only these values. Failure handling of those steps stays with #79.
+   #172 changes only these values. Failure handling of those steps stays with #79. *(§5's three
+   changes moved to #191 in the 2026-10-08 split, D034; failure handling stays with #79.)*
 6. **Post-deploy check.** One reusable script reads `/model/info` and compares it with the pointer.
    `deploy.yml` runs it, and it is documented for use after `docker compose up`. It is treated as an
    architect-triggered assertion change (`.claude/loop.config.md` §2), although `deploy.yml` is dispatched, not scheduled.
+   *(Moved to #190 in the 2026-10-08 split, D034.)*
 7. **Ordering.**
    - Deploy freeze until #175 closes, because the `deploy.yml` cleanup step deletes older GCR images,
      which are evidence.
@@ -2139,7 +2146,9 @@ that starts, reports healthy, and fails every `/predict`.
    `xfail(strict)` until #180 lands), and loads the committed artifact and compares its
    probabilities with golden values captured from the running container (evidence on #176).
    Replacing the first half with #172's guard is proposed to #172; the second half is not proposed
-   for replacement, because the guard D027 describes binds bytes, not code.
+   for replacement, because the guard D027 describes binds bytes, not code. *(Done in D034: the stamp
+   half is a guard call on the committed tree; the load-and-predict half stays, with probabilities
+   keyed by version.)*
 
 **Consequences.** This is the first demonstrated instance of D027's accepted consequence: the joblib
 hash binds the model bytes, not the `src/fp1_nb` code the pickle imports. With the pointer at v2.4.0,
@@ -2179,10 +2188,11 @@ nothing until EP is retrained.
    (`compare_versions(None)` returns an improvement) and `model_training` fails closed. So nothing
    compares a retrained EP with v1.0.0. Owner: #172, chosen by the human (handoff posted on #172).
    `retrain.py`'s training step exits before training today (#186); fixing #186 first would make its
-   fail-open reachable.
+   fail-open reachable. *(The rule moved to #191 in the 2026-10-08 split, D034.)*
 
 **Consequences.** EP image builds fail at `COPY` until an EP artifact is in the tree; requiring that
-artifact to be registered is #172's guard. This is consistent with D027 §4. A dispatch with the default
+artifact to be registered is #172's guard. *(Since D034, EP builds fail at the guard's null-pointer
+refusal, whatever EP files are present.)* This is consistent with D027 §4. A dispatch with the default
 `all` reports a failed `deploy-ep` job; FP still deploys, because `deploy-fp` does not depend on it. The
 squash commit body names `2a14794` so the files can be recovered.
 
@@ -2361,6 +2371,8 @@ rollback target. #172's build guard needs a recorded hash to compare against. #1
    and #172's build guard (D027 §2–3) once it exists. The check is one function, `check_pointer_move`.
    Whether #172's guard reuses it is #172's call: reusing it would amend D027 §3, which places the
    guard beside `file_sha256` in `src/deployment/versioning.py`, a module `registry.py` imports.
+   *(D034: the check moved into `versioning.py` as `check_registered_bytes`, which
+   `check_pointer_move` calls, so D027 §3 holds as written.)*
 5. **A hashless version cannot be rolled back to, at two layers.** The tooling refuses the move now
    (§4). Any other route, such as a hand edit of `production`, is for #172's build guard (D027 §2–3)
    to block. A
@@ -2393,4 +2405,86 @@ rollback target. #172's build guard needs a recorded hash to compare against. #1
   The registry is not written, and the message says the run's bytes may not be that version's: the
   registry, not MLflow, is the record.
 - `retrain.py`'s deploy dispatch and the paths that move the pointer without changing what is served
-  stay with #172.
+  stay with #172. *(Corrected by D034: the dispatch is #190's, the pointer-moving paths #191's.)*
+
+## D034: The Build Guard Refuses Anything but the Pointer's Registered, Stamped Bytes; It Does Not Bind Committed State (#172)
+
+**Date:** 2026-10-18 · **Status:** accepted (architect-reviewed 2026-10-18; approved by the human at #172's plan gate) · **Issues:** #172, #189, #190, #191, #180
+(epic #152)
+
+**Context.** D027 §2–3 asked for one standard-library guard, run in the Dockerfile's builder stage, so
+that no supported build packages anything but the registry pointer's registered bytes. #189 (D033)
+made every new entry record `pipeline_sha256` and backfilled FP `v2.4.0`'s, so the guard has a hash to
+compare against. #172 was split again on 2026-10-08: the post-deploy check went to #190 and the
+promotion paths to #191.
+
+**Decision.**
+1. **The guard.** `check_build_artifact` in `src/deployment/versioning.py` refuses, by name: a
+   classifier whose `production` is `null`, before it looks at any file (so EP artifacts in `models/`
+   never make EP buildable by a supported build, D029); a pointer with no registry entry; an entry
+   with no `pipeline_sha256`; a joblib whose sha256 differs from the entry's; a config not stamped with
+   the pointer's `version`; a missing `production` key or a malformed registry; and a missing,
+   unreadable or malformed file. Each refusal after the pointer is read names it and what was found.
+2. **Beyond AC1, kept by the human:** the guard also requires the stamp's `pipeline_sha256` to equal
+   the entry's. Without it an image could pass the guard and report `unversioned`
+   (`BaseClassifier._verified_version`).
+3. **D027 §3 holds as written.** The byte check for a named version (entry hash, joblib, config
+   stamp) is one function, `check_registered_bytes`, in `versioning.py`. Both `check_build_artifact`
+   and `registry.check_pointer_move` call it, so a pointer move is allowed exactly when the build guard
+   would then pass on those files. The check moved down into the guard's module; the guard did not move up into
+   `registry.py`. #189's reading, that reusing its check would amend D027 §3 (D033 §4), was considered
+   and not taken. One exception, `ArtifactRefused` (a `ValueError`), serves both;
+   `check_pointer_move` re-raises it as `PointerMoveRefused`.
+4. **How it runs.** The builder runs the file by path under `python -I` (exit 0 build, 1 refuse, 2
+   usage), so it imports nothing from `src` and none of `src/deployment/__init__.py`'s ML imports. It
+   runs after `uv sync` and before the dependency-detection step that may download models, and
+   detection reads the guarded config.
+5. **What the builder copies.** `models/registry.json` and the classifier's two artifact files, named,
+   with bracket globs so an absent file matches nothing and the build reaches the guard's refusal.
+   Not the whole `models/`, so other files there do not invalidate the build cache. A change to any of
+   the four guard inputs (`registry.json`, the two artifacts, `versioning.py`) re-runs the guard and
+   every step after it, the price of the guard-before-detection order in §4 (kept by the human at
+   review, 2026-10-19). The runtime
+   stage copies the two checked files with `COPY --from=builder`; `registry.json` is never in the
+   runtime image (D026 §1).
+6. **The bypass packages the files as they are** (human ruling on an AC4 reinterpretation, recorded on
+   #172). `SKIP_MODEL_GUARD=true`, exactly, skips the guard; any other value runs it. Such an image
+   reports the version its config is stamped with only when the stamp's hash matches the packaged
+   joblib (as a registered version's files are), and `unversioned` otherwise. AC4's "reports `unversioned`" is read as "claims no version it does not
+   have". Smoke tests use another image name and port, never `docker compose build`, which would
+   replace the image the labeling pipeline calls.
+7. **`deploy.yml`'s "Verify model file exists" steps are deleted**, not kept beside the guard.
+8. **Served probabilities are keyed by version.** In the promotion PR, build the guarded image from the
+   promotion tree, send the four recorded articles to its `/predict/batch`, record the values under
+   the new version in `tests/test_committed_model_registry.py`, and post the request and response on
+   the issue (as on #176). A new version has no served container yet, so the guarded image is the
+   source. Old versions' values are kept for rollback; a pointer with none recorded fails by name.
+9. **Where #172's comment proposals went.** 2a (dispatch only when the built ref holds the pointer's
+   bytes): unnecessary under #190's fail-on-mismatch; the gap stays open until #190 lands, latent while
+   `retrain.py` exits before training (#186). 2b (`retrain.py`'s patch skip) and the no-production
+   rule: #191. The post-deploy smoke prediction: #190. `promote_version`'s existence refusal: done in
+   #189.
+
+**Rejected.**
+- **Binding committed state** (#172 comment of 2026-09-30, item 1). A git-cleanliness or committed-blob
+  check would need `.git` in the build context or a second enforcement point outside the Dockerfile,
+  contrary to D027 §3. A locally registered, uncommitted pointer and artifact agree with each other,
+  so what remains is a reproducibility gap, not a wrong-model risk. `deploy.yml` builds the committed
+  tree.
+- Stripping the stamp under the bypass so it always reports `unversioned`: it would hide a registered
+  version's true identity.
+- Copying the whole `models/` into the builder: any notebook output written there would invalidate
+  the guard's layer and every layer after it. (Naming the two files without bracket globs was also
+  rejected: a missing file would fail at `COPY` instead of at the guard's refusal by name.)
+- A test that the deleted `deploy.yml` step stays deleted: it pins an absence nothing reintroduces.
+
+**Consequences.**
+- No supported build packages unregistered bytes. EP builds fail at the guard's null-pointer refusal
+  until a retrained EP is registered and promoted; that change also updates
+  `tests/test_committed_model_registry.py`'s EP test and `RETIRED_EP_REGISTRY`.
+- **Correction to D033's last Consequence:** `retrain.py`'s deploy dispatch is #190's, and the paths
+  that move the pointer without changing what is served are #191's, not #172's.
+- The guard binds the joblib's bytes and the config stamp, not the code the pickle imports (D028) or
+  the config's `threshold` (#141).
+- A main that agrees with itself passes the guard even when a local promotion was never pushed; #190
+  is what fails that deploy.
