@@ -72,8 +72,8 @@ The workflow deploys via manual trigger or automation:
 
 1. **Manual trigger** - Use "Run workflow" button in Actions tab:
    - `fp` - Deploy only FP classifier. Pick this one while EP is on hold.
-   - `ep` - Deploy only EP classifier. EP is on hold, with no production version and no committed artifact (#180), so this job fails at its model-file check.
-   - `all` - Deploy both classifiers. This is the default; while EP is on hold its EP job fails at the model-file check, so the run reports a failure even when FP deploys.
+   - `ep` - Deploy only EP classifier. EP is on hold, with no production version and no committed artifact (#180), so the Dockerfile's build guard refuses its image build (#172).
+   - `all` - Deploy both classifiers. This is the default; while EP is on hold its EP job fails at the build guard, so the run reports a failure even when FP deploys.
 
 2. **Automated via retrain.py** - After major/minor version promotion:
    ```bash
@@ -94,7 +94,7 @@ After deployment, services are available at:
 | FP | `fp-classifier-api` | 2GB | 300s |
 | EP | `ep-classifier-api` | 512MB | 60s |
 
-EP is on hold with no production version (#180). No EP artifact is committed, so the EP deploy job fails at its model-file check; the deploy does not read the registry pointer.
+EP is on hold with no production version (#180). Every image build runs the Dockerfile's build guard, which fails unless `models/` holds the registry pointer's registered bytes (#172, [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md#the-registry-pointer-decides-what-is-built)), so the EP deploy job fails at its image build.
 
 ## Verifying Deployment
 

@@ -12,6 +12,10 @@
 #   - GCP_SA_KEY: Service account JSON key with Cloud Run Admin + Storage Admin roles
 #   - GCP_REGION: (optional) Cloud Run region, defaults to us-central1
 #
+# Each image build runs the Dockerfile's build guard (#172, D034): it fails unless
+# the committed models/ holds the registry pointer's registered bytes, and it
+# refuses EP by name while EP's pointer is null.
+#
 # Usage from retrain.py (after promotion):
 #   gh workflow run deploy.yml -f classifier=fp -f version=v1.2.0 -f bump_type=minor
 
@@ -134,16 +138,6 @@ jobs:
           docker-images: true
           swap-storage: true
 
-      - name: Verify model file exists
-        run: |
-          if [ ! -f "models/fp_classifier_pipeline.joblib" ]; then
-            echo "❌ ERROR: models/fp_classifier_pipeline.joblib not found!"
-            echo "The model file must be committed to the repository for deployment."
-            exit 1
-          fi
-          echo "✅ Model file found: $(ls -lh models/fp_classifier_pipeline.joblib)"
-          df -h
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -245,16 +239,6 @@ jobs:
           large-packages: true
           docker-images: true
           swap-storage: true
-
-      - name: Verify model file exists
-        run: |
-          if [ ! -f "models/ep_classifier_pipeline.joblib" ]; then
-            echo "❌ ERROR: models/ep_classifier_pipeline.joblib not found!"
-            echo "The model file must be committed to the repository for deployment."
-            exit 1
-          fi
-          echo "✅ Model file found: $(ls -lh models/ep_classifier_pipeline.joblib)"
-          df -h
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2

@@ -8,12 +8,23 @@
 #   docker run -p 8000:8000 fp-classifier-api
 #   docker run -p 8001:8000 ep-classifier-api
 #
+# Build guard (#172, D034): the builder stage refuses to build unless
+# models/<type>_classifier_pipeline.joblib and _config.json are the registered,
+# stamped bytes of the version models/registry.json's production pointer names.
+# The refusal names the pointer and what it found; docs/DEPLOYMENT.md says how
+# to reconcile. registry.json is copied into the builder only, never into the
+# runtime image.
+#
 # EP is on hold, with no production version and no committed artifact (#180).
-# From a clean checkout the EP build fails because its COPY of
-# models/ep_classifier_config.json and models/ep_classifier_pipeline.joblib
-# finds no file. The build context is the working tree,
-# so if the ep3 notebook has written EP artifacts to models/, the build succeeds
-# with an EP model that is not registered.
+# Its pointer is null, so the guard refuses an EP build by name, whatever
+# models/ep_* files are present.
+#
+# Local candidate smoke test only (never through docker compose, which would
+# replace the image the labeling pipeline calls):
+#   docker build --build-arg SKIP_MODEL_GUARD=true -t fp-candidate .
+#   docker run -p 8002:8000 fp-candidate
+# The bypass packages the files as they are. The API reports `unversioned`
+# unless they are a registered version's stamped bytes.
 #
 # Classifier Types:
 #   fp  - False Positive Brand Classifier (~150MB image)
@@ -56,8 +67,21 @@ COPY pyproject.toml uv.lock ./
 # Create virtual environment and install production dependencies
 RUN uv sync --frozen --no-dev --no-editable
 
-# Copy config file to detect transformer method
-COPY models/${CLASSIFIER_TYPE}_classifier_config.json /tmp/config.json
+# Build guard inputs (after uv sync, so a model change does not invalidate the
+# dependency layers). The bracket globs let an absent artifact match nothing, so
+# a classifier with no files still reaches the guard and its refusal by name.
+COPY models/registry.json models/${CLASSIFIER_TYPE}_classifier_pipeline.jobli[b] models/${CLASSIFIER_TYPE}_classifier_config.jso[n] /build/models/
+COPY src/deployment/versioning.py /build/versioning.py
+
+# Refuse unless the files are the registry pointer's registered bytes. Run by
+# path under -I, so it imports nothing from src. Only SKIP_MODEL_GUARD=true
+# (exactly) skips it; deploy.yml and docker-compose.yml never pass it.
+ARG SKIP_MODEL_GUARD=false
+RUN if [ "$SKIP_MODEL_GUARD" = "true" ]; then \
+        echo "WARNING: SKIP_MODEL_GUARD=true: the build guard did not run. This image is an unchecked candidate for a local smoke test; never build it through docker compose."; \
+    else \
+        python -I /build/versioning.py --classifier "${CLASSIFIER_TYPE}" --models-dir /build/models; \
+    fi
 
 # Download dependencies based on transformer_method in config
 # - Methods containing "ner" need spaCy
@@ -65,7 +89,7 @@ COPY models/${CLASSIFIER_TYPE}_classifier_config.json /tmp/config.json
 # - Methods with only "tfidf"/"lsa" need nothing extra (scikit-learn already installed)
 # Always create .cache directory so COPY doesn't fail
 RUN mkdir -p /root/.cache && \
-    TRANSFORMER_METHOD=$(python -c "import json; print(json.load(open('/tmp/config.json'))['transformer_method'])") && \
+    TRANSFORMER_METHOD=$(python -c "import json; print(json.load(open('/build/models/${CLASSIFIER_TYPE}_classifier_config.json'))['transformer_method'])") && \
     echo "Detected transformer method: ${TRANSFORMER_METHOD}" && \
     if echo "$TRANSFORMER_METHOD" | grep -q "sentence_transformer"; then \
         echo "Installing spaCy + sentence-transformers for ${TRANSFORMER_METHOD}..." && \
@@ -76,8 +100,7 @@ RUN mkdir -p /root/.cache && \
         uv pip install --python /app/.venv/bin/python en-core-web-sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl; \
     else \
         echo "No extra dependencies needed for ${TRANSFORMER_METHOD}"; \
-    fi && \
-    rm /tmp/config.json
+    fi
 
 # ==============================================================================
 # Stage 2: Runtime - Minimal production image
@@ -130,9 +153,8 @@ COPY --chown=appuser:appuser src/data_collection/config.py src/data_collection/c
 # Create minimal __init__.py (avoids importing models which needs SQLAlchemy)
 RUN echo 'from .config import settings' > src/data_collection/__init__.py && chown appuser:appuser src/data_collection/__init__.py
 
-# Copy model artifacts for the specified classifier
-COPY --chown=appuser:appuser models/${CLASSIFIER_TYPE}_classifier_pipeline.joblib models/
-COPY --chown=appuser:appuser models/${CLASSIFIER_TYPE}_classifier_config.json models/
+# Copy the model artifacts the builder's guard checked, not the build context's
+COPY --from=builder --chown=appuser:appuser /build/models/${CLASSIFIER_TYPE}_classifier_pipeline.joblib /build/models/${CLASSIFIER_TYPE}_classifier_config.json models/
 
 # Switch to non-root user
 USER appuser

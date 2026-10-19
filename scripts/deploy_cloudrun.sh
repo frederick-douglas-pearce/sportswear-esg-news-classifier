@@ -15,11 +15,13 @@
 #   ./scripts/deploy_cloudrun.sh all     # Deploy all classifiers
 #   ./scripts/deploy_cloudrun.sh status  # Check deployment status
 #
+# The image is built from the working tree, and the Dockerfile's build guard
+# (#172, D034) fails the build unless models/ holds the registry pointer's
+# registered bytes (docs/DEPLOYMENT.md).
+#
 # EP is on hold, with no production version and no committed artifact (#180).
-# The image is built from the working tree, so from a clean checkout `ep` fails
-# at the EP image build and `all` deploys FP, then fails at EP. If the ep3
-# notebook has written EP artifacts to models/, `ep` and `all` build and deploy
-# an EP model that is not registered. Use `fp`.
+# The build guard refuses EP by name, whatever models/ep_* files are present, so
+# `ep` fails at the EP image build and `all` deploys FP, then fails at EP. Use `fp`.
 
 set -e
 
