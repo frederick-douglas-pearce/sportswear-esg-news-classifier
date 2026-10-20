@@ -104,7 +104,8 @@ unless:
    `pipeline_sha256`;
 3. `models/<clf>_classifier_pipeline.joblib` has that sha256;
 4. `models/<clf>_classifier_config.json` is stamped with the pointer's `version` and that
-   `pipeline_sha256`.
+   `pipeline_sha256`;
+5. that config's `threshold` equals the entry's `threshold` exactly (#141, D035).
 
 Check 4's hash half makes the image report the pointer's version from `/model/info` rather than
 `unversioned`. Every supported build runs the guard, because each builds the same Dockerfile:
@@ -127,6 +128,8 @@ it has been read:
 | `… has no recorded pipeline_sha256` | the pointer's entry predates #189 | record that version's hash through its own reconciliation, with byte evidence and a D-entry (D033), or move the pointer to a version that records one |
 | `… is not <clf> <version>'s bytes: its sha256 is …, and the registry records …` | `models/` holds other bytes, such as a notebook or `train.py` output | to ship them, register and promote them (`register_model.py --classifier <clf> --bump <major|minor|patch> --update-registry --set-production`) and commit the registry, joblib and config together; otherwise restore the pointer's bytes from git |
 | `… is stamped version=…, pipeline_sha256=…` | the config is not the pointer's stamped config | restore the pointer's config from git, or register and promote the artifact as above |
+| `… has threshold …, and <clf> <version>'s registry entry records …` | the config's threshold is not the one registered for the pointer's version | restore the pointer's config from git; to ship a new threshold, register and promote the artifact as above (the tooling never rewrites a registered version's threshold, D033) |
+| `… has no numeric threshold: it holds …` | the config or the pointer's entry has no usable `threshold` | restore the file from git; the tooling never rewrites a registered entry (D033), so an entry that records no threshold needs its own hand edit with a D-entry, or move the pointer to a version that records one |
 | `… registry record has no versions object` / `… registry entry is not an object` | the registry's entries for the classifier are malformed | restore `models/registry.json` from git |
 | `Pipeline not found` / `Config not found` / `… is not valid JSON` / `… does not hold a JSON object` / `… cannot be read` | a file is missing, unreadable or malformed | restore it from git |
 
@@ -154,14 +157,14 @@ promotion tree, send the test's four articles to its `/predict/batch`, record th
 the new version in `SERVED_FP_PROBABILITIES`, and post the request and response on the issue (as on
 #176). Keep the old version's values, so a rollback stays covered.
 
-**What the guard does not check.** It binds the joblib's bytes and the config stamp, not:
+**What the guard does not check.** It binds the joblib's bytes, the config stamp and the config's
+`threshold`, not:
 - **committed state.** A pointer and artifact registered locally but not committed agree with each
   other, so a working-tree build passes. What remains is a reproducibility gap, not a wrong model,
   and checking git state would need `.git` in the build context (D034). `deploy.yml` builds the
   committed tree.
 - **the code the pickle imports** (`src/fp1_nb`, library versions; D028). The load-and-predict test
   covers that for the committed FP artifact.
-- **the config's `threshold`** beyond the stamp (#141).
 
 ## Labeling Pipeline Integration
 

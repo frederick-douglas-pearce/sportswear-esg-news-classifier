@@ -45,6 +45,7 @@ from src.deployment.registry import (  # noqa: E402
     require_new_version,
     write_version,
 )
+from src.deployment.versioning import read_config_threshold  # noqa: E402
 
 
 def register_mlflow(
@@ -155,7 +156,6 @@ def update_registry(
         "trained_on": f"data/{classifier}_training_data.jsonl",
         "model_name": config.get("model_name"),
         "transformer_method": config.get("transformer_method"),
-        "threshold": round(config.get("threshold", 0), 4),
         "metrics": {
             "cv_f2": round(config.get("cv_f2", 0), 4),
             "cv_recall": round(config.get("cv_recall", 0), 4),
@@ -265,6 +265,8 @@ def main():
         # refuse here, before the dry-run summary and before the MLflow run.
         if args.update_registry:
             require_new_version(registry, args.classifier, version, args.bump)
+            # write_version records the config's threshold in the entry (D035).
+            read_config_threshold(config_path)
         elif version in existing_versions:
             free = next_version(registry, args.classifier, args.bump)
             print(f"⚠️  Version {version} is already in the registry; the registry is not written.")

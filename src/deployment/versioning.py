@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import Union
@@ -93,7 +94,12 @@ def stamp_artifact_version(
 
 
 class ArtifactRefused(ValueError):
-    """The files are not the registered bytes of the version they are checked against."""
+    """An artifact or registry entry is refused.
+
+    Either the files are not the registered bytes of the version they are checked
+    against, or a registry write cannot record the config (it cannot be read as a JSON
+    object, or holds no numeric threshold).
+    """
 
 
 def _load_json_object(path: Path) -> dict:
@@ -108,6 +114,34 @@ def _load_json_object(path: Path) -> dict:
     if not isinstance(data, dict):
         raise ArtifactRefused(f"{path} does not hold a JSON object.")
     return data
+
+
+def threshold_of(value: object, where: str) -> float:
+    """Return ``value`` as a threshold, refusing anything but a finite number.
+
+    A bool is refused although Python treats it as an int. ``where`` names the file
+    or entry the value came from, for the refusal message.
+    """
+    refused = ArtifactRefused(f"{where} has no numeric threshold: it holds {value!r}.")
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        raise refused
+    try:
+        threshold = float(value)
+    except OverflowError:
+        raise refused from None
+    if not math.isfinite(threshold):
+        raise refused
+    return threshold
+
+
+def read_config_threshold(config_path: Union[str, Path]) -> float:
+    """Return the artifact config's threshold.
+
+    Refuses a config that cannot be read as a JSON object, or whose threshold is not a
+    finite number.
+    """
+    config_path = Path(config_path)
+    return threshold_of(_load_json_object(config_path).get("threshold"), str(config_path))
 
 
 def _is_file(path: Path) -> bool:
@@ -129,8 +163,11 @@ def check_registered_bytes(
 
     The entry must record a ``pipeline_sha256``, the joblib at ``pipeline_path`` must
     have that hash, and the config at ``config_path`` must be stamped with ``version``
-    and that hash. Both the build guard (:func:`check_build_artifact`) and a pointer
-    move (``src.deployment.registry.check_pointer_move``) use this check (D034).
+    and that hash. The config's ``threshold`` must equal the entry's exactly: the hash
+    does not cover the config, so this is what binds the threshold the API serves to
+    the version (D035). Both the build guard
+    (:func:`check_build_artifact`) and a pointer move
+    (``src.deployment.registry.check_pointer_move``) use this check (D034).
 
     Returns:
         The entry's recorded ``pipeline_sha256``.
@@ -177,6 +214,16 @@ def check_registered_bytes(
             f"{config_path} is stamped version={config.get('version')!r}, "
             f"pipeline_sha256={config.get('pipeline_sha256')!r}; {classifier} {version} "
             f"needs version={version!r} and pipeline_sha256={recorded!r}."
+        )
+
+    entry_threshold = threshold_of(
+        entry.get("threshold"), f"{classifier} {version}'s registry entry"
+    )
+    config_threshold = threshold_of(config.get("threshold"), str(config_path))
+    if entry_threshold != config_threshold:
+        raise ArtifactRefused(
+            f"{config_path} has threshold {config_threshold!r}, and {classifier} {version}'s "
+            f"registry entry records {entry_threshold!r}."
         )
     return recorded
 

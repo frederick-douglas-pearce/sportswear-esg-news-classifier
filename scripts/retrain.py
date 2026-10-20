@@ -49,6 +49,7 @@ from src.deployment.registry import (
     require_new_version,
     write_version,
 )
+from src.deployment.versioning import ArtifactRefused, read_config_threshold
 
 
 def trigger_deploy_workflow(
@@ -352,8 +353,12 @@ def promote_version(
             before anything is copied. If another writer registers the name after it,
             ``write_version`` refuses after the copy into ``models_dir``; concurrent
             writers are unsupported (D033).
+        ArtifactRefused: the trained config cannot be read as a JSON object, or holds no
+            numeric threshold. Refused before anything is copied (D035).
     """
     require_new_version(load_registry(registry_path), classifier, version, bump_type)
+    # Before the copy: write_version records this config's threshold in the entry (D035).
+    read_config_threshold(output_dir / f"{classifier}_classifier_config.json")
 
     print(f"\nPromoting {classifier.upper()} {version} to production...")
 
@@ -374,7 +379,6 @@ def promote_version(
         {
             "created_at": datetime.utcnow().isoformat(),
             "trained_on": data_path,
-            "threshold": new_metrics.get("threshold"),
             "metrics": {
                 "test_f2": new_metrics.get("test_f2"),
                 "test_recall": new_metrics.get("test_recall"),
@@ -577,7 +581,7 @@ Examples:
                 mlflow_version=training_result.get("mlflow_version"),
                 bump_type=bump_type,
             )
-        except VersionExistsError as e:
+        except (VersionExistsError, ArtifactRefused) as e:
             print(f"\nPromotion refused: {e}", file=sys.stderr)
             print(f"New version saved to: {output_dir}")
             return 1
