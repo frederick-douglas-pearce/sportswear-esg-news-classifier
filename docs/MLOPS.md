@@ -246,7 +246,8 @@ recorded hash is refused until that version is reconciled by its own hand edit, 
 evidence and D-entry (D033).
 
 A pointer move does not move `FP_SKIP_LLM_THRESHOLD`. Unset, the labeling pipeline skips below the
-threshold the served model returns, so a promoted model brings its own; set, the override applies
+threshold the served model returns, so a promoted model brings its own once it is built and served;
+set, the override applies
 whatever model is served. After promoting an FP model, re-check any override set in the labeling
 environment against the new model's threshold (D035 §6). No tool checks it.
 

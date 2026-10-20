@@ -445,6 +445,7 @@ class TestPipelineRecordsVersion:
             "src.labeling.pipeline.labeling_settings"
         ) as settings:
             settings.fp_classifier_enabled = False
+            settings.fp_skip_llm_threshold = None
             pipeline = LabelingPipeline()
             with patch.object(pipeline, "_save_classifier_prediction") as save:
                 pipeline._run_fp_prefilter_batch(

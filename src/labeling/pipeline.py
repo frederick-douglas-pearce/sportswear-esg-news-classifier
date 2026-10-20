@@ -28,7 +28,7 @@ from src.deployment.versioning import (
 
 from .chunker import ArticleChunker, Chunk
 from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
-from .config import FP_FAILED_BATCH_THRESHOLD, labeling_settings
+from .config import FP_FAILED_BATCH_THRESHOLD, check_fp_skip_threshold, labeling_settings
 from .database import LabelingDatabase, labeling_db
 from .disposition import FALSE_POSITIVE, LABELED, dispose_reply
 from .embedder import OpenAIEmbedder
@@ -136,7 +136,13 @@ class LabelingPipeline:
             reranker: Cross-encoder reranker for evidence matching
             novelty_scorer: Novelty scorer for drift detection
             prompt_version: Version of prompts to use (default: production version)
+
+        Raises:
+            ValueError: FP_SKIP_LLM_THRESHOLD is set outside 0 to 1. Checked here,
+                before any article is processed and outside the FP batch's
+                exception handling, so a bad value stops the run.
         """
+        check_fp_skip_threshold(labeling_settings.fp_skip_llm_threshold)
         self.database = database or labeling_db
         self.chunker = chunker or ArticleChunker()
         self.embedder = embedder
@@ -429,7 +435,8 @@ class LabelingPipeline:
 
         results: dict[UUID, tuple[bool, ClassifierPredictionRecord | None]] = {}
         # Unset: each article is judged against the threshold the API served with its
-        # prediction, so a promoted model brings its own skip boundary (D035 §4).
+        # prediction, so a promoted model brings its own skip boundary once it is
+        # built and served (D035 §4).
         override = labeling_settings.fp_skip_llm_threshold
 
         try:

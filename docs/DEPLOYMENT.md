@@ -186,9 +186,12 @@ uv run python scripts/label_articles.py --batch-size 20
 The pipeline uses batch API calls for efficiency (1 call per batch, not per article). Articles below the threshold are marked as `false_positive` and skip LLM labeling, saving ~$0.01-0.02 per article.
 
 The threshold is the one the FP API returns with each prediction, read from the artifact it loaded, so
-a promoted model brings its own skip boundary (D035). `FP_SKIP_LLM_THRESHOLD`, when set, replaces it
-for every article and is logged once per batch beside the served threshold; `threshold_used` records
-whichever was applied. A batch whose API call fails records the override, or 0.5 when none is set.
+a promoted model brings its own skip boundary once it is built and served (D035).
+`FP_SKIP_LLM_THRESHOLD`, when set, replaces it for every article and is logged beside the served
+threshold once per batch the FP API answers; `threshold_used` records whichever was applied. A set
+value outside 0 to 1 stops the labeling run when the pipeline is built. A batch that raises, whether
+the API call failed or a later step did (saving a prediction included), records every article as
+`failed` with the override, or 0.5 when none is set.
 
 ## API Reference
 

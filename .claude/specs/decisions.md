@@ -2559,3 +2559,18 @@ thresholds stated.
   `BaseClassifier`'s 0.5 fallback for a config without a threshold, which a supported build can no
   longer reach.
 - After #141 PR2 merges, the owner removes the override from the production environment.
+
+**Amendment (#141 PR2 code review, 2026-10-20, approved by the owner).** Recorded as an addendum,
+per D019's precedent that a committed entry is not rewritten.
+- **Where the override is checked.** A set `FP_SKIP_LLM_THRESHOLD` outside 0 to 1 is refused when a
+  `LabelingPipeline` is built (`check_fp_skip_threshold`), not when the settings load. The plan put
+  the check at load, which is import time: the agent imports `src.labeling` through `exit_codes`, so
+  a bad value would have stopped every agent workflow, `run_audit` included. That is the import-time
+  failure #75's scope ruling reversed (`run_audit.py`). A non-numeric value still fails at import, as
+  every numeric labeling setting does; #211 is the follow-up for that coupling.
+- **§4's failed-batch case is wider than "no served threshold exists".** The batch's exception
+  handling also covers saving each prediction, so a batch that raises after the API answered records
+  every article as `failed` with the override or 0.5, although a served threshold existed. #209 is the
+  follow-up.
+- **The served threshold is checked to be finite, not to be within 0 to 1** (§1's check). A
+  registered threshold outside that range fails open, as a failed batch. #208 is the follow-up.

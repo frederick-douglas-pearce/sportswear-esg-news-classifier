@@ -9,17 +9,25 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 **The labeling pipeline skips an article below the threshold the FP API served with its prediction,
 and `FP_SKIP_LLM_THRESHOLD` becomes an optional override (#141 PR2, D035 §4).**
 - `src/labeling/config.py`: `fp_skip_llm_threshold` is `None` when `FP_SKIP_LLM_THRESHOLD` is unset or
-  blank. A set value must be a number from 0 to 1, or loading the settings fails.
-  `FP_FAILED_BATCH_THRESHOLD` (0.5) is what a failed batch records when no override is set.
-- `src/labeling/pipeline.py`: each article is judged against the override if one is set, else
-  against its prediction's served `threshold`; `threshold_used` and the skip reason record the value
-  applied. A set override is logged once per batch beside the served threshold, and a batch that
-  returns more than one served threshold logs a warning.
+  blank; a non-number fails when the settings load, as before. `check_fp_skip_threshold` refuses a
+  set value outside 0 to 1 (nan and inf included). `FP_FAILED_BATCH_THRESHOLD` (0.5) is what every
+  article of a batch that raises records when no override is set.
+- `src/labeling/pipeline.py`: `LabelingPipeline` runs `check_fp_skip_threshold` when it is built,
+  not at import, so an out-of-range value stops labeling and not every process that imports
+  `src.labeling` (the agent does, through `exit_codes`). Each article is judged against the override
+  if one is set, else against its prediction's served `threshold`; `threshold_used` and the skip
+  reason record the value applied. A set override is logged beside the served threshold once per
+  batch the FP API answers, and a batch that returns more than one served threshold logs a warning.
+- Unchanged: a batch that raises after the API answered (a failed save, say) still records every
+  article as `failed`, with the override or 0.5, although a served threshold existed.
 - Where the environment sets `FP_SKIP_LLM_THRESHOLD`, behavior is unchanged until it is removed.
 - `.env.example`, `CLAUDE.md`, `docs/DATABASE.md` and `docs/DEPLOYMENT.md` describe the override as
   optional; `docs/MLOPS.md` says a pointer move does not move it, so re-check it after promoting
   (D035 §6).
 - Tests: `TestSkipThresholdSource` and `TestSkipThresholdSetting` in `tests/test_fp_prefilter.py`.
+- `.claude/specs/decisions.md`: an amendment appended to D035 records where the override is checked
+  and two gaps left open, with their follow-ups (#208, #209); #210 and #211 are filed from the same
+  review.
 
 ### 2026-10-19: The registry entry binds the served FP threshold
 
