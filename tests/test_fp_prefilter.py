@@ -247,6 +247,7 @@ class TestLabelingPipelineFPClient:
         with patch("src.labeling.pipeline.db"):
             with patch("src.labeling.pipeline.labeling_settings") as mock_settings:
                 mock_settings.fp_classifier_enabled = False
+                mock_settings.fp_skip_llm_threshold = None
 
                 pipeline = LabelingPipeline()
                 result = pipeline._ensure_fp_client()
@@ -261,6 +262,7 @@ class TestLabelingPipelineFPClient:
                     mock_settings.fp_classifier_enabled = True
                     mock_settings.fp_classifier_url = "http://localhost:8000"
                     mock_settings.fp_classifier_timeout = 30.0
+                    mock_settings.fp_skip_llm_threshold = None
 
                     mock_fp_client = MagicMock()
                     mock_client_class.return_value = mock_fp_client
@@ -362,6 +364,7 @@ class TestFPPrefilter:
         with patch("src.labeling.pipeline.db"):
             with patch("src.labeling.pipeline.labeling_settings") as mock_settings:
                 mock_settings.fp_classifier_enabled = False
+                mock_settings.fp_skip_llm_threshold = None
 
                 pipeline = LabelingPipeline()
 
@@ -690,3 +693,188 @@ class TestNotLowRiskSkipCount:
 
     def test_stats_default(self):
         assert LabelingStats().fp_classifier_skipped_not_low == 0
+
+
+def _prefilter_batch(served, override, batch_error=None):
+    """Run the FP pre-filter on one article per (probability, served threshold) pair."""
+    articles = [
+        {
+            "id": uuid4(),
+            "title": "t",
+            "full_content": "Article body " * 20,
+            "brands_mentioned": ["Nike"],
+            "source_name": "Test Source",
+            "category": [],
+        }
+        for _ in served
+    ]
+    with patch("src.labeling.pipeline.db"):
+        with patch("src.labeling.pipeline.labeling_settings") as mock_settings:
+            mock_settings.fp_classifier_enabled = True
+            mock_settings.fp_skip_llm_threshold = override
+            mock_fp_client = MagicMock()
+            if batch_error is not None:
+                mock_fp_client.predict_fp_batch.side_effect = batch_error
+            else:
+                mock_fp_client.predict_fp_batch.return_value = [
+                    FPPredictionResult(
+                        is_sportswear=probability >= threshold,
+                        probability=probability,
+                        confidence_level="medium",
+                        threshold=threshold,
+                    )
+                    for probability, threshold in served
+                ]
+            mock_fp_client.get_model_info.return_value = {"version": "v2.4.0"}
+            pipeline = LabelingPipeline(fp_client=mock_fp_client)
+            results = pipeline._run_fp_prefilter_batch(articles, dry_run=True)
+    return [results[article["id"]] for article in articles]
+
+
+class TestSkipThresholdSource:
+    """The skip threshold is the served model's unless FP_SKIP_LLM_THRESHOLD overrides it (#141, D035 §4)."""
+
+    def test_unset_override_applies_the_served_threshold(self):
+        """p=0.6 is skipped against a served 0.7; the 0.5 code default would have continued it."""
+        [(should_continue, prediction)] = _prefilter_batch([(0.6, 0.7)], override=None)
+
+        assert should_continue is False
+        assert prediction.action_taken == "skipped_llm"
+        assert prediction.threshold_used == 0.7
+        assert prediction.skip_reason.endswith("probability 0.600 < threshold 0.7")
+
+    def test_each_article_is_judged_against_its_own_served_threshold(self):
+        results = _prefilter_batch([(0.6, 0.55), (0.6, 0.65)], override=None)
+
+        assert [should_continue for should_continue, _ in results] == [True, False]
+        assert [prediction.threshold_used for _, prediction in results] == [0.55, 0.65]
+
+    def test_override_replaces_the_served_threshold(self, caplog):
+        """p=0.5 continues under an override of 0.3, where the served 0.7 would skip it."""
+        with caplog.at_level("INFO", logger="src.labeling.pipeline"):
+            [(should_continue, prediction)] = _prefilter_batch([(0.5, 0.7)], override=0.3)
+
+        assert should_continue is True
+        assert prediction.action_taken == "continued_to_llm"
+        assert prediction.threshold_used == 0.3
+        [message] = [
+            r.getMessage() for r in caplog.records if "FP_SKIP_LLM_THRESHOLD" in r.getMessage()
+        ]
+        assert "override 0.3" in message
+        assert "0.7" in message
+
+    def test_zero_override_is_applied(self, caplog):
+        """0 is a set override (never skip), not an unset one: p=0.5 against a served 0.7 continues."""
+        with caplog.at_level("INFO", logger="src.labeling.pipeline"):
+            [(should_continue, prediction)] = _prefilter_batch([(0.5, 0.7)], override=0.0)
+
+        assert should_continue is True
+        assert prediction.threshold_used == 0.0
+        assert len(
+            [r for r in caplog.records if "FP_SKIP_LLM_THRESHOLD override 0.0" in r.getMessage()]
+        ) == 1
+
+    def test_override_above_the_served_threshold_skips_and_states_the_override(self):
+        """p=0.75 passes the served 0.7 but not an override of 0.8; the reason names 0.8."""
+        [(should_continue, prediction)] = _prefilter_batch([(0.75, 0.7)], override=0.8)
+
+        assert should_continue is False
+        assert prediction.action_taken == "skipped_llm"
+        assert prediction.threshold_used == 0.8
+        assert prediction.skip_reason.endswith("probability 0.750 < threshold 0.8")
+
+    def test_no_override_logs_no_override(self, caplog):
+        with caplog.at_level("INFO", logger="src.labeling.pipeline"):
+            _prefilter_batch([(0.5, 0.7)], override=None)
+
+        assert not [r for r in caplog.records if "FP_SKIP_LLM_THRESHOLD" in r.getMessage()]
+
+    def test_more_than_one_served_threshold_in_a_batch_warns(self, caplog):
+        with caplog.at_level("WARNING", logger="src.labeling.pipeline"):
+            _prefilter_batch([(0.6, 0.55), (0.6, 0.65)], override=None)
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "[0.55, 0.65]" in warnings[0].getMessage()
+
+    def test_one_served_threshold_does_not_warn(self, caplog):
+        with caplog.at_level("WARNING", logger="src.labeling.pipeline"):
+            _prefilter_batch([(0.6, 0.55), (0.4, 0.55)], override=None)
+
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    @pytest.mark.parametrize("override,expected", [(None, 0.5), (0.3, 0.3), (0.0, 0.0)])
+    def test_failed_batch_records_the_override_else_the_failed_batch_default(
+        self, override, expected
+    ):
+        [(should_continue, prediction)] = _prefilter_batch(
+            [(0.0, 0.0)], override=override, batch_error=RuntimeError("connection refused")
+        )
+
+        assert should_continue is True
+        assert prediction.action_taken == "failed"
+        assert prediction.threshold_used == expected
+
+
+class TestSkipThresholdSetting:
+    """FP_SKIP_LLM_THRESHOLD is optional; a set value must be a probability, checked where the
+    pipeline is built rather than at import (#141, D035 §4)."""
+
+    @pytest.fixture
+    def settings_with(self, monkeypatch):
+        from src.labeling.config import LabelingSettings
+
+        def build(value):
+            if value is None:
+                monkeypatch.delenv("FP_SKIP_LLM_THRESHOLD", raising=False)
+            else:
+                monkeypatch.setenv("FP_SKIP_LLM_THRESHOLD", value)
+            return LabelingSettings()
+
+        return build
+
+    @pytest.mark.parametrize("value", [None, "", "   "])
+    def test_unset_or_blank_means_derive(self, settings_with, value):
+        assert settings_with(value).fp_skip_llm_threshold is None
+
+    @pytest.mark.parametrize("value,expected", [("0.53", 0.53), ("0", 0.0), ("1", 1.0)])
+    def test_a_probability_is_kept(self, settings_with, value, expected):
+        assert settings_with(value).fp_skip_llm_threshold == expected
+
+    @pytest.mark.parametrize("value", ["53", "-0.1", "1.0001", "nan", "inf"])
+    def test_a_value_outside_zero_to_one_loads_but_the_pipeline_refuses_it(
+        self, settings_with, value
+    ):
+        settings = settings_with(value)
+
+        with patch("src.labeling.pipeline.labeling_settings", settings):
+            with pytest.raises(ValueError, match="between 0 and 1"):
+                LabelingPipeline(database=MagicMock(), chunker=MagicMock())
+
+    @pytest.mark.parametrize("value", [None, "0", "0.53", "1"])
+    def test_the_pipeline_accepts_unset_or_a_probability(self, settings_with, value):
+        with patch("src.labeling.pipeline.labeling_settings", settings_with(value)):
+            LabelingPipeline(database=MagicMock(), chunker=MagicMock())
+
+    def test_an_out_of_range_value_does_not_stop_an_import_of_src_labeling(self):
+        """The agent imports src.labeling.exit_codes (src/agent/runner.py), which builds the
+        settings; an import-time range check would stop every agent workflow."""
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import src.labeling.exit_codes"],
+            cwd=Path(__file__).resolve().parent.parent,
+            env={**os.environ, "FP_SKIP_LLM_THRESHOLD": "53"},
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        assert result.returncode == 0, result.stderr
+
+    def test_a_non_number_is_refused(self, settings_with):
+        with pytest.raises(ValueError):
+            settings_with("abc")

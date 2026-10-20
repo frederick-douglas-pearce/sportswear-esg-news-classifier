@@ -28,6 +28,29 @@ LLM_INPUT_COST_PER_MTOK = 1.00
 LLM_OUTPUT_COST_PER_MTOK = 5.00
 EMBEDDING_COST_PER_1K_TOKENS = 0.00002
 
+# Recorded as threshold_used (NOT NULL) for every article of an FP pre-filter
+# batch that raises, whether the API call failed or a later step did (saving a
+# prediction included), unless FP_SKIP_LLM_THRESHOLD is set (D035 §4).
+FP_FAILED_BATCH_THRESHOLD = 0.5
+
+
+def _fp_skip_threshold_override() -> float | None:
+    """FP_SKIP_LLM_THRESHOLD as a float, or None when it is unset or blank."""
+    value = os.getenv("FP_SKIP_LLM_THRESHOLD", "").strip()
+    return float(value) if value else None
+
+
+def check_fp_skip_threshold(value: float | None) -> None:
+    """Refuse an FP_SKIP_LLM_THRESHOLD outside 0 to 1, nan and inf included.
+
+    Called when a LabelingPipeline is built, not at import: importing
+    src.labeling builds the settings, and the agent imports it, so a range check
+    there would stop every agent workflow instead of labeling alone (the
+    point-of-use precedent in run_audit.py, #75).
+    """
+    if value is not None and not 0.0 <= value <= 1.0:
+        raise ValueError(f"FP_SKIP_LLM_THRESHOLD must be between 0 and 1, got {value}")
+
 
 def _get_prompt_version() -> str:
     """Get the prompt version to use.
@@ -178,9 +201,10 @@ class LabelingSettings(BaseModel):
     fp_classifier_url: str = Field(
         default_factory=lambda: os.getenv("FP_CLASSIFIER_URL", "http://localhost:8000")
     )
-    fp_skip_llm_threshold: float = Field(
-        default_factory=lambda: float(os.getenv("FP_SKIP_LLM_THRESHOLD", "0.5"))
-    )
+    # Optional override of the served model's threshold for LLM skips. Unset or blank
+    # means the pipeline applies the threshold the FP API returns with each
+    # prediction (D035 §4).
+    fp_skip_llm_threshold: float | None = Field(default_factory=_fp_skip_threshold_override)
     fp_classifier_timeout: float = Field(
         default_factory=lambda: float(os.getenv("FP_CLASSIFIER_TIMEOUT", "30.0"))
     )
