@@ -28,7 +28,7 @@ from src.deployment.versioning import (
 
 from .chunker import ArticleChunker, Chunk
 from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
-from .config import labeling_settings
+from .config import FP_FAILED_BATCH_THRESHOLD, labeling_settings
 from .database import LabelingDatabase, labeling_db
 from .disposition import FALSE_POSITIVE, LABELED, dispose_reply
 from .embedder import OpenAIEmbedder
@@ -428,6 +428,9 @@ class LabelingPipeline:
             })
 
         results: dict[UUID, tuple[bool, ClassifierPredictionRecord | None]] = {}
+        # Unset: each article is judged against the threshold the API served with its
+        # prediction, so a promoted model brings its own skip boundary (D035 §4).
+        override = labeling_settings.fp_skip_llm_threshold
 
         try:
             # Single batch API call
@@ -442,10 +445,21 @@ class LabelingPipeline:
                     f"FP classifier reported no model version ({model_version}); "
                     f"predictions in this batch are recorded as model_version={model_version}"
                 )
-            threshold = labeling_settings.fp_skip_llm_threshold
+            served_thresholds = sorted({result.threshold for result in fp_results})
+            if len(served_thresholds) > 1:
+                logger.warning(
+                    f"FP classifier served more than one threshold in one batch: "
+                    f"{served_thresholds}"
+                )
+            if override is not None:
+                logger.info(
+                    f"FP_SKIP_LLM_THRESHOLD override {override} applied; "
+                    f"served model threshold {served_thresholds}"
+                )
 
             # Process each result
             for article_id, result in zip(article_ids, fp_results):
+                threshold = override if override is not None else result.threshold
                 should_continue = result.probability >= threshold
 
                 if should_continue:
@@ -503,7 +517,9 @@ class LabelingPipeline:
                     model_version=UNAVAILABLE,
                     probability=0.0,
                     prediction=False,
-                    threshold_used=labeling_settings.fp_skip_llm_threshold,
+                    threshold_used=(
+                        override if override is not None else FP_FAILED_BATCH_THRESHOLD
+                    ),
                     action_taken=FP_ACTION_FAILED,
                     error_message=str(e),
                     novelty_score=novelty_score,

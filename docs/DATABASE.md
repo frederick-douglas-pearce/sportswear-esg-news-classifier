@@ -330,7 +330,7 @@ The restore command includes safety features:
 |----------|-------------|---------|
 | `FP_CLASSIFIER_ENABLED` | Enable FP classifier pre-filter | `false` |
 | `FP_CLASSIFIER_URL` | FP classifier API URL | `http://localhost:8000` |
-| `FP_SKIP_LLM_THRESHOLD` | Skip LLM for articles below this probability | `0.5` |
+| `FP_SKIP_LLM_THRESHOLD` | Optional override: skip LLM for articles below this probability (0 to 1). Unset, an article is skipped below the threshold the FP API served with its prediction (D035) | unset |
 | `FP_CLASSIFIER_TIMEOUT` | FP classifier API timeout (seconds) | `30.0` |
 
 A skipped article's `classifier_predictions.skip_reason` (for an article that reached the per-article

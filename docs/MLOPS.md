@@ -245,6 +245,11 @@ hand in #189, and its threshold at full precision in #141 (D035 §3); a move to 
 recorded hash is refused until that version is reconciled by its own hand edit, with its own byte
 evidence and D-entry (D033).
 
+A pointer move does not move `FP_SKIP_LLM_THRESHOLD`. Unset, the labeling pipeline skips below the
+threshold the served model returns, so a promoted model brings its own; set, the override applies
+whatever model is served. After promoting an FP model, re-check any override set in the labeling
+environment against the new model's threshold (D035 §6). No tool checks it.
+
 The stamp is written to the working tree. An image picks it up only when it is built from a tree that
 holds the stamped config: a local `docker compose build` reads the working tree, while `deploy.yml`
 builds from the committed tree, so commit the stamped config with its joblib before deploying. Every

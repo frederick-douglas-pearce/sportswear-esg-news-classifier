@@ -4,6 +4,23 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-20: The FP skip threshold derives from the served model by default
+
+**The labeling pipeline skips an article below the threshold the FP API served with its prediction,
+and `FP_SKIP_LLM_THRESHOLD` becomes an optional override (#141 PR2, D035 §4).**
+- `src/labeling/config.py`: `fp_skip_llm_threshold` is `None` when `FP_SKIP_LLM_THRESHOLD` is unset or
+  blank. A set value must be a number from 0 to 1, or loading the settings fails.
+  `FP_FAILED_BATCH_THRESHOLD` (0.5) is what a failed batch records when no override is set.
+- `src/labeling/pipeline.py`: each article is judged against the override if one is set, else
+  against its prediction's served `threshold`; `threshold_used` and the skip reason record the value
+  applied. A set override is logged once per batch beside the served threshold, and a batch that
+  returns more than one served threshold logs a warning.
+- Where the environment sets `FP_SKIP_LLM_THRESHOLD`, behavior is unchanged until it is removed.
+- `.env.example`, `CLAUDE.md`, `docs/DATABASE.md` and `docs/DEPLOYMENT.md` describe the override as
+  optional; `docs/MLOPS.md` says a pointer move does not move it, so re-check it after promoting
+  (D035 §6).
+- Tests: `TestSkipThresholdSource` and `TestSkipThresholdSetting` in `tests/test_fp_prefilter.py`.
+
 ### 2026-10-19: The registry entry binds the served FP threshold
 
 **The build guard and pointer moves refuse a config whose `threshold` differs from the one the

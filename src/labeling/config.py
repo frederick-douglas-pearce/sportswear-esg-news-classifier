@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.data_collection.config import BRANDS
 
@@ -27,6 +27,16 @@ PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts" / "labeling"
 LLM_INPUT_COST_PER_MTOK = 1.00
 LLM_OUTPUT_COST_PER_MTOK = 5.00
 EMBEDDING_COST_PER_1K_TOKENS = 0.00002
+
+# Recorded as threshold_used (NOT NULL) when the FP batch call fails and no
+# served threshold exists, unless FP_SKIP_LLM_THRESHOLD is set (D035 §4).
+FP_FAILED_BATCH_THRESHOLD = 0.5
+
+
+def _fp_skip_threshold_override() -> float | None:
+    """FP_SKIP_LLM_THRESHOLD as a float, or None when it is unset or blank."""
+    value = os.getenv("FP_SKIP_LLM_THRESHOLD", "").strip()
+    return float(value) if value else None
 
 
 def _get_prompt_version() -> str:
@@ -178,8 +188,11 @@ class LabelingSettings(BaseModel):
     fp_classifier_url: str = Field(
         default_factory=lambda: os.getenv("FP_CLASSIFIER_URL", "http://localhost:8000")
     )
-    fp_skip_llm_threshold: float = Field(
-        default_factory=lambda: float(os.getenv("FP_SKIP_LLM_THRESHOLD", "0.5"))
+    # Optional override of the served model's threshold for LLM skips. Unset or blank
+    # means the pipeline applies the threshold the FP API returns with each
+    # prediction (D035 §4).
+    fp_skip_llm_threshold: float | None = Field(
+        default_factory=_fp_skip_threshold_override, validate_default=True
     )
     fp_classifier_timeout: float = Field(
         default_factory=lambda: float(os.getenv("FP_CLASSIFIER_TIMEOUT", "30.0"))
@@ -202,6 +215,13 @@ class LabelingSettings(BaseModel):
     )
 
     model_config = ConfigDict(frozen=True)
+
+    @field_validator("fp_skip_llm_threshold")
+    @classmethod
+    def _skip_threshold_is_a_probability(cls, value: float | None) -> float | None:
+        if value is not None and not 0.0 <= value <= 1.0:
+            raise ValueError(f"FP_SKIP_LLM_THRESHOLD must be between 0 and 1, got {value}")
+        return value
 
 
 # ESG category definitions with descriptions for prompts
