@@ -2535,8 +2535,8 @@ thresholds stated.
    records it and #142's cohort predicate `probability < threshold_used` excludes such rows by
    construction. #142 should key or filter its realized-recall baseline on `threshold_used`.
 6. **A pointer move does not move an override.** Whoever promotes a model re-checks any override set
-   against the new model's threshold; #141 PR2 adds that step to the promotion checklist in
-   `docs/MLOPS.md`. No tool checks it.
+   against the new model's threshold; #141 PR2 is to document that step in `docs/MLOPS.md`. No
+   tool checks it.
 
 **Rejected.**
 - **An operating point independent of the model, as a committed literal** (the plan's first fork B).
