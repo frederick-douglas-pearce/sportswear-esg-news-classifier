@@ -1,7 +1,8 @@
 """Run two labeling prompt versions on the same articles and summarize the differences.
 
-No DB or API access here. `scripts/compare_prompts.py` reads the articles and builds the two
-labelers; this module calls them, records each reply, and computes the report's figures.
+This module makes no DB or API call of its own. `scripts/compare_prompts.py` reads the articles
+and builds the two labelers; this module calls them, records each reply, and computes the report's
+figures.
 
 Each reply's article outcome comes from `dispose_reply`, the function the pipeline uses (D032).
 The per-brand category and sentiment comparison reuses `src/migration_eval/compare.py`. Its
@@ -23,7 +24,7 @@ from src.data_collection.models import SKIP_NO_ESG_CATEGORIES, UNJUDGED_SKIP_REA
 from src.labeling.disposition import FALSE_POSITIVE, LABELED, SKIPPED, dispose_reply
 from src.labeling.labeler import LabelingResult
 from src.labeling.models import normalize_brand
-from src.labeling.pricing import llm_cost_usd
+from src.labeling.config import llm_cost_usd
 from src.migration_eval.compare import compare_article, decisions_from_response
 from src.migration_eval.models import BrandDecision
 
@@ -92,7 +93,8 @@ class EvalArticle:
     repeats: int = 1
     expected: Expectation | None = None
     note: str = ""
-    # The article's stored labeling status, and whether it was stored under the baseline prompt
+    # The article's stored labeling status, and whether it is stored as labeled with brand labels
+    # written under the baseline prompt version (the noise floor's population)
     stored_status: str | None = None
     stored_under_baseline: bool = False
     # A quoted example in the candidate prompt that this article looks like the source of
@@ -124,8 +126,10 @@ class ReplyRecord:
 
     @property
     def complete(self) -> bool:
-        """The reply judged every brand it was sent."""
-        return self.outcome != FAILED and not self.omitted and not self.unset
+        """The reply judged every brand it was sent: the pipeline's definition of a complete reply,
+        the one `labeling_runs.incomplete_replies` counts. An entry with no verdict for a sent
+        brand already puts that brand in `omitted`; `unset` entries are reported separately."""
+        return self.outcome != FAILED and not self.omitted
 
 
 @dataclass
@@ -354,10 +358,15 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
     )
 
     fp_flips, newly_judged = [], 0
-    category_flips, sentiment_pairs, sentiment_equal = 0, 0, 0
+    category_flips, one_sided_brands, sentiment_pairs, sentiment_equal = 0, 0, 0, 0
     for r in paired:
         b, c = r.baseline[0], r.candidate[0]
+        if b.outcome == FAILED or c.outcome == FAILED:
+            continue
+        sent = {normalize_brand(name) for name in r.article.brands}
         for brand, verdict in c.verdicts.items():
+            if brand not in sent:
+                continue
             if brand not in b.verdicts:
                 newly_judged += 1
             elif b.verdicts[brand] != verdict:
@@ -369,10 +378,12 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
                     "baseline_explanation": b.explanations.get(brand, ""),
                     "candidate_explanation": c.explanations.get(brand, ""),
                 })
-        if b.outcome == FAILED or c.outcome == FAILED:
-            continue
         comparison = compare_article(r.article.article_id, r.article.title, b.decisions, c.decisions)
         for brand in comparison.brand_comparisons:
+            # A brand only one side labeled is an outcome change, counted apart from category flips
+            if not (brand.in_baseline and brand.in_candidate):
+                one_sided_brands += 1
+                continue
             for diff in brand.category_diffs:
                 if diff.baseline_applies != diff.candidate_applies:
                     category_flips += 1
@@ -392,6 +403,7 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
             ),
             "compliance": _rate(sum(1 for x in answered if x.complete), len(answered)),
             "incomplete_replies": sum(1 for x in answered if not x.complete),
+            "replies_with_unset_entries": sum(1 for x in answered if x.unset),
             "replies_with_duplicates": sum(1 for x in answered if x.duplicates),
             "duplicate_entries": sum(x.duplicates for x in answered),
             "replies_with_unsent_brands": sum(1 for x in answered if x.unsent),
@@ -405,40 +417,60 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
             continue
         b_outcomes = [x.outcome for x in r.baseline]
         c_outcomes = [x.outcome for x in r.candidate]
+        # A case the spend cap cut short has fewer replies than repeats; it is never consistent
+        complete = len(b_outcomes) == len(c_outcomes) == r.article.repeats
         stability.append({
             **_brief(r),
             "baseline": b_outcomes,
             "candidate": c_outcomes,
-            "baseline_consistent": len(set(b_outcomes)) == 1,
-            "candidate_consistent": len(set(c_outcomes)) == 1,
+            "complete": complete,
+            "baseline_consistent": complete and len(set(b_outcomes)) == 1,
+            "candidate_consistent": complete and len(set(c_outcomes)) == 1,
         })
 
     def accuracy(side: str) -> dict:
-        scored, correct, misses = 0, 0, []
+        """Per case: correct if every reply that judged the expected brand is on the expected
+        side, wrong if any is not, not judged if none judged it (v1.10.0 omits a sportswear brand
+        with no ESG content by instruction, so its omissions are not counted as misses)."""
+        correct, wrong, not_judged = [], [], []
         for r in paired:
             exp = r.article.expected
             if exp is None or r.article.prompt_example:
                 continue
-            for reply in getattr(r, side):
-                scored += 1
-                got = reply.verdicts.get(normalize_brand(exp.brand))
-                if got == exp.is_sportswear_brand:
-                    correct += 1
-                else:
-                    misses.append({
-                        **_brief(r),
-                        "brand": exp.brand,
-                        "expected": exp.is_sportswear_brand,
-                        "got": got,
-                        "explanation": reply.explanations.get(normalize_brand(exp.brand), ""),
-                    })
-        return {"scored": scored, "correct": correct, "rate": _rate(correct, scored), "misses": misses}
+            key = normalize_brand(exp.brand)
+            replies = getattr(r, side)
+            verdicts = [x.verdicts[key] for x in replies if key in x.verdicts]
+            entry = {
+                **_brief(r),
+                "brand": exp.brand,
+                "expected": exp.is_sportswear_brand,
+                "got": verdicts,
+                "explanation": next(
+                    (x.explanations.get(key, "") for x in replies if key in x.verdicts), ""
+                ),
+            }
+            if not verdicts:
+                not_judged.append(entry)
+            elif all(v == exp.is_sportswear_brand for v in verdicts):
+                correct.append(entry)
+            else:
+                wrong.append(entry)
+        judged = len(correct) + len(wrong)
+        return {
+            "cases": judged + len(not_judged),
+            "correct": len(correct),
+            "wrong": len(wrong),
+            "not_judged": len(not_judged),
+            "rate": _rate(len(correct), judged),
+            "misses": wrong,
+            "not_judged_cases": not_judged,
+        }
 
     sample = [r for r in paired if SAMPLE in r.article.strata]
-    floor = [r for r in paired if r.article.stored_under_baseline and r.baseline[0].outcome != FAILED]
-    floor_agree = sum(
-        1 for r in floor if r.baseline[0].outcome == _stored_class(r.article.stored_status)
-    )
+    # Noise floor: sample articles stored as labeled under the baseline prompt that a fresh
+    # baseline reply still labels. The named cases are left out: they were chosen as hard.
+    floor = [r for r in sample if r.article.stored_under_baseline and r.baseline[0].outcome != FAILED]
+    floor_agree = sum(1 for r in floor if r.baseline[0].outcome == LABELED)
 
     return {
         "articles": len(paired),
@@ -453,6 +485,7 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
         "fp_flips": fp_flips,
         "brands_newly_judged": newly_judged,
         "category_flips": category_flips,
+        "brands_labeled_by_one_side": one_sided_brands,
         "sentiment_agreement": _rate(sentiment_equal, sentiment_pairs),
         "stability": stability,
         "product_accuracy": {"baseline": accuracy("baseline"), "candidate": accuracy("candidate")},
@@ -463,13 +496,8 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
         ],
         "noise_floor": {
             "articles": len(floor),
-            "agree_with_stored": floor_agree,
+            "still_labeled": floor_agree,
             "rate": _rate(floor_agree, len(floor)),
         },
     }
 
-
-def _stored_class(status: str | None) -> str | None:
-    """A stored status's class, where the status alone decides it (stored skips do not record
-    whether they were judged, so only labeled and false_positive rows are comparable)."""
-    return status if status in (LABELED, FALSE_POSITIVE) else None

@@ -22,9 +22,9 @@ from .config import (
     LABELING_USER_PROMPT_TEMPLATE,
     TARGET_SPORTSWEAR_BRANDS,
     labeling_settings,
+    llm_cost_usd,
 )
 from .models import BrandAnalysis, CategoryLabel, LabelingResponse
-from .pricing import llm_cost_usd
 from .prompt_manager import PromptManager, PromptVersion
 
 logger = logging.getLogger(__name__)

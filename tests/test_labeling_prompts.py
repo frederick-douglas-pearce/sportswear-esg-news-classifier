@@ -29,7 +29,7 @@ RULE_FALSE_SIDE = (
     "retail detail, not a release or a description"
 )
 
-# The v1.11.0 text the contrastive eval measures (D036 §3: the hashes evaluated are the hashes
+# The v1.11.0 text the contrastive eval will run on (D036 §3: the hashes evaluated are the hashes
 # promoted). A change to either file changes its hash: rerun the eval, then update these.
 V1_11_0_SYSTEM_HASH = "530e492ec63a"
 V1_11_0_USER_HASH = "45127a22f2cf"
@@ -182,7 +182,7 @@ class TestV1_11_0:
             assert '"goes on sale November 14" for a product not sold before' in true_side
             assert _bullet(lines, "`is_sportswear_brand: false`") == false_bullet
 
-    def test_text_is_frozen_at_the_evaluated_hashes(self, manager):
+    def test_text_is_frozen_at_the_pinned_hashes(self, manager):
         """Any edit to v1.11.0, in the Product-article rule or anywhere else, fails here (D036)."""
         version = manager.load_version("v1.11.0")
         assert (version.system_prompt_hash, version.user_prompt_hash) == (

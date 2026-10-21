@@ -20,7 +20,7 @@ from src.data_collection.models import (
 from .chunker import Chunk
 from .evidence_matcher import EvidenceMatch
 from .models import BrandAnalysis
-from .pricing import llm_cost_usd
+from .config import llm_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -322,7 +322,7 @@ class LabelingDatabase:
         run.error_message = error_message
 
         # Calculate estimated cost
-        # LLM prices: src/labeling/pricing.py. OpenAI embeddings: $0.00002/1K tokens
+        # LLM prices: src/labeling/config.py. OpenAI embeddings: $0.00002/1K tokens
         llm_cost = llm_cost_usd(input_tokens, output_tokens)
         # Rough estimate for embedding tokens (assume similar to chunk count)
         embedding_cost = (embeddings_generated * 500 / 1000) * 0.00002

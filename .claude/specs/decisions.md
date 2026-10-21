@@ -2600,8 +2600,9 @@ brand becoming judged. #122's v1.12.0 needs the same check.
    after the run needs a new run. A candidate's text may be edited in place only while no
    `labeling_runs` or `brand_labels` row records its version.
 4. The script refuses equal versions, a version that does not load, and a labeler that fell back to
-   the hardcoded prompt, before any call: `ArticleLabeler` otherwise logs a warning and runs the
-   production prompt under the candidate's name.
+   the hardcoded prompt, before any call: `ArticleLabeler` otherwise logs a warning, labels with the
+   hardcoded fallback prompt and reports its version as `legacy`. It also refuses a run whose
+   worst-case cost exceeds `--max-cost`, before any call.
 
 **Rejected.**
 - **Extending `eval_model_migration.py`.** Its stored-label baseline, single prompt version and
@@ -2612,7 +2613,8 @@ brand becoming judged. #122's v1.12.0 needs the same check.
 
 **Consequences.**
 - A promotion costs one eval run and a human read of its transitions. The named cases
-  (`prompts/labeling/eval_cases/`) are version-independent and reused.
+  (`prompts/labeling/eval_cases/`) are reusable for any candidate; their expected verdicts follow
+  v1.11.0's Product-article rule and are re-read if that rule changes.
 - `labeling_runs.incomplete_replies` (migration 008, NULL on earlier runs) gives a per-run
   compliance figure to read with `labeling_runs.prompt_version` after a flip.
 - `tests/test_labeling_prompts.py` pins v1.11.0's hashes; changing the text fails it until the

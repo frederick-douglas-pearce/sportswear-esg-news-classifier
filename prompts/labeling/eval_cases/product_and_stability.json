@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). Version-independent. 'expected' is the verdict the Product-article rule (prompt v1.11.0) gives the named brand, chosen by reading the article; gray-zone cases carry none and are reported, not scored. Cases whose title matches a quoted prompt example are flagged by the harness and kept out of accuracy. A case may also name the example it is the source of ('prompt_example') where the titles differ.",
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt.",
   "cases": [
     {
       "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
@@ -155,7 +155,7 @@
         "product_true"
       ],
       "repeats": 1,
-      "note": "new signature shoe now available: Reebok Angel Reese 1 (not the prompt example's source)",
+      "note": "colorways still in stock, with a product description: Reebok Angel Reese 1 (not the prompt example's source)",
       "expected": {
         "brand": "Reebok",
         "is_sportswear_brand": true
@@ -231,7 +231,8 @@
       "expected": {
         "brand": "Timberland",
         "is_sportswear_brand": false
-      }
+      },
+      "prompt_example": "Timberland just dropped an epic Gift Guide with a promo code"
     },
     {
       "article_id": "42689fdd-c343-4564-898a-8ecff395cf4d",
@@ -307,7 +308,8 @@
       "expected": {
         "brand": "Skechers",
         "is_sportswear_brand": false
-      }
+      },
+      "prompt_example": "Skechers slippers 'perfect for cold months' reduced to £19"
     },
     {
       "article_id": "6ec5fd75-5e7a-4e06-b53f-58b4326cddba",
@@ -317,9 +319,10 @@
       "repeats": 1,
       "note": "prompt example source: Brooks Adrenaline GTS 24 $20 off",
       "expected": {
-        "brand": "Brooks",
+        "brand": "Brooks Running",
         "is_sportswear_brand": false
-      }
+      },
+      "prompt_example": "Brooks Running shoes: Adrenaline GTS 24 now $20 off"
     },
     {
       "article_id": "464a9fe5-d0f1-4306-98a2-1cdb2a94d8f7",
@@ -327,7 +330,8 @@
         "prompt_example_source"
       ],
       "repeats": 1,
-      "note": "prompt example source: A Ma Maniere Air Jordan 4 roundup"
+      "note": "prompt example source: A Ma Maniere Air Jordan 4 roundup",
+      "prompt_example": "A Ma Maniére Serves an Air Jordan 4 'Dark Mocha' in This Week's Best Footwear Drops"
     },
     {
       "article_id": "3c93143f-4a9c-44f0-845b-3c7822450cfa",
@@ -339,7 +343,8 @@
       "expected": {
         "brand": "Patagonia",
         "is_sportswear_brand": true
-      }
+      },
+      "prompt_example": "Patagonia Nano Puff Hoody review: A sustainable synthetic jacket that still delivers"
     },
     {
       "article_id": "efa10606-e4c9-4f33-9c7c-eaa46140e8b8",
@@ -351,7 +356,8 @@
       "expected": {
         "brand": "Merrell",
         "is_sportswear_brand": true
-      }
+      },
+      "prompt_example": "I spent 6 months testing the Merrell Moab Speed 2s"
     },
     {
       "article_id": "ed1e5bad-d330-43f9-bb87-d102c9691054",

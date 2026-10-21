@@ -17,7 +17,8 @@ def _version_rows(summary: dict) -> list[str]:
         ("Parse failures", b["parse_failures"], c["parse_failures"]),
         ("Unjudged rate", _pct(b["unjudged_rate"]), _pct(c["unjudged_rate"])),
         ("Every-brand compliance", _pct(b["compliance"]), _pct(c["compliance"])),
-        ("Incomplete replies", b["incomplete_replies"], c["incomplete_replies"]),
+        ("Incomplete replies (a sent brand left out)", b["incomplete_replies"], c["incomplete_replies"]),
+        ("Replies with an entry stating no verdict", b["replies_with_unset_entries"], c["replies_with_unset_entries"]),
         ("Replies with duplicate brands", b["replies_with_duplicates"], c["replies_with_duplicates"]),
         ("Replies naming unsent brands", b["replies_with_unsent_brands"], c["replies_with_unsent_brands"]),
         ("Output tokens, mean", _num(b["tokens"]["output_mean"]), _num(c["tokens"]["output_mean"])),
@@ -94,23 +95,33 @@ def render_markdown(summary: dict, config: dict) -> str:
         "",
         *_newly_labeled("All articles", summary["newly_labeled_all"]),
         "",
-        f"Brands judged by the candidate that the baseline left out: {summary['brands_newly_judged']}. "
-        f"Category flips: {summary['category_flips']}. "
+        f"Sent brands judged by the candidate that the baseline left out: "
+        f"{summary['brands_newly_judged']}. "
+        f"Category flips on brands both versions labeled: {summary['category_flips']}; "
+        f"brands only one version labeled: {summary['brands_labeled_by_one_side']}. "
         f"Sentiment agreement where both apply: {_pct(summary['sentiment_agreement'])}.",
         "",
-        f"Noise floor: the baseline agrees with the stored status on "
-        f"{summary['noise_floor']['agree_with_stored']} of {summary['noise_floor']['articles']} "
-        f"articles stored under the baseline ({_pct(summary['noise_floor']['rate'])}).",
+        f"Noise floor: of {summary['noise_floor']['articles']} random-sample articles stored as "
+        f"labeled under the baseline prompt, a fresh baseline reply still labels "
+        f"{summary['noise_floor']['still_labeled']} ({_pct(summary['noise_floor']['rate'])}).",
         "",
         "## Product-article accuracy (cases with an expected side, prompt-example cases excluded)",
+        "",
+        "Per case: correct if every reply that judged the brand is on the expected side; not judged "
+        "if no reply judged it (v1.10.0 leaves out a sportswear brand with no ESG content). The rate "
+        "is over judged cases. Only the candidate's prompt examples are excluded, so baseline "
+        "accuracy is context only.",
         "",
     ]
     for side in ("baseline", "candidate"):
         acc = summary["product_accuracy"][side]
-        lines.append(f"- {side}: {acc['correct']} of {acc['scored']} ({_pct(acc['rate'])})")
+        lines.append(
+            f"- {side}: {acc['correct']} correct, {acc['wrong']} wrong, {acc['not_judged']} not "
+            f"judged ({_pct(acc['rate'])} of judged)"
+        )
         for miss in acc["misses"]:
             lines.append(
-                f"  - miss: {miss['title']} (`{miss['article_id']}`), {miss['brand']} expected "
+                f"  - wrong: {miss['title']} (`{miss['article_id']}`), {miss['brand']} expected "
                 f"{miss['expected']}, got {miss['got']}. {miss['explanation']}"
             )
     lines += ["", "## Prompt-example cases (reported apart from accuracy)", ""]
@@ -120,9 +131,10 @@ def render_markdown(summary: dict, config: dict) -> str:
     ] or ["- none"]
     lines += ["", "## Stability (cases with repeats)", ""]
     for s in summary["stability"]:
+        flag = "" if s["complete"] else " (incomplete: the spend cap cut its repeats)"
         lines.append(
             f"- {s['title']} (`{s['article_id']}`): baseline {s['baseline']}, "
-            f"candidate {s['candidate']}"
+            f"candidate {s['candidate']}{flag}"
         )
     lines += ["", "## Transitions to read (D036)", ""]
     lines += _transitions("Non-labeled -> labeled", summary["non_labeled_to_labeled"])

@@ -8,8 +8,10 @@ database. A promotion is judged against D036's criteria by a human reading the r
 Articles come from any combination of:
   --case-file      named cases (ids, repeats, an expected verdict for one brand)
   --article-ids    ad-hoc ids
-  --sample-size    a seeded random sample of recent LLM-judged articles
-  --most-brands    the LLM-judged articles with the most brands mentioned
+  --sample-size    a seeded random sample of recent articles the labeling LLM replied on
+                   (label source llm or unjudged, pre-LLM skips left out), within --since-days
+  --most-brands    the articles the labeling LLM replied on with the most brands mentioned,
+                   from the whole database
   --human-rulings  the articles a human ruled on in #182 (src/data_collection/provenance.py)
 
 Usage:
@@ -39,7 +41,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data_collection import provenance  # noqa: E402
 from src.data_collection.database import db  # noqa: E402
-from src.data_collection.models import Article, BrandLabel  # noqa: E402
+from src.data_collection.models import (  # noqa: E402
+    SKIP_INSUFFICIENT_CONTENT,
+    SKIP_NO_BRANDS,
+    Article,
+    BrandLabel,
+)
 from src.evaluation.comparator import (  # noqa: E402
     MOST_BRANDS,
     SAMPLE,
@@ -55,6 +62,7 @@ from src.evaluation.comparator import (  # noqa: E402
 from src.evaluation.diff_report import render_markdown  # noqa: E402
 from src.labeling.article_input import article_content, has_sufficient_content  # noqa: E402
 from src.labeling.config import TARGET_SPORTSWEAR_BRANDS, labeling_settings  # noqa: E402
+from src.labeling.models import normalize_brand  # noqa: E402
 from src.labeling.labeler import ArticleLabeler  # noqa: E402
 from src.labeling.prompt_manager import PromptManager  # noqa: E402
 
@@ -64,7 +72,10 @@ logger = logging.getLogger("compare_prompts")
 OUTPUT_DIR = Path("data/evaluation/comparisons")
 CASES = "cases"
 HUMAN_RULINGS = "human_rulings"
-LLM_JUDGED_SOURCES = frozenset({provenance.LLM, provenance.UNJUDGED})
+# Label sources whose status came from a reply of the labeling LLM: `llm`, and `unjudged` (a reply
+# that judged no brand). The unjudged skips the pipeline writes before any LLM call are left out.
+LLM_REPLY_SOURCES = frozenset({provenance.LLM, provenance.UNJUDGED})
+PRE_LLM_SKIP_REASONS = frozenset({SKIP_INSUFFICIENT_CONTENT, SKIP_NO_BRANDS})
 
 
 class EvalSetupError(RuntimeError):
@@ -135,8 +146,37 @@ def check_labeler(labeler: ArticleLabeler, version: str) -> None:
         )
 
 
-def _llm_judged_candidates(session, since: datetime):
-    """(article_id, brand count) for recent articles whose status the LLM decided."""
+@dataclasses.dataclass(frozen=True)
+class Candidate:
+    """An article the sample and most-brands selection can draw from."""
+
+    article_id: str
+    brand_count: int
+    # Published date, else the date it was collected
+    dated: datetime | None
+
+
+def replied_on_by_llm(source: str, labeling_status: str, labeling_error: str | None) -> bool:
+    """Whether an article's stored status came from a reply of the labeling LLM."""
+    if source not in LLM_REPLY_SOURCES:
+        return False
+    return not (labeling_status == "skipped" and labeling_error in PRE_LLM_SKIP_REASONS)
+
+
+def pick_most_brands(candidates: list[Candidate], n: int) -> list[str]:
+    """The n candidates with the most brands mentioned; ties broken by id."""
+    ranked = sorted(candidates, key=lambda c: (-c.brand_count, c.article_id))
+    return [c.article_id for c in ranked[:n]]
+
+
+def pick_sample(candidates: list[Candidate], n: int, seed: int, since: datetime) -> list[str]:
+    """A seeded random sample of the candidates dated on or after `since`."""
+    pool = sorted(c.article_id for c in candidates if c.dated is not None and c.dated >= since)
+    return random.Random(seed).sample(pool, min(n, len(pool)))
+
+
+def _replied_on_candidates(session) -> list[Candidate]:
+    """Every article whose stored status came from a reply of the labeling LLM, with brands."""
     latest = provenance.latest_prediction_subquery("fp")
     rows = (
         session.query(
@@ -144,6 +184,8 @@ def _llm_judged_candidates(session, since: datetime):
             Article.labeling_status,
             Article.labeling_error,
             Article.brands_mentioned,
+            Article.published_at,
+            Article.created_at,
             latest.c.action_taken,
             latest.c.skip_reason,
         )
@@ -154,19 +196,21 @@ def _llm_judged_candidates(session, since: datetime):
                 [*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS]
             )
         )
-        .filter(Article.published_at >= since)
         .order_by(Article.id)
         .all()
     )
     out = []
-    for article_id, status, error, brands, action, skip_reason in rows:
+    for article_id, status, error, brands, published, created, action, skip_reason in rows:
         if not brands:
             continue
         source = provenance.derive_label_source(
             status, error, action, skip_reason, article_id=article_id
         )
-        if source in LLM_JUDGED_SOURCES:
-            out.append((str(article_id), len(brands)))
+        if replied_on_by_llm(source, status, error):
+            dated = published or created
+            if dated is not None and dated.tzinfo is None:
+                dated = dated.replace(tzinfo=timezone.utc)
+            out.append(Candidate(str(article_id), len(brands), dated))
     return out
 
 
@@ -180,16 +224,49 @@ def select_specs(session, args, specs: dict[str, Spec]) -> None:
             merge_spec(specs, article_id, HUMAN_RULINGS)
     if not (args.sample_size or args.most_brands):
         return
+    candidates = _replied_on_candidates(session)
+    for article_id in pick_most_brands(candidates, args.most_brands):
+        merge_spec(specs, article_id, MOST_BRANDS)
     since = datetime.now(timezone.utc) - timedelta(days=args.since_days)
-    candidates = _llm_judged_candidates(session, since)
-    if args.most_brands:
-        ranked = sorted(candidates, key=lambda c: (-c[1], c[0]))
-        for article_id, _ in ranked[: args.most_brands]:
-            merge_spec(specs, article_id, MOST_BRANDS)
-    if args.sample_size:
-        pool = sorted(c[0] for c in candidates)
-        for article_id in random.Random(args.seed).sample(pool, min(args.sample_size, len(pool))):
-            merge_spec(specs, article_id, SAMPLE)
+    for article_id in pick_sample(candidates, args.sample_size, args.seed, since):
+        merge_spec(specs, article_id, SAMPLE)
+
+
+def build_eval_article(
+    article, spec: Spec, stored_under_baseline: bool, examples: list[str]
+) -> EvalArticle | None:
+    """What the comparison sends for one article, or None when the pipeline would not send it.
+
+    Raises EvalSetupError when a case expects a verdict for a brand the article does not list:
+    that case could never be scored.
+    """
+    article_id = str(article.id)
+    content = article_content(article.full_content, article.description)
+    if not has_sufficient_content(content) or not article.brands_mentioned:
+        return None
+    brands = list(article.brands_mentioned)
+    if spec.expected and normalize_brand(spec.expected.brand) not in {
+        normalize_brand(b) for b in brands
+    }:
+        raise EvalSetupError(
+            f"Case {article_id} expects a verdict for {spec.expected.brand!r}, "
+            f"which is not among its brands {brands}"
+        )
+    return EvalArticle(
+        article_id=article_id,
+        title=article.title,
+        content=content,
+        brands=brands,
+        published_at=article.published_at,
+        source_name=article.source_name,
+        strata=tuple(sorted(spec.strata)),
+        repeats=spec.repeats,
+        expected=spec.expected,
+        note=spec.note,
+        stored_status=article.labeling_status,
+        stored_under_baseline=stored_under_baseline and article.labeling_status == "labeled",
+        prompt_example=spec.prompt_example or matching_prompt_example(article.title, examples),
+    )
 
 
 def load_articles(session, specs: dict[str, Spec], baseline: str, examples: list[str]) -> list[EvalArticle]:
@@ -205,42 +282,25 @@ def load_articles(session, specs: dict[str, Spec], baseline: str, examples: list
     }
     articles = []
     for article_id in sorted(ids):
-        spec = specs[article_id]
         a = by_id.get(article_id)
         if a is None:
             logger.warning(f"Article {article_id} not found; left out")
             continue
-        content = article_content(a.full_content, a.description)
-        if not has_sufficient_content(content) or not a.brands_mentioned:
+        built = build_eval_article(a, specs[article_id], article_id in under_baseline, examples)
+        if built is None:
             logger.warning(f"Article {article_id} has no content or brands to send; left out")
             continue
-        articles.append(
-            EvalArticle(
-                article_id=article_id,
-                title=a.title,
-                content=content,
-                brands=list(a.brands_mentioned),
-                published_at=a.published_at,
-                source_name=a.source_name,
-                strata=tuple(sorted(spec.strata)),
-                repeats=spec.repeats,
-                expected=spec.expected,
-                note=spec.note,
-                stored_status=a.labeling_status,
-                stored_under_baseline=(
-                    article_id in under_baseline and a.labeling_status == "labeled"
-                ),
-                prompt_example=(
-                    spec.prompt_example or matching_prompt_example(a.title, examples)
-                ),
-            )
-        )
+        articles.append(built)
     return articles
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--baseline", default=None, help="Baseline prompt version (default: production)")
+    p.add_argument(
+        "--baseline",
+        default=None,
+        help="Baseline prompt version (default: the runtime prompt, LABELING_PROMPT_VERSION else production)",
+    )
     p.add_argument("--candidate", required=True, help="Candidate prompt version")
     p.add_argument("--model", default=None, help="Model for both sides (default: LABELING_MODEL)")
     p.add_argument("--max-tokens", type=int, default=2000)
@@ -249,7 +309,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--sample-size", type=int, default=0)
     p.add_argument("--most-brands", type=int, default=0)
     p.add_argument("--human-rulings", action="store_true")
-    p.add_argument("--since-days", type=int, default=180, help="Sample window by published date")
+    p.add_argument(
+        "--since-days",
+        type=int,
+        default=180,
+        help="Window for --sample-size, by published date (else collected); --most-brands is not windowed",
+    )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--max-cost", type=float, default=10.0, help="Spend cap in USD")
     p.add_argument("--dry-run", action="store_true", help="Select and estimate; no API call")
@@ -260,7 +325,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     manager = PromptManager()
-    baseline = args.baseline or manager.get_production_version()
+    # The prompt the pipeline runs: LABELING_PROMPT_VERSION, else the registry's production
+    baseline = args.baseline or labeling_settings.prompt_version or manager.get_production_version()
+    if baseline != manager.get_production_version():
+        logger.warning(
+            f"Baseline {baseline} is not the registry's production version "
+            f"({manager.get_production_version()})"
+        )
     model = args.model or labeling_settings.labeling_model
     try:
         loaded = check_prompt_versions(baseline, args.candidate, manager)
@@ -276,9 +347,13 @@ def main(argv: list[str] | None = None) -> int:
     examples = prompt_examples(loaded[args.candidate].system_prompt + loaded[args.candidate].user_prompt)
 
     specs = parse_case_file(json.loads(args.case_file.read_text())) if args.case_file else {}
-    with db.get_session() as session:
-        select_specs(session, args, specs)
-        articles = load_articles(session, specs, baseline, examples)
+    try:
+        with db.get_session() as session:
+            select_specs(session, args, specs)
+            articles = load_articles(session, specs, baseline, examples)
+    except EvalSetupError as e:
+        logger.error(str(e))
+        return 2
 
     bound = worst_case_cost(articles, prompt_chars, args.max_tokens)
     calls = 2 * sum(a.repeats for a in articles)
@@ -288,8 +363,17 @@ def main(argv: list[str] | None = None) -> int:
     for a in articles:
         if a.prompt_example:
             logger.info(f"  prompt-example case: {a.title!r} ~ {a.prompt_example!r}")
+    over_cap = (
+        f"Worst-case cost ${bound:.2f} exceeds --max-cost ${args.max_cost:.2f}: raise the cap "
+        "or narrow the selection"
+    )
     if args.dry_run:
+        if bound > args.max_cost:
+            logger.warning(f"{over_cap} (a run would be refused)")
         return 0
+    if bound > args.max_cost:
+        logger.error(over_cap)
+        return 2
     if not articles:
         logger.error("No articles to compare")
         return 2

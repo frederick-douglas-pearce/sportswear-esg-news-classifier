@@ -1,7 +1,7 @@
 """What the labeling LLM is sent for an article's content.
 
-The pipeline and the prompt evaluation (`src/evaluation/`) both read this, so an evaluation
-sends the same content the pipeline would (#192 PR2).
+The pipeline and the prompt evaluation (`scripts/compare_prompts.py`) both read this, so an
+evaluation sends the same content the pipeline would (#192 PR2).
 """
 
 # Shorter content is skipped as SKIP_INSUFFICIENT_CONTENT before any LLM call

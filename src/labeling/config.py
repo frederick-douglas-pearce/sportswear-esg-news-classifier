@@ -24,9 +24,19 @@ PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts" / "labeling"
 # the FP pre-filter savings still come from the script's stdout. When those two
 # priced differently the same report could claim it saved more than it spent
 # (issue #81). Model-aware pricing is tracked in #54; these are Haiku 4.5 rates.
+# The labeler's stats, the run record and the prompt evaluation price through
+# llm_cost_usd below; scripts/label_articles.py reads the two rates directly.
 LLM_INPUT_COST_PER_MTOK = 1.00
 LLM_OUTPUT_COST_PER_MTOK = 5.00
 EMBEDDING_COST_PER_1K_TOKENS = 0.00002
+
+
+def llm_cost_usd(input_tokens: int, output_tokens: int) -> float:
+    """Cost in USD of the given token counts at the rates above."""
+    return (
+        input_tokens / 1_000_000 * LLM_INPUT_COST_PER_MTOK
+        + output_tokens / 1_000_000 * LLM_OUTPUT_COST_PER_MTOK
+    )
 
 # Recorded as threshold_used (NOT NULL) for every article of an FP pre-filter
 # batch that raises, whether the API call failed or a later step did (saving a

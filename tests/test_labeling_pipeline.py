@@ -907,6 +907,10 @@ class TestStoredLabelingReasons:
                 MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, incomplete_replies=value
             )
             assert run.incomplete_replies == value
+        # priced through the one table in src/labeling/config.py: 10 input, 5 output tokens
+        from src.labeling.config import llm_cost_usd
+
+        assert run.estimated_cost_usd == pytest.approx(llm_cost_usd(10, 5))
 
     def test_fp_skip_stores_the_predictions_own_reason(self):
         """The export recognizes a classifier-only negative by this equality."""
