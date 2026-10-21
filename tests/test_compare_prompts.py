@@ -458,7 +458,8 @@ class TestSelection:
         ruled = next(k for k, v in HUMAN_RULINGS.items() if v == "false_positive")
         rows = [
             ("llm-1", "labeled", None, ["Nike"], self.NOW, None, "continued_to_llm", None),
-            (ruled, "false_positive", "Nike: the brand", ["Puma"], self.NOW, None, None, None),
+            # without the ruling this row derives as `llm` (an FP prediction exists) and would be in
+            (ruled, "false_positive", "Puma: the animal", ["Puma"], self.NOW, None, "continued_to_llm", None),
             ("short", "skipped", "Insufficient content", ["Nike"], self.NOW, None, None, None),
             ("nobrands", "labeled", None, [], self.NOW, None, "continued_to_llm", None),
         ]

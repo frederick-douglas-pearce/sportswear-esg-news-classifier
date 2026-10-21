@@ -177,8 +177,8 @@ def pick_sample(candidates: list[Candidate], n: int, seed: int, since: datetime)
 
 def candidates_from_rows(rows) -> list[Candidate]:
     """Candidates from (id, status, error, brands, published, created, fp action, fp skip reason)
-    rows. A status a human ruled on (provenance's human-verified ids) did not come from an LLM
-    reply, so it is left out, as the FP export labels it `human`."""
+    rows. A status a human ruled on (provenance's human-verified ids) derives as `human`, as in the
+    FP export, so it is left out of the pool; `--human-rulings` selects those articles."""
     verified = provenance.human_verified_ids((str(r[0]), r[1]) for r in rows)
     out = []
     for article_id, status, error, brands, published, created, action, skip_reason in rows:
