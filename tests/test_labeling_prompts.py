@@ -1,5 +1,6 @@
 """Tests for the labeling prompt versions in prompts/labeling/ (#192)."""
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -27,6 +28,13 @@ RULE_FALSE_SIDE = (
     'runs ("20% off until Sunday"), or a one-line sales blurb ("perfect for cold months") is a '
     "retail detail, not a release or a description"
 )
+
+# The v1.11.0 text the contrastive eval will run on (D036 §3: the hashes evaluated are the hashes
+# promoted). A change to either file changes its hash: rerun the eval, then update these.
+V1_11_0_SYSTEM_HASH = "530e492ec63a"
+V1_11_0_USER_HASH = "45127a22f2cf"
+# sha256 of docs/LABELING.md's Product-article rule section, which states the prompt's rule
+LABELING_DOC_RULE_SHA256 = "aa856601593e88dcd6bdd197e3e36e55df755d3c2e641fd0f9c8bb5cd188d185"
 
 
 def _bullet(lines, marker):
@@ -173,6 +181,27 @@ class TestV1_11_0:
             true_side = next(line for line in lines if "`is_sportswear_brand: true`" in line)
             assert '"goes on sale November 14" for a product not sold before' in true_side
             assert _bullet(lines, "`is_sportswear_brand: false`") == false_bullet
+
+    def test_text_is_frozen_at_the_pinned_hashes(self, manager):
+        """Any edit to v1.11.0, in the Product-article rule or anywhere else, fails here (D036)."""
+        version = manager.load_version("v1.11.0")
+        assert (version.system_prompt_hash, version.user_prompt_hash) == (
+            V1_11_0_SYSTEM_HASH,
+            V1_11_0_USER_HASH,
+        ), "v1.11.0 changed: rerun scripts/compare_prompts.py before updating the pinned hashes"
+
+    def test_labeling_doc_rule_section_is_pinned(self):
+        """The doc's statement of the rule changes only together with the prompt's."""
+        doc = (PROMPTS_DIR.parents[1] / "docs" / "LABELING.md").read_text()
+        start = doc.index("**Product-article rule** (prompt v1.11.0")
+        section = doc[start:doc.index("### Every brand judged", start)]
+        assert hashlib.sha256(section.encode()).hexdigest() == LABELING_DOC_RULE_SHA256
+
+    def test_shopping_examples_do_not_say_on_sale(self, manager):
+        """'Goes on sale' marks a release on the rule's true side, so a discount is not 'on sale'."""
+        system, _ = self._prompts(manager)
+        on_sale = [line for line in system.splitlines() if "on sale" in line]
+        assert len(on_sale) == 1 and RULE_TRUE_RELEASE in on_sale[0]
 
 
 class TestV1_10_0:

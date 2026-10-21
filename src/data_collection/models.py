@@ -282,6 +282,8 @@ class LabelingRun(Base):
     # Raised before any status update, so still pending and retryable —
     # unlike articles_failed, which are spent
     articles_left_pending = Column(Integer, default=0)
+    # LLM replies that left out a sent brand (#192); NULL on runs before it was recorded
+    incomplete_replies = Column(Integer)
     brands_labeled = Column(Integer, default=0)
     chunks_created = Column(Integer, default=0)
     embeddings_generated = Column(Integer, default=0)

@@ -80,6 +80,27 @@ uv run python scripts/label_articles.py --batch-size 5 -v
 | Claude labeling | ~$3-5 per 1000 articles (Haiku 4.5) |
 | **Total** | **~$3-5 per 1000 articles** |
 
+## Promoting a Prompt Version (Contrastive Evaluation)
+
+A prompt version becomes production (`registry.json`'s `production`) only after a contrastive evaluation, judged against criteria fixed before the run (D036). `scripts/compare_prompts.py` labels the same articles fresh under the baseline (by default the prompt the pipeline runs) and the candidate, with the same model, and writes nothing to the database. Each reply's outcome comes from `dispose_reply`, as in the pipeline.
+
+```bash
+# Selection and worst-case cost, no API call
+uv run python scripts/compare_prompts.py --candidate v1.11.0 \
+  --case-file prompts/labeling/eval_cases/product_and_stability.json \
+  --sample-size 100 --most-brands 10 --human-rulings --dry-run
+
+# The run; stops before a pair of calls could take spend past --max-cost (USD)
+uv run python scripts/compare_prompts.py --candidate v1.11.0 \
+  --case-file prompts/labeling/eval_cases/product_and_stability.json \
+  --sample-size 100 --most-brands 10 --human-rulings --max-cost 10
+```
+
+- **Articles.** Named cases (`prompts/labeling/eval_cases/`, reusable for any candidate: #182's stability set with repeats, Product-article cases with the verdict v1.11.0's rule gives one brand, gray-zone cases reported but not scored); a seeded random sample, within `--since-days`, of articles whose stored status came from a reply of the labeling LLM (label source `llm` or `unjudged`, leaving out the skips written before any LLM call); the articles of that kind with the most brands, from the whole database; and the articles a human ruled on in #182. The content sent is the pipeline's (`src/labeling/article_input.py`). The baseline defaults to the prompt the pipeline runs (`LABELING_PROMPT_VERSION`, else the registry's production).
+- **Guards.** Before any call, the script refuses equal versions, a version that does not load, a labeler that fell back to the hardcoded prompt (it reports `legacy`), a case expecting a verdict for a brand its article does not list, and a run whose worst-case cost exceeds `--max-cost` (a dry run only warns).
+- **Report** (`data/evaluation/comparisons/`, not committed): outcome transitions over four classes (`labeled`, judged skip, unjudged skip, `false_positive`) plus `failed` for a call that errored or did not parse; the newly-labeled rate over the baseline's non-labeled replies, by class; per-brand sportswear flips; category flips on brands both versions labeled, and brands only one labeled; sentiment agreement; every-brand compliance (no sent brand left out, as `labeling_runs.incomplete_replies` counts) and duplicate entries per version; output tokens, including on the most-brands articles, with replies at `max_tokens` counted as truncated; stability across repeats, with a case the spend cap cut short marked incomplete; Product-article accuracy per case (correct, wrong, or not judged when no reply judged the brand), leaving out cases whose article is the source of a quoted example in the candidate prompt; a noise floor (random-sample articles stored as labeled under the baseline prompt whose fresh baseline call answered, and how many of those it still labels); cost.
+- **Criteria (D036).** No parse failures; no reply at `max_tokens`; candidate every-brand compliance at least 95%; each stability case consistent across repeats or explained; each Product-article case on its expected side or the miss explained; a human reads every labeled to non-labeled and non-labeled to labeled transition and every per-brand sportswear flip. The prompt hashes promoted are the hashes evaluated; a text change after the run needs a new run.
+
 ## Exporting Training Data
 
 Export labeled data for ML classifier training:
@@ -257,7 +278,7 @@ The article's status is decided by `dispose_reply` (`src/labeling/disposition.py
 | Only non-sportswear brands, a sent brand left out | `skipped` / "Some brands not judged; the rest not sportswear" | no |
 | Only non-sportswear brands, covering every sent brand | `false_positive` | yes |
 
-The fourth row is a change for every prompt version: until #192 such a reply was stored as `false_positive`, although under v1.10.0 the brand left out may be a sportswear brand with no ESG content, which that version tells the model to omit. Rows already stored that way keep their status until they are relabeled. The rows the fourth row writes are `unjudged` in the FP export, so they are left out by default, and `--include-unjudged-skips` would put them back as positives. The `esg-prefilter` export reads every `skipped` row as `has_esg=0`, these included (EP is on hold). The run summary's `Incomplete replies` line counts replies that left out at least one brand sent, an empty reply included. Under v1.10.0 that includes every "No ESG content found" reply, so the count measures compliance only under v1.11.0. It is printed only; it is not stored in `labeling_runs`.
+The fourth row is a change for every prompt version: until #192 such a reply was stored as `false_positive`, although under v1.10.0 the brand left out may be a sportswear brand with no ESG content, which that version tells the model to omit. Rows already stored that way keep their status until they are relabeled. The rows the fourth row writes are `unjudged` in the FP export, so they are left out by default, and `--include-unjudged-skips` would put them back as positives. The `esg-prefilter` export reads every `skipped` row as `has_esg=0`, these included (EP is on hold). The run summary's `Incomplete replies` line counts replies that left out at least one brand sent, an empty reply included. Under v1.10.0 that includes every "No ESG content found" reply, so the count measures compliance only under v1.11.0. It is stored per run in `labeling_runs.incomplete_replies` (from #192 PR2; NULL on earlier runs), so read it with `labeling_runs.prompt_version`.
 
 ### FP Classifier Limitation
 

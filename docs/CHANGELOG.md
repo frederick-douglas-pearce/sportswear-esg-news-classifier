@@ -4,6 +4,38 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-20: Contrastive evaluation of labeling prompt versions
+
+**A labeling prompt is promoted only after a contrastive evaluation judged against criteria fixed
+beforehand (#192 PR2a, D036).** No change to the prompt production uses (still v1.10.0).
+- `scripts/compare_prompts.py` + `src/evaluation/` (`comparator.py`, no DB or API call of its own; `diff_report.py`): labels
+  the same articles fresh under a baseline and a candidate prompt version, with the same model, and
+  writes JSON and markdown reports to `data/evaluation/comparisons/` (gitignored). Nothing is written
+  to the database. Outcomes come from `dispose_reply` in four classes (labeled, judged skip, unjudged
+  skip, false_positive) plus `failed`; the per-brand category and sentiment comparison reuses
+  `src/migration_eval/compare.py`. The report covers transitions, the newly-labeled rate by baseline
+  class, sportswear flips, compliance, duplicates, output tokens (truncation at `max_tokens`),
+  stability across repeats, Product-article accuracy, a noise floor and cost.
+- Guards before any call: equal versions, a version that does not load, a labeler that fell back to
+  the hardcoded prompt, a case expecting a brand its article does not list, and a worst-case cost over
+  `--max-cost` are refused. `--dry-run` selects and prints a worst-case cost; during a run, a pair of
+  calls that could take spend past `--max-cost` is not started.
+- `prompts/labeling/eval_cases/product_and_stability.json`: #182's seven stability articles (3
+  repeats), Product-article cases on both sides and in the gray zone, and the sources of quoted
+  prompt examples, which the report keeps out of accuracy.
+- `src/labeling/article_input.py`: the content rule (`full_content` or description, at least 100
+  characters) shared by the pipeline and the comparison. `llm_cost_usd` in `src/labeling/config.py`
+  prices tokens from the existing rate table (labeler stats, run record, comparison).
+- `labeling_runs.incomplete_replies` (migration 008, nullable, NULL on earlier runs): the counter
+  the run summary prints, now stored on both run-completion paths.
+- Prompt v1.11.0 (candidate) edited in place under D036 §3's precondition, checked 2026-10-20: two shopping examples say "discounted"
+  instead of "on sale", which the Product-article rule uses for a release. Its hashes are pinned in
+  `tests/test_labeling_prompts.py`, with docs/LABELING.md's rule section.
+- Follow-up: a guard that the ORM models match the migrations, for every table, is #214.
+
+**Migration:** `psql $DATABASE_URL -f migrations/008_labeling_run_incomplete_replies.sql` before
+running this code: `LabelingRun` maps the new column.
+
 ### 2026-10-20: The FP skip threshold derives from the served model by default
 
 **The labeling pipeline skips an article below the threshold the FP API served with its prediction,
