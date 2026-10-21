@@ -467,8 +467,9 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
         }
 
     sample = [r for r in paired if SAMPLE in r.article.strata]
-    # Noise floor: sample articles stored as labeled under the baseline prompt that a fresh
-    # baseline reply still labels. The named cases are left out: they were chosen as hard.
+    # Noise floor: random-sample articles stored as labeled under the baseline prompt whose fresh
+    # baseline call answered, and how many of those it still labels. An article only in the named
+    # cases is left out (they were chosen as hard); a named case the sample also drew is counted.
     floor = [r for r in sample if r.article.stored_under_baseline and r.baseline[0].outcome != FAILED]
     floor_agree = sum(1 for r in floor if r.baseline[0].outcome == LABELED)
 

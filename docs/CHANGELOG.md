@@ -8,7 +8,7 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 **A labeling prompt is promoted only after a contrastive evaluation judged against criteria fixed
 beforehand (#192 PR2a, D036).** No change to the prompt production uses (still v1.10.0).
-- `scripts/compare_prompts.py` + `src/evaluation/` (`comparator.py`, pure; `diff_report.py`): labels
+- `scripts/compare_prompts.py` + `src/evaluation/` (`comparator.py`, no DB or API call of its own; `diff_report.py`): labels
   the same articles fresh under a baseline and a candidate prompt version, with the same model, and
   writes JSON and markdown reports to `data/evaluation/comparisons/` (gitignored). Nothing is written
   to the database. Outcomes come from `dispose_reply` in four classes (labeled, judged skip, unjudged
@@ -28,7 +28,7 @@ beforehand (#192 PR2a, D036).** No change to the prompt production uses (still v
   prices tokens from the existing rate table (labeler stats, run record, comparison).
 - `labeling_runs.incomplete_replies` (migration 008, nullable, NULL on earlier runs): the counter
   the run summary prints, now stored on both run-completion paths.
-- Prompt v1.11.0 (candidate, never served) edited in place: two shopping examples say "discounted"
+- Prompt v1.11.0 (candidate) edited in place under D036 §3's precondition, checked 2026-10-20: two shopping examples say "discounted"
   instead of "on sale", which the Product-article rule uses for a release. Its hashes are pinned in
   `tests/test_labeling_prompts.py`, with docs/LABELING.md's rule section.
 - Follow-up: a guard that the ORM models match the migrations, for every table, is #214.

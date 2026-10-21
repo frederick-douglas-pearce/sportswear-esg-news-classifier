@@ -452,6 +452,21 @@ class TestSelection:
     def test_pool_is_replies_of_the_labeling_llm(self, source, status, error, expected):
         assert compare_prompts.replied_on_by_llm(source, status, error) is expected
 
+    def test_human_ruled_and_pre_llm_rows_leave_the_pool(self):
+        from src.data_collection.provenance import HUMAN_RULINGS
+
+        ruled = next(k for k, v in HUMAN_RULINGS.items() if v == "false_positive")
+        rows = [
+            ("llm-1", "labeled", None, ["Nike"], self.NOW, None, "continued_to_llm", None),
+            (ruled, "false_positive", "Nike: the brand", ["Puma"], self.NOW, None, None, None),
+            ("short", "skipped", "Insufficient content", ["Nike"], self.NOW, None, None, None),
+            ("nobrands", "labeled", None, [], self.NOW, None, "continued_to_llm", None),
+        ]
+        assert [c.article_id for c in compare_prompts.candidates_from_rows(rows)] == ["llm-1"]
+        # the same row without a human ruling on its status is an LLM reply
+        rows[1] = (ruled, "labeled", None, ["Puma"], self.NOW, None, "continued_to_llm", None)
+        assert [c.article_id for c in compare_prompts.candidates_from_rows(rows)] == ["llm-1", ruled]
+
     def test_most_brands_ranks_descending_with_id_ties(self):
         c = compare_prompts.Candidate
         cands = [c("b", 3, None), c("a", 3, None), c("c", 9, None), c("d", 1, self.NOW)]

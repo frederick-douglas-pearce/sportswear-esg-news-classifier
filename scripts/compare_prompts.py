@@ -175,6 +175,31 @@ def pick_sample(candidates: list[Candidate], n: int, seed: int, since: datetime)
     return random.Random(seed).sample(pool, min(n, len(pool)))
 
 
+def candidates_from_rows(rows) -> list[Candidate]:
+    """Candidates from (id, status, error, brands, published, created, fp action, fp skip reason)
+    rows. A status a human ruled on (provenance's human-verified ids) did not come from an LLM
+    reply, so it is left out, as the FP export labels it `human`."""
+    verified = provenance.human_verified_ids((str(r[0]), r[1]) for r in rows)
+    out = []
+    for article_id, status, error, brands, published, created, action, skip_reason in rows:
+        if not brands:
+            continue
+        source = provenance.derive_label_source(
+            status,
+            error,
+            action,
+            skip_reason,
+            human_verified=str(article_id) in verified,
+            article_id=article_id,
+        )
+        if replied_on_by_llm(source, status, error):
+            dated = published or created
+            if dated is not None and dated.tzinfo is None:
+                dated = dated.replace(tzinfo=timezone.utc)
+            out.append(Candidate(str(article_id), len(brands), dated))
+    return out
+
+
 def _replied_on_candidates(session) -> list[Candidate]:
     """Every article whose stored status came from a reply of the labeling LLM, with brands."""
     latest = provenance.latest_prediction_subquery("fp")
@@ -199,19 +224,7 @@ def _replied_on_candidates(session) -> list[Candidate]:
         .order_by(Article.id)
         .all()
     )
-    out = []
-    for article_id, status, error, brands, published, created, action, skip_reason in rows:
-        if not brands:
-            continue
-        source = provenance.derive_label_source(
-            status, error, action, skip_reason, article_id=article_id
-        )
-        if replied_on_by_llm(source, status, error):
-            dated = published or created
-            if dated is not None and dated.tzinfo is None:
-                dated = dated.replace(tzinfo=timezone.utc)
-            out.append(Candidate(str(article_id), len(brands), dated))
-    return out
+    return candidates_from_rows(rows)
 
 
 def select_specs(session, args, specs: dict[str, Spec]) -> None:

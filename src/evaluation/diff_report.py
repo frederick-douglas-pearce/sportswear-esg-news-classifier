@@ -102,7 +102,7 @@ def render_markdown(summary: dict, config: dict) -> str:
         f"Sentiment agreement where both apply: {_pct(summary['sentiment_agreement'])}.",
         "",
         f"Noise floor: of {summary['noise_floor']['articles']} random-sample articles stored as "
-        f"labeled under the baseline prompt, a fresh baseline reply still labels "
+        f"labeled under the baseline prompt whose fresh baseline call answered, it still labels "
         f"{summary['noise_floor']['still_labeled']} ({_pct(summary['noise_floor']['rate'])}).",
         "",
         "## Product-article accuracy (cases with an expected side, prompt-example cases excluded)",
