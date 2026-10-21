@@ -356,6 +356,15 @@ class TestSummarize:
         assert s["candidate"]["compliance"] == 1.0  # over the two answered replies
         assert s["candidate"]["tokens"]["calls"] == 3
 
+    def test_a_failed_candidate_reply_is_not_a_labeled_to_non_labeled_transition(self):
+        parse_failure = record_reply(["Nike"], LabelingResult(success=False, error="parse", output_tokens=50))
+        runs = [
+            _run(_article("failed"), [_reply([_esg("Nike")])], [parse_failure]),
+            _run(_article("dropped"), [_reply([_esg("Nike")])], [_reply([_no_esg("Nike")])]),
+        ]
+        s = summarize(runs, max_tokens=MAX_TOKENS)
+        assert [x["article_id"] for x in s["labeled_to_non_labeled"]] == ["dropped"]
+
     def test_newly_judged_counts_sent_brands_only(self):
         runs = [_run(_article("1"), [_reply([])], [_reply([_no_esg("Nike"), _no_esg("Vans")])])]
         s = summarize(runs, max_tokens=MAX_TOKENS)
@@ -471,6 +480,23 @@ class TestSelection:
         rows[1] = (ruled, "labeled", None, ["Puma"], self.NOW, None, "continued_to_llm", None)
         assert [c.article_id for c in compare_prompts.candidates_from_rows(rows)] == ["llm-1", ruled]
 
+    def test_a_date_without_a_timezone_is_read_as_utc(self):
+        from datetime import datetime, timedelta, timezone
+
+        naive_published = datetime(2026, 10, 1, 12, 0)
+        naive_created = datetime(2026, 9, 30, 8, 0)
+        rows = [
+            ("pub", "labeled", None, ["Nike"], naive_published, None, "continued_to_llm", None),
+            ("made", "labeled", None, ["Nike"], None, naive_created, "continued_to_llm", None),
+        ]
+        cands = compare_prompts.candidates_from_rows(rows)
+        assert [c.dated for c in cands] == [
+            naive_published.replace(tzinfo=timezone.utc),
+            naive_created.replace(tzinfo=timezone.utc),
+        ]
+        # comparable with the aware window start the script builds
+        assert sorted(compare_prompts.pick_sample(cands, 5, 42, self.NOW - timedelta(days=180))) == ["made", "pub"]
+
     def test_most_brands_ranks_descending_with_id_ties(self):
         c = compare_prompts.Candidate
         cands = [c("b", 3, None), c("a", 3, None), c("c", 9, None), c("d", 1, self.NOW)]
@@ -546,6 +572,42 @@ class TestCaseFile:
         assert all(s.repeats == 3 for s in specs.values() if "stability" in s.strata)
         product = [s for s in specs.values() if s.strata & {"product_true", "product_false"}]
         assert {s.expected.is_sportswear_brand for s in product} == {True, False}
+
+    # Each expected verdict was read from its article by a person; one changes only with this list
+    EXPECTED = {
+        "3a637c91-2fd3-4f8e-86be-f1ea45780808": ("Adidas", True),
+        "dcf616c4-7fb5-47b2-b430-6175902ba489": ("Puma", False),
+        "7118e53b-f6c0-4d7f-8877-cb62aec7f350": ("New Balance", True),
+        "cfdf8b6f-861d-4b75-95f0-17c2f91c7d1f": ("Hoka", True),
+        "6672e27c-6607-4880-a5cc-30700a5b34df": ("Mammut", True),
+        "d3b1df33-2bf6-40f0-9775-ce4ec6782c6d": ("Nike", True),
+        "f928bd32-2bc8-44f1-a658-e9bde970f924": ("Nike", True),
+        "ec94386e-4263-45e0-b431-2e11e4adb905": ("Nike", True),
+        "edf23d74-19c6-4435-b3d5-e7e5b34c74ad": ("Lululemon", True),
+        "9a2e5cf2-be8f-46cb-b503-d2b4dfbb6403": ("Reebok", True),
+        "c8f6ba97-85f3-4b5f-8552-43c2a2a2bb66": ("Adidas", False),
+        "442282ca-90ae-4811-a7f5-1026bc8fcf75": ("Skechers", False),
+        "02ffd32e-cca0-476d-88f8-1486c790f421": ("Lululemon", False),
+        "94a563b7-2c67-4c74-9884-66f7a4f35ee8": ("Converse", False),
+        "5812c8dc-58a9-4c53-b75e-394e9844322e": ("Lululemon", False),
+        "eb5aa27c-2fc8-4db4-a5b7-a202b116c4ea": ("Timberland", False),
+        "bcc52f23-6048-40e3-ab75-ed701468a5a2": ("Skechers", False),
+        "6ec5fd75-5e7a-4e06-b53f-58b4326cddba": ("Brooks Running", False),
+        "3c93143f-4a9c-44f0-845b-3c7822450cfa": ("Patagonia", True),
+        "efa10606-e4c9-4f33-9c7c-eaa46140e8b8": ("Merrell", True),
+        "ed1e5bad-d330-43f9-bb87-d102c9691054": ("Reebok", True),
+    }
+
+    def test_expected_verdicts_are_pinned(self):
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases/product_and_stability.json"
+        specs = compare_prompts.parse_case_file(json.loads(path.read_text()))
+        got = {
+            k: (s.expected.brand, s.expected.is_sportswear_brand) for k, s in specs.items() if s.expected
+        }
+        assert got == self.EXPECTED
 
     def test_every_prompt_example_case_names_a_quote_in_the_candidate_prompt(self):
         """The cases kept out of accuracy are kept out by a quote the v1.11.0 prompt really has."""
