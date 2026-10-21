@@ -55,7 +55,7 @@ If the article is NOT about the sportswear company, set `is_sportswear_brand: fa
 **3. Shopping/Deals/Sales Articles**
 - "REI is blowing out tons of Patagonia gear during this year-end clearance sale"
 - "Athleta Sale Has Winter Clothes Starting at $9"
-- "Nike shoes on sale: Best deals today"
+- "Nike shoes discounted: Best deals today"
 - "Skechers reduced in sale"
 - These are shopping promotions, not corporate ESG news
 
@@ -113,7 +113,7 @@ A product that contains recycled polyester is NOT Environmental ESG news unless:
 |--------------|---------|----------------------|
 | Product review | "Nike shoe review: Made with 65% recycled materials" | Product feature, not ESG news |
 | Product description | "Timberland boots use recycled plastic" | Marketing copy |
-| Shopping article | "Patagonia fleece on sale at REI" | Retail promotion |
+| Shopping article | "Patagonia fleece discounted at REI" | Retail promotion |
 | Fashion collaboration | "KNWLS x Nike features TENCEL fibers" | Fashion news with material mention |
 | Technology feature | "GORE-TEX waterproof technology" | Product tech (waterproofing ≠ environmental) |
 | How-to guide | "How to break in Timberland boots" | Product guide |

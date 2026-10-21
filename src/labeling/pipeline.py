@@ -26,6 +26,7 @@ from src.deployment.versioning import (
     UNREPORTED,
 )
 
+from .article_input import article_content, has_sufficient_content
 from .chunker import ArticleChunker, Chunk
 from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
 from .config import FP_FAILED_BATCH_THRESHOLD, check_fp_skip_threshold, labeling_settings
@@ -788,6 +789,7 @@ class LabelingPipeline:
                             articles_failed=stats.articles_failed,
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
+                            incomplete_replies=stats.incomplete_replies,
                         )
 
             logger.info(
@@ -820,6 +822,7 @@ class LabelingPipeline:
                             articles_failed=stats.articles_failed,
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
+                            incomplete_replies=stats.incomplete_replies,
                         )
             raise
 
@@ -846,7 +849,7 @@ class LabelingPipeline:
             Dict with processing results
         """
         article_id = article["id"]
-        content = article["full_content"] or article["description"] or ""
+        content = article_content(article["full_content"], article["description"])
         brands = article["brands_mentioned"]
 
         result = {
@@ -873,7 +876,7 @@ class LabelingPipeline:
         }
 
         # Check for content
-        if not content or len(content.strip()) < 100:
+        if not has_sufficient_content(content):
             logger.warning(f"Article {article_id} has insufficient content")
             if not dry_run:
                 with self.database.db.get_session() as session:

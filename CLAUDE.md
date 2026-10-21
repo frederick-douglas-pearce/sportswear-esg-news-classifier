@@ -86,6 +86,9 @@ uv run python scripts/fix_label.py update <id> --status skipped   # Correct labe
 uv run python scripts/fix_label.py update <id1> <id2> --status skipped  # Batch update
 uv run python scripts/fix_label.py statuses                       # List valid statuses
 
+# Contrastive Prompt Evaluation (before promoting a labeling prompt, D036)
+uv run python scripts/compare_prompts.py --candidate v1.11.0 --case-file prompts/labeling/eval_cases/product_and_stability.json --sample-size 100 --most-brands 10 --human-rulings --dry-run  # Selection + worst-case cost, no API call; drop --dry-run (and set --max-cost) to run
+
 # Export Training Data
 uv run python scripts/export_training_data.py --dataset fp -o data/fp_training_data.jsonl  # False positive classifier data, to the file the fp notebooks and train.py read by default; retrain.py reads its --data (excludes classifier-only negatives, unjudged skips and keyword-sweep negatives by default, which shifts the class balance: read the printed by-source breakdown; every record carries label_source, see docs/LABELING.md#fp-label-provenance)
 uv run python scripts/export_training_data.py --dataset fp --include-classifier-labels  # Also --include-unjudged-skips, --include-rule-labels: put one excluded cohort back
@@ -214,7 +217,7 @@ prompts/labeling/
     ├── config.json, system_prompt.txt, user_prompt.txt
 ```
 
-**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.10.0; v1.11.0 is a candidate (#192)
+**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Run `scripts/compare_prompts.py` and judge the report against D036 → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.10.0; v1.11.0 is a candidate (#192)
 
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
@@ -336,7 +339,7 @@ Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, te
 - **article_chunks**: Chunked text with embeddings (pgvector)
 - **brand_labels**: Per-brand ESG labels with sentiment
 - **label_evidence**: Supporting excerpts linked to chunks (rerank_score, match_method)
-- **labeling_runs**: Labeling batch tracking
+- **labeling_runs**: Labeling batch tracking (per-outcome counts; `incomplete_replies` from migration 008)
 - **classifier_predictions**: ML classifier predictions audit trail
 - **scorecard_snapshots**: Daily scorecard metadata (period, article counts, dedup settings)
 - **scorecard_brand_scores**: Per-brand scores per snapshot (category scores, rank, medals)
@@ -498,6 +501,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-10-20**: Contrastive evaluation of labeling prompt versions (#192 PR2a, D036). `scripts/compare_prompts.py` + `src/evaluation/` label the same articles fresh under a baseline and a candidate prompt, write nothing to the database, and report four-class transitions (unjudged vs judged skips), the newly-labeled rate, sportswear flips, compliance, duplicates, truncation at `max_tokens`, stability and Product-article accuracy; it refuses equal versions, an unloadable version and a labeler that fell back to the hardcoded prompt, before any call. A promotion is judged against D036's criteria, and the hashes evaluated are the hashes promoted (v1.11.0's are pinned in `tests/test_labeling_prompts.py`). Named cases: `prompts/labeling/eval_cases/`. `labeling_runs.incomplete_replies` stores the run summary's counter (migration 008; apply before running). `src/labeling/article_input.py` and `src/labeling/pricing.py` hold the content rule and token prices the pipeline and the comparison share. Production prompt unchanged (v1.10.0)
 - **2026-10-20**: The FP skip threshold derives from the served model by default (#141 PR2, D035 §4). The labeling pipeline skips an article below the threshold the FP API served with its prediction; `FP_SKIP_LLM_THRESHOLD` is an optional override (0 to 1, checked when a `LabelingPipeline` is built, not at import, so an out-of-range value does not stop agent workflows; a non-number still fails at import, #211), logged beside the served threshold once per batch the FP API answers, and `threshold_used` records the value applied. A batch that raises records the override, or `FP_FAILED_BATCH_THRESHOLD` (0.5), for every article. Where the environment sets the override, behavior is unchanged until it is removed; a pointer move does not move it (`docs/MLOPS.md`)
 - **2026-10-19**: The registry entry binds the served FP threshold (#141 PR1, D035). `check_registered_bytes` (`src/deployment/versioning.py`), run by the build guard and by pointer moves, refuses a config whose `threshold` is not exactly the entry's, or is missing or not a number; FP `v2.4.0`'s entry threshold was reconciled to its config's full-precision value (a one-off hand edit, D035 §3). `write_version` takes the entry's threshold from the config it stamps, at full precision, and the writers refuse a config without one before their side effects. D035 also decides that the LLM-skip threshold will derive from the served model's threshold, with `FP_SKIP_LLM_THRESHOLD` as an optional override; #141 PR2 implements that, and until then the pipeline is unchanged
 - **2026-10-18**: Supported image builds use only the registry pointer's registered bytes (#172, D034). The Dockerfile's builder stage runs `check_build_artifact` (`src/deployment/versioning.py`, run by path under `python -I`), which refuses a `null` pointer by name (EP), an unregistered or hashless pointer, a joblib whose sha256 is not the entry's, and a config not stamped with the pointer and that hash; the runtime stage copies the checked files from the builder and `registry.json` stays out of it. `deploy.yml`'s model-file checks are deleted. `--build-arg SKIP_MODEL_GUARD=true` is for a local candidate smoke test only, never through compose. `registry.check_pointer_move` shares the byte check. Refusals and reconciliation: `docs/DEPLOYMENT.md`

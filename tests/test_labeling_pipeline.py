@@ -877,6 +877,37 @@ class TestStoredLabelingReasons:
         assert stats.incomplete_replies == 2
         assert LabelingStats().incomplete_replies == 0
 
+    def test_incomplete_replies_are_stored_on_both_run_completion_paths(self):
+        """The run row records the counter on success and, when completion raises, on failure."""
+        results = [{"labeled": True, "brands_count": 1, "incomplete_reply": True}] * 2
+        articles = [{"id": uuid4()} for _ in results]
+        database = MagicMock()
+        database.complete_labeling_run.side_effect = [RuntimeError("db down"), None]
+        pipeline = LabelingPipeline(database=database)
+        with patch("src.labeling.pipeline.db"), \
+             patch.object(pipeline, "_ensure_labeler"), \
+             patch.object(pipeline, "_deduplicate_by_title", return_value=(articles, [])), \
+             patch.object(pipeline, "_compute_novelty_batch", return_value={}), \
+             patch.object(pipeline, "_run_fp_prefilter_batch", return_value={}), \
+             patch.object(pipeline, "_process_article", side_effect=results), \
+             pytest.raises(RuntimeError, match="db down"):
+            pipeline.label_articles(dry_run=False)
+        calls = database.complete_labeling_run.call_args_list
+        assert [c.kwargs["status"] for c in calls] == ["success", "failed"]
+        assert [c.kwargs["incomplete_replies"] for c in calls] == [2, 2]
+
+    def test_complete_labeling_run_stores_incomplete_replies(self):
+        from types import SimpleNamespace
+
+        from src.labeling.database import LabelingDatabase
+
+        for value in (3, None):
+            run = SimpleNamespace()
+            LabelingDatabase(MagicMock()).complete_labeling_run(
+                MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, incomplete_replies=value
+            )
+            assert run.incomplete_replies == value
+
     def test_fp_skip_stores_the_predictions_own_reason(self):
         """The export recognizes a classifier-only negative by this equality."""
         database = MagicMock()

@@ -2574,3 +2574,48 @@ per D019's precedent that a committed entry is not rewritten.
   follow-up.
 - **The served threshold is checked to be finite, not to be within 0 to 1** (§1's check). A
   registered threshold outside that range fails open, as a failed batch. #208 is the follow-up.
+
+## D036: A Labeling Prompt Is Promoted Only After a Contrastive Evaluation Judged Against Criteria Fixed Beforehand (#192)
+
+**Date:** 2026-10-20 · **Status:** accepted (architect-reviewed 2026-10-20; approved by the human at #192 PR2's plan gate) · **Issues:** #192, #4, #122
+(epic #152)
+
+**Context.** Prompt v1.11.0 (#192, D032) changes what a reply contains (every brand judged) and one
+decision rule (product articles). The existing tool, `scripts/eval_model_migration.py`, compares a
+fresh call with stored labels and reduces each article to labeled or `false_positive`
+(`src/migration_eval/compare.py`), so it cannot see v1.11.0's main effect: replies that judged no
+brand becoming judged. #122's v1.12.0 needs the same check.
+
+**Decision.**
+1. A labeling prompt version is promoted (`prompts/labeling/registry.json`'s `production`) only after
+   `scripts/compare_prompts.py` labels the same articles fresh under the baseline and the candidate,
+   with the same model, and each reply's outcome comes from `dispose_reply` (D032).
+2. Criteria, fixed before any result exists: no parse failures; no reply at `max_tokens` (a truncation
+   stops the promotion; raising `max_tokens` is a separate decision); candidate every-brand
+   compliance at least 95%; each stability case consistent across its repeats or explained; each
+   Product-article case on its expected side or the miss explained; a human reads every
+   labeled→non-labeled and non-labeled→labeled transition and every per-brand sportswear flip; the
+   unjudged rate is reported for both versions.
+3. Freeze: the system and user prompt hashes promoted are the hashes evaluated, and a text change
+   after the run needs a new run. A candidate's text may be edited in place only while no
+   `labeling_runs` or `brand_labels` row records its version.
+4. The script refuses equal versions, a version that does not load, and a labeler that fell back to
+   the hardcoded prompt, before any call: `ArticleLabeler` otherwise logs a warning and runs the
+   production prompt under the candidate's name.
+
+**Rejected.**
+- **Extending `eval_model_migration.py`.** Its stored-label baseline, single prompt version and
+  two-way outcome would each need replacing. The new comparer reuses its pure category and
+  sentiment comparison (`effective_decision_from_analysis`, `compare_article`).
+- **Promoting in the same PR as the harness.** The harness is reviewed before its numbers are
+  trusted; a report that sends the candidate back still lands the tool.
+
+**Consequences.**
+- A promotion costs one eval run and a human read of its transitions. The named cases
+  (`prompts/labeling/eval_cases/`) are version-independent and reused.
+- `labeling_runs.incomplete_replies` (migration 008, NULL on earlier runs) gives a per-run
+  compliance figure to read with `labeling_runs.prompt_version` after a flip.
+- `tests/test_labeling_prompts.py` pins v1.11.0's hashes; changing the text fails it until the
+  eval is rerun and the pin updated.
+- Out of scope: routing `eval_model_migration.py` through `dispose_reply`; folding
+  `src/migration_eval/` into `src/evaluation/`; exposing `stop_reason` on `LabelingResult`.

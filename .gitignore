@@ -79,6 +79,8 @@ social/*
 
 # Model-migration eval run artifacts (harness is tracked; reports are not)
 data/evaluation/migration/
+# Contrastive prompt eval reports (scripts/compare_prompts.py)
+data/evaluation/comparisons/
 
 # dev-loop ledger: local working state, never committed.
 # `.claude/loop.config.md` (the binding seam) IS committed -- do not widen this to `.claude/loop*`.

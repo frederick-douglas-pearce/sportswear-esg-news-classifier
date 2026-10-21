@@ -24,6 +24,7 @@ from .config import (
     labeling_settings,
 )
 from .models import BrandAnalysis, CategoryLabel, LabelingResponse
+from .pricing import llm_cost_usd
 from .prompt_manager import PromptManager, PromptVersion
 
 logger = logging.getLogger(__name__)
@@ -720,17 +721,11 @@ class ArticleLabeler:
         Returns:
             Dictionary with usage statistics
         """
-        # Cost estimate for the production labeling model (Claude Haiku 4.5):
-        # Input: $1.00 per 1M tokens, Output: $5.00 per 1M tokens.
-        # Hardcoded to the current model; model-aware pricing is tracked in #54.
-        input_cost = (self.total_input_tokens / 1_000_000) * 1.00
-        output_cost = (self.total_output_tokens / 1_000_000) * 5.00
-
         return {
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
             "total_api_calls": self.total_api_calls,
-            "estimated_cost_usd": input_cost + output_cost,
+            "estimated_cost_usd": llm_cost_usd(self.total_input_tokens, self.total_output_tokens),
             "model": self.model,
             "prompt_version": self.prompt_version,
             "prompt_system_hash": self.prompt_system_hash,

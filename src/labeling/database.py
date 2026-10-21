@@ -20,6 +20,7 @@ from src.data_collection.models import (
 from .chunker import Chunk
 from .evidence_matcher import EvidenceMatch
 from .models import BrandAnalysis
+from .pricing import llm_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +293,7 @@ class LabelingDatabase:
         articles_failed: int = 0,
         articles_deduplicated: int = 0,
         articles_left_pending: int = 0,
+        incomplete_replies: int | None = None,
     ) -> None:
         """Update a labeling run with final statistics.
 
@@ -309,6 +311,7 @@ class LabelingDatabase:
         run.articles_failed = articles_failed
         run.articles_deduplicated = articles_deduplicated
         run.articles_left_pending = articles_left_pending
+        run.incomplete_replies = incomplete_replies
         run.brands_labeled = brands_labeled
         run.chunks_created = chunks_created
         run.embeddings_generated = embeddings_generated
@@ -319,9 +322,8 @@ class LabelingDatabase:
         run.error_message = error_message
 
         # Calculate estimated cost
-        # Claude Haiku 4.5: $1/1M input, $5/1M output (model-aware pricing tracked in #54)
-        # OpenAI embeddings: $0.00002/1K tokens
-        llm_cost = (input_tokens / 1_000_000) * 1 + (output_tokens / 1_000_000) * 5
+        # LLM prices: src/labeling/pricing.py. OpenAI embeddings: $0.00002/1K tokens
+        llm_cost = llm_cost_usd(input_tokens, output_tokens)
         # Rough estimate for embedding tokens (assume similar to chunk count)
         embedding_cost = (embeddings_generated * 500 / 1000) * 0.00002
         run.estimated_cost_usd = llm_cost + embedding_cost

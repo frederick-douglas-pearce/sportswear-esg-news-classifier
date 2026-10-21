@@ -1,0 +1,370 @@
+{
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). Version-independent. 'expected' is the verdict the Product-article rule (prompt v1.11.0) gives the named brand, chosen by reading the article; gray-zone cases carry none and are reported, not scored. Cases whose title matches a quoted prompt example are flagged by the harness and kept out of accuracy. A case may also name the example it is the source of ('prompt_example') where the titles differ.",
+  "cases": [
+    {
+      "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
+      "strata": [
+        "stability"
+      ],
+      "repeats": 3,
+      "note": "#182 stability: Puma trademark dispute"
+    },
+    {
+      "article_id": "f751891e-1ed4-4183-a907-5d198022f8e9",
+      "strata": [
+        "stability"
+      ],
+      "repeats": 3,
+      "note": "#182 stability: Puma warehouse theft"
+    },
+    {
+      "article_id": "3a637c91-2fd3-4f8e-86be-f1ea45780808",
+      "strata": [
+        "stability"
+      ],
+      "repeats": 3,
+      "note": "#182 stability: CLOT x adidas release roundup (held out of the v1.11.0 prompt)",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "8dca1142-c86c-4f26-a0e8-d031ffbf65df",
+      "strata": [
+        "stability"
+      ],
+      "repeats": 3,
+      "note": "#182 stability: UK menswear market report, brands in a list"
+    },
+    {
+      "article_id": "1739fb42-ee49-4466-aeec-c39894d2ba41",
+      "strata": [
+        "stability"
+      ],
+      "repeats": 3,
+      "note": "#182 stability: Style (04/13/26)"
+    },
+    {
+      "article_id": "4f90a464-7776-48cd-8d45-8fca72d4c64e",
+      "strata": [
+        "stability"
+      ],
+      "repeats": 3,
+      "note": "#182 stability: intrinsic value of PUMA SE"
+    },
+    {
+      "article_id": "dcf616c4-7fb5-47b2-b430-6175902ba489",
+      "strata": [
+        "stability"
+      ],
+      "repeats": 3,
+      "note": "#182 stability: Joe La Puma, a person's name",
+      "expected": {
+        "brand": "Puma",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "7118e53b-f6c0-4d7f-8877-cb62aec7f350",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "review: New Balance 1906R",
+      "expected": {
+        "brand": "New Balance",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "cfdf8b6f-861d-4b75-95f0-17c2f91c7d1f",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "tested review: Hoka Clifton Pro, 40 miles",
+      "expected": {
+        "brand": "Hoka",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "6672e27c-6607-4880-a5cc-30700a5b34df",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "tested review: Mammut Crag rope",
+      "expected": {
+        "brand": "Mammut",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "d3b1df33-2bf6-40f0-9775-ce4ec6782c6d",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "release announcement: Nike Air Max Metro, new silhouette",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "f928bd32-2bc8-44f1-a658-e9bde970f924",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "collaboration release: Victor Solomon x Nike Foamposite",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "ec94386e-4263-45e0-b431-2e11e4adb905",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "collaboration launch: Kallmeyer x Nike",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "edf23d74-19c6-4435-b3d5-e7e5b34c74ad",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "collaboration launch with a launch date, shopping-styled title: Ganni x Lululemon",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "9a2e5cf2-be8f-46cb-b503-d2b4dfbb6403",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "new signature shoe now available: Reebok Angel Reese 1 (not the prompt example's source)",
+      "expected": {
+        "brand": "Reebok",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "c8f6ba97-85f3-4b5f-8552-43c2a2a2bb66",
+      "strata": [
+        "product_false"
+      ],
+      "repeats": 1,
+      "note": "sale listing with a one-line blurb: Adidas Stadium Polo $21.30",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "442282ca-90ae-4811-a7f5-1026bc8fcf75",
+      "strata": [
+        "product_false"
+      ],
+      "repeats": 1,
+      "note": "sale listing: Skechers slippers on sale (not the prompt example's source)",
+      "expected": {
+        "brand": "Skechers",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "02ffd32e-cca0-476d-88f8-1486c790f421",
+      "strata": [
+        "product_false"
+      ],
+      "repeats": 1,
+      "note": "sale section: Lululemon We Made Too Much (not the prompt example's source)",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "94a563b7-2c67-4c74-9884-66f7a4f35ee8",
+      "strata": [
+        "product_false"
+      ],
+      "repeats": 1,
+      "note": "retail promotion: Converse hearts at DSW (a v1.10.0 example, removed in v1.11.0)",
+      "expected": {
+        "brand": "Converse",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "5812c8dc-58a9-4c53-b75e-394e9844322e",
+      "strata": [
+        "product_false"
+      ],
+      "repeats": 1,
+      "note": "gift guide: Lululemon Father's Day",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "eb5aa27c-2fc8-4db4-a5b7-a202b116c4ea",
+      "strata": [
+        "prompt_example_source"
+      ],
+      "repeats": 1,
+      "note": "prompt example source: Timberland gift guide with a promo code",
+      "expected": {
+        "brand": "Timberland",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "42689fdd-c343-4564-898a-8ecff395cf4d",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 2,
+      "note": "retro reissue with a date: Nike Air Max Plus Spider Web returns (reissue vs restock)"
+    },
+    {
+      "article_id": "da5f5982-300e-449e-8e81-b6b5fcde6a7d",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 2,
+      "note": "retro reissue: Nike Air Max NM returns Fall 2027 (reissue vs restock)"
+    },
+    {
+      "article_id": "461d95ca-a317-45a7-908b-d6e742779931",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 2,
+      "note": "deal post that describes the product: Black Diamond Zone (descriptor vs blurb)"
+    },
+    {
+      "article_id": "3c432add-3bc8-4acd-9716-911c68891a5c",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 2,
+      "note": "deal post with ratings: Adidas Heritage Tennis Polo (descriptor vs blurb)"
+    },
+    {
+      "article_id": "a58ca215-32de-4909-8641-d400969701f9",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 1,
+      "note": "gift guide written as a personal piece: Vuori"
+    },
+    {
+      "article_id": "d36c1da5-79fa-4e90-8e3c-8e5594b4f760",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 1,
+      "note": "best-of guide, paywalled copy: lululemon leggings 2026"
+    },
+    {
+      "article_id": "1769af09-0817-42b7-90ca-8b3654376711",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 1,
+      "note": "best-of guide, syndicated copy: lululemon leggings 2026"
+    },
+    {
+      "article_id": "72e8eee7-e9d3-45fd-902c-37020708fd61",
+      "strata": [
+        "product_gray"
+      ],
+      "repeats": 1,
+      "note": "best-of guide, syndicated copy: lululemon leggings 2026"
+    },
+    {
+      "article_id": "bcc52f23-6048-40e3-ab75-ed701468a5a2",
+      "strata": [
+        "prompt_example_source"
+      ],
+      "repeats": 1,
+      "note": "prompt example source: Skechers slippers reduced to 19",
+      "expected": {
+        "brand": "Skechers",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "6ec5fd75-5e7a-4e06-b53f-58b4326cddba",
+      "strata": [
+        "prompt_example_source"
+      ],
+      "repeats": 1,
+      "note": "prompt example source: Brooks Adrenaline GTS 24 $20 off",
+      "expected": {
+        "brand": "Brooks",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "464a9fe5-d0f1-4306-98a2-1cdb2a94d8f7",
+      "strata": [
+        "prompt_example_source"
+      ],
+      "repeats": 1,
+      "note": "prompt example source: A Ma Maniere Air Jordan 4 roundup"
+    },
+    {
+      "article_id": "3c93143f-4a9c-44f0-845b-3c7822450cfa",
+      "strata": [
+        "prompt_example_source"
+      ],
+      "repeats": 1,
+      "note": "prompt example source: Patagonia Nano Puff Hoody review",
+      "expected": {
+        "brand": "Patagonia",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "efa10606-e4c9-4f33-9c7c-eaa46140e8b8",
+      "strata": [
+        "prompt_example_source"
+      ],
+      "repeats": 1,
+      "note": "prompt example source: Merrell Moab Speed 2 tested",
+      "expected": {
+        "brand": "Merrell",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "ed1e5bad-d330-43f9-bb87-d102c9691054",
+      "strata": [
+        "prompt_example_source"
+      ],
+      "repeats": 1,
+      "note": "prompt example source: Reebok Angel Reese 1 releases November 14",
+      "expected": {
+        "brand": "Reebok",
+        "is_sportswear_brand": true
+      },
+      "prompt_example": "Reebok Angel Reese 1 releases November 14"
+    }
+  ]
+}
