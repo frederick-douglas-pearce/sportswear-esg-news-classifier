@@ -29,12 +29,12 @@ RULE_FALSE_SIDE = (
     "retail detail, not a release or a description"
 )
 
-# The v1.11.0 text the contrastive eval will run on (D036 §3: the hashes evaluated are the hashes
-# promoted). A change to either file changes its hash: rerun the eval, then update these.
-V1_11_0_SYSTEM_HASH = "530e492ec63a"
-V1_11_0_USER_HASH = "45127a22f2cf"
+# The v1.11.0 text evaluated in report v1.10.0_vs_v1.11.0_2026-10-22 (failed; frozen as the record,
+# D036 §3). A change to either file changes its hash; v1.12.0 supersedes v1.11.0 instead.
+V1_11_0_SYSTEM_HASH = "e3a32befdb40"
+V1_11_0_USER_HASH = "0ede675fa4b0"
 # sha256 of docs/LABELING.md's Product-article rule section, which states the prompt's rule
-LABELING_DOC_RULE_SHA256 = "aa856601593e88dcd6bdd197e3e36e55df755d3c2e641fd0f9c8bb5cd188d185"
+LABELING_DOC_RULE_SHA256 = "304a10a37d9f729726e723a77a80b9888200ddb25d232fc3a148bf0fd2600032"
 
 
 def _bullet(lines, marker):

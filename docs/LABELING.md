@@ -240,7 +240,7 @@ Auto-generated or template content with no human analysis:
 - **Boilerplate analyst roundups**: "Columbia Sportswear Receives Consensus Rating of Hold" — rating lists without reasoning
 - **Stock comparisons**: "Oxford Industries vs. Under Armour Head to Head" — side-by-side financial metrics
 - **Return calculators**: "$100 Invested In Deckers 20 Years Ago" — just math
-- **Sale listings**: "Skechers slippers reduced to £19" — `false_positive` only when the article gives every brand nothing but retail details; a product article is decided per brand by the Product-article rule below, not by its genre
+- **Sale listings**: "Under Armour Tech 2.0 tee now $15" — `false_positive` only when the article gives every brand nothing but retail details; a product article is decided per brand by the Product-article rule below, not by its genre
 
 **Telltale signs of template articles:** "Get Free Report", "according to its most recent 13F filing", "200-day moving average of $X", "Several other research analysts also recently issued reports", "shares of the footwear maker". Sources like MarketBeat, MarketScreener, HoldingsChannel, tickerreport.com, themarketsdaily.com.
 
@@ -253,7 +253,8 @@ Auto-generated or template content with no human analysis:
 | Institutional 13F | "Vontobel Holding Boosts Position in Under Armour" | No | `false_positive` |
 | Boilerplate ratings | "Columbia Sportswear Receives Consensus PT of $60.50" | No | `false_positive` |
 | Stock comparison | "Reviewing Victoria's Secret & Allbirds" (just metrics) | No | `false_positive` |
-| Sale listing | "Skechers slippers reduced to £19" (name, price and link only) | No | `false_positive` |
+| Sale listing | "Under Armour Tech 2.0 tee now $15" (name, price and a one-line blurb or a line of specs only) | No | `false_positive` |
+| Sale listing with a description | "Brooks Adrenaline GTS 24 now $20 off" (describes cushioning, support, upper) | Yes | `skipped` |
 | Release announcement | "Reebok Angel Reese 1 releases November 14" | Yes | `skipped` |
 | Analyst with reasoning | "Needham downgrades Nike citing brand weakness" | Yes | `skipped` |
 | Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | Yes | `skipped` |
@@ -274,9 +275,11 @@ Auto-generated or template content with no human analysis:
 - `is_sportswear_brand: true` → for this brand, the article describes or evaluates a specific product, or reports its release (what it is made of or does, what is new, how it performs, or that it is releasing or launching and when). A release date counts on its own, however it is phrased: "releases November 14", "available from November 14" or "goes on sale November 14" for a product not sold before
 - `is_sportswear_brand: false` → for this brand, the article gives only retail details: product names, prices, discounts, links, stock or where to buy, or promo codes. A restock, the dates a discount or sale event runs ("20% off until Sunday"), or a one-line sales blurb ("perfect for cold months") is a retail detail, not a release or a description
 
-The genre is a hint, not the test: reviews, release announcements and collaboration launches are usually `true`, and sale listings, price-drop alerts, deals roundups and gift guides usually `false`. A release roundup is `true` for each brand whose release it describes and `false` for a brand it only names with a price or a link; a buying guide that tested the products is `true` for each brand whose product it assesses; a review that also mentions a discount is `true`; a release announcement is `true` even when it gives only the product, the date and a price.
+The genre is a hint, not the test: reviews, release announcements and collaboration launches are usually `true`, and sale listings, price-drop alerts, deals roundups and gift guides usually `false`. A release roundup is `true` for each brand whose release it describes and `false` for a brand it only names with a price or a link; a buying guide that tested the products is `true` for each brand whose product it assesses; a review that also mentions a discount is `true`; a sale listing that also describes the product (what it is made of, how it is built, how it performs, or how buyers say it holds up) is `true`, whatever the sale framing, while a line of specs (capacity, sizes, a feature list) is a retail detail; a release announcement is `true` even when it gives only the product, the date and a price.
 
 v1.7.0 through v1.10.0 state both "shopping/deals → `false`" and "product announcements, reviews, sales → `true`" (v1.0.0 to v1.6.0 state only the second); v1.11.0 replaces both with this rule. v1.11.0 also rewords the brand-specific notes for Mizuno, ANTA, Vans and Decathlon, which listed the article topics that count ("Only ANTA Sports articles about shoes, apparel, athletes, or sports sponsorships are valid"), so that they say only which company is the brand and leave substantive content to the rules above.
+
+v1.11.0's text was revised in place on 2026-10-22, after the first contrastive eval (#215) and before any database row recorded it. The articles behind its two sale-listing `false` examples (Skechers slippers reduced to £19, Brooks Adrenaline GTS 24 $20 off) both describe the product, so under the rule they are `true`: the Brooks example moved to the `true` side, the Skechers one was dropped, and an invented name-price-blurb listing took the `false` side. The revision also states that judging every brand is not a reason to find a category for it (no Digital Transformation for marketing, app features or facilities, no Environmental for a product's materials), after the eval found replies whose reasoning said a category did not apply while assigning it.
 
 ### Every brand judged (reply disposition)
 
