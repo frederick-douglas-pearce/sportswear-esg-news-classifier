@@ -4,15 +4,20 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
-### 2026-10-22: Candidate prompt v1.11.0 revised after its first contrastive eval
+### 2026-10-22: Candidate prompt v1.11.0 revised, failed its second eval, not to be promoted
 
 **v1.11.0 failed its first eval (#215) and its text was revised in place (D036 §3: no
-`labeling_runs` or `brand_labels` row recorded v1.11.0, checked 2026-10-22).** Production is
-unchanged (v1.10.0); the revised text needs a new eval before it can be promoted.
+`labeling_runs` or `brand_labels` row recorded v1.11.0, checked 2026-10-22).** The revised text
+(hashes `e3a32befdb40` / `0ede675fa4b0`) failed its second eval the same day (report
+`v1.10.0_vs_v1.11.0_2026-10-22`): 7 of 22 Product cases wrong, all of them expected `false` and
+judged `true`, and 1 parse failure. v1.11.0 stays frozen as the evaluated record and is not to be
+promoted; v1.12.0 supersedes it. Production is unchanged (v1.10.0).
 - Product-article rule: a sale listing that also describes the product (what it is made of, how it
   is built, how it performs, or how buyers say it holds up) is `is_sportswear_brand: true`, whatever
-  the sale framing; a line of specs (capacity, sizes, a feature list) is a retail detail. The articles behind the two sale-listing `false` examples both describe the product:
-  the Brooks Adrenaline GTS 24 example moved to the `true` side, the Skechers slippers example was
+  the sale framing; a line of specs (capacity, sizes, a feature list) is a retail detail. The general
+  `true` definition still says "what it is made of or does", which a line of specs also meets; that
+  tension is left for v1.12.0. The articles behind the two sale-listing `false` examples both describe
+  the product: the Brooks Adrenaline GTS 24 example moved to the `true` side, the Skechers slippers example was
   dropped, and an invented name-price-blurb listing is the `false` example. `docs/LABELING.md`
   states the same rule.
 - Categories: Important Guidelines item 7 and a user-prompt reminder say that judging every brand is
@@ -24,7 +29,7 @@ unchanged (v1.10.0); the revised text needs a new eval before it can be promoted
   example sources), the check #213 left owed. Six cases are added, ruled by the owner: five `false`
   (Puma, The North Face and adidas sale listings, a Nike deals post with a one-line blurb, a Nike
   backpack deal with a line of specs) and one `true` (a new Nike trainer described in a price post),
-  so the scored `false` side has 8 cases instead of 3.
+  so the scored `false` side has 8 cases (run 1 scored 5; 3 remained after the owner's flips).
 - The v1.11.0 hash pins in `tests/test_labeling_prompts.py` and the doc-rule hash are updated.
 
 ### 2026-10-20: Contrastive evaluation of labeling prompt versions

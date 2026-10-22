@@ -239,7 +239,7 @@ Auto-generated or template content with no human analysis:
 | Institutional 13F | "Vontobel Holding Boosts Position in Under Armour" | No | `false_positive` |
 | Boilerplate ratings | "Columbia Sportswear Receives Consensus PT of $60.50" | No | `false_positive` |
 | Stock comparison | "Reviewing Victoria's Secret & Allbirds" (just metrics) | No | `false_positive` |
-| Sale listing | "Under Armour Tech 2.0 tee now $15" (name, price and a one-line blurb only) | No | `false_positive` |
+| Sale listing | "Under Armour Tech 2.0 tee now $15" (name, price and a one-line blurb or a line of specs only) | No | `false_positive` |
 | Sale listing with a description | "Brooks Adrenaline GTS 24 now $20 off" (describes cushioning, support, upper) | Yes | `skipped` |
 | Release announcement | "Reebok Angel Reese 1 releases November 14" | Yes | `skipped` |
 | Analyst with reasoning | "Needham downgrades Nike citing brand weakness" | Yes | `skipped` |
