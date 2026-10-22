@@ -35,9 +35,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.labeling.config import (
     EMBEDDING_COST_PER_1K_TOKENS,
-    LLM_INPUT_COST_PER_MTOK,
-    LLM_OUTPUT_COST_PER_MTOK,
     labeling_settings,
+    llm_cost_usd,
 )
 from src.labeling.database import labeling_db
 from src.labeling.exit_codes import EXIT_FAILURE, EXIT_PARTIAL_FAILURE, EXIT_SUCCESS
@@ -236,9 +235,7 @@ def print_fp_classifier_stats(stats) -> None:
         # Estimate ~1500 input tokens and ~500 output tokens per skipped article
         saved_input = stats.fp_classifier_skipped * 1500
         saved_output = stats.fp_classifier_skipped * 500
-        saved_input_cost = (saved_input / 1_000_000) * LLM_INPUT_COST_PER_MTOK
-        saved_output_cost = (saved_output / 1_000_000) * LLM_OUTPUT_COST_PER_MTOK
-        saved_cost = saved_input_cost + saved_output_cost
+        saved_cost = llm_cost_usd(saved_input, saved_output, labeling_settings.labeling_model)
         print(f"Est. LLM cost saved:    ${saved_cost:.4f}")
 
 
@@ -328,10 +325,11 @@ def main() -> int:
 
         # Cost estimate
         if stats.input_tokens > 0 or stats.output_tokens > 0:
-            input_cost = (stats.input_tokens / 1_000_000) * LLM_INPUT_COST_PER_MTOK
-            output_cost = (stats.output_tokens / 1_000_000) * LLM_OUTPUT_COST_PER_MTOK
+            llm_cost = llm_cost_usd(
+                stats.input_tokens, stats.output_tokens, labeling_settings.labeling_model
+            )
             embedding_cost = (stats.embeddings_generated * 500 / 1000) * EMBEDDING_COST_PER_1K_TOKENS
-            total_cost = input_cost + output_cost + embedding_cost
+            total_cost = llm_cost + embedding_cost
             print(f"Estimated cost:         ${total_cost:.4f}")
 
         if stats.errors:

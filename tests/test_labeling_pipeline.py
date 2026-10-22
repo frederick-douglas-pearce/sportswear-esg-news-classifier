@@ -895,6 +895,10 @@ class TestStoredLabelingReasons:
         calls = database.complete_labeling_run.call_args_list
         assert [c.kwargs["status"] for c in calls] == ["success", "failed"]
         assert [c.kwargs["incomplete_replies"] for c in calls] == [2, 2]
+        # No labeler was built, so the run is priced at the model one would have run
+        from src.labeling.config import labeling_settings
+
+        assert [c.kwargs["model"] for c in calls] == [labeling_settings.labeling_model] * 2
 
     def test_complete_labeling_run_stores_incomplete_replies(self):
         from types import SimpleNamespace
@@ -910,7 +914,13 @@ class TestStoredLabelingReasons:
         # priced through the one table in src/labeling/config.py: 10 input, 5 output tokens
         from src.labeling.config import llm_cost_usd
 
-        assert run.estimated_cost_usd == pytest.approx(llm_cost_usd(10, 5))
+        assert run.estimated_cost_usd == pytest.approx(
+            llm_cost_usd(10, 5, "claude-haiku-4-5-20251001")
+        )
+        LabelingDatabase(MagicMock()).complete_labeling_run(
+            MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, model="claude-haiku-5-5"
+        )
+        assert run.estimated_cost_usd == pytest.approx(llm_cost_usd(10, 5, "claude-haiku-5-5"))
 
     def test_fp_skip_stores_the_predictions_own_reason(self):
         """The export recognizes a classifier-only negative by this equality."""

@@ -21,6 +21,7 @@ from .config import (
     LABELING_SYSTEM_PROMPT,
     LABELING_USER_PROMPT_TEMPLATE,
     TARGET_SPORTSWEAR_BRANDS,
+    labeling_model_spec,
     labeling_settings,
     llm_cost_usd,
 )
@@ -37,6 +38,14 @@ logger = logging.getLogger(__name__)
 # quotes and silently merged into a single corrupted excerpt that validates.
 # Treating `"` as a terminator makes that case stay unparseable instead.
 STRUCTURAL_AFTER_STRING = frozenset(",}]:\"")
+
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+# error_type of a reply the model declined (stop_reason "refusal"). Haiku 5.5 runs safety
+# classifiers and has no server-side fallback, so a decline is recorded as a failed article.
+REFUSAL_ERROR_TYPE = "refusal"
+# error_type of a reply that stopped at max_tokens and could not be parsed
+MAX_TOKENS_ERROR_TYPE = "max_tokens"
 
 
 def _json_error_context(json_str: str, pos: int, window: int = 80) -> str:
@@ -64,6 +73,20 @@ class LabelingResult:
     prompt_version: str = ""
     prompt_system_hash: str = ""
     prompt_user_hash: str = ""
+    # The API's stop_reason, when it answered: "max_tokens" is a truncated reply
+    stop_reason: str | None = None
+
+
+@dataclass
+class ApiReply:
+    """What one Messages API call returned that the labeler uses."""
+
+    text: str
+    input_tokens: int
+    output_tokens: int
+    stop_reason: str | None
+    # stop_details.category of a refusal, when the API gave one
+    refusal_category: str | None = None
 
 
 def classify_api_error(error: Exception) -> tuple[str, str]:
@@ -155,9 +178,10 @@ class ArticleLabeler:
         model: str | None = None,
         max_retries: int = 3,
         retry_delay: float = 1.0,
-        max_tokens: int = 2000,
+        max_tokens: int | None = None,
         temperature: float = 0.0,
         prompt_version: str | None = None,
+        effort: str | None = None,
     ):
         """Initialize the labeler.
 
@@ -166,21 +190,31 @@ class ArticleLabeler:
             model: Model to use for labeling (default: from settings)
             max_retries: Maximum retry attempts for rate limits
             retry_delay: Initial delay between retries in seconds
-            max_tokens: Maximum output tokens
-            temperature: Sampling temperature (0.0 for deterministic classification)
+            max_tokens: Maximum output tokens, thinking included (default: the model's)
+            temperature: Sampling temperature (0.0 for deterministic classification), sent only
+                to a model that accepts sampling parameters
             prompt_version: Version of prompts to use (default: production version)
+            effort: output_config.effort (default: from settings), sent only to a model that
+                accepts it
         """
         self.api_key = api_key or labeling_settings.anthropic_api_key
         self.model = model or labeling_settings.labeling_model
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.max_tokens = max_tokens
         self.temperature = temperature
 
         if not self.api_key:
             raise ValueError(
                 "Anthropic API key is required. Set ANTHROPIC_API_KEY environment variable."
             )
+
+        # Refuses a model with no spec before any call, so its spend is never priced at
+        # another model's rates and its request is never built for another model's surface
+        self.model_spec = labeling_model_spec(self.model)
+        self.max_tokens = max_tokens or self.model_spec.default_max_tokens
+        self.effort = effort or labeling_settings.labeling_effort
+        if self.model_spec.accepts_effort and self.effort not in EFFORT_LEVELS:
+            raise ValueError(f"Effort must be one of {EFFORT_LEVELS}, got {self.effort!r}")
 
         self.client = Anthropic(api_key=self.api_key)
 
@@ -296,37 +330,58 @@ class ArticleLabeler:
 
         # Call Claude API with retry
         try:
-            response_text, input_tokens, output_tokens = self._call_api_with_retry(
-                user_prompt, system_prompt
-            )
-            self.total_input_tokens += input_tokens
-            self.total_output_tokens += output_tokens
+            reply = self._call_api_with_retry(user_prompt, system_prompt)
+            self.total_input_tokens += reply.input_tokens
+            self.total_output_tokens += reply.output_tokens
             self.total_api_calls += 1
 
+            if reply.stop_reason == "refusal":
+                logger.warning(f"Model declined the request (category: {reply.refusal_category})")
+                return LabelingResult(
+                    success=False,
+                    error=f"Model declined the request (refusal, category: {reply.refusal_category})",
+                    error_type=REFUSAL_ERROR_TYPE,
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
+                    model=self.model,
+                    prompt_version=self.prompt_version,
+                    prompt_system_hash=self.prompt_system_hash,
+                    prompt_user_hash=self.prompt_user_hash,
+                    stop_reason=reply.stop_reason,
+                )
+
             # Parse the response
-            parsed = self._parse_response(response_text)
+            parsed = self._parse_response(reply.text)
 
             if parsed:
                 return LabelingResult(
                     success=True,
                     response=parsed,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
                     model=self.model,
                     prompt_version=self.prompt_version,
                     prompt_system_hash=self.prompt_system_hash,
                     prompt_user_hash=self.prompt_user_hash,
+                    stop_reason=reply.stop_reason,
                 )
             else:
+                truncated = reply.stop_reason == "max_tokens"
                 return LabelingResult(
                     success=False,
-                    error="Failed to parse LLM response",
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
+                    error=(
+                        f"Failed to parse LLM response: stopped at max_tokens ({self.max_tokens})"
+                        if truncated
+                        else "Failed to parse LLM response"
+                    ),
+                    error_type=MAX_TOKENS_ERROR_TYPE if truncated else None,
+                    input_tokens=reply.input_tokens,
+                    output_tokens=reply.output_tokens,
                     model=self.model,
                     prompt_version=self.prompt_version,
                     prompt_system_hash=self.prompt_system_hash,
                     prompt_user_hash=self.prompt_user_hash,
+                    stop_reason=reply.stop_reason,
                 )
 
         except Exception as e:
@@ -360,9 +415,44 @@ class ArticleLabeler:
         logger.debug(f"Truncated content from {len(content)} to {len(truncated)} chars")
         return truncated + "\n\n[Content truncated...]"
 
-    def _call_api_with_retry(
-        self, user_prompt: str, system_prompt: str
-    ) -> tuple[str, int, int]:
+    def _request_params(self, user_prompt: str, system_prompt: str) -> dict:
+        """The Messages API request for this labeler's model.
+
+        Haiku 4.5 takes temperature and errors on effort; Haiku 5.5 returns a 400 for a
+        non-default temperature and takes effort. The pinned SDK predates output_config as a
+        named argument, so it goes in extra_body (#216).
+        """
+        params: dict = {
+            "model": self.model,
+            "max_tokens": self.max_tokens,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+        }
+        if self.model_spec.accepts_sampling:
+            params["temperature"] = self.temperature
+        if self.model_spec.accepts_effort:
+            params["extra_body"] = {"output_config": {"effort": self.effort}}
+        return params
+
+    @staticmethod
+    def _reply_from_response(response) -> ApiReply:
+        """Read a response by block type: a model that thinks can start with thinking blocks."""
+        text = "".join(block.text for block in response.content if block.type == "text")
+        # The pinned SDK may not model stop_details, in which case it arrives as an extra dict
+        stop_details = getattr(response, "stop_details", None)
+        if isinstance(stop_details, dict):
+            category = stop_details.get("category")
+        else:
+            category = getattr(stop_details, "category", None)
+        return ApiReply(
+            text=text,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            stop_reason=response.stop_reason,
+            refusal_category=category,
+        )
+
+    def _call_api_with_retry(self, user_prompt: str, system_prompt: str) -> ApiReply:
         """Call Claude API with automatic retry for rate limits and transient errors.
 
         Args:
@@ -370,7 +460,7 @@ class ArticleLabeler:
             system_prompt: The system prompt to use
 
         Returns:
-            Tuple of (response_text, input_tokens, output_tokens)
+            The reply's text, token counts and stop reason
 
         Raises:
             Various Anthropic exceptions with detailed error classification
@@ -382,18 +472,9 @@ class ArticleLabeler:
         for attempt in range(self.max_retries):
             try:
                 response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature,
-                    system=system_prompt,
-                    messages=[{"role": "user", "content": user_prompt}],
+                    **self._request_params(user_prompt, system_prompt)
                 )
-
-                response_text = response.content[0].text
-                input_tokens = response.usage.input_tokens
-                output_tokens = response.usage.output_tokens
-
-                return response_text, input_tokens, output_tokens
+                return self._reply_from_response(response)
 
             except RateLimitError as e:
                 error_type, error_msg = classify_api_error(e)
@@ -725,7 +806,9 @@ class ArticleLabeler:
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
             "total_api_calls": self.total_api_calls,
-            "estimated_cost_usd": llm_cost_usd(self.total_input_tokens, self.total_output_tokens),
+            "estimated_cost_usd": llm_cost_usd(
+                self.total_input_tokens, self.total_output_tokens, self.model
+            ),
             "model": self.model,
             "prompt_version": self.prompt_version,
             "prompt_system_hash": self.prompt_system_hash,

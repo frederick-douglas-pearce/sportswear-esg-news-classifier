@@ -4,6 +4,28 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-21: The labeler and the contrastive harness support Claude Haiku 5.5
+
+**Haiku 5.5 can be evaluated against Haiku 4.5 without changing production (#212).** The default
+`LABELING_MODEL` stays Haiku 4.5 until the owner accepts the eval report.
+- `LABELING_MODELS` in `src/labeling/config.py` holds each labeling model's prices and request
+  surface, matched on the id prefix; `llm_cost_usd` takes the model, and the labeler's stats, the
+  run record (`complete_labeling_run(model=...)`, defaulting to `LABELING_MODEL`), the CLI's cost
+  lines and the eval price through it. A labeler for a model with no entry is refused before any
+  call. Haiku 5.5's second rate card (prompts over 100K tokens) is not modeled; a labeling prompt is
+  far below it.
+- `ArticleLabeler` reads reply text by block type (a reply can start with a `thinking` block), sends
+  `temperature` only to a model that takes it, sends `output_config.effort` (`LABELING_EFFORT`,
+  default `medium`; through `extra_body`, since the pinned SDK has no named argument) only to a
+  model that takes it, defaults `max_tokens` to the model's (8000 for Haiku 5.5, since thinking
+  counts toward it), records `stop_reason`, and records a refusal as a failure with error type
+  `refusal` and a reply that stopped at `max_tokens` without parsing as `max_tokens`.
+- `scripts/compare_prompts.py` takes `--baseline-model` / `--candidate-model` (and `--effort`), and
+  `--candidate` defaults to the baseline's version. The setup guard refuses sides that are equal or
+  that differ in both prompt and model, a model with no spec, and a labeler running another model.
+  Truncation is counted from `stop_reason`, refusals apart from parse failures, and each side's
+  cost at its own model's rates.
+
 ### 2026-10-20: Contrastive evaluation of labeling prompt versions
 
 **A labeling prompt is promoted only after a contrastive evaluation judged against criteria fixed

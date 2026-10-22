@@ -1,4 +1,5 @@
-"""Run two labeling prompt versions on the same articles and summarize the differences.
+"""Run two labeling prompt versions, or two models under one version, on the same articles and
+summarize the differences.
 
 This module makes no DB or API call of its own. `scripts/compare_prompts.py` reads the articles
 and builds the two labelers; this module calls them, records each reply, and computes the report's
@@ -22,9 +23,9 @@ from typing import Callable, Protocol
 
 from src.data_collection.models import SKIP_NO_ESG_CATEGORIES, UNJUDGED_SKIP_REASONS
 from src.labeling.disposition import FALSE_POSITIVE, LABELED, SKIPPED, dispose_reply
-from src.labeling.labeler import LabelingResult
+from src.labeling.labeler import REFUSAL_ERROR_TYPE, LabelingResult
 from src.labeling.models import normalize_brand
-from src.labeling.config import llm_cost_usd
+from src.labeling.config import labeling_model_spec, llm_cost_usd
 from src.migration_eval.compare import compare_article, decisions_from_response
 from src.migration_eval.models import BrandDecision
 
@@ -41,12 +42,12 @@ MOST_BRANDS = "most_brands"
 # Shortest quoted prompt text treated as an example an article could be the source of
 _MIN_EXAMPLE_CHARS = 15
 _EXAMPLE_MATCH_RATIO = 0.8
-# Characters per token assumed for a worst-case input estimate; real text runs nearer 4
-_CHARS_PER_TOKEN_UPPER_BOUND = 3
 
 
 class Labeler(Protocol):
     """What the evaluation needs from `ArticleLabeler`."""
+
+    model: str
 
     def label_article(
         self,
@@ -77,6 +78,14 @@ class Expectation:
 
     brand: str
     is_sportswear_brand: bool
+
+
+@dataclass(frozen=True)
+class SideSettings:
+    """The model and output cap one side of the comparison calls with."""
+
+    model: str
+    max_tokens: int
 
 
 @dataclass
@@ -110,6 +119,9 @@ class ReplyRecord:
     reason: str | None = None
     error: str | None = None
     parse_failure: bool = False
+    # The model declined the request (stop_reason "refusal"); not a parse failure
+    refusal: bool = False
+    stop_reason: str | None = None
     # normalized brand -> is_sportswear_brand, for brands the reply judged
     verdicts: dict[str, bool] = field(default_factory=dict)
     # normalized brand -> the reply's reasoning (and not_sportswear_reason) for it
@@ -145,13 +157,17 @@ def record_reply(sent_brands: list[str], result: LabelingResult) -> ReplyRecord:
     """Record one labeling result through `dispose_reply`.
 
     A failed result with output tokens is a parse failure: the API answered and the reply could
-    not be parsed. A failed result without them is an API or input error.
+    not be parsed, unless the model declined, which is a refusal. A failed result without output
+    tokens is an API or input error.
     """
     if not result.success or result.response is None:
+        refusal = result.error_type == REFUSAL_ERROR_TYPE
         return ReplyRecord(
             outcome=FAILED,
             error=result.error,
-            parse_failure=result.output_tokens > 0,
+            parse_failure=result.output_tokens > 0 and not refusal,
+            refusal=refusal,
+            stop_reason=result.stop_reason,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
         )
@@ -184,6 +200,7 @@ def record_reply(sent_brands: list[str], result: LabelingResult) -> ReplyRecord:
         conflicting=tuple(disposition.conflicting),
         duplicates=sum(n - 1 for n in counts.values()),
         decisions=decisions_from_response(result.response),
+        stop_reason=result.stop_reason,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
     )
@@ -207,20 +224,25 @@ def matching_prompt_example(title: str, examples: list[str]) -> str | None:
     return None
 
 
-def worst_case_call_cost(article: EvalArticle, prompt_chars: int, max_tokens: int) -> float:
-    """An upper bound on one call's cost: a generous input estimate and a full output."""
-    input_tokens = math.ceil((prompt_chars + len(article.content)) / _CHARS_PER_TOKEN_UPPER_BOUND)
-    return llm_cost_usd(input_tokens, max_tokens)
+def worst_case_call_cost(article: EvalArticle, prompt_chars: int, side: SideSettings) -> float:
+    """An upper bound on one call's cost: a generous input estimate and a full output.
+
+    The input estimate divides by the model's fewest characters per token, since the same text
+    counts as more tokens on Haiku 5.5 than on Haiku 4.5.
+    """
+    chars_per_token = labeling_model_spec(side.model).min_chars_per_token
+    input_tokens = math.ceil((prompt_chars + len(article.content)) / chars_per_token)
+    return llm_cost_usd(input_tokens, side.max_tokens, side.model)
 
 
 def worst_case_cost(
-    articles: list[EvalArticle], prompt_chars: dict[str, int], max_tokens: int
+    articles: list[EvalArticle], calls: list[tuple[int, SideSettings]]
 ) -> float:
-    """Worst-case cost of every call the run would make, both versions."""
+    """Worst-case cost of every call the run would make: one call per (prompt chars, side)."""
     return sum(
-        article.repeats * worst_case_call_cost(article, chars, max_tokens)
+        article.repeats * worst_case_call_cost(article, chars, side)
         for article in articles
-        for chars in prompt_chars.values()
+        for chars, side in calls
     )
 
 
@@ -261,7 +283,7 @@ def run_articles(
             for labeler, replies in ((baseline, run.baseline), (candidate, run.candidate)):
                 reply = _label(labeler, article)
                 replies.append(reply)
-                spent += llm_cost_usd(reply.input_tokens, reply.output_tokens)
+                spent += llm_cost_usd(reply.input_tokens, reply.output_tokens, labeler.model)
             if on_pair:
                 on_pair(run)
         runs.append(run)
@@ -281,9 +303,12 @@ def _percentile(values: list[int], q: float) -> int:
     return ordered[index]
 
 
-def _token_stats(replies: list[ReplyRecord], max_tokens: int) -> dict:
+def _token_stats(replies: list[ReplyRecord], side: SideSettings) -> dict:
+    """Token figures for one side. A reply is truncated when the API stopped it at max_tokens;
+    output tokens include thinking, so a count at the cap is not the test."""
     outputs = [r.output_tokens for r in replies if r.output_tokens]
-    near_floor = math.ceil(0.95 * max_tokens)
+    near_floor = math.ceil(0.95 * side.max_tokens)
+    truncated = [r for r in replies if r.stop_reason == "max_tokens"]
     return {
         "calls": len(replies),
         "input_tokens": sum(r.input_tokens for r in replies),
@@ -291,10 +316,12 @@ def _token_stats(replies: list[ReplyRecord], max_tokens: int) -> dict:
         "output_mean": (sum(outputs) / len(outputs)) if outputs else None,
         "output_p95": _percentile(outputs, 0.95) if outputs else None,
         "output_max": max(outputs) if outputs else None,
-        "truncated": sum(1 for r in replies if r.output_tokens >= max_tokens),
-        "near_limit": sum(1 for r in replies if near_floor <= r.output_tokens < max_tokens),
+        "truncated": len(truncated),
+        "near_limit": sum(
+            1 for r in replies if r.output_tokens >= near_floor and r.stop_reason != "max_tokens"
+        ),
         "cost_usd": llm_cost_usd(
-            sum(r.input_tokens for r in replies), sum(r.output_tokens for r in replies)
+            sum(r.input_tokens for r in replies), sum(r.output_tokens for r in replies), side.model
         ),
     }
 
@@ -337,8 +364,9 @@ def _newly_labeled(runs: list[ArticleRun]) -> dict:
     }
 
 
-def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
+def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: SideSettings) -> dict:
     """The report's figures. Transitions use each article's first repeat."""
+    sides = {"baseline": baseline, "candidate": candidate}
     paired = [r for r in runs if r.baseline and r.candidate]
 
     transitions = Counter(f"{r.baseline[0].outcome} -> {r.candidate[0].outcome}" for r in paired)
@@ -398,6 +426,7 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
         return {
             "outcomes": {cls: sum(1 for x in replies if x.outcome == cls) for cls in CLASSES},
             "parse_failures": sum(1 for x in replies if x.parse_failure),
+            "refusals": sum(1 for x in replies if x.refusal),
             "unjudged_rate": _rate(
                 sum(1 for x in answered if x.outcome == SKIPPED_UNJUDGED), len(answered)
             ),
@@ -407,8 +436,8 @@ def summarize(runs: list[ArticleRun], *, max_tokens: int) -> dict:
             "replies_with_duplicates": sum(1 for x in answered if x.duplicates),
             "duplicate_entries": sum(x.duplicates for x in answered),
             "replies_with_unsent_brands": sum(1 for x in answered if x.unsent),
-            "tokens": _token_stats(replies, max_tokens),
-            "tokens_most_brands": _token_stats(most_brands, max_tokens),
+            "tokens": _token_stats(replies, sides[side]),
+            "tokens_most_brands": _token_stats(most_brands, sides[side]),
         }
 
     stability = []

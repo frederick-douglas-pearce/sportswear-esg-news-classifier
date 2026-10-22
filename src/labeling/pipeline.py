@@ -174,6 +174,12 @@ class LabelingPipeline:
             self._labeler_initialized = True
         return self.labeler
 
+    def _labeling_model(self) -> str:
+        """The model the run's LLM tokens were spent on, without building a labeler."""
+        if self._labeler_initialized:
+            return self.labeler.model
+        return labeling_settings.labeling_model
+
     def _ensure_fp_client(self) -> ClassifierClient | None:
         """Ensure FP classifier client is initialized if enabled.
 
@@ -790,6 +796,7 @@ class LabelingPipeline:
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
                             incomplete_replies=stats.incomplete_replies,
+                            model=self._labeling_model(),
                         )
 
             logger.info(
@@ -823,6 +830,7 @@ class LabelingPipeline:
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
                             incomplete_replies=stats.incomplete_replies,
+                            model=self._labeling_model(),
                         )
             raise
 
