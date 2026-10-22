@@ -176,13 +176,13 @@
     {
       "article_id": "442282ca-90ae-4811-a7f5-1026bc8fcf75",
       "strata": [
-        "product_false"
+        "product_true"
       ],
       "repeats": 1,
-      "note": "sale listing: Skechers slippers on sale (not the prompt example's source)",
+      "note": "sale listing that describes the product (footbed, upper, lining, sole, buyer reviews): Skechers slippers on sale; expected flipped to true by the owner on 2026-10-22 (#215): it describes the product",
       "expected": {
         "brand": "Skechers",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true
       }
     },
     {
@@ -200,13 +200,13 @@
     {
       "article_id": "94a563b7-2c67-4c74-9884-66f7a4f35ee8",
       "strata": [
-        "product_false"
+        "product_true"
       ],
       "repeats": 1,
-      "note": "retail promotion: Converse hearts at DSW (a v1.10.0 example, removed in v1.11.0)",
+      "note": "retail promotion that describes the product (upper, embroidery, insole, sole): Converse hearts at DSW (a v1.10.0 example, removed in v1.11.0); expected flipped to true by the owner on 2026-10-22 (#215): it describes the product",
       "expected": {
         "brand": "Converse",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true
       }
     },
     {
@@ -301,15 +301,14 @@
     {
       "article_id": "bcc52f23-6048-40e3-ab75-ed701468a5a2",
       "strata": [
-        "prompt_example_source"
+        "product_true"
       ],
       "repeats": 1,
-      "note": "prompt example source: Skechers slippers reduced to 19",
+      "note": "sale listing that describes the product: Skechers slippers reduced to 19 (a v1.11.0 example until 2026-10-22, dropped); expected flipped to true by the owner on 2026-10-22 (#215): it describes the product",
       "expected": {
         "brand": "Skechers",
-        "is_sportswear_brand": false
-      },
-      "prompt_example": "Skechers slippers 'perfect for cold months' reduced to £19"
+        "is_sportswear_brand": true
+      }
     },
     {
       "article_id": "6ec5fd75-5e7a-4e06-b53f-58b4326cddba",
@@ -317,10 +316,10 @@
         "prompt_example_source"
       ],
       "repeats": 1,
-      "note": "prompt example source: Brooks Adrenaline GTS 24 $20 off",
+      "note": "prompt example source: Brooks Adrenaline GTS 24 $20 off, the rule's true sale-listing example (moved from false on 2026-10-22); expected flipped to true by the owner on 2026-10-22 (#215): it describes the product",
       "expected": {
         "brand": "Brooks Running",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true
       },
       "prompt_example": "Brooks Running shoes: Adrenaline GTS 24 now $20 off"
     },

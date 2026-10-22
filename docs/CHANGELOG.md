@@ -4,6 +4,26 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-22: Candidate prompt v1.11.0 revised after its first contrastive eval
+
+**v1.11.0 failed its first eval (#215) and its text was revised in place (D036 §3: no
+`labeling_runs` or `brand_labels` row recorded v1.11.0, checked 2026-10-22).** Production is
+unchanged (v1.10.0); the revised text needs a new eval before it can be promoted.
+- Product-article rule: a sale listing that also describes the product (what it is made of, how it
+  is built, what it does, or how buyers say it holds up) is `is_sportswear_brand: true`, whatever the
+  sale framing. The articles behind the two sale-listing `false` examples both describe the product:
+  the Brooks Adrenaline GTS 24 example moved to the `true` side, the Skechers slippers example was
+  dropped, and an invented name-price-blurb listing is the `false` example. `docs/LABELING.md`
+  states the same rule.
+- Categories: Important Guidelines item 7 and a user-prompt reminder say that judging every brand is
+  not a reason to find a category for it (no Digital Transformation for marketing, app features or
+  facilities, no Environmental for a product's materials). The eval found new labels whose reasoning
+  said the category did not apply.
+- Case file (`prompts/labeling/eval_cases/product_and_stability.json`): the owner ruled four expected
+  verdicts `true` (Skechers slippers on sale, Converse hearts at DSW, and the Skechers and Brooks
+  example sources), the check #213 left owed.
+- The v1.11.0 hash pins in `tests/test_labeling_prompts.py` and the doc-rule hash are updated.
+
 ### 2026-10-20: Contrastive evaluation of labeling prompt versions
 
 **A labeling prompt is promoted only after a contrastive evaluation judged against criteria fixed

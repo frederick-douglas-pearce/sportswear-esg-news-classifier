@@ -72,6 +72,7 @@ Important reminders:
 - If NOT a sportswear brand: set `is_sportswear_brand: false`, explain in `not_sportswear_reason`, leave `categories` empty
 - If IS a sportswear brand: set `is_sportswear_brand: true`, `not_sportswear_reason: null`, and fill in categories if any ESG category applies
 - Only set `applies: true` if the article contains clear, relevant ESG information for that category
+- Judging a brand is not a reason to find a category for it: a sportswear brand with no ESG content gets `"categories": {{}}`, and a category your reasoning says does not apply gets `applies: false`
 - Sentiment must be -1, 0, or 1 when applies is true; null when applies is false
 - Evidence quotes MUST be exact text from the article
 - **CRITICAL: Every brand in "Brands to Analyze" must appear in `brand_analyses` exactly once, with `is_sportswear_brand` set.** Use each brand name exactly as it is written in that list. A brand with no applicable ESG category is still included, with `"categories": {{}}` and `is_sportswear_brand` set by the brand verification rules (a brand mentioned only as a competitor, reference point, or context, e.g. "Nike's biggest Chinese challenger", is `false`). Never leave a brand out of the reply.
