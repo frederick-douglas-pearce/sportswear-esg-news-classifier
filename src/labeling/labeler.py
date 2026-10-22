@@ -17,6 +17,8 @@ from anthropic import (
     RateLimitError,
 )
 
+from src.data_collection.models import FAILED_MAX_TOKENS_PREFIX, FAILED_REFUSAL_PREFIX
+
 from .config import (
     LABELING_SYSTEM_PROMPT,
     LABELING_USER_PROMPT_TEMPLATE,
@@ -339,7 +341,7 @@ class ArticleLabeler:
                 logger.warning(f"Model declined the request (category: {reply.refusal_category})")
                 return LabelingResult(
                     success=False,
-                    error=f"Model declined the request (refusal, category: {reply.refusal_category})",
+                    error=f"{FAILED_REFUSAL_PREFIX} (refusal, category: {reply.refusal_category})",
                     error_type=REFUSAL_ERROR_TYPE,
                     input_tokens=reply.input_tokens,
                     output_tokens=reply.output_tokens,
@@ -354,6 +356,12 @@ class ArticleLabeler:
             parsed = self._parse_response(reply.text)
 
             if parsed:
+                if reply.stop_reason == "max_tokens":
+                    # Parse repairs can close a cut-off reply; what it left out is lost
+                    logger.warning(
+                        f"Reply stopped at max_tokens ({self.max_tokens}) but parsed; "
+                        "it may be missing brands or evidence"
+                    )
                 return LabelingResult(
                     success=True,
                     response=parsed,
@@ -370,7 +378,7 @@ class ArticleLabeler:
                 return LabelingResult(
                     success=False,
                     error=(
-                        f"Failed to parse LLM response: stopped at max_tokens ({self.max_tokens})"
+                        f"{FAILED_MAX_TOKENS_PREFIX} ({self.max_tokens}); failed to parse LLM response"
                         if truncated
                         else "Failed to parse LLM response"
                     ),

@@ -1138,6 +1138,24 @@ class TestModelRequests:
         assert result.error_type == "max_tokens" and result.stop_reason == "max_tokens"
         assert "max_tokens (8000)" in result.error
 
+    def test_failures_are_stored_with_a_selectable_prefix(self):
+        """Neither failure is retried, so stored rows are found by these prefixes (#212)."""
+        from src.data_collection.models import FAILED_MAX_TOKENS_PREFIX, FAILED_REFUSAL_PREFIX
+
+        refused, _ = self._labeler("claude-haiku-5-5", _api_response([], stop_reason="refusal"))
+        assert self._label(refused).error.startswith(FAILED_REFUSAL_PREFIX)
+        cut, _ = self._labeler("claude-haiku-5-5", _api_response([("text", '{"brand_')], stop_reason="max_tokens"))
+        assert self._label(cut).error.startswith(FAILED_MAX_TOKENS_PREFIX)
+
+    def test_a_truncated_reply_that_parses_is_kept_with_a_warning(self, caplog):
+        labeler, _ = self._labeler(
+            "claude-haiku-5-5", _api_response([("text", _REPLY_JSON)], stop_reason="max_tokens")
+        )
+        with caplog.at_level("WARNING"):
+            result = self._label(labeler)
+        assert result.success and result.stop_reason == "max_tokens"
+        assert "stopped at max_tokens (8000) but parsed" in caplog.text
+
     def test_unknown_model_is_refused_before_any_call(self):
         with patch("src.labeling.labeler.Anthropic"):
             with pytest.raises(ValueError, match="No pricing or request spec"):
@@ -1172,6 +1190,16 @@ class TestLabelingModelSpec:
         from src.labeling.config import labeling_model_spec
 
         assert labeling_model_spec(DEFAULT_CANDIDATE_MODEL).accepts_sampling
+
+    @pytest.mark.parametrize(
+        "model", ["claude-haiku-5-5-preview", "claude-haiku-5-5-2026", "claude-haiku-4-5x", "claude-haiku"]
+    )
+    def test_an_id_that_only_starts_with_a_key_is_refused(self, model):
+        """Only a key, or a key and a -YYYYMMDD snapshot date, is priced at the key's rates."""
+        from src.labeling.config import labeling_model_spec
+
+        with pytest.raises(ValueError, match="No pricing"):
+            labeling_model_spec(model)
 
     def test_haiku_5_5_rates(self):
         from src.labeling.config import llm_cost_usd

@@ -884,8 +884,9 @@ class TestStoredLabelingReasons:
         database = MagicMock()
         database.complete_labeling_run.side_effect = [RuntimeError("db down"), None]
         pipeline = LabelingPipeline(database=database)
+        ensure_labeler = patch.object(pipeline, "_ensure_labeler")
         with patch("src.labeling.pipeline.db"), \
-             patch.object(pipeline, "_ensure_labeler"), \
+             ensure_labeler as built, \
              patch.object(pipeline, "_deduplicate_by_title", return_value=(articles, [])), \
              patch.object(pipeline, "_compute_novelty_batch", return_value={}), \
              patch.object(pipeline, "_run_fp_prefilter_batch", return_value={}), \
@@ -895,10 +896,13 @@ class TestStoredLabelingReasons:
         calls = database.complete_labeling_run.call_args_list
         assert [c.kwargs["status"] for c in calls] == ["success", "failed"]
         assert [c.kwargs["incomplete_replies"] for c in calls] == [2, 2]
-        # No labeler was built, so the run is priced at the model one would have run
-        from src.labeling.config import labeling_settings
-
-        assert [c.kwargs["model"] for c in calls] == [labeling_settings.labeling_model] * 2
+        # The run is priced at the model its labeler called
+        labeler_model = built.return_value.model
+        assert [c.kwargs["model"] for c in calls] == [labeler_model] * 2
+        # labeling_runs has no model column, so the run's config records it
+        config = database.create_labeling_run.call_args.kwargs["config"]
+        assert config["model"] == labeler_model
+        assert config["effort"] == built.return_value.effort
 
     def test_complete_labeling_run_stores_incomplete_replies(self):
         from types import SimpleNamespace
@@ -908,7 +912,8 @@ class TestStoredLabelingReasons:
         for value in (3, None):
             run = SimpleNamespace()
             LabelingDatabase(MagicMock()).complete_labeling_run(
-                MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, incomplete_replies=value
+                MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, incomplete_replies=value,
+                model="claude-haiku-4-5-20251001",
             )
             assert run.incomplete_replies == value
         # priced through the one table in src/labeling/config.py: 10 input, 5 output tokens

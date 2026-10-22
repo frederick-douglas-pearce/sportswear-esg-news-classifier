@@ -82,10 +82,12 @@ class Expectation:
 
 @dataclass(frozen=True)
 class SideSettings:
-    """The model and output cap one side of the comparison calls with."""
+    """The model, output cap and effort one side of the comparison calls with."""
 
     model: str
     max_tokens: int
+    # output_config.effort, or None for a model that does not take it
+    effort: str | None = None
 
 
 @dataclass

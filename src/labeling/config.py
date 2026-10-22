@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -38,7 +39,7 @@ class LabelingModelSpec(BaseModel):
     min_chars_per_token: float
 
 
-# LLM prices per million tokens and request surface, by model id prefix (a dated id such as
+# LLM prices per million tokens and request surface, by model id (a dated snapshot id such as
 # claude-haiku-4-5-20251001 matches claude-haiku-4-5).
 #
 # One table, because the report mixes sources: spend comes from
@@ -82,9 +83,20 @@ LABELING_MODELS: dict[str, LabelingModelSpec] = {
 }
 
 
+_DATED_SUFFIX = re.compile(r"-\d{8}")
+
+
 def labeling_model_spec(model: str) -> LabelingModelSpec:
-    """The spec for a model id, matched on the longest prefix; refuses an unknown model."""
-    matches = [prefix for prefix in LABELING_MODELS if model.startswith(prefix)]
+    """The spec for a model id: a table key, or a key followed by a -YYYYMMDD snapshot date.
+
+    Anything else is refused, so a variant id that only starts with a key (another model, or a
+    tier priced differently) is never priced at that key's rates.
+    """
+    matches = [
+        key
+        for key in LABELING_MODELS
+        if model == key or (model.startswith(key) and _DATED_SUFFIX.fullmatch(model[len(key):]))
+    ]
     if not matches:
         raise ValueError(
             f"No pricing or request spec for labeling model {model!r}; "

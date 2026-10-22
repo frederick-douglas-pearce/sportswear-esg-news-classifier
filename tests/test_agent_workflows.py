@@ -856,7 +856,8 @@ Continued to LLM:       12
                 fp_classifier_skipped=8,
                 fp_classifier_skipped_not_low=3,
                 fp_classifier_continued=12,
-            )
+            ),
+            "claude-haiku-4-5-20251001",
         )
         stats = _parse_labeling_output(capsys.readouterr().out)
 
@@ -878,7 +879,8 @@ Continued to LLM:       12
                 fp_classifier_skipped=skipped,
                 fp_classifier_skipped_not_low=0,
                 fp_classifier_continued=5 - skipped,
-            )
+            ),
+            "claude-haiku-4-5-20251001",
         )
         out = capsys.readouterr().out
         stats = _parse_labeling_output(out)
@@ -891,7 +893,7 @@ Continued to LLM:       12
         from scripts.label_articles import print_fp_classifier_stats
         from src.labeling.pipeline import LabelingStats
 
-        print_fp_classifier_stats(LabelingStats())
+        print_fp_classifier_stats(LabelingStats(), "claude-haiku-4-5-20251001")
 
         assert capsys.readouterr().out == ""
 

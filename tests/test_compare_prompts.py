@@ -459,25 +459,56 @@ class TestSummarize:
         assert "1 of 1 baseline non-labeled replies labeled by the candidate" in md
 
 
+def _contrast(b_version, c_version, b_side, c_side):
+    compare_prompts.check_contrast(
+        {"baseline": b_version, "candidate": c_version}, {"baseline": b_side, "candidate": c_side}
+    )
+
+
+H55_LOW = SideSettings(HAIKU_55, 8000, "low")
+H55_MEDIUM = SideSettings(HAIKU_55, 8000, "medium")
+
+
 class TestScriptGuards:
     def test_equal_sides_are_refused(self):
         with pytest.raises(compare_prompts.EvalSetupError, match="same version"):
-            compare_prompts.check_contrast("v1.10.0", "v1.10.0", HAIKU_45, HAIKU_45)
+            _contrast("v1.10.0", "v1.10.0", SIDE, SIDE)
 
-    def test_sides_differing_in_prompt_and_model_are_refused(self):
+    @pytest.mark.parametrize("c_side", [H55_MEDIUM, SideSettings(HAIKU_55, 8000, "low")])
+    def test_sides_differing_in_prompt_and_call_are_refused(self, c_side):
+        b_side = SIDE if c_side is H55_MEDIUM else H55_MEDIUM
         with pytest.raises(compare_prompts.EvalSetupError, match="vary one at a time"):
-            compare_prompts.check_contrast("v1.10.0", "v1.11.0", HAIKU_45, HAIKU_55)
+            _contrast("v1.10.0", "v1.11.0", b_side, c_side)
+
+    @pytest.mark.parametrize(
+        "versions,sides",
+        [
+            (("v1.10.0", "v1.11.0"), (SIDE, SIDE)),
+            (("v1.11.0", "v1.11.0"), (SIDE, H55_MEDIUM)),
+            (("v1.11.0", "v1.11.0"), (H55_LOW, H55_MEDIUM)),
+        ],
+    )
+    def test_sides_differing_in_one_are_accepted(self, versions, sides):
+        _contrast(*versions, *sides)
 
     def test_a_model_without_a_spec_is_refused(self):
         with pytest.raises(compare_prompts.EvalSetupError, match="No pricing"):
-            compare_prompts.check_contrast("v1.11.0", "v1.11.0", HAIKU_45, "claude-unknown-1")
+            compare_prompts.side_settings("claude-unknown-1", None, "medium")
 
-    @pytest.mark.parametrize(
-        "versions,models",
-        [(("v1.10.0", "v1.11.0"), (HAIKU_45, HAIKU_45)), (("v1.11.0", "v1.11.0"), (HAIKU_45, HAIKU_55))],
-    )
-    def test_sides_differing_in_one_are_accepted(self, versions, models):
-        compare_prompts.check_contrast(*versions, *models)
+    def test_an_unknown_effort_is_refused_for_a_model_that_takes_effort(self):
+        with pytest.raises(compare_prompts.EvalSetupError, match="Effort must be one of"):
+            compare_prompts.side_settings(HAIKU_55, None, "extreme")
+
+    def test_side_settings_record_effort_only_where_the_model_takes_it(self):
+        assert compare_prompts.side_settings(HAIKU_45, None, "low") == SideSettings(HAIKU_45, 2000, None)
+        assert compare_prompts.side_settings(HAIKU_55, 4000, "low") == SideSettings(HAIKU_55, 4000, "low")
+
+    def test_one_model_at_two_efforts_without_effort_support_is_the_same_call(self):
+        """Haiku 4.5 is sent no effort, so asking for two efforts compares a setup with itself."""
+        b = compare_prompts.side_settings(HAIKU_45, None, "low")
+        c = compare_prompts.side_settings(HAIKU_45, None, "high")
+        with pytest.raises(compare_prompts.EvalSetupError, match="same version"):
+            _contrast("v1.11.0", "v1.11.0", b, c)
 
     def test_unloadable_version_is_refused(self):
         manager = MagicMock()
@@ -494,20 +525,25 @@ class TestScriptGuards:
     def test_labeler_that_fell_back_to_the_hardcoded_prompt_is_refused(self):
         labeler = MagicMock(loaded_prompt=None, prompt_version="legacy", model=HAIKU_45)
         with pytest.raises(compare_prompts.EvalSetupError, match="legacy"):
-            compare_prompts.check_labeler(labeler, "v1.11.0", HAIKU_45)
+            compare_prompts.check_labeler(labeler, "v1.11.0", SIDE)
 
     def test_labeler_with_another_version_is_refused(self):
         labeler = MagicMock(loaded_prompt=object(), prompt_version="v1.10.0", model=HAIKU_45)
         with pytest.raises(compare_prompts.EvalSetupError):
-            compare_prompts.check_labeler(labeler, "v1.11.0", HAIKU_45)
+            compare_prompts.check_labeler(labeler, "v1.11.0", SIDE)
         compare_prompts.check_labeler(
-            MagicMock(loaded_prompt=object(), prompt_version="v1.11.0", model=HAIKU_45), "v1.11.0", HAIKU_45
+            MagicMock(loaded_prompt=object(), prompt_version="v1.11.0", model=HAIKU_45), "v1.11.0", SIDE
         )
 
     def test_labeler_with_another_model_is_refused(self):
         labeler = MagicMock(loaded_prompt=object(), prompt_version="v1.11.0", model=HAIKU_45)
         with pytest.raises(compare_prompts.EvalSetupError, match="runs"):
-            compare_prompts.check_labeler(labeler, "v1.11.0", HAIKU_55)
+            compare_prompts.check_labeler(labeler, "v1.11.0", H55_MEDIUM)
+
+    def test_labeler_with_another_effort_is_refused(self):
+        labeler = MagicMock(loaded_prompt=object(), prompt_version="v1.11.0", model=HAIKU_55, effort="medium")
+        with pytest.raises(compare_prompts.EvalSetupError, match="effort"):
+            compare_prompts.check_labeler(labeler, "v1.11.0", H55_LOW)
 
 
 class TestSelection:
@@ -821,7 +857,7 @@ class TestMain:
         def make(model, max_tokens, prompt_version, effort):
             built.append((model, max_tokens, prompt_version, effort))
             fake = FakeLabeler([_ok([_esg("Nike")])], model=model)
-            fake.loaded_prompt, fake.prompt_version = object(), prompt_version
+            fake.loaded_prompt, fake.prompt_version, fake.effort = object(), prompt_version, effort
             return fake
 
         a, b, c = self._patches([_article(strata=(SAMPLE,))])
@@ -832,10 +868,30 @@ class TestMain:
             )
         assert code == 0
         # Each side gets its model's own cap when --max-tokens is not given
-        assert built == [(HAIKU_45, 2000, "v1.11.0", "low"), (HAIKU_55, 8000, "v1.11.0", "low")]
+        # Effort goes only to the side whose model takes it
+        assert built == [(HAIKU_45, 2000, "v1.11.0", None), (HAIKU_55, 8000, "v1.11.0", "low")]
         import json
 
         config = json.loads((tmp_path / "models.json").read_text())["config"]
         assert config["effort"] == {"baseline": None, "candidate": "low"}
         md = (tmp_path / "models.md").read_text()
-        assert f"v1.11.0 on {HAIKU_45} (baseline) vs v1.11.0 on {HAIKU_55} (candidate)" in md
+        assert f"v1.11.0 on {HAIKU_45} (baseline) vs v1.11.0 on {HAIKU_55} (effort low) (candidate)" in md
+        # The sample drew no article stored under the baseline, so the floor says it is empty
+        assert "Noise floor: empty" in md
+
+    def test_effort_contrast_holds_the_prompt_and_model(self, tmp_path):
+        built = []
+
+        def make(model, max_tokens, prompt_version, effort):
+            built.append(effort)
+            fake = FakeLabeler([_ok([_esg("Nike")])], model=model)
+            fake.loaded_prompt, fake.prompt_version, fake.effort = object(), prompt_version, effort
+            return fake
+
+        a, b, c = self._patches([_article(strata=(SAMPLE,))])
+        with a, b, c, patch.object(compare_prompts, "ArticleLabeler", side_effect=make):
+            code = compare_prompts.main(
+                ["--baseline", "v1.11.0", "--model", HAIKU_55, "--baseline-effort", "medium",
+                 "--candidate-effort", "low", "--max-cost", "5", "--output", str(tmp_path / "effort")]
+            )
+        assert code == 0 and built == ["medium", "low"]

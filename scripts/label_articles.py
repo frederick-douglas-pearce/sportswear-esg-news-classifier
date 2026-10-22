@@ -212,7 +212,11 @@ def exit_code_for(stats) -> int:
     return EXIT_FAILURE
 
 
-def print_fp_classifier_stats(stats) -> None:
+# Tokens assumed per skipped article when the run made no LLM call to measure from
+FALLBACK_TOKENS_PER_CALL = (1500, 500)
+
+
+def print_fp_classifier_stats(stats, model: str) -> None:
     """Print the FP pre-filter block of the run summary.
 
     The daily_labeling workflow parses these lines by substring, so a new line
@@ -220,6 +224,7 @@ def print_fp_classifier_stats(stats) -> None:
 
     Args:
         stats: LabelingStats from the pipeline
+        model: The model the run's labeler called, which prices the savings
     """
     if stats.fp_classifier_calls <= 0:
         return
@@ -232,10 +237,18 @@ def print_fp_classifier_stats(stats) -> None:
         print(f"Classifier errors:      {stats.fp_classifier_errors}")
     # Calculate cost savings estimate
     if stats.fp_classifier_skipped > 0:
-        # Estimate ~1500 input tokens and ~500 output tokens per skipped article
-        saved_input = stats.fp_classifier_skipped * 1500
-        saved_output = stats.fp_classifier_skipped * 500
-        saved_cost = llm_cost_usd(saved_input, saved_output, labeling_settings.labeling_model)
+        # A skipped article is assumed to cost what this run's calls cost on average, thinking
+        # included, so the estimate follows the model (#212)
+        if stats.llm_calls > 0:
+            per_input = stats.input_tokens / stats.llm_calls
+            per_output = stats.output_tokens / stats.llm_calls
+        else:
+            per_input, per_output = FALLBACK_TOKENS_PER_CALL
+        saved_cost = llm_cost_usd(
+            round(stats.fp_classifier_skipped * per_input),
+            round(stats.fp_classifier_skipped * per_output),
+            model,
+        )
         print(f"Est. LLM cost saved:    ${saved_cost:.4f}")
 
 
@@ -321,13 +334,11 @@ def main() -> int:
         print(f"Output tokens:          {stats.output_tokens}")
 
         # FP Classifier stats
-        print_fp_classifier_stats(stats)
+        print_fp_classifier_stats(stats, pipeline.labeler.model)
 
         # Cost estimate
         if stats.input_tokens > 0 or stats.output_tokens > 0:
-            llm_cost = llm_cost_usd(
-                stats.input_tokens, stats.output_tokens, labeling_settings.labeling_model
-            )
+            llm_cost = llm_cost_usd(stats.input_tokens, stats.output_tokens, pipeline.labeler.model)
             embedding_cost = (stats.embeddings_generated * 500 / 1000) * EMBEDDING_COST_PER_1K_TOKENS
             total_cost = llm_cost + embedding_cost
             print(f"Estimated cost:         ${total_cost:.4f}")

@@ -174,12 +174,6 @@ class LabelingPipeline:
             self._labeler_initialized = True
         return self.labeler
 
-    def _labeling_model(self) -> str:
-        """The model the run's LLM tokens were spent on, without building a labeler."""
-        if self._labeler_initialized:
-            return self.labeler.model
-        return labeling_settings.labeling_model
-
     def _ensure_fp_client(self) -> ClassifierClient | None:
         """Ensure FP classifier client is initialized if enabled.
 
@@ -639,6 +633,10 @@ class LabelingPipeline:
                         "article_ids": [str(id) for id in article_ids]
                         if article_ids
                         else None,
+                        # labeling_runs has no model column; the run's cost is priced at this
+                        # model, and effort is what was sent to it, if it takes effort (#212)
+                        "model": labeler.model,
+                        "effort": labeler.effort if labeler.model_spec.accepts_effort else None,
                     },
                     prompt_version=labeler.prompt_version,
                     prompt_system_hash=labeler.prompt_system_hash,
@@ -796,7 +794,7 @@ class LabelingPipeline:
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
                             incomplete_replies=stats.incomplete_replies,
-                            model=self._labeling_model(),
+                            model=labeler.model,
                         )
 
             logger.info(
@@ -830,7 +828,7 @@ class LabelingPipeline:
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
                             incomplete_replies=stats.incomplete_replies,
-                            model=self._labeling_model(),
+                            model=labeler.model,
                         )
             raise
 

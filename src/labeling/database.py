@@ -20,7 +20,7 @@ from src.data_collection.models import (
 from .chunker import Chunk
 from .evidence_matcher import EvidenceMatch
 from .models import BrandAnalysis
-from .config import labeling_settings, llm_cost_usd
+from .config import llm_cost_usd
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +294,7 @@ class LabelingDatabase:
         articles_deduplicated: int = 0,
         articles_left_pending: int = 0,
         incomplete_replies: int | None = None,
-        model: str | None = None,
+        model: str,
     ) -> None:
         """Update a labeling run with final statistics.
 
@@ -304,8 +304,8 @@ class LabelingDatabase:
         `articles_skipped` excludes false positives — they get their own field
         so a report can show both without double-counting.
 
-        `model` prices the LLM tokens; it defaults to LABELING_MODEL, which is what
-        the pipeline's labeler runs unless it was given another.
+        `model` prices the LLM tokens: the model the run's labeler called. It is
+        required so a caller cannot price a run at a model it did not run (#212).
         """
         run.completed_at = datetime.now(timezone.utc)
         run.articles_processed = articles_processed
@@ -327,7 +327,7 @@ class LabelingDatabase:
 
         # Calculate estimated cost
         # LLM prices: src/labeling/config.py. OpenAI embeddings: $0.00002/1K tokens
-        llm_cost = llm_cost_usd(input_tokens, output_tokens, model or labeling_settings.labeling_model)
+        llm_cost = llm_cost_usd(input_tokens, output_tokens, model)
         # Rough estimate for embedding tokens (assume similar to chunk count)
         embedding_cost = (embeddings_generated * 500 / 1000) * 0.00002
         run.estimated_cost_usd = llm_cost + embedding_cost

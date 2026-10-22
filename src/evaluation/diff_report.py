@@ -12,8 +12,9 @@ def _num(value: float | int | None, fmt: str = "{:,.0f}") -> str:
 
 
 def _side(config: dict, side: str) -> str:
-    """One side's prompt version and model, as the report names it."""
-    return f"{config[side]} on {config[f'{side}_model']}"
+    """One side's prompt version, model and effort, as the report names it."""
+    effort = config["effort"][side]
+    return f"{config[side]} on {config[f'{side}_model']}" + (f" (effort {effort})" if effort else "")
 
 
 def _version_rows(summary: dict) -> list[str]:
@@ -47,6 +48,20 @@ def _version_rows(summary: dict) -> list[str]:
     lines = ["| Measure | Baseline | Candidate |", "|---|---|---|"]
     lines += [f"| {name} | {bv} | {cv} |" for name, bv, cv in rows]
     return lines
+
+
+def _noise_floor(floor: dict) -> str:
+    if not floor["articles"]:
+        return (
+            "Noise floor: empty. No random-sample article is stored as labeled under the baseline "
+            "prompt and model, so transition counts have no baseline self-disagreement to read "
+            "against."
+        )
+    return (
+        f"Noise floor: of {floor['articles']} random-sample articles stored as labeled under the "
+        f"baseline prompt and model whose fresh baseline call answered, it still labels "
+        f"{floor['still_labeled']} ({_pct(floor['rate'])})."
+    )
 
 
 def _newly_labeled(title: str, block: dict) -> list[str]:
@@ -83,8 +98,8 @@ def render_markdown(summary: dict, config: dict) -> str:
         "",
         *[
             f"- {side.capitalize()}: {_side(config, side)}, max_tokens "
-            f"{config[f'{side}_max_tokens']} (thinking included), effort "
-            f"{config['effort'][side] or 'not sent'}"
+            f"{config[f'{side}_max_tokens']} (thinking included)"
+            + ("" if config["effort"][side] else ", effort not sent")
             for side in ("baseline", "candidate")
         ],
         f"- Prompt hashes: baseline {config['baseline_hashes']}, candidate {config['candidate_hashes']}",
@@ -113,9 +128,7 @@ def render_markdown(summary: dict, config: dict) -> str:
         f"brands only one version labeled: {summary['brands_labeled_by_one_side']}. "
         f"Sentiment agreement where both apply: {_pct(summary['sentiment_agreement'])}.",
         "",
-        f"Noise floor: of {summary['noise_floor']['articles']} random-sample articles stored as "
-        f"labeled under the baseline prompt whose fresh baseline call answered, it still labels "
-        f"{summary['noise_floor']['still_labeled']} ({_pct(summary['noise_floor']['rate'])}).",
+        _noise_floor(summary["noise_floor"]),
         "",
         "## Product-article accuracy (cases with an expected side, prompt-example cases excluded)",
         "",

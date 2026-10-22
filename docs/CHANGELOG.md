@@ -9,9 +9,8 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 **Haiku 5.5 can be evaluated against Haiku 4.5 without changing production (#212).** The default
 `LABELING_MODEL` stays Haiku 4.5 until the owner accepts the eval report.
 - `LABELING_MODELS` in `src/labeling/config.py` holds each labeling model's prices and request
-  surface, matched on the id prefix; `llm_cost_usd` takes the model, and the labeler's stats, the
-  run record (`complete_labeling_run(model=...)`, defaulting to `LABELING_MODEL`), the CLI's cost
-  lines and the eval price through it. A labeler for a model with no entry is refused before any
+  surface (Haiku 4.5, Haiku 5.5, Sonnet 4.6); `llm_cost_usd` takes the model, and the labeler's
+  stats, the run record, the CLI's cost lines and the eval price through it. A labeler for a model with no entry is refused before any
   call. Haiku 5.5's second rate card (prompts over 100K tokens) is not modeled; a labeling prompt is
   far below it.
 - `ArticleLabeler` reads reply text by block type (a reply can start with a `thinking` block), sends
@@ -20,11 +19,22 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
   model that takes it, defaults `max_tokens` to the model's (8000 for Haiku 5.5, since thinking
   counts toward it), records `stop_reason`, and records a refusal as a failure with error type
   `refusal` and a reply that stopped at `max_tokens` without parsing as `max_tokens`.
-- `scripts/compare_prompts.py` takes `--baseline-model` / `--candidate-model` (and `--effort`), and
-  `--candidate` defaults to the baseline's version. The setup guard refuses sides that are equal or
-  that differ in both prompt and model, a model with no spec, and a labeler running another model.
-  Truncation is counted from `stop_reason`, refusals apart from parse failures, and each side's
-  cost at its own model's rates.
+- `scripts/compare_prompts.py` takes `--baseline-model` / `--candidate-model` and
+  `--effort` / `--baseline-effort` / `--candidate-effort`, and `--candidate` defaults to the
+  baseline's version. A side is a prompt version and a call (model and effort); the setup guard
+  refuses sides that are equal or that differ in both, a model with no spec, an unknown effort,
+  and a labeler running another model or effort. Truncation is counted from `stop_reason`,
+  refusals apart from parse failures, and each side's cost at its own model's rates. The noise
+  floor counts articles stored under the baseline's prompt and model, and the report says when it
+  is empty. D036 is amended: no refusals, or each one read and explained.
+- Refusals and unparsed `max_tokens` stops are stored as `failed` with fixed prefixes
+  (`FAILED_REFUSAL_PREFIX`, `FAILED_MAX_TOKENS_PREFIX` in `src/data_collection/models.py`) and are
+  not retried. A reply that parsed despite stopping at `max_tokens` is kept with a warning.
+- `complete_labeling_run` requires `model`, the pipeline passes its labeler's, and the run's config
+  JSON records `model` and `effort`. The CLI prices its cost lines at the labeler's model, and the
+  FP-savings estimate uses the run's mean tokens per call (thinking included) instead of a fixed
+  1500 / 500. Model ids match a table key exactly or with a `-YYYYMMDD` date, so an unlisted variant
+  is refused rather than priced at its family's rates.
 
 ### 2026-10-20: Contrastive evaluation of labeling prompt versions
 
