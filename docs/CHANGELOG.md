@@ -10,8 +10,8 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 `labeling_runs` or `brand_labels` row recorded v1.11.0, checked 2026-10-22).** Production is
 unchanged (v1.10.0); the revised text needs a new eval before it can be promoted.
 - Product-article rule: a sale listing that also describes the product (what it is made of, how it
-  is built, what it does, or how buyers say it holds up) is `is_sportswear_brand: true`, whatever the
-  sale framing. The articles behind the two sale-listing `false` examples both describe the product:
+  is built, how it performs, or how buyers say it holds up) is `is_sportswear_brand: true`, whatever
+  the sale framing; a line of specs (capacity, sizes, a feature list) is a retail detail. The articles behind the two sale-listing `false` examples both describe the product:
   the Brooks Adrenaline GTS 24 example moved to the `true` side, the Skechers slippers example was
   dropped, and an invented name-price-blurb listing is the `false` example. `docs/LABELING.md`
   states the same rule.
@@ -21,7 +21,10 @@ unchanged (v1.10.0); the revised text needs a new eval before it can be promoted
   said the category did not apply.
 - Case file (`prompts/labeling/eval_cases/product_and_stability.json`): the owner ruled four expected
   verdicts `true` (Skechers slippers on sale, Converse hearts at DSW, and the Skechers and Brooks
-  example sources), the check #213 left owed.
+  example sources), the check #213 left owed. Six cases are added, ruled by the owner: five `false`
+  (Puma, The North Face and adidas sale listings, a Nike deals post with a one-line blurb, a Nike
+  backpack deal with a line of specs) and one `true` (a new Nike trainer described in a price post),
+  so the scored `false` side has 8 cases instead of 3.
 - The v1.11.0 hash pins in `tests/test_labeling_prompts.py` and the doc-rule hash are updated.
 
 ### 2026-10-20: Contrastive evaluation of labeling prompt versions
