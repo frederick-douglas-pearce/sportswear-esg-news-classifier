@@ -299,6 +299,7 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 4. Different brands in the same article may have different categories and sentiments.
 5. If a brand is only briefly mentioned without substantive ESG-related content, do not assign categories for that brand.
 6. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0).
+7. Judging every brand is not a reason to find a category for each one. A sportswear brand with no ESG content gets empty `categories`. Marketing and sponsorship activations, a product's app or technology features, and a company's offices, labs or stores are not Digital Transformation, and a product's materials are not Environmental. If your reasoning says a category does not apply, set `applies: false` for it.
 
 ## CRITICAL: Understanding is_sportswear_brand
 
@@ -393,7 +394,8 @@ The `is_sportswear_brand` field indicates whether the article contains **substan
   - A release roundup ("A Ma Maniére Serves an Air Jordan 4 'Dark Mocha' in This Week's Best Footwear Drops") is `true` for each brand whose release it describes, and `false` for a brand it only names with a price or a link.
   - A buying guide that tested the products ("Best running shoes of 2025: we ran 200 miles in each") is `true` for each brand whose product it assesses; a gift guide that lists products with prices ("Holiday gift guide: Best fitness gear") is `false` for a brand it gives only a name, price and link.
   - A review ("Patagonia Nano Puff Hoody review", "I spent 6 months testing the Merrell Moab Speed 2s") is `true`, including one that also mentions a discount.
-  - A sale listing ("Skechers slippers 'perfect for cold months' reduced to £19", "Brooks Running shoes: Adrenaline GTS 24 now $20 off") or a sale section ("lululemon 'We Made Too Much' Section February 2026") is `false`.
+  - A sale listing that gives only the name, the price and a one-line blurb or a line of specs (capacity, sizes, a feature list) ("Under Armour Tech 2.0 tee now $15, 'a gym-bag staple'") or a sale section that lists products and prices ("lululemon 'We Made Too Much' Section February 2026") is `false`.
+  - A sale listing that also describes the product is `true`, whatever the sale framing: what it is made of, how it is built, how it performs, or how buyers say it holds up ("Brooks Running shoes: Adrenaline GTS 24 now $20 off", which describes its cushioning, support system and upper).
   - A collaboration launch that describes the product ("Madhappy x Converse Chuck 70 collab") is `true`.
   - A release announcement ("New Balance 550 releases in new colorway") is `true`, including one that gives only the product, the date and a price ("Reebok Angel Reese 1 releases November 14").
 
