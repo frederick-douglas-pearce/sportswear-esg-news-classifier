@@ -24,16 +24,20 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
   baseline's version. A side is a prompt version and a call (model and effort); the setup guard
   refuses sides that are equal or that differ in both, a model with no spec, an unknown effort,
   and a labeler running another model or effort. Truncation is counted from `stop_reason`,
-  refusals apart from parse failures, and each side's cost at its own model's rates. The noise
-  floor counts articles stored under the baseline's prompt and model, and the report says when it
-  is empty. D036 is amended: no refusals, or each one read and explained.
+  refusals apart from parse failures, and each side's cost at its own model's rates. Models are
+  compared by table key, so an alias and its dated snapshot are one model, not a model contrast.
+  The noise floor counts articles stored under the baseline's prompt and model (matched by table
+  key), and the report says when it is empty. D036 is amended: no refusals, or each one read and explained.
 - Refusals and unparsed `max_tokens` stops are stored as `failed` with fixed prefixes
   (`FAILED_REFUSAL_PREFIX`, `FAILED_MAX_TOKENS_PREFIX` in `src/data_collection/models.py`) and are
   not retried. A reply that parsed despite stopping at `max_tokens` is kept with a warning.
 - `complete_labeling_run` requires `model`, the pipeline passes its labeler's, and the run's config
   JSON records `model` and `effort`. The CLI prices its cost lines at the labeler's model, and the
-  FP-savings estimate uses the run's mean tokens per call (thinking included) instead of a fixed
-  1500 / 500. Model ids match a table key exactly or with a `-YYYYMMDD` date, so an unlisted variant
+  FP-savings estimate uses the run's mean tokens per answered call (thinking included; a call that
+  failed with no usage is left out) instead of a fixed 1500 / 500. On Haiku 4.5, with no change in
+  behavior, the daily `Est. LLM cost saved` figure steps up about 2.7x at merge: measured calls
+  average about 8,500 input and 460 output tokens, so a skipped article is worth about $0.011, not
+  the old $0.004. Model ids match a table key exactly or with a `-YYYYMMDD` date, so an unlisted variant
   is refused rather than priced at its family's rates.
 
 ### 2026-10-20: Contrastive evaluation of labeling prompt versions

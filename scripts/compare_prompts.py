@@ -72,6 +72,7 @@ from src.evaluation.diff_report import render_markdown  # noqa: E402
 from src.labeling.article_input import article_content, has_sufficient_content  # noqa: E402
 from src.labeling.config import (  # noqa: E402
     TARGET_SPORTSWEAR_BRANDS,
+    labeling_model_key,
     labeling_model_spec,
     labeling_settings,
 )
@@ -161,7 +162,8 @@ def check_contrast(versions: dict[str, str], sides: dict[str, SideSettings]) -> 
     """
     b, c = sides["baseline"], sides["candidate"]
     same_prompt = versions["baseline"] == versions["candidate"]
-    same_call = (b.model, b.effort) == (c.model, c.effort)
+    # An alias and its dated snapshot are one model, so they are compared by table key
+    same_call = (labeling_model_key(b.model), b.effort) == (labeling_model_key(c.model), c.effort)
     if same_prompt and same_call:
         raise EvalSetupError(
             f"Baseline and candidate are the same version ({versions['baseline']}), model "
@@ -343,6 +345,23 @@ def build_eval_article(
     )
 
 
+def labeled_by_model(rows, model: str) -> set[str]:
+    """Article ids among (article_id, model_version) rows whose stored model is `model`.
+
+    Models are compared by table key, the same rule that prices them, so a stored dated snapshot
+    matches its alias and a variant id (or a model the table no longer lists) matches nothing.
+    """
+    key = labeling_model_key(model)
+    matched = set()
+    for article_id, model_version in rows:
+        try:
+            if model_version and labeling_model_key(model_version) == key:
+                matched.add(str(article_id))
+        except ValueError:
+            continue
+    return matched
+
+
 def load_articles(
     session, specs: dict[str, Spec], baseline: str, baseline_model: str, examples: list[str]
 ) -> list[EvalArticle]:
@@ -351,21 +370,17 @@ def load_articles(
     An article counts toward the noise floor when its brand labels were written under the
     baseline's prompt version and model: a label from another model is not the baseline
     disagreeing with itself (#212). The stored model id may carry a snapshot date the baseline
-    model leaves out, so it is matched on the prefix.
+    model leaves out, so models are compared by table key (labeled_by_model).
     """
     ids = list(specs)
     rows = session.query(Article).filter(Article.id.in_(ids)).all()
     by_id = {str(a.id): a for a in rows}
-    under_baseline = {
-        str(article_id)
-        for (article_id,) in session.query(BrandLabel.article_id)
-        .filter(
-            BrandLabel.article_id.in_(ids),
-            BrandLabel.prompt_version == baseline,
-            BrandLabel.model_version.startswith(baseline_model, autoescape=True),
-        )
-        .distinct()
-    }
+    under_baseline = labeled_by_model(
+        session.query(BrandLabel.article_id, BrandLabel.model_version)
+        .filter(BrandLabel.article_id.in_(ids), BrandLabel.prompt_version == baseline)
+        .distinct(),
+        baseline_model,
+    )
     articles = []
     for article_id in sorted(ids):
         a = by_id.get(article_id)

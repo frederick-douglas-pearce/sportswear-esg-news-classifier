@@ -491,6 +491,11 @@ class TestScriptGuards:
     def test_sides_differing_in_one_are_accepted(self, versions, sides):
         _contrast(*versions, *sides)
 
+    def test_an_alias_and_its_dated_snapshot_are_one_model(self):
+        """Two names for one model would report its self-disagreement as a model difference."""
+        with pytest.raises(compare_prompts.EvalSetupError, match="same version"):
+            _contrast("v1.11.0", "v1.11.0", SIDE, SideSettings("claude-haiku-4-5", MAX_TOKENS))
+
     def test_a_model_without_a_spec_is_refused(self):
         with pytest.raises(compare_prompts.EvalSetupError, match="No pricing"):
             compare_prompts.side_settings("claude-unknown-1", None, "medium")
@@ -648,6 +653,53 @@ class TestSelection:
         assert auto.prompt_example == "Some title" and not auto.stored_under_baseline
         skipped = compare_prompts.build_eval_article(self._row(labeling_status="skipped"), named, True, [])
         assert not skipped.stored_under_baseline
+
+
+class TestNoiseFloorModel:
+    ROWS = [
+        ("a", "claude-haiku-4-5-20251001"),
+        ("b", "claude-haiku-4-5"),
+        ("c", HAIKU_55),
+        ("d", "claude-haiku-5-5-preview"),
+        ("e", "claude-3-5-sonnet-20240620"),
+        ("f", None),
+    ]
+
+    @pytest.mark.parametrize(
+        "model,expected",
+        [("claude-haiku-4-5", {"a", "b"}), (HAIKU_45, {"a", "b"}), (HAIKU_55, {"c"})],
+    )
+    def test_stored_models_are_matched_by_table_key(self, model, expected):
+        """A variant id, or a model the table no longer lists, is not the baseline model."""
+        assert compare_prompts.labeled_by_model(self.ROWS, model) == expected
+
+    def test_load_articles_puts_only_the_baseline_prompt_and_model_in_the_floor(self):
+        from src.data_collection.models import Article, BrandLabel
+
+        def row(article_id):
+            return MagicMock(id=article_id, title="Some title", full_content="x" * 200,
+                             description=None, brands_mentioned=["Nike"], published_at=None,
+                             source_name="S", labeling_status="labeled")
+
+        articles_q, labels_q = MagicMock(), MagicMock()
+        articles_q.filter.return_value.all.return_value = [row("a1"), row("a2")]
+        labels_q.filter.return_value.distinct.return_value = [("a1", HAIKU_45), ("a2", HAIKU_55)]
+        session = MagicMock()
+        session.query.side_effect = lambda *cols: articles_q if cols[0] is Article else labels_q
+
+        specs = {"a1": compare_prompts.Spec(), "a2": compare_prompts.Spec()}
+        built = compare_prompts.load_articles(session, specs, "v1.10.0", HAIKU_45, [])
+
+        assert {a.article_id: a.stored_under_baseline for a in built} == {"a1": True, "a2": False}
+        # Compared by identity: == on a mapped column builds SQL instead of comparing
+        label_cols = [c.args for c in session.query.call_args_list if c.args[0] is not Article]
+        assert len(label_cols) == 1
+        assert label_cols[0][0] is BrandLabel.article_id and label_cols[0][1] is BrandLabel.model_version
+        clauses = labels_q.filter.call_args.args
+        assert any(
+            str(c.left) == "brand_labels.prompt_version" and c.right.value == "v1.10.0"
+            for c in clauses
+        )
 
 
 class TestCaseFile:

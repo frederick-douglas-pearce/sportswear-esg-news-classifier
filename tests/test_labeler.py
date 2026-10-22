@@ -400,6 +400,7 @@ class TestEvidenceExtraction:
 
 # Tests for ArticleLabeler class
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from src.labeling.labeler import ArticleLabeler, LabelingResult
@@ -1094,8 +1095,9 @@ class TestModelRequests:
         labeler, client = self._labeler("claude-haiku-4-5-20251001", _api_response([("text", _REPLY_JSON)]))
         assert self._label(labeler).success
         kwargs = client.messages.create.call_args.kwargs
+        # The production request, pinned whole: anything added to it fails here
+        assert kwargs.keys() == {"model", "max_tokens", "system", "messages", "temperature"}
         assert kwargs["temperature"] == 0.0
-        assert "extra_body" not in kwargs
         assert kwargs["max_tokens"] == 2000
 
     def test_haiku_5_5_sends_effort_and_no_sampling_parameters(self):
@@ -1119,7 +1121,12 @@ class TestModelRequests:
 
     @pytest.mark.parametrize(
         "stop_details,category",
-        [({"type": "refusal", "category": "general_harms"}, "general_harms"), (None, None)],
+        [
+            ({"type": "refusal", "category": "general_harms"}, "general_harms"),
+            # A newer SDK models stop_details as an object (#216)
+            (SimpleNamespace(type="refusal", category="cyber"), "cyber"),
+            (None, None),
+        ],
     )
     def test_refusal_is_a_failure_with_its_own_error_type(self, stop_details, category):
         response = _api_response([], stop_reason="refusal", output_tokens=3, stop_details=stop_details)
@@ -1183,6 +1190,12 @@ class TestLabelingModelSpec:
         from src.labeling.config import LABELING_MODELS, labeling_model_spec
 
         assert labeling_model_spec("claude-haiku-4-5-20251001") is LABELING_MODELS["claude-haiku-4-5"]
+
+    def test_an_alias_and_its_dated_snapshot_resolve_to_one_key(self):
+        from src.labeling.config import labeling_model_key
+
+        assert labeling_model_key("claude-haiku-4-5") == labeling_model_key("claude-haiku-4-5-20251001")
+        assert labeling_model_key("claude-haiku-4-5") != labeling_model_key("claude-haiku-5-5")
 
     def test_the_retrospective_eval_candidate_has_a_spec(self):
         """scripts/eval_model_migration.py builds a labeler for its default candidate."""

@@ -438,8 +438,12 @@ class ArticleLabeler:
         }
         if self.model_spec.accepts_sampling:
             params["temperature"] = self.temperature
+        # Built up so later output_config fields (a reply schema) join effort rather than replace it
+        output_config: dict = {}
         if self.model_spec.accepts_effort:
-            params["extra_body"] = {"output_config": {"effort": self.effort}}
+            output_config["effort"] = self.effort
+        if output_config:
+            params["extra_body"] = {"output_config": output_config}
         return params
 
     @staticmethod

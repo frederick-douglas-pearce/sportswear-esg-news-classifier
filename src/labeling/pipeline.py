@@ -86,6 +86,8 @@ class LabelingStats:
     chunks_created: int = 0
     embeddings_generated: int = 0
     llm_calls: int = 0
+    # Calls that reported token usage; a call that failed before the API answered reports none
+    llm_calls_with_usage: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     # LLM replies that left out at least one brand that was sent (#192)
@@ -732,6 +734,8 @@ class LabelingPipeline:
                     stats.chunks_created += result.get("chunks_count", 0)
                     stats.embeddings_generated += result.get("embeddings_count", 0)
                     stats.llm_calls += result.get("llm_calls", 0)
+                    if result.get("input_tokens", 0) or result.get("output_tokens", 0):
+                        stats.llm_calls_with_usage += 1
                     stats.input_tokens += result.get("input_tokens", 0)
                     stats.output_tokens += result.get("output_tokens", 0)
                     if result.get("incomplete_reply"):

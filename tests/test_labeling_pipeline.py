@@ -877,6 +877,27 @@ class TestStoredLabelingReasons:
         assert stats.incomplete_replies == 2
         assert LabelingStats().incomplete_replies == 0
 
+    def test_only_calls_that_reported_usage_count_toward_the_token_mean(self):
+        """A call that failed before the API answered reports no tokens (#212)."""
+        results = [
+            {"labeled": True, "skipped": False, "brands_count": 1, "llm_calls": 1,
+             "input_tokens": 8000, "output_tokens": 500},
+            {"labeled": False, "skipped": False, "llm_calls": 1, "input_tokens": 0,
+             "output_tokens": 0},
+        ]
+        articles = [{"id": uuid4()} for _ in results]
+        database = MagicMock()
+        database.get_articles_pending_labeling.return_value = []
+        pipeline = LabelingPipeline(database=database)
+        with patch("src.labeling.pipeline.db"), \
+             patch.object(pipeline, "_ensure_labeler"), \
+             patch.object(pipeline, "_deduplicate_by_title", return_value=(articles, [])), \
+             patch.object(pipeline, "_compute_novelty_batch", return_value={}), \
+             patch.object(pipeline, "_run_fp_prefilter_batch", return_value={}), \
+             patch.object(pipeline, "_process_article", side_effect=results):
+            stats = pipeline.label_articles(dry_run=True)
+        assert (stats.llm_calls, stats.llm_calls_with_usage) == (2, 1)
+
     def test_incomplete_replies_are_stored_on_both_run_completion_paths(self):
         """The run row records the counter on success and, when completion raises, on failure."""
         results = [{"labeled": True, "brands_count": 1, "incomplete_reply": True}] * 2

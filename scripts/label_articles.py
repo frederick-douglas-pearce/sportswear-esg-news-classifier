@@ -237,11 +237,12 @@ def print_fp_classifier_stats(stats, model: str) -> None:
         print(f"Classifier errors:      {stats.fp_classifier_errors}")
     # Calculate cost savings estimate
     if stats.fp_classifier_skipped > 0:
-        # A skipped article is assumed to cost what this run's calls cost on average, thinking
-        # included, so the estimate follows the model (#212)
-        if stats.llm_calls > 0:
-            per_input = stats.input_tokens / stats.llm_calls
-            per_output = stats.output_tokens / stats.llm_calls
+        # A skipped article is assumed to cost what this run's answered calls cost on average,
+        # thinking included, so the estimate follows the model (#212). A call that failed with no
+        # usage would pull the mean down, so only calls that reported tokens count.
+        if stats.llm_calls_with_usage > 0:
+            per_input = stats.input_tokens / stats.llm_calls_with_usage
+            per_output = stats.output_tokens / stats.llm_calls_with_usage
         else:
             per_input, per_output = FALLBACK_TOKENS_PER_CALL
         saved_cost = llm_cost_usd(

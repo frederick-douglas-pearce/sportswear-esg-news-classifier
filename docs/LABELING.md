@@ -96,7 +96,7 @@ uv run python scripts/compare_prompts.py --baseline v1.11.0 \
   --sample-size 100 --most-brands 10 --human-rulings --dry-run
 ```
 
-Each side's `max_tokens` defaults to its model's (`LABELING_MODELS` in `src/labeling/config.py`: 2000 for Haiku 4.5, 8000 for Haiku 5.5, whose thinking counts toward the cap); `--max-tokens` sets both. `--effort` (default `LABELING_EFFORT`) sets both sides' effort, and is sent only to a model that takes it, so asking Haiku 4.5 for two efforts is refused as equal sides. The noise floor counts articles stored under the baseline's prompt version *and* model; under a prompt version that was promoted recently, few or none qualify, and the report says when the floor is empty.
+Each side's `max_tokens` defaults to its model's (`LABELING_MODELS` in `src/labeling/config.py`: 2000 for Haiku 4.5, 8000 for Haiku 5.5, whose thinking counts toward the cap); `--max-tokens` sets both. `--effort` (default `LABELING_EFFORT`) sets both sides' effort, and is sent only to a model that takes it, so asking Haiku 4.5 for two efforts is refused as equal sides. Models are compared by table key, so an alias and its dated snapshot count as one model. The noise floor counts articles stored under the baseline's prompt version *and* model; under a prompt version that was promoted recently, few or none qualify, and the report says when the floor is empty.
 
 ```bash
 # Selection and worst-case cost, no API call

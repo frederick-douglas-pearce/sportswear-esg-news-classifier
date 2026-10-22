@@ -86,11 +86,13 @@ LABELING_MODELS: dict[str, LabelingModelSpec] = {
 _DATED_SUFFIX = re.compile(r"-\d{8}")
 
 
-def labeling_model_spec(model: str) -> LabelingModelSpec:
-    """The spec for a model id: a table key, or a key followed by a -YYYYMMDD snapshot date.
+def labeling_model_key(model: str) -> str:
+    """The table key a model id names: the key itself, or the key followed by a -YYYYMMDD date.
 
     Anything else is refused, so a variant id that only starts with a key (another model, or a
-    tier priced differently) is never priced at that key's rates.
+    tier priced differently) is never priced at that key's rates. An alias and its dated snapshot
+    resolve to the same key, which is how the eval tells two names for one model apart from two
+    models.
     """
     matches = [
         key
@@ -102,7 +104,12 @@ def labeling_model_spec(model: str) -> LabelingModelSpec:
             f"No pricing or request spec for labeling model {model!r}; "
             f"add it to LABELING_MODELS in src/labeling/config.py (known: {sorted(LABELING_MODELS)})"
         )
-    return LABELING_MODELS[max(matches, key=len)]
+    return max(matches, key=len)
+
+
+def labeling_model_spec(model: str) -> LabelingModelSpec:
+    """The spec for a model id, resolved by labeling_model_key."""
+    return LABELING_MODELS[labeling_model_key(model)]
 
 
 def llm_cost_usd(input_tokens: int, output_tokens: int, model: str) -> float:
