@@ -154,6 +154,9 @@ Ask yourself these questions IN ORDER:
 3. **Is this about a CEO/leadership change?**
    - Is the change due to ethics scandal, accountability failure, or board decision on governance grounds? → Governance
    - Is it routine succession, retirement, or performance-based? → **NOT Governance**
+   - The pay package of a routine hire is part of the hire → **NOT Governance**, unless the article reports the pay as contested (a shareholder vote against it, investor criticism, a board pay policy under scrutiny)
+
+A governance topic named only in passing (one clause in a list of a company's problems, with nothing on what happened or why) is not Governance content. Governance needs the article to report the governance matter itself.
 
 4. **Is this about a lawsuit or legal issue?**
    - Does it involve fraud, misleading investors, ethics violations, or regulatory compliance? → Governance
@@ -170,6 +173,7 @@ Ask yourself these questions IN ORDER:
 | Stake acquisition | "Elliott takes $1B stake in Lululemon" | Investing is NOT governance (UNLESS activist campaign for board changes) |
 | Investment amount | "Summit invests $1.27M in Nike" | Institutional investment is NOT governance |
 | Executive appointment | "PUMA appoints new VP of Retail" | Routine hiring is NOT governance |
+| New hire's pay | "Brand names new COO with salary and equity award" | A routine hire's pay is NOT governance unless contested |
 | Financial restructuring | "PUMA secures €500m bridge loan" | Treasury operations are NOT governance |
 | Market analysis | "Nike prospects dim as China remains weak" | Business outlook is NOT governance |
 | Trading volume | "Anta sees unusual trading volume" | Market activity is NOT governance |
@@ -307,6 +311,10 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 
 For each brand, first write `reasoning`: one or two sentences on what the article gives THAT brand. Then set `content_type` to the one value below that your reasoning supports. The content type decides whether the brand counts as the sportswear company with substantive content, and only `business` keeps ESG categories. Decide it by what the article gives the brand, not by how prominent the brand's name is.
 
+**Owned brands:** news about a brand a company owns is news about that company. When the owned brand is not itself in "Brands to Analyze" (UGG or Teva for Deckers, Jordan Brand for Nike), judge the company by what the article gives the owned brand, even when the company is named only as the owner ("Teva, a Deckers brand"). When the owned brand is in the list (Converse, Hoka), judge each brand by what the article gives it.
+
+**ESG content decides first:** if the article reports an ESG initiative, partnership, donation, policy, commitment or controversy of the brand, its content type is `business`, however much of the article is product, campaign or financial content. The category decision trees above still decide whether that content counts; a product's materials or a marketing activation alone do not make an article `business`. The event must be news the article reports: one it recounts as history or background (a past controversy retold as context) does not count.
+
 **`other_entity`: the name refers to something ELSE entirely:**
 - Puma the animal (not Puma sportswear)
 - Patagonia the geographic region (not Patagonia outdoor apparel)
@@ -361,11 +369,17 @@ For each brand, first write `reasoning`: one or two sentences on what the articl
    **Auto-generated stock return calculators** → `mention_only`
    - "$100 Invested In Deckers Outdoor 20 Years Ago Would Be Worth This Much Today" — just math
 
+   **Automated valuation templates** → `mention_only`
+   Fair-value, intrinsic-value or discounted cash flow (DCF) articles that run the company's numbers through a standard model: projected cash flows, a discount rate, a terminal value, and an estimate set against the share price, often followed by a stock checklist ("strengths, weaknesses, opportunities, threats"). Sources like Simply Wall St. The figures are the company's, but nobody analyzed its business.
+
 2. **Tangential mentions without substantive coverage:**
    - Former executives now at other companies (article is about the OTHER company)
    - Brand mentioned only as biographical context or comparison
    - Industry reports where brand appears in a list without detail
    - A competitor named as context ("Nike's biggest Chinese challenger")
+   - **A market wrap or news roundup that gives the brand one or two lines** (futures and pre-market reports, "stocks moving today", daily briefings), even when that line gives a reason ("shares fell after a downgrade", "after weak quarterly profits"). The article's subject is the market or the day's news, not the brand.
+   - **A brand named only as the goods or the store in an incident it is not a party to** (a theft of its products from a franchise or retailer's store), when the article reports nothing the company did or decided
+   - **A brand named in a list of companies an event affects** ("retailers including Walmart, Target and Adidas face delays from the port strike"), when the article says nothing specific about that brand.
 
 3. **Brand mentioned only as comparison, analogy, or reference point:**
    - Color comparisons: "reminiscent of Nike's Infrared orange", "similar to Adidas' classic blue"
@@ -385,11 +399,12 @@ For each brand, first write `reasoning`: one or two sentences on what the articl
   - A buying guide that tested the products ("Best running shoes of 2025: we ran 200 miles in each") is `product` for each brand whose product it assesses; a gift guide that lists products with prices ("Holiday gift guide: Best fitness gear") is `retail_only` for a brand it gives only a name, price and link.
   - A review ("Patagonia Nano Puff Hoody review", "I spent 6 months testing the Merrell Moab Speed 2s") is `product`, including one that also mentions a discount.
   - A sale listing that gives only the name, the price and a one-line blurb or a line of specs ("Under Armour Tech 2.0 tee now $15, 'a gym-bag staple'") or a sale section that lists products and prices ("lululemon 'We Made Too Much' Section February 2026") is `retail_only`.
-  - A sale listing that also describes the product is `product`, whatever the sale framing: what it is made of, how it is built, how it performs, or how buyers say it holds up ("Brooks Running shoes: Adrenaline GTS 24 now $20 off", which describes its cushioning, support system and upper).
+  - A sale listing that also describes the product is `product`, whatever the sale framing: what it is made of, how it is built, how it performs, or how buyers say it holds up ("Brooks Running shoes: Adrenaline GTS 24 now $20 off", which describes its cushioning, support system and upper). One sentence is enough when it says how the product is built and what that does ("a carbon plate and a rocker sole for faster turnover"); a bare list of specs, or a blurb that only praises it ("a gym-bag staple"), is not.
   - A collaboration launch that describes the product ("Madhappy x Converse Chuck 70 collab") is `product`.
   - A release announcement ("New Balance 550 releases in new colorway") is `product`, including one that gives only the product, the date and a price ("Reebok Angel Reese 1 releases November 14").
+- Check your reasoning against the type: if your reasoning says the article describes the product's materials, build, fit or performance, the type is `product`, not `retail_only`.
 
-**`financial`: the article's subject is the company's stock, earnings, or an analyst's or investor's view of it, with human-written analysis or commentary.** Never receives ESG categories (see "Governance is NOT Financial News" above).
+**`financial`: the article's subject is the company's stock, earnings, or an analyst's or investor's view of it, with human-written analysis or commentary.** Never receives ESG categories (see "Governance is NOT Financial News" above). The brand must be the subject, or one of a few companies the article analyzes in their own paragraphs: one or two lines in a market wrap, or a place in a list of companies, is `mention_only` however financial the line is.
 - "Jim Cramer says Nike CEO is reinventing the company" — discusses strategy/management as an investment case
 - "Analysts give Adidas Buy rating citing strong Q4 outlook" — business prospects with reasoning
 - "Puma reports earnings beat driven by China growth" — business performance with context
@@ -399,7 +414,7 @@ For each brand, first write `reasoning`: one or two sentences on what the articl
 - "Deckers Racks Up Record Revenue as Significant Global Demand for Ugg and Hoka Continues" — earnings with CEO quotes and segment analysis
 - An earnings preview, a stock drop explained by tariffs or demand, or a refund or charge's effect on results is `financial`.
 
-**Key test for financial articles:** Does the article contain **human-written analysis or commentary** about the brand's business (analyst reasoning, CEO/CFO quotes, strategy discussion, competitive analysis, what drove results)? Then `financial`. Is it **auto-generated/template content** that just plugs financial data into a standard format (raw prices, 13F share counts, moving averages, rating lists without reasoning, short interest, metric tables, "X invested Y years ago")? Then `mention_only`. If the article reports a governance event (a board fight, a proxy battle, fraud, an ESG report, executive pay policy) rather than the stock's or results' outlook, it is `business`, even with stock figures in it.
+**Key test for financial articles:** Does the article contain **human-written analysis or commentary** about the brand's business (analyst reasoning, CEO/CFO quotes, strategy discussion, competitive analysis, what drove results)? Then `financial`. Is it **auto-generated/template content** that just plugs financial data into a standard format (raw prices, 13F share counts, moving averages, rating lists without reasoning, short interest, metric tables, "X invested Y years ago", a DCF or fair-value model)? Then `mention_only`. If the article reports a governance event (a board fight, a proxy battle, fraud, an ESG report, executive pay policy) rather than the stock's or results' outlook, it is `business`, even with stock figures in it.
 
 **`business`: substantive news about the company itself** — strategy, operations, leadership, legal matters, store openings, sponsorships, athlete signings, partnerships, and ESG initiatives, policies, programs, commitments or controversies. This is the only content type whose ESG categories are kept, and the decision trees above still decide whether any category applies. A `business` brand with no ESG content (a store opening, a sponsorship) gets `applies: false` for every category.
 

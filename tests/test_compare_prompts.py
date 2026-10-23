@@ -515,6 +515,36 @@ class TestContentTypeReport:
         assert [(x["article_id"], x["brand"]) for x in cats["baseline"]] == [("1", "Nike"), ("2", "Nike"), ("4", "nike")]
         assert [(x["article_id"], x["categories"]) for x in cats["candidate"]] == [("2", ["environmental"])]
 
+    def test_expected_categories_are_checked_per_reply(self):
+        social = Expectation("Nike", True, ("social",))
+        runs = [
+            # matched: the brand gets exactly the ruled category
+            _run(_article("1", expected=social), [_reply([_typed("Nike", "business", ("social",))])],
+                 [_reply([_typed("Nike", "business", ("social",))])]),
+            # a reply that leaves the brand out, and a content type that keeps no category
+            _run(_article("2", expected=social), [_reply([])], [_reply([_typed("Nike", "product", ("social",))])]),
+            # an extra category is a miss too
+            _run(_article("3", expected=social), [_reply([_typed("Nike", "business", ("social",))])],
+                 [_reply([_typed("Nike", "business", ("social", "governance"))])]),
+            # a case that rules no categories is not checked
+            _run(_article("4", expected=Expectation("Nike", True)), [_reply([_esg("Nike")])], [_reply([_esg("Nike")])]),
+        ]
+        cats = summarize(runs, **SIDES)["expected_categories"]
+        assert (cats["baseline"]["matched"], cats["baseline"]["cases"]) == (2, 3)
+        assert [m["article_id"] for m in cats["baseline"]["misses"]] == ["2"]
+        assert (cats["candidate"]["matched"], cats["candidate"]["cases"]) == (1, 3)
+        two, three = cats["candidate"]["misses"]
+        assert (two["content_type"], two["missing"], two["extra"]) == ("product", ["social"], [])
+        assert (three["missing"], three["extra"]) == ([], ["governance"])
+
+    def test_case_file_reads_expected_categories_and_refuses_unknown_ones(self):
+        case = {"article_id": "a", "expected": {"brand": "Deckers", "is_sportswear_brand": True, "categories": ["social"]}}
+        specs = compare_prompts.parse_case_file({"cases": [case]})
+        assert specs["a"].expected == Expectation("Deckers", True, ("social",))
+        case["expected"]["categories"] = ["sociall"]
+        with pytest.raises(ValueError, match="unknown expected categories"):
+            compare_prompts.parse_case_file({"cases": [case]})
+
     def test_accuracy_reports_the_always_true_score(self):
         runs = [
             _run(_article("1", expected=Expectation("Nike", True)), [_reply([_no_esg("Nike")])], [_reply([_no_esg("Nike")])]),
@@ -544,6 +574,8 @@ class TestContentTypeReport:
         assert "answering `true` for every judged case scores 1, 100.0%" in md
         assert "## Categories on Product, financial and no-category cases" in md
         assert "## Categories the content type dropped (D037 gate)" in md
+        assert "## Expected categories (cases that rule them)" in md
+        assert "- candidate: 0 of 0 cases matched" in md
         assert "T 1 (`1`), nike (product): environmental. Nike product" in md
 
     def test_prompt_hashes_name_the_schema_when_there_is_one(self):
@@ -872,7 +904,7 @@ class TestCaseFile:
         "cdb26552-8643-4007-a403-4f0451447e2f": ("Deckers", True),
         "3fee9d78-c7a8-4936-8ff0-2b14edadbcce": ("Nike", True),
         "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72": ("Nike", True),
-        "e434b12d-eb59-4406-bd26-f3bad800aaf1": ("Nike", True),
+        "e434b12d-eb59-4406-bd26-f3bad800aaf1": ("Nike", False),
         "19832789-ca96-4c74-ba7a-7df0453c4874": ("Nike", True),
         "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("Puma", True),
     }

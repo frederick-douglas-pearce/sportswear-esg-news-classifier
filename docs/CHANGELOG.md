@@ -28,8 +28,8 @@ written before the reasoning and read as brand identity (#215); prompt text alon
   types stated, the categories kept on Product and financial cases, every category the gate dropped,
   and the score an always-`true` answer would get on the Product cases. The worst-case cost counts
   the schema as input.
-- Case file: 22 cases added, owner-ruled 2026-10-22. They are #118's corrections (#118's Mammut review was already a case), plus the five financial articles #215's run 2 gave Governance or Social. Under the new strata, `financial` (12) and `no_category` (3) should get no ESG category; `financial_gray` and `partial_categories` are scored on the verdict and their categories read by hand.
-- Pinned in `tests/test_content_type.py`: the v1.12.0 hashes (`295fd4ed4b5c` / `f9e786d07439`, schema
+- Case file: 22 cases added, owner-ruled 2026-10-22. They are #118's corrections (#118's Mammut review was already a case), plus the five financial articles #215's run 2 gave Governance or Social. Under the new strata, `financial` (12) and `no_category` (3) should get no ESG category; `financial_gray` is scored on the verdict and its categories read by hand. A case can rule its brand's categories (`expected.categories`), which the report checks per reply under "Expected categories"; `partial_categories` (the UGG case, Social) does.
+- Pinned in `tests/test_content_type.py`: the v1.12.0 hashes (`6ab0c3af777b` / `f9e786d07439`, schema
   `96064689a1f3`), the schema's enum against `ContentType`, and the request each model gets.
 
 ### 2026-10-22: Candidate prompt v1.11.0 revised, failed its second eval, not to be promoted

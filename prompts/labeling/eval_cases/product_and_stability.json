@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'partial_categories' cases are scored on the verdict and their categories read by hand. #118's Mammut rope review was already a product_true case.",
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' case does), and the report checks every reply against them. #118's Mammut rope review was already a product_true case.",
   "cases": [
     {
       "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
@@ -517,7 +517,7 @@
         "financial"
       ],
       "repeats": 1,
-      "note": "#118: CFOs and Nike's turnaround (Fortune), financial or business with no ESG category; owner-ruled 2026-10-22",
+      "note": "#118: CFOs and Nike's turnaround (Fortune), financial or business with no ESG category; owner-ruled 2026-10-22, and after #219's P1 kept Governance: no category, since the disclosure pullback is one clause and the pay package only illustrates CFO market rates",
       "expected": {
         "brand": "Nike",
         "is_sportswear_brand": true
@@ -633,10 +633,13 @@
         "partial_categories"
       ],
       "repeats": 1,
-      "note": "#118: UGG back-to-school campaign; human-corrected to Social kept, Environmental cleared (read by hand, not checked); owner-ruled 2026-10-22",
+      "note": "#118: UGG back-to-school campaign; human-corrected to Social kept (the Queer|Art grant and the CRSELA donation), Environmental cleared; owner-ruled 2026-10-22",
       "expected": {
         "brand": "Deckers",
-        "is_sportswear_brand": true
+        "is_sportswear_brand": true,
+        "categories": [
+          "social"
+        ]
       }
     },
     {
@@ -669,10 +672,10 @@
         "financial"
       ],
       "repeats": 1,
-      "note": "#215 run 2 gave Governance: tariff refunds to Apple, Amazon and Nike, financial; owner-ruled 2026-10-22",
+      "note": "#215 run 2 gave Governance: tariff refunds to Apple, Amazon and Nike; Nike only in a list of beneficiaries (mention_only); owner re-ruled false 2026-10-22 after #219's P1",
       "expected": {
         "brand": "Nike",
-        "is_sportswear_brand": true
+        "is_sportswear_brand": false
       }
     },
     {

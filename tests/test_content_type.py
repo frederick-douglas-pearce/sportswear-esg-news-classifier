@@ -18,7 +18,7 @@ CATEGORY_NAMES = ("environmental", "social", "governance", "digital_transformati
 
 # The v1.12.0 text and schema to be evaluated (#219). Edited in place only while no labeling_runs
 # or brand_labels row records v1.12.0 (D036 §3); the hashes evaluated are the hashes promoted.
-V1_12_0_SYSTEM_HASH = "295fd4ed4b5c"
+V1_12_0_SYSTEM_HASH = "6ab0c3af777b"
 V1_12_0_USER_HASH = "f9e786d07439"
 V1_12_0_SCHEMA_HASH = "96064689a1f3"
 

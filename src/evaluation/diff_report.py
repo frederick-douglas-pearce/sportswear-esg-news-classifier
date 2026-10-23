@@ -177,6 +177,24 @@ def render_markdown(summary: dict, config: dict) -> str:
         "Applicable categories kept on the expected brand of a Product, financial or no-category "
         "case (on any brand, for a case that names none), per reply. There should be none.",
     )
+    lines += [
+        "## Expected categories (cases that rule them)",
+        "",
+        "Per case: matched if every answered reply gives the expected brand exactly the ruled "
+        "categories. A reply that leaves the brand out or calls it not sportswear gives it none.",
+        "",
+    ]
+    for side in ("baseline", "candidate"):
+        block = summary["expected_categories"][side]
+        lines.append(f"- {side}: {block['matched']} of {block['cases']} cases matched")
+        for miss in block["misses"]:
+            type_note = f" ({miss['content_type']})" if miss.get("content_type") else ""
+            lines.append(
+                f"  - {miss['title']} (`{miss['article_id']}`), {miss['brand']}{type_note}: expected "
+                f"{', '.join(miss['expected']) or 'none'}; missing {', '.join(miss['missing']) or 'none'}, "
+                f"extra {', '.join(miss['extra']) or 'none'}. {miss['explanation']}"
+            )
+    lines.append("")
     lines += _category_list(
         "Categories the content type dropped (D037 gate)",
         summary["gated_categories"],

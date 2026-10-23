@@ -71,6 +71,7 @@ from src.evaluation.comparator import (  # noqa: E402
 from src.evaluation.diff_report import render_markdown  # noqa: E402
 from src.labeling.article_input import article_content, has_sufficient_content  # noqa: E402
 from src.labeling.config import (  # noqa: E402
+    ESG_CATEGORIES,
     TARGET_SPORTSWEAR_BRANDS,
     labeling_model_key,
     labeling_model_spec,
@@ -114,11 +115,21 @@ def parse_case_file(data: dict) -> dict[str, Spec]:
     for case in data.get("cases", []):
         article_id = case["article_id"]
         expected = case.get("expected")
+        # Optional: the categories the brand should get, checked by the report when given
+        categories = expected.get("categories") if expected else None
+        if categories is not None:
+            unknown = set(categories) - set(ESG_CATEGORIES)
+            if unknown:
+                raise ValueError(f"Case {article_id}: unknown expected categories {sorted(unknown)}")
         specs[article_id] = Spec(
             strata={CASES, *case.get("strata", [])},
             repeats=int(case.get("repeats", 1)),
             expected=(
-                Expectation(expected["brand"], bool(expected["is_sportswear_brand"]))
+                Expectation(
+                    expected["brand"],
+                    bool(expected["is_sportswear_brand"]),
+                    tuple(categories) if categories is not None else None,
+                )
                 if expected
                 else None
             ),

@@ -83,6 +83,8 @@ class Expectation:
 
     brand: str
     is_sportswear_brand: bool
+    # The applicable ESG categories the brand should get, or None when the case rules none
+    categories: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -499,6 +501,38 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
                         })
         return found
 
+    def expected_categories(side: str) -> dict:
+        """Per case that rules the brand's categories: matched if every answered reply gives the
+        brand exactly those categories. A reply that leaves the brand out or calls it not
+        sportswear gives it none."""
+        matched, misses = 0, []
+        for r in paired:
+            exp = r.article.expected
+            if exp is None or exp.categories is None:
+                continue
+            key = normalize_brand(exp.brand)
+            want = set(exp.categories)
+            wrong = [
+                x for x in getattr(r, side)
+                if x.outcome != FAILED and set(x.categories.get(key, ())) != want
+            ]
+            if not wrong:
+                matched += 1
+                continue
+            for x in wrong:
+                got = set(x.categories.get(key, ()))
+                misses.append({
+                    **_brief(r),
+                    "brand": exp.brand,
+                    "content_type": x.content_types.get(key),
+                    "expected": sorted(want),
+                    "missing": sorted(want - got),
+                    "extra": sorted(got - want),
+                    "explanation": x.explanations.get(key, ""),
+                })
+        cases = matched + len({m["article_id"] for m in misses})
+        return {"cases": cases, "matched": matched, "misses": misses}
+
     stability = []
     for r in paired:
         if r.article.repeats < 2:
@@ -583,6 +617,10 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
         "stability": stability,
         "product_accuracy": {"baseline": accuracy("baseline"), "candidate": accuracy("candidate")},
         "case_categories": {"baseline": case_categories("baseline"), "candidate": case_categories("candidate")},
+        "expected_categories": {
+            "baseline": expected_categories("baseline"),
+            "candidate": expected_categories("candidate"),
+        },
         "gated_categories": {"baseline": gated("baseline"), "candidate": gated("candidate")},
         "prompt_example_cases": [
             {**_brief(r), "example": r.article.prompt_example}
