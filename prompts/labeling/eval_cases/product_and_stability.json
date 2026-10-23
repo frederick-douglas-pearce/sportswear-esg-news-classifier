@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt.",
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'partial_categories' cases are scored on the verdict and their categories read by hand. #118's Mammut rope review was already a product_true case.",
   "cases": [
     {
       "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
@@ -442,6 +442,262 @@
         "is_sportswear_brand": true
       },
       "prompt_example": "Reebok Angel Reese 1 releases November 14"
+    },
+    {
+      "article_id": "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: Zerohedge futures wrap, Nike a tangential mention (mention_only); owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "b8891fbc-7d8a-40b2-9b9b-527d9d373858",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: Zerohedge futures wrap, Adidas a tangential mention (mention_only); owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "12396c87-b2a4-4563-ac1b-d2923202afe2",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: Nike exits the S&P 100 (Fortune), financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "2df21233-ef21-4ec7-87b7-44334f90ac19",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: Nike dropped from S&P 100 (Retail Dive), financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "1ba1c2a2-ac8a-4077-ac44-11feae1a08ec",
+      "strata": [
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#118: 'Nike Will Never Be the Same' (Highsnobiety), business or financial with no ESG category; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "22a41460-1976-41e4-9a36-e0fe0943441d",
+      "strata": [
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#118: Steak n Shake vs Nike commentary (RedState); human-corrected to no ESG category, sportswear status not ruled"
+    },
+    {
+      "article_id": "23c30b60-9671-4613-a93a-893d14830a14",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: CFOs and Nike's turnaround (Fortune), financial or business with no ESG category; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "a058da6e-8656-4dc7-901a-fc1d56d4b745",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: KeyBanc downgrades Nike (SGB), financial; sonnet-4-6 also mislabeled it; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "ea428de7-23a8-4004-80a7-5323c26e2f1a",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: KeyBanc lowers Nike rating (Yahoo), financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "9e973f0c-458b-4d3d-bf2a-55f3e3439149",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#118: Nike shares dip on competitive headwinds (IBT), financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "eded2885-014c-45d1-8164-4bd6605a0618",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "#118: Mountain Hardwear jacket review (GearJunkie); owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Mountain Hardwear",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "3b4de2e6-78d4-47b9-bea1-fe298967a6d0",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "#118: Nike Air Bakin release date; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "7dccbf22-de0e-4e60-acb5-f562b551fafc",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "#118: Rick Owens x Adidas collab launch; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "cfe9e317-aed2-4c28-9c7b-ca9450d14e59",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "#118: adidas x Sole Play collab; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "89330b08-e205-48b3-a233-ecce8b03b2d3",
+      "strata": [
+        "product_true"
+      ],
+      "repeats": 1,
+      "note": "#118: emerging-gear roundup describing a Cotopaxi pack; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Cotopaxi",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "3c8017cb-e7f6-47dc-83ea-4d59468118ef",
+      "strata": [
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#118: Cannes Lions creativity report naming Columbia Sportswear; human-corrected to no ESG category, mention_only vs business not ruled"
+    },
+    {
+      "article_id": "cdb26552-8643-4007-a403-4f0451447e2f",
+      "strata": [
+        "partial_categories"
+      ],
+      "repeats": 1,
+      "note": "#118: UGG back-to-school campaign; human-corrected to Social kept, Environmental cleared (read by hand, not checked); owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Deckers",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "3fee9d78-c7a8-4936-8ff0-2b14edadbcce",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#215 run 2 gave Governance: Nike fiscal Q4 preview, financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#215 run 2 gave Governance: 'Sneaker Market Crash', Nike stock down 76%, financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "e434b12d-eb59-4406-bd26-f3bad800aaf1",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#215 run 2 gave Governance: tariff refunds to Apple, Amazon and Nike, financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "19832789-ca96-4c74-ba7a-7df0453c4874",
+      "strata": [
+        "financial_gray"
+      ],
+      "repeats": 1,
+      "note": "#215 run 2 gave Governance -1: Nike shares tumble with layoff plans; financial or business (a layoff may be Social), categories read by hand; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true
+      }
+    },
+    {
+      "article_id": "fbefe459-5ddf-4e05-b092-1bbc31b823cb",
+      "strata": [
+        "financial"
+      ],
+      "repeats": 1,
+      "note": "#215 run 2 gave Social -1 and Governance 0: Puma Q2 earnings call, financial; owner-ruled 2026-10-22",
+      "expected": {
+        "brand": "Puma",
+        "is_sportswear_brand": true
+      }
     }
   ]
 }

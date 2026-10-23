@@ -32,6 +32,9 @@ class PromptVersion:
         commit_message: Description of changes in this version
         description: Longer description of the prompt version
         tags: Key-value metadata tags
+        reply_schema: JSON schema the reply is constrained to (structured outputs), or None for a
+            version called without one (D037)
+        reply_schema_hash: SHA256 hash prefix of the schema file, or "" without one
     """
 
     version: str
@@ -44,6 +47,8 @@ class PromptVersion:
     commit_message: str = ""
     description: str = ""
     tags: dict[str, str] = field(default_factory=dict)
+    reply_schema: dict[str, Any] | None = None
+    reply_schema_hash: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage/logging."""
@@ -51,6 +56,7 @@ class PromptVersion:
             "version": self.version,
             "system_prompt_hash": self.system_prompt_hash,
             "user_prompt_hash": self.user_prompt_hash,
+            "reply_schema_hash": self.reply_schema_hash,
             "model_config": self.model_config,
             "created_at": self.created_at,
             "commit_message": self.commit_message,
@@ -211,6 +217,17 @@ class PromptManager:
         with open(user_path) as f:
             user_prompt = f.read()
 
+        # A version that names a reply schema is called with structured outputs (D037); one that
+        # names none is called exactly as it was evaluated
+        reply_schema, schema_hash = None, ""
+        if config.get("reply_schema_file"):
+            schema_path = version_dir / config["reply_schema_file"]
+            if not schema_path.exists():
+                raise FileNotFoundError(f"Reply schema not found: {schema_path}")
+            schema_text = schema_path.read_text()
+            reply_schema = json.loads(schema_text)
+            schema_hash = hashlib.sha256(schema_text.encode()).hexdigest()[:12]
+
         # Get version metadata
         version_meta = versions[version]
 
@@ -229,6 +246,8 @@ class PromptManager:
             commit_message=version_meta.get("commit_message", ""),
             description=version_meta.get("description", ""),
             tags=version_meta.get("tags", {}),
+            reply_schema=reply_schema,
+            reply_schema_hash=schema_hash,
         )
 
         # Cache the loaded version

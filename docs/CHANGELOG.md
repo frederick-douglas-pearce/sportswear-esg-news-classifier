@@ -4,6 +4,34 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-22: Candidate prompt v1.12.0 states a per-brand content type under a reply schema (#219, D037)
+
+**Prompt v1.12.0 is registered as a candidate; production is unchanged (v1.10.0) until its
+contrastive eval against v1.10.0 on Haiku 5.5.** v1.11.0 failed two evals because the verdict was
+written before the reasoning and read as brand identity (#215); prompt text alone did not move it.
+- Reply contract: each brand analysis writes `reasoning`, then a `content_type` (`other_entity`,
+  `mention_only`, `retail_only`, `product`, `financial`, `business`), constrained by
+  `prompts/labeling/v1.12.0/reply_schema.json` through structured outputs. The reply no longer
+  states `is_sportswear_brand` or `not_sportswear_reason`.
+- Derivation: `BrandAnalysis` sets `is_sportswear_brand` from `CONTENT_TYPE_RULES`
+  (`src/labeling/models.py`), derives `not_sportswear_reason` as `"<content_type>: <reasoning>"`, and
+  drops the categories of every type but `business`, recording them in `gated_categories`.
+  `dispose_reply` counts a content type as a verdict. Replies under earlier versions parse as before.
+- `financial` (#114): stock, earnings or analyst coverage with human-written analysis is sportswear
+  with no ESG categories; template financial content is `mention_only`.
+- Sentiment (#117): measures the brand's conduct, not the article's stance, in both directions; bare
+  "Criticism" is replaced by "credible criticism of conduct that fell short".
+- Labeler: a version whose `config.json` names `reply_schema_file` is called with
+  `output_config.format` (in `extra_body`, beside `effort`); versions without one are called exactly
+  as evaluated. `PromptVersion` carries the schema and its hash.
+- Harness: the report prints the schema hash with the prompt hashes (D036 §3 amended), the content
+  types stated, the categories kept on Product and financial cases, every category the gate dropped,
+  and the score an always-`true` answer would get on the Product cases. The worst-case cost counts
+  the schema as input.
+- Case file: 22 cases added, owner-ruled 2026-10-22. They are #118's corrections (#118's Mammut review was already a case), plus the five financial articles #215's run 2 gave Governance or Social. Under the new strata, `financial` (12) and `no_category` (3) should get no ESG category; `financial_gray` and `partial_categories` are scored on the verdict and their categories read by hand.
+- Pinned in `tests/test_content_type.py`: the v1.12.0 hashes (`295fd4ed4b5c` / `f9e786d07439`, schema
+  `96064689a1f3`), the schema's enum against `ContentType`, and the request each model gets.
+
 ### 2026-10-22: Candidate prompt v1.11.0 revised, failed its second eval, not to be promoted
 
 **v1.11.0 failed its first eval (#215) and its text was revised in place (D036 §3: no
