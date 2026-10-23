@@ -856,7 +856,8 @@ Continued to LLM:       12
                 fp_classifier_skipped=8,
                 fp_classifier_skipped_not_low=3,
                 fp_classifier_continued=12,
-            )
+            ),
+            "claude-haiku-4-5-20251001",
         )
         stats = _parse_labeling_output(capsys.readouterr().out)
 
@@ -878,7 +879,8 @@ Continued to LLM:       12
                 fp_classifier_skipped=skipped,
                 fp_classifier_skipped_not_low=0,
                 fp_classifier_continued=5 - skipped,
-            )
+            ),
+            "claude-haiku-4-5-20251001",
         )
         out = capsys.readouterr().out
         stats = _parse_labeling_output(out)
@@ -887,11 +889,40 @@ Continued to LLM:       12
         assert "fp_skipped_not_low" in stats
         assert stats["fp_skipped_not_low"] == 0
 
+    @pytest.mark.parametrize(
+        "with_usage,input_tokens,output_tokens,saved",
+        [
+            # 10 skips at the answered calls' mean: 8000 in at $1/M and 500 out at $5/M each
+            (2, 16000, 1000, "$0.1050"),
+            # No answered call: the fallback of 1500 in and 500 out per call
+            (0, 0, 0, "$0.0400"),
+        ],
+    )
+    def test_savings_are_priced_from_answered_calls(
+        self, capsys, with_usage, input_tokens, output_tokens, saved
+    ):
+        """A failed call with no usage does not pull the per-call mean down (#212)."""
+        from scripts.label_articles import print_fp_classifier_stats
+        from src.labeling.pipeline import LabelingStats
+
+        print_fp_classifier_stats(
+            LabelingStats(
+                fp_classifier_calls=10,
+                fp_classifier_skipped=10,
+                llm_calls=4,
+                llm_calls_with_usage=with_usage,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            ),
+            "claude-haiku-4-5-20251001",
+        )
+        assert f"Est. LLM cost saved:    {saved}" in capsys.readouterr().out
+
     def test_block_is_absent_without_fp_calls(self, capsys):
         from scripts.label_articles import print_fp_classifier_stats
         from src.labeling.pipeline import LabelingStats
 
-        print_fp_classifier_stats(LabelingStats())
+        print_fp_classifier_stats(LabelingStats(), "claude-haiku-4-5-20251001")
 
         assert capsys.readouterr().out == ""
 

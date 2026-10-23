@@ -86,6 +86,8 @@ class LabelingStats:
     chunks_created: int = 0
     embeddings_generated: int = 0
     llm_calls: int = 0
+    # Calls that reported token usage; a call that failed before the API answered reports none
+    llm_calls_with_usage: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
     # LLM replies that left out at least one brand that was sent (#192)
@@ -633,6 +635,10 @@ class LabelingPipeline:
                         "article_ids": [str(id) for id in article_ids]
                         if article_ids
                         else None,
+                        # labeling_runs has no model column; the run's cost is priced at this
+                        # model, and effort is what was sent to it, if it takes effort (#212)
+                        "model": labeler.model,
+                        "effort": labeler.effort if labeler.model_spec.accepts_effort else None,
                     },
                     prompt_version=labeler.prompt_version,
                     prompt_system_hash=labeler.prompt_system_hash,
@@ -728,6 +734,8 @@ class LabelingPipeline:
                     stats.chunks_created += result.get("chunks_count", 0)
                     stats.embeddings_generated += result.get("embeddings_count", 0)
                     stats.llm_calls += result.get("llm_calls", 0)
+                    if result.get("input_tokens", 0) or result.get("output_tokens", 0):
+                        stats.llm_calls_with_usage += 1
                     stats.input_tokens += result.get("input_tokens", 0)
                     stats.output_tokens += result.get("output_tokens", 0)
                     if result.get("incomplete_reply"):
@@ -790,6 +798,7 @@ class LabelingPipeline:
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
                             incomplete_replies=stats.incomplete_replies,
+                            model=labeler.model,
                         )
 
             logger.info(
@@ -823,6 +832,7 @@ class LabelingPipeline:
                             articles_deduplicated=stats.articles_deduplicated,
                             articles_left_pending=stats.articles_left_pending,
                             incomplete_replies=stats.incomplete_replies,
+                            model=labeler.model,
                         )
             raise
 

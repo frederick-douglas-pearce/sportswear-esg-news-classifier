@@ -67,6 +67,13 @@ UNJUDGED_SKIP_REASONS = frozenset({
 # The one skip that follows an explicit sportswear judgment by the LLM.
 JUDGED_SKIP_REASONS = frozenset({SKIP_NO_ESG_CATEGORIES})
 
+# Prefixes of the errors the labeler stores in articles.labeling_error with a 'failed' status for
+# a reply the model declined, and for one that stopped at max_tokens and did not parse. The rest of
+# the message (refusal category, the cap) follows the prefix. Neither is retried: select them with
+# `labeling_error LIKE '<prefix>%'` (#212). Never reword one.
+FAILED_REFUSAL_PREFIX = "Model declined the request"
+FAILED_MAX_TOKENS_PREFIX = "Reply stopped at max_tokens"
+
 # Reasons scripts/cleanup_false_positives.py stores with a 'false_positive' status: a hand-picked
 # list of ids, and a keyword-pattern sweep (the prefix is followed by the brand and the pattern).
 FP_REASON_MANUAL = "Manually marked as false positive"

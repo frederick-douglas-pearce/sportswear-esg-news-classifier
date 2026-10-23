@@ -877,6 +877,27 @@ class TestStoredLabelingReasons:
         assert stats.incomplete_replies == 2
         assert LabelingStats().incomplete_replies == 0
 
+    def test_only_calls_that_reported_usage_count_toward_the_token_mean(self):
+        """A call that failed before the API answered reports no tokens (#212)."""
+        results = [
+            {"labeled": True, "skipped": False, "brands_count": 1, "llm_calls": 1,
+             "input_tokens": 8000, "output_tokens": 500},
+            {"labeled": False, "skipped": False, "llm_calls": 1, "input_tokens": 0,
+             "output_tokens": 0},
+        ]
+        articles = [{"id": uuid4()} for _ in results]
+        database = MagicMock()
+        database.get_articles_pending_labeling.return_value = []
+        pipeline = LabelingPipeline(database=database)
+        with patch("src.labeling.pipeline.db"), \
+             patch.object(pipeline, "_ensure_labeler"), \
+             patch.object(pipeline, "_deduplicate_by_title", return_value=(articles, [])), \
+             patch.object(pipeline, "_compute_novelty_batch", return_value={}), \
+             patch.object(pipeline, "_run_fp_prefilter_batch", return_value={}), \
+             patch.object(pipeline, "_process_article", side_effect=results):
+            stats = pipeline.label_articles(dry_run=True)
+        assert (stats.llm_calls, stats.llm_calls_with_usage) == (2, 1)
+
     def test_incomplete_replies_are_stored_on_both_run_completion_paths(self):
         """The run row records the counter on success and, when completion raises, on failure."""
         results = [{"labeled": True, "brands_count": 1, "incomplete_reply": True}] * 2
@@ -884,8 +905,9 @@ class TestStoredLabelingReasons:
         database = MagicMock()
         database.complete_labeling_run.side_effect = [RuntimeError("db down"), None]
         pipeline = LabelingPipeline(database=database)
+        ensure_labeler = patch.object(pipeline, "_ensure_labeler")
         with patch("src.labeling.pipeline.db"), \
-             patch.object(pipeline, "_ensure_labeler"), \
+             ensure_labeler as built, \
              patch.object(pipeline, "_deduplicate_by_title", return_value=(articles, [])), \
              patch.object(pipeline, "_compute_novelty_batch", return_value={}), \
              patch.object(pipeline, "_run_fp_prefilter_batch", return_value={}), \
@@ -895,6 +917,13 @@ class TestStoredLabelingReasons:
         calls = database.complete_labeling_run.call_args_list
         assert [c.kwargs["status"] for c in calls] == ["success", "failed"]
         assert [c.kwargs["incomplete_replies"] for c in calls] == [2, 2]
+        # The run is priced at the model its labeler called
+        labeler_model = built.return_value.model
+        assert [c.kwargs["model"] for c in calls] == [labeler_model] * 2
+        # labeling_runs has no model column, so the run's config records it
+        config = database.create_labeling_run.call_args.kwargs["config"]
+        assert config["model"] == labeler_model
+        assert config["effort"] == built.return_value.effort
 
     def test_complete_labeling_run_stores_incomplete_replies(self):
         from types import SimpleNamespace
@@ -904,13 +933,20 @@ class TestStoredLabelingReasons:
         for value in (3, None):
             run = SimpleNamespace()
             LabelingDatabase(MagicMock()).complete_labeling_run(
-                MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, incomplete_replies=value
+                MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, incomplete_replies=value,
+                model="claude-haiku-4-5-20251001",
             )
             assert run.incomplete_replies == value
         # priced through the one table in src/labeling/config.py: 10 input, 5 output tokens
         from src.labeling.config import llm_cost_usd
 
-        assert run.estimated_cost_usd == pytest.approx(llm_cost_usd(10, 5))
+        assert run.estimated_cost_usd == pytest.approx(
+            llm_cost_usd(10, 5, "claude-haiku-4-5-20251001")
+        )
+        LabelingDatabase(MagicMock()).complete_labeling_run(
+            MagicMock(), run, 1, 0, 0, 0, 1, 10, 5, model="claude-haiku-5-5"
+        )
+        assert run.estimated_cost_usd == pytest.approx(llm_cost_usd(10, 5, "claude-haiku-5-5"))
 
     def test_fp_skip_stores_the_predictions_own_reason(self):
         """The export recognizes a classifier-only negative by this equality."""

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Contrastive evaluation of two labeling prompt versions (#4, #192 PR2, D036).
+"""Contrastive evaluation of two labeling prompt versions, or two models (#4, #192 PR2, #212, D036).
 
-Labels the same articles fresh under a baseline and a candidate prompt version, with the same
-model, and reports what would change if the candidate were promoted. Nothing is written to the
-database. A promotion is judged against D036's criteria by a human reading the report.
+Labels the same articles fresh under a baseline and a candidate side, and reports what would
+change if the candidate were promoted. A side is a prompt version and a model; the two sides
+differ in exactly one of them, so the report attributes every change to that one. Nothing is
+written to the database. A promotion is judged against D036's criteria by a human reading the
+report.
 
 Articles come from any combination of:
   --case-file      named cases (ids, repeats, an expected verdict for one brand)
@@ -24,6 +26,12 @@ Usage:
     uv run python scripts/compare_prompts.py --candidate v1.11.0 \\
         --case-file prompts/labeling/eval_cases/product_and_stability.json \\
         --sample-size 100 --most-brands 10 --human-rulings --max-cost 10
+
+    # Two models under one prompt version (#212):
+    uv run python scripts/compare_prompts.py --baseline v1.11.0 \\
+        --baseline-model claude-haiku-4-5-20251001 --candidate-model claude-haiku-5-5 \\
+        --case-file prompts/labeling/eval_cases/product_and_stability.json \\
+        --sample-size 100 --most-brands 10 --human-rulings --dry-run
 """
 
 from __future__ import annotations
@@ -52,6 +60,7 @@ from src.evaluation.comparator import (  # noqa: E402
     SAMPLE,
     EvalArticle,
     Expectation,
+    SideSettings,
     matching_prompt_example,
     prompt_examples,
     run_articles,
@@ -61,9 +70,14 @@ from src.evaluation.comparator import (  # noqa: E402
 )
 from src.evaluation.diff_report import render_markdown  # noqa: E402
 from src.labeling.article_input import article_content, has_sufficient_content  # noqa: E402
-from src.labeling.config import TARGET_SPORTSWEAR_BRANDS, labeling_settings  # noqa: E402
+from src.labeling.config import (  # noqa: E402
+    TARGET_SPORTSWEAR_BRANDS,
+    labeling_model_key,
+    labeling_model_spec,
+    labeling_settings,
+)
 from src.labeling.models import normalize_brand  # noqa: E402
-from src.labeling.labeler import ArticleLabeler  # noqa: E402
+from src.labeling.labeler import EFFORT_LEVELS, ArticleLabeler  # noqa: E402
 from src.labeling.prompt_manager import PromptManager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -119,10 +133,52 @@ def merge_spec(specs: dict[str, Spec], article_id: str, stratum: str) -> None:
     specs.setdefault(article_id, Spec()).strata.add(stratum)
 
 
+def side_settings(model: str, max_tokens: int | None, effort: str) -> SideSettings:
+    """One side's call settings, refusing a model with no spec or an unknown effort level.
+
+    Effort is recorded only for a model that takes it, so two sides on Haiku 4.5 asked for
+    different efforts are the same call. Checked here, before the database or any call, rather
+    than when the labeler is built.
+    """
+    try:
+        spec = labeling_model_spec(model)
+    except ValueError as e:
+        raise EvalSetupError(str(e)) from e
+    if spec.accepts_effort and effort not in EFFORT_LEVELS:
+        raise EvalSetupError(f"Effort must be one of {EFFORT_LEVELS}, got {effort!r}")
+    return SideSettings(
+        model=model,
+        max_tokens=max_tokens or spec.default_max_tokens,
+        effort=effort if spec.accepts_effort else None,
+    )
+
+
+def check_contrast(versions: dict[str, str], sides: dict[str, SideSettings]) -> None:
+    """Refuse two sides that do not differ in exactly one of prompt version and call (D036 §4).
+
+    The call is the model and its effort, so a model contrast, or one model at two efforts, holds
+    the prompt fixed. Equal sides compare a setup with itself. Sides that differ in both leave no
+    way to tell which change a difference in the report came from.
+    """
+    b, c = sides["baseline"], sides["candidate"]
+    same_prompt = versions["baseline"] == versions["candidate"]
+    # An alias and its dated snapshot are one model, so they are compared by table key
+    same_call = (labeling_model_key(b.model), b.effort) == (labeling_model_key(c.model), c.effort)
+    if same_prompt and same_call:
+        raise EvalSetupError(
+            f"Baseline and candidate are the same version ({versions['baseline']}), model "
+            f"({b.model}) and effort ({b.effort})"
+        )
+    if not same_prompt and not same_call:
+        raise EvalSetupError(
+            f"Baseline and candidate differ in both prompt ({versions['baseline']} vs "
+            f"{versions['candidate']}) and call ({b.model}, effort {b.effort} vs {c.model}, "
+            f"effort {c.effort}); vary one at a time"
+        )
+
+
 def check_prompt_versions(baseline: str, candidate: str, manager: PromptManager) -> dict[str, object]:
-    """Load both versions, refusing equal or unloadable ones (D036 §4)."""
-    if baseline == candidate:
-        raise EvalSetupError(f"Baseline and candidate are the same version ({baseline})")
+    """Load both versions, refusing unloadable ones (D036 §4)."""
     loaded = {}
     for version in (baseline, candidate):
         try:
@@ -134,8 +190,9 @@ def check_prompt_versions(baseline: str, candidate: str, manager: PromptManager)
     return loaded
 
 
-def check_labeler(labeler: ArticleLabeler, version: str) -> None:
-    """Refuse a labeler that fell back to the hardcoded prompt or loaded another version.
+def check_labeler(labeler: ArticleLabeler, version: str, side: SideSettings) -> None:
+    """Refuse a labeler that fell back to the hardcoded prompt, loaded another version, or runs
+    another model or effort.
 
     `ArticleLabeler` logs a warning and carries on with the hardcoded prompt when a version
     fails to load, so a mistyped version would otherwise compare production with itself.
@@ -143,6 +200,12 @@ def check_labeler(labeler: ArticleLabeler, version: str) -> None:
     if labeler.loaded_prompt is None or labeler.prompt_version != version:
         raise EvalSetupError(
             f"Labeler for {version} loaded {labeler.prompt_version!r}; refusing to run"
+        )
+    if labeler.model != side.model:
+        raise EvalSetupError(f"Labeler for {side.model} runs {labeler.model!r}; refusing to run")
+    if side.effort is not None and labeler.effort != side.effort:
+        raise EvalSetupError(
+            f"Labeler for effort {side.effort} runs effort {labeler.effort!r}; refusing to run"
         )
 
 
@@ -282,17 +345,42 @@ def build_eval_article(
     )
 
 
-def load_articles(session, specs: dict[str, Spec], baseline: str, examples: list[str]) -> list[EvalArticle]:
-    """Read each article once and build what the comparison sends; skips what the pipeline would."""
+def labeled_by_model(rows, model: str) -> set[str]:
+    """Article ids among (article_id, model_version) rows whose stored model is `model`.
+
+    Models are compared by table key, the same rule that prices them, so a stored dated snapshot
+    matches its alias and a variant id (or a model the table no longer lists) matches nothing.
+    """
+    key = labeling_model_key(model)
+    matched = set()
+    for article_id, model_version in rows:
+        try:
+            if model_version and labeling_model_key(model_version) == key:
+                matched.add(str(article_id))
+        except ValueError:
+            continue
+    return matched
+
+
+def load_articles(
+    session, specs: dict[str, Spec], baseline: str, baseline_model: str, examples: list[str]
+) -> list[EvalArticle]:
+    """Read each article once and build what the comparison sends; skips what the pipeline would.
+
+    An article counts toward the noise floor when its brand labels were written under the
+    baseline's prompt version and model: a label from another model is not the baseline
+    disagreeing with itself (#212). The stored model id may carry a snapshot date the baseline
+    model leaves out, so models are compared by table key (labeled_by_model).
+    """
     ids = list(specs)
     rows = session.query(Article).filter(Article.id.in_(ids)).all()
     by_id = {str(a.id): a for a in rows}
-    under_baseline = {
-        str(article_id)
-        for (article_id,) in session.query(BrandLabel.article_id)
+    under_baseline = labeled_by_model(
+        session.query(BrandLabel.article_id, BrandLabel.model_version)
         .filter(BrandLabel.article_id.in_(ids), BrandLabel.prompt_version == baseline)
-        .distinct()
-    }
+        .distinct(),
+        baseline_model,
+    )
     articles = []
     for article_id in sorted(ids):
         a = by_id.get(article_id)
@@ -314,9 +402,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Baseline prompt version (default: the runtime prompt, LABELING_PROMPT_VERSION else production)",
     )
-    p.add_argument("--candidate", required=True, help="Candidate prompt version")
+    p.add_argument(
+        "--candidate", default=None, help="Candidate prompt version (default: the baseline's)"
+    )
     p.add_argument("--model", default=None, help="Model for both sides (default: LABELING_MODEL)")
-    p.add_argument("--max-tokens", type=int, default=2000)
+    p.add_argument("--baseline-model", default=None, help="Baseline model (default: --model)")
+    p.add_argument("--candidate-model", default=None, help="Candidate model (default: --model)")
+    p.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Output cap for both sides, thinking included (default: each model's own)",
+    )
+    p.add_argument(
+        "--effort",
+        default=None,
+        help="output_config.effort for a side whose model takes it (default: LABELING_EFFORT)",
+    )
+    p.add_argument("--baseline-effort", default=None, help="Baseline effort (default: --effort)")
+    p.add_argument("--candidate-effort", default=None, help="Candidate effort (default: --effort)")
     p.add_argument("--case-file", type=Path)
     p.add_argument("--article-ids", help="Comma-separated article ids")
     p.add_argument("--sample-size", type=int, default=0)
@@ -345,32 +449,50 @@ def main(argv: list[str] | None = None) -> int:
             f"Baseline {baseline} is not the registry's production version "
             f"({manager.get_production_version()})"
         )
+    candidate = args.candidate or baseline
     model = args.model or labeling_settings.labeling_model
+    models = {"baseline": args.baseline_model or model, "candidate": args.candidate_model or model}
+    versions = {"baseline": baseline, "candidate": candidate}
+    effort = args.effort or labeling_settings.labeling_effort
+    efforts = {"baseline": args.baseline_effort or effort, "candidate": args.candidate_effort or effort}
     try:
-        loaded = check_prompt_versions(baseline, args.candidate, manager)
+        sides = {side: side_settings(models[side], args.max_tokens, efforts[side]) for side in versions}
+        check_contrast(versions, sides)
+        loaded = check_prompt_versions(baseline, candidate, manager)
     except EvalSetupError as e:
         logger.error(str(e))
         return 2
-
     prompt_chars = {
-        v: len(manager.get_formatted_system_prompt(version=v, brands=list(TARGET_SPORTSWEAR_BRANDS)))
+        side: len(manager.get_formatted_system_prompt(version=v, brands=list(TARGET_SPORTSWEAR_BRANDS)))
         + len(loaded[v].user_prompt)
-        for v in (baseline, args.candidate)
+        for side, v in versions.items()
     }
-    examples = prompt_examples(loaded[args.candidate].system_prompt + loaded[args.candidate].user_prompt)
+    examples = prompt_examples(loaded[candidate].system_prompt + loaded[candidate].user_prompt)
 
     specs = parse_case_file(json.loads(args.case_file.read_text())) if args.case_file else {}
     try:
         with db.get_session() as session:
             select_specs(session, args, specs)
-            articles = load_articles(session, specs, baseline, examples)
+            articles = load_articles(session, specs, baseline, sides["baseline"].model, examples)
     except EvalSetupError as e:
         logger.error(str(e))
         return 2
 
-    bound = worst_case_cost(articles, prompt_chars, args.max_tokens)
+    calls_per_article = [(prompt_chars[side], sides[side]) for side in versions]
+    bound = worst_case_cost(articles, calls_per_article)
     calls = 2 * sum(a.repeats for a in articles)
     logger.info(f"{len(articles)} articles, {calls} calls; worst-case cost ${bound:.2f}")
+    for side, version in versions.items():
+        logger.info(
+            f"  {side}: {version} on {sides[side].model}, max_tokens {sides[side].max_tokens}, "
+            f"effort {sides[side].effort or 'not sent'}"
+        )
+    floor_population = sum(1 for a in articles if SAMPLE in a.strata and a.stored_under_baseline)
+    if args.sample_size and not floor_population:
+        logger.warning(
+            f"No random-sample article is stored as labeled under {baseline} on "
+            f"{sides['baseline'].model}: the report's noise floor will be empty"
+        )
     for stratum in sorted({s for a in articles for s in a.strata}):
         logger.info(f"  {stratum}: {sum(1 for a in articles if stratum in a.strata)}")
     for a in articles:
@@ -392,21 +514,26 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     labelers = {}
-    for version in (baseline, args.candidate):
-        labelers[version] = ArticleLabeler(model=model, max_tokens=args.max_tokens, prompt_version=version)
+    for side, version in versions.items():
+        labelers[side] = ArticleLabeler(
+            model=sides[side].model,
+            max_tokens=sides[side].max_tokens,
+            prompt_version=version,
+            effort=sides[side].effort,
+        )
         try:
-            check_labeler(labelers[version], version)
+            check_labeler(labelers[side], version, sides[side])
         except EvalSetupError as e:
             logger.error(str(e))
             return 2
 
     def pair_bound(article: EvalArticle) -> float:
-        return sum(worst_case_call_cost(article, c, args.max_tokens) for c in prompt_chars.values())
+        return sum(worst_case_call_cost(article, chars, side) for chars, side in calls_per_article)
 
     runs, stopped = run_articles(
         articles,
-        labelers[baseline],
-        labelers[args.candidate],
+        labelers["baseline"],
+        labelers["candidate"],
         max_cost_usd=args.max_cost,
         pair_bound=pair_bound,
         on_pair=lambda r: logger.info(f"labeled {r.article.article_id}"),
@@ -414,15 +541,19 @@ def main(argv: list[str] | None = None) -> int:
     if stopped:
         logger.warning("Stopped before the spend cap; the report covers the articles labeled so far")
 
-    summary = summarize(runs, max_tokens=args.max_tokens)
+    summary = summarize(runs, baseline=sides["baseline"], candidate=sides["candidate"])
     config = {
         "baseline": baseline,
-        "candidate": args.candidate,
-        "model": model,
-        "max_tokens": args.max_tokens,
+        "candidate": candidate,
+        "baseline_model": sides["baseline"].model,
+        "candidate_model": sides["candidate"].model,
+        "baseline_max_tokens": sides["baseline"].max_tokens,
+        "candidate_max_tokens": sides["candidate"].max_tokens,
+        # Sent only to a side whose model takes it
+        "effort": {side: sides[side].effort for side in versions},
         "baseline_hashes": f"{loaded[baseline].system_prompt_hash}/{loaded[baseline].user_prompt_hash}",
         "candidate_hashes": (
-            f"{loaded[args.candidate].system_prompt_hash}/{loaded[args.candidate].user_prompt_hash}"
+            f"{loaded[candidate].system_prompt_hash}/{loaded[candidate].user_prompt_hash}"
         ),
         "stopped_early": stopped,
         "seed": args.seed,
@@ -433,9 +564,14 @@ def main(argv: list[str] | None = None) -> int:
         "max_cost_usd": args.max_cost,
         "run_at": datetime.now(timezone.utc).isoformat(),
     }
-    stem = args.output or OUTPUT_DIR / (
-        f"{baseline}_vs_{args.candidate}_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
-    )
+    b, c = sides["baseline"], sides["candidate"]
+    if baseline != candidate:
+        contrast = f"{baseline}_vs_{candidate}"
+    elif b.model != c.model:
+        contrast = f"{baseline}_{b.model}_vs_{c.model}"
+    else:
+        contrast = f"{baseline}_{b.model}_{b.effort}_vs_{c.effort}"
+    stem = args.output or OUTPUT_DIR / f"{contrast}_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"
     stem.parent.mkdir(parents=True, exist_ok=True)
     # Version names contain dots, so append the extension rather than use with_suffix
     json_path, md_path = Path(f"{stem}.json"), Path(f"{stem}.md")

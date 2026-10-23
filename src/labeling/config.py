@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,25 +18,112 @@ logger = logging.getLogger(__name__)
 # Root directory for prompts (relative to project root)
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "prompts" / "labeling"
 
-# LLM pricing per million tokens, used for cost estimates.
-#
-# One table, because the report now mixes sources: spend comes from
-# `labeling_runs.estimated_cost_usd` (written by `complete_labeling_run`) while
-# the FP pre-filter savings still come from the script's stdout. When those two
-# priced differently the same report could claim it saved more than it spent
-# (issue #81). Model-aware pricing is tracked in #54; these are Haiku 4.5 rates.
-# The labeler's stats, the run record and the prompt evaluation price through
-# llm_cost_usd below; scripts/label_articles.py reads the two rates directly.
-LLM_INPUT_COST_PER_MTOK = 1.00
-LLM_OUTPUT_COST_PER_MTOK = 5.00
 EMBEDDING_COST_PER_1K_TOKENS = 0.00002
 
 
-def llm_cost_usd(input_tokens: int, output_tokens: int) -> float:
-    """Cost in USD of the given token counts at the rates above."""
+class LabelingModelSpec(BaseModel):
+    """What the labeler needs to know about a labeling model: its prices and request surface."""
+
+    model_config = ConfigDict(frozen=True)
+
+    input_cost_per_mtok: float
+    output_cost_per_mtok: float
+    # Haiku 4.5 takes temperature; Haiku 5.5 returns a 400 for any non-default value
+    accepts_sampling: bool
+    # output_config.effort errors on Haiku 4.5; Haiku 5.5 takes low through max
+    accepts_effort: bool
+    # Thinking counts toward max_tokens, so a model that thinks by default needs more room
+    default_max_tokens: int
+    # Fewest characters per input token assumed for a worst-case cost bound. The v1.11.0 prompt
+    # measured 3.91 on Haiku 4.5 and 2.65 on Haiku 5.5, whose tokenizer counts more tokens (#212)
+    min_chars_per_token: float
+
+
+# LLM prices per million tokens and request surface, by model id (a dated snapshot id such as
+# claude-haiku-4-5-20251001 matches claude-haiku-4-5).
+#
+# One table, because the report mixes sources: spend comes from
+# `labeling_runs.estimated_cost_usd` (written by `complete_labeling_run`) while the FP pre-filter
+# savings come from the script's stdout. When those two priced differently the same report could
+# claim it saved more than it spent (issue #81). A model missing here is refused by
+# `labeling_model_spec` rather than priced at another model's rates (#212; #54 covers the rest).
+#
+# Haiku 5.5 has a second rate card ($0.50 / $2.50) for prompts over 100K tokens. A labeling
+# prompt is capped by MAX_ARTICLE_TOKENS (4000) plus the prompt template, far below that, and the
+# aggregate token counts priced here cannot be split by prompt length, so only the lower card is
+# recorded.
+LABELING_MODELS: dict[str, LabelingModelSpec] = {
+    "claude-haiku-4-5": LabelingModelSpec(
+        input_cost_per_mtok=1.00,
+        output_cost_per_mtok=5.00,
+        accepts_sampling=True,
+        accepts_effort=False,
+        default_max_tokens=2000,
+        min_chars_per_token=3.0,
+    ),
+    # The candidate default of scripts/eval_model_migration.py (#38), kept on that script's request
+    # surface (temperature, no effort). Sonnet 4, its baseline, is retired and needs no entry: the
+    # script builds a labeler for the candidate only.
+    "claude-sonnet-4-6": LabelingModelSpec(
+        input_cost_per_mtok=3.00,
+        output_cost_per_mtok=15.00,
+        accepts_sampling=True,
+        accepts_effort=False,
+        default_max_tokens=2000,
+        min_chars_per_token=3.0,
+    ),
+    "claude-haiku-5-5": LabelingModelSpec(
+        input_cost_per_mtok=0.10,
+        output_cost_per_mtok=0.50,
+        accepts_sampling=False,
+        accepts_effort=True,
+        default_max_tokens=8000,
+        min_chars_per_token=2.0,
+    ),
+}
+
+
+_DATED_SUFFIX = re.compile(r"-\d{8}")
+
+
+def labeling_model_key(model: str) -> str:
+    """The table key a model id names: the key itself, or the key followed by a -YYYYMMDD date.
+
+    Anything else is refused, so a variant id that only starts with a key (another model, or a
+    tier priced differently) is never priced at that key's rates. An alias and its dated snapshot
+    resolve to the same key, which is how the eval tells two names for one model apart from two
+    models.
+    """
+    matches = [
+        key
+        for key in LABELING_MODELS
+        if model == key or (model.startswith(key) and _DATED_SUFFIX.fullmatch(model[len(key):]))
+    ]
+    if not matches:
+        raise ValueError(
+            f"No pricing or request spec for labeling model {model!r}; "
+            f"add it to LABELING_MODELS in src/labeling/config.py (known: {sorted(LABELING_MODELS)})"
+        )
+    return max(matches, key=len)
+
+
+def labeling_model_spec(model: str) -> LabelingModelSpec:
+    """The spec for a model id, resolved by labeling_model_key."""
+    return LABELING_MODELS[labeling_model_key(model)]
+
+
+def llm_cost_usd(input_tokens: int, output_tokens: int, model: str) -> float:
+    """Cost in USD of the given token counts at the model's rates.
+
+    No tokens cost nothing under any model, so a run that never called the LLM (every article
+    skipped before it) records zero without its model being looked up.
+    """
+    if not input_tokens and not output_tokens:
+        return 0.0
+    spec = labeling_model_spec(model)
     return (
-        input_tokens / 1_000_000 * LLM_INPUT_COST_PER_MTOK
-        + output_tokens / 1_000_000 * LLM_OUTPUT_COST_PER_MTOK
+        input_tokens / 1_000_000 * spec.input_cost_per_mtok
+        + output_tokens / 1_000_000 * spec.output_cost_per_mtok
     )
 
 # Recorded as threshold_used (NOT NULL) for every article of an FP pre-filter
@@ -140,6 +228,10 @@ class LabelingSettings(BaseModel):
     # Model settings
     labeling_model: str = Field(
         default_factory=lambda: os.getenv("LABELING_MODEL", "claude-haiku-4-5-20251001")
+    )
+    # output_config.effort, sent only to a model that accepts it (Haiku 5.5's default is medium)
+    labeling_effort: str = Field(
+        default_factory=lambda: os.getenv("LABELING_EFFORT", "medium")
     )
 
     # Prompt version (None = use production version from registry)

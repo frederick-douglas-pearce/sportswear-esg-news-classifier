@@ -32,6 +32,42 @@ promoted; v1.12.0 supersedes it. Production is unchanged (v1.10.0).
   so the scored `false` side has 8 cases (run 1 scored 5; 3 remained after the owner's flips).
 - The v1.11.0 hash pins in `tests/test_labeling_prompts.py` and the doc-rule hash are updated.
 
+### 2026-10-21: The labeler and the contrastive harness support Claude Haiku 5.5
+
+**Haiku 5.5 can be evaluated against Haiku 4.5 without changing production (#212).** The default
+`LABELING_MODEL` stays Haiku 4.5 until the owner accepts the eval report.
+- `LABELING_MODELS` in `src/labeling/config.py` holds each labeling model's prices and request
+  surface (Haiku 4.5, Haiku 5.5, Sonnet 4.6); `llm_cost_usd` takes the model, and the labeler's
+  stats, the run record, the CLI's cost lines and the eval price through it. A labeler for a model with no entry is refused before any
+  call. Haiku 5.5's second rate card (prompts over 100K tokens) is not modeled; a labeling prompt is
+  far below it.
+- `ArticleLabeler` reads reply text by block type (a reply can start with a `thinking` block), sends
+  `temperature` only to a model that takes it, sends `output_config.effort` (`LABELING_EFFORT`,
+  default `medium`; through `extra_body`, since the pinned SDK has no named argument) only to a
+  model that takes it, defaults `max_tokens` to the model's (8000 for Haiku 5.5, since thinking
+  counts toward it), records `stop_reason`, and records a refusal as a failure with error type
+  `refusal` and a reply that stopped at `max_tokens` without parsing as `max_tokens`.
+- `scripts/compare_prompts.py` takes `--baseline-model` / `--candidate-model` and
+  `--effort` / `--baseline-effort` / `--candidate-effort`, and `--candidate` defaults to the
+  baseline's version. A side is a prompt version and a call (model and effort); the setup guard
+  refuses sides that are equal or that differ in both, a model with no spec, an unknown effort,
+  and a labeler running another model or effort. Truncation is counted from `stop_reason`,
+  refusals apart from parse failures, and each side's cost at its own model's rates. Models are
+  compared by table key, so an alias and its dated snapshot are one model, not a model contrast.
+  The noise floor counts articles stored under the baseline's prompt and model (matched by table
+  key), and the report says when it is empty. D036 is amended: no refusals, or each one read and explained.
+- Refusals and unparsed `max_tokens` stops are stored as `failed` with fixed prefixes
+  (`FAILED_REFUSAL_PREFIX`, `FAILED_MAX_TOKENS_PREFIX` in `src/data_collection/models.py`) and are
+  not retried. A reply that parsed despite stopping at `max_tokens` is kept with a warning.
+- `complete_labeling_run` requires `model`, the pipeline passes its labeler's, and the run's config
+  JSON records `model` and `effort`. The CLI prices its cost lines at the labeler's model, and the
+  FP-savings estimate uses the run's mean tokens per answered call (thinking included; a call that
+  failed with no usage is left out) instead of a fixed 1500 / 500. On Haiku 4.5, with no change in
+  behavior, the daily `Est. LLM cost saved` figure steps up about 2.7x at merge: measured calls
+  average about 8,500 input and 460 output tokens, so a skipped article is worth about $0.011, not
+  the old $0.004. Model ids match a table key exactly or with a `-YYYYMMDD` date, so an unlisted variant
+  is refused rather than priced at its family's rates.
+
 ### 2026-10-20: Contrastive evaluation of labeling prompt versions
 
 **A labeling prompt is promoted only after a contrastive evaluation judged against criteria fixed

@@ -28,6 +28,7 @@ from src.evaluation.comparator import (
     record_reply,
     run_articles,
     summarize,
+    SideSettings,
 )
 from src.evaluation.diff_report import render_markdown
 from src.labeling.disposition import FALSE_POSITIVE, LABELED, SKIPPED
@@ -36,6 +37,10 @@ from src.labeling.models import BrandAnalysis, CategoryLabel, LabelingResponse
 from src.labeling.config import llm_cost_usd
 
 MAX_TOKENS = 2000
+HAIKU_45 = "claude-haiku-4-5-20251001"
+HAIKU_55 = "claude-haiku-5-5"
+SIDE = SideSettings(model=HAIKU_45, max_tokens=MAX_TOKENS)
+SIDES = {"baseline": SIDE, "candidate": SIDE}
 
 
 def _esg(brand, sentiment=1):
@@ -58,12 +63,13 @@ def _not_sportswear(brand):
     )
 
 
-def _ok(analyses, output_tokens=100, input_tokens=1000):
+def _ok(analyses, output_tokens=100, input_tokens=1000, stop_reason="end_turn"):
     return LabelingResult(
         success=True,
         response=LabelingResponse(brand_analyses=analyses, article_summary="s"),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        stop_reason=stop_reason,
     )
 
 
@@ -78,9 +84,10 @@ def _article(article_id="a1", brands=("Nike",), **kw):
 class FakeLabeler:
     """Returns queued results in order and records each call."""
 
-    def __init__(self, results):
+    def __init__(self, results, model=HAIKU_45):
         self.results = list(results)
         self.calls = []
+        self.model = model
 
     def label_article(self, title, content, brands, published_at=None, source_name=None):
         self.calls.append((title, tuple(brands), source_name))
@@ -150,13 +157,23 @@ class TestWorstCaseCost:
     def test_one_call_is_a_generous_input_estimate_and_a_full_output(self):
         article = EvalArticle(article_id="a", title="t", content="x" * 300, brands=["Nike"])
         # (3000 prompt chars + 300 content chars) / 3 chars per token
-        assert comparator.worst_case_call_cost(article, 3000, 2000) == pytest.approx(llm_cost_usd(1100, 2000))
+        assert comparator.worst_case_call_cost(article, 3000, SIDE) == pytest.approx(
+            llm_cost_usd(1100, 2000, HAIKU_45)
+        )
+
+    def test_one_call_is_priced_at_its_sides_model_and_cap(self):
+        article = EvalArticle(article_id="a", title="t", content="x" * 300, brands=["Nike"])
+        side = SideSettings(model=HAIKU_55, max_tokens=8000)
+        # Haiku 5.5's tokenizer: (3000 + 300) / 2 chars per token
+        assert comparator.worst_case_call_cost(article, 3000, side) == pytest.approx(
+            llm_cost_usd(1650, 8000, HAIKU_55)
+        )
 
     def test_run_bound_covers_both_versions_and_every_repeat(self):
         a = EvalArticle(article_id="a", title="t", content="x" * 300, brands=["Nike"], repeats=3)
-        chars = {"v1": 3000, "v2": 6000}
-        expected = 3 * (comparator.worst_case_call_cost(a, 3000, 2000) + comparator.worst_case_call_cost(a, 6000, 2000))
-        assert comparator.worst_case_cost([a], chars, 2000) == pytest.approx(expected)
+        calls = [(3000, SIDE), (6000, SIDE)]
+        expected = 3 * (comparator.worst_case_call_cost(a, 3000, SIDE) + comparator.worst_case_call_cost(a, 6000, SIDE))
+        assert comparator.worst_case_cost([a], calls) == pytest.approx(expected)
 
 
 class TestRunArticles:
@@ -217,7 +234,7 @@ class TestSummarize:
             # outside the sample: counted in "all" only
             _run(_article("5"), [_reply([])], [_reply([_esg("Nike")])]),
         ]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         sample = s["newly_labeled_sample"]
         assert (sample["newly_labeled"], sample["denominator"]) == (2, 3)
         assert sample["by_baseline_class"][FALSE_POSITIVE] == {"denominator": 1, "newly_labeled": 1}
@@ -232,7 +249,7 @@ class TestSummarize:
             _run(_article("1"), [_reply([])], [_reply([_no_esg("Nike")])]),
             _run(_article("2"), [_reply([])], [_reply([_not_sportswear("Nike")])]),
         ]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert s["transitions"] == {
             f"{SKIPPED_UNJUDGED} -> {FALSE_POSITIVE}": 1,
             f"{SKIPPED_UNJUDGED} -> {SKIPPED_JUDGED}": 1,
@@ -249,7 +266,7 @@ class TestSummarize:
                 [_reply([_esg("Nike", -1), _not_sportswear("Puma")], brands=("Nike", "Puma"))],
             )
         ]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert [(f["brand"], f["baseline"], f["candidate"]) for f in s["fp_flips"]] == [("puma", True, False)]
         # Puma is labeled on one side only: an outcome change, not a category flip
         assert s["category_flips"] == 0 and s["brands_labeled_by_one_side"] == 1
@@ -259,7 +276,7 @@ class TestSummarize:
         social = _esg("Nike")
         social.categories["social"] = CategoryLabel(applies=True, sentiment=1, evidence=["e"])
         runs = [_run(_article("1"), [_reply([_esg("Nike")])], [_reply([social])])]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert s["category_flips"] == 1 and s["brands_labeled_by_one_side"] == 0
 
     def test_compliance_and_duplicates_per_version(self):
@@ -270,7 +287,7 @@ class TestSummarize:
                 [_reply([_esg("Nike"), _no_esg("Puma"), _no_esg("puma")], brands=("Nike", "Puma"))],
             )
         ]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert s["baseline"]["compliance"] == 0.0 and s["baseline"]["incomplete_replies"] == 1
         assert s["candidate"]["compliance"] == 1.0
         assert s["candidate"]["duplicate_entries"] == 1 and s["candidate"]["replies_with_duplicates"] == 1
@@ -278,16 +295,42 @@ class TestSummarize:
     def test_tokens_truncation_near_limit_and_most_brands_stratum(self):
         runs = [
             _run(_article("1", strata=(MOST_BRANDS,)), [_reply([_esg("Nike")], output_tokens=1900)],
-                 [_reply([_esg("Nike")], output_tokens=MAX_TOKENS)]),
+                 [_reply([_esg("Nike")], output_tokens=MAX_TOKENS, stop_reason="max_tokens")]),
             _run(_article("2"), [_reply([_esg("Nike")], output_tokens=100)],
                  [_reply([_esg("Nike")], output_tokens=300)]),
         ]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert s["candidate"]["tokens"]["truncated"] == 1 and s["candidate"]["tokens"]["near_limit"] == 0
         assert s["baseline"]["tokens"]["near_limit"] == 1 and s["baseline"]["tokens"]["truncated"] == 0
         assert s["candidate"]["tokens_most_brands"]["output_max"] == MAX_TOKENS
         assert s["candidate"]["tokens_most_brands"]["calls"] == 1
-        assert s["candidate"]["tokens"]["cost_usd"] == pytest.approx(llm_cost_usd(2000, 2300))
+        assert s["candidate"]["tokens"]["cost_usd"] == pytest.approx(llm_cost_usd(2000, 2300, HAIKU_45))
+
+    def test_truncation_is_the_stop_reason_not_the_output_count(self):
+        """Output tokens include thinking, so a reply can stop at the cap below it, and a count
+        at the cap is not a truncation unless the API says so."""
+        runs = [
+            _run(_article("1"), [_reply([_esg("Nike")], output_tokens=MAX_TOKENS)],
+                 [_reply([_esg("Nike")], output_tokens=500, stop_reason="max_tokens")]),
+        ]
+        s = summarize(runs, **SIDES)
+        assert s["baseline"]["tokens"]["truncated"] == 0 and s["baseline"]["tokens"]["near_limit"] == 1
+        assert s["candidate"]["tokens"]["truncated"] == 1 and s["candidate"]["tokens"]["near_limit"] == 0
+
+    def test_each_side_is_priced_at_its_own_model(self):
+        runs = [_run(_article("1"), [_reply([_esg("Nike")])], [_reply([_esg("Nike")])])]
+        s = summarize(runs, baseline=SIDE, candidate=SideSettings(model=HAIKU_55, max_tokens=8000))
+        assert s["baseline"]["tokens"]["cost_usd"] == pytest.approx(llm_cost_usd(1000, 100, HAIKU_45))
+        assert s["candidate"]["tokens"]["cost_usd"] == pytest.approx(llm_cost_usd(1000, 100, HAIKU_55))
+
+    def test_refusals_are_counted_apart_from_parse_failures(self):
+        refused = LabelingResult(
+            success=False, error="declined", error_type="refusal", output_tokens=10, stop_reason="refusal"
+        )
+        runs = [_run(_article("1"), [_reply([_esg("Nike")])], [record_reply(["Nike"], refused)])]
+        s = summarize(runs, **SIDES)
+        assert s["candidate"]["refusals"] == 1 and s["candidate"]["parse_failures"] == 0
+        assert s["candidate"]["outcomes"][FAILED] == 1
 
     def test_product_accuracy_buckets_per_case(self):
         expect = Expectation("Nike", True)
@@ -308,13 +351,13 @@ class TestSummarize:
                 [_reply([_not_sportswear("Nike")])],
             ),
         ]
-        acc = summarize(runs, max_tokens=MAX_TOKENS)["product_accuracy"]
+        acc = summarize(runs, **SIDES)["product_accuracy"]
         b, c = acc["baseline"], acc["candidate"]
         assert (b["correct"], b["wrong"], b["not_judged"], b["rate"]) == (1, 0, 1, 1.0)
         assert (c["correct"], c["wrong"], c["not_judged"], c["rate"]) == (1, 1, 0, 0.5)
         assert c["misses"][0]["article_id"] == "1" and c["misses"][0]["got"] == [True, False]
         assert [x["article_id"] for x in b["not_judged_cases"]] == ["2"]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert [x["article_id"] for x in s["prompt_example_cases"]] == ["3"]
 
     def test_stability_consistency_and_completeness(self):
@@ -325,7 +368,7 @@ class TestSummarize:
             _run(_article("short", repeats=3), [_reply([])], [_reply([])]),
             _run(_article("single"), [_reply([])], [_reply([])]),
         ]
-        stab = {s["article_id"]: s for s in summarize(runs, max_tokens=MAX_TOKENS)["stability"]}
+        stab = {s["article_id"]: s for s in summarize(runs, **SIDES)["stability"]}
         assert set(stab) == {"same", "varies", "short"}
         assert stab["same"]["baseline_consistent"] and stab["same"]["candidate_consistent"]
         assert not stab["varies"]["baseline_consistent"] and stab["varies"]["candidate_consistent"]
@@ -335,7 +378,7 @@ class TestSummarize:
     def test_transitions_use_the_first_repeat(self):
         runs = [_run(_article("1", repeats=2), [_reply([]), _reply([_esg("Nike")])],
                      [_reply([_esg("Nike")]), _reply([])])]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert s["transitions"] == {f"{SKIPPED_UNJUDGED} -> {LABELED}": 1}
 
     def test_failed_replies_are_kept_out_of_rates(self):
@@ -345,7 +388,7 @@ class TestSummarize:
             _run(_article("2", strata=(SAMPLE,)), [parse_failure], [_reply([_esg("Nike")])]),
             _run(_article("3", strata=(SAMPLE,)), [_reply([])], [_reply([_esg("Nike")])]),
         ]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert s["baseline"]["parse_failures"] == 1 and s["candidate"]["parse_failures"] == 1
         assert s["baseline"]["outcomes"][FAILED] == 1
         nl = s["newly_labeled_sample"]
@@ -362,12 +405,12 @@ class TestSummarize:
             _run(_article("failed"), [_reply([_esg("Nike")])], [parse_failure]),
             _run(_article("dropped"), [_reply([_esg("Nike")])], [_reply([_no_esg("Nike")])]),
         ]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert [x["article_id"] for x in s["labeled_to_non_labeled"]] == ["dropped"]
 
     def test_newly_judged_counts_sent_brands_only(self):
         runs = [_run(_article("1"), [_reply([])], [_reply([_no_esg("Nike"), _no_esg("Vans")])])]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         assert s["brands_newly_judged"] == 1
         assert s["candidate"]["replies_with_unsent_brands"] == 1
 
@@ -378,7 +421,7 @@ class TestSummarize:
             [_reply([_esg("Nike")], brands=("Nike", "Converse"))],
             [_reply([_esg("Nike"), unset, _no_esg("Converse")], brands=("Nike", "Converse"))],
         )]
-        s = summarize(runs, max_tokens=MAX_TOKENS)
+        s = summarize(runs, **SIDES)
         # the baseline left Converse out; the candidate judged it, beside an entry with no verdict
         assert s["baseline"]["incomplete_replies"] == 1 and s["baseline"]["compliance"] == 0.0
         assert s["candidate"]["incomplete_replies"] == 0 and s["candidate"]["compliance"] == 1.0
@@ -397,25 +440,80 @@ class TestSummarize:
             _run(_article("3", stored_status=LABELED, stored_under_baseline=True), [_reply([])], [_reply([])]),
             _run(_article("4", strata=sample, stored_status=LABELED), [_reply([])], [_reply([])]),
         ]
-        floor = summarize(runs, max_tokens=MAX_TOKENS)["noise_floor"]
+        floor = summarize(runs, **SIDES)["noise_floor"]
         assert (floor["still_labeled"], floor["articles"]) == (1, 2)
 
     def test_report_renders(self):
         runs = [_run(_article("1", strata=(SAMPLE,)), [_reply([])], [_reply([_esg("Nike")])])]
         config = {
-            "baseline": "v1.10.0", "candidate": "v1.11.0", "model": "m", "max_tokens": MAX_TOKENS,
+            "baseline": "v1.10.0", "candidate": "v1.11.0",
+            "baseline_model": HAIKU_45, "candidate_model": HAIKU_45,
+            "baseline_max_tokens": MAX_TOKENS, "candidate_max_tokens": MAX_TOKENS,
+            "effort": {"baseline": None, "candidate": None},
             "baseline_hashes": "a/b", "candidate_hashes": "c/d", "stopped_early": False,
         }
-        md = render_markdown(summarize(runs, max_tokens=MAX_TOKENS), config)
-        assert "v1.10.0 (baseline) vs v1.11.0 (candidate)" in md
+        md = render_markdown(summarize(runs, **SIDES), config)
+        assert f"v1.10.0 on {HAIKU_45} (baseline) vs v1.11.0 on {HAIKU_45} (candidate)" in md
+        assert "effort not sent" in md
         assert "### Non-labeled -> labeled (1)" in md
         assert "1 of 1 baseline non-labeled replies labeled by the candidate" in md
 
 
+def _contrast(b_version, c_version, b_side, c_side):
+    compare_prompts.check_contrast(
+        {"baseline": b_version, "candidate": c_version}, {"baseline": b_side, "candidate": c_side}
+    )
+
+
+H55_LOW = SideSettings(HAIKU_55, 8000, "low")
+H55_MEDIUM = SideSettings(HAIKU_55, 8000, "medium")
+
+
 class TestScriptGuards:
-    def test_equal_versions_are_refused(self):
+    def test_equal_sides_are_refused(self):
         with pytest.raises(compare_prompts.EvalSetupError, match="same version"):
-            compare_prompts.check_prompt_versions("v1.10.0", "v1.10.0", MagicMock())
+            _contrast("v1.10.0", "v1.10.0", SIDE, SIDE)
+
+    @pytest.mark.parametrize("c_side", [H55_MEDIUM, SideSettings(HAIKU_55, 8000, "low")])
+    def test_sides_differing_in_prompt_and_call_are_refused(self, c_side):
+        b_side = SIDE if c_side is H55_MEDIUM else H55_MEDIUM
+        with pytest.raises(compare_prompts.EvalSetupError, match="vary one at a time"):
+            _contrast("v1.10.0", "v1.11.0", b_side, c_side)
+
+    @pytest.mark.parametrize(
+        "versions,sides",
+        [
+            (("v1.10.0", "v1.11.0"), (SIDE, SIDE)),
+            (("v1.11.0", "v1.11.0"), (SIDE, H55_MEDIUM)),
+            (("v1.11.0", "v1.11.0"), (H55_LOW, H55_MEDIUM)),
+        ],
+    )
+    def test_sides_differing_in_one_are_accepted(self, versions, sides):
+        _contrast(*versions, *sides)
+
+    def test_an_alias_and_its_dated_snapshot_are_one_model(self):
+        """Two names for one model would report its self-disagreement as a model difference."""
+        with pytest.raises(compare_prompts.EvalSetupError, match="same version"):
+            _contrast("v1.11.0", "v1.11.0", SIDE, SideSettings("claude-haiku-4-5", MAX_TOKENS))
+
+    def test_a_model_without_a_spec_is_refused(self):
+        with pytest.raises(compare_prompts.EvalSetupError, match="No pricing"):
+            compare_prompts.side_settings("claude-unknown-1", None, "medium")
+
+    def test_an_unknown_effort_is_refused_for_a_model_that_takes_effort(self):
+        with pytest.raises(compare_prompts.EvalSetupError, match="Effort must be one of"):
+            compare_prompts.side_settings(HAIKU_55, None, "extreme")
+
+    def test_side_settings_record_effort_only_where_the_model_takes_it(self):
+        assert compare_prompts.side_settings(HAIKU_45, None, "low") == SideSettings(HAIKU_45, 2000, None)
+        assert compare_prompts.side_settings(HAIKU_55, 4000, "low") == SideSettings(HAIKU_55, 4000, "low")
+
+    def test_one_model_at_two_efforts_without_effort_support_is_the_same_call(self):
+        """Haiku 4.5 is sent no effort, so asking for two efforts compares a setup with itself."""
+        b = compare_prompts.side_settings(HAIKU_45, None, "low")
+        c = compare_prompts.side_settings(HAIKU_45, None, "high")
+        with pytest.raises(compare_prompts.EvalSetupError, match="same version"):
+            _contrast("v1.11.0", "v1.11.0", b, c)
 
     def test_unloadable_version_is_refused(self):
         manager = MagicMock()
@@ -430,15 +528,27 @@ class TestScriptGuards:
             compare_prompts.check_prompt_versions("v1.9.0", "v1.11.0", manager)
 
     def test_labeler_that_fell_back_to_the_hardcoded_prompt_is_refused(self):
-        labeler = MagicMock(loaded_prompt=None, prompt_version="legacy")
+        labeler = MagicMock(loaded_prompt=None, prompt_version="legacy", model=HAIKU_45)
         with pytest.raises(compare_prompts.EvalSetupError, match="legacy"):
-            compare_prompts.check_labeler(labeler, "v1.11.0")
+            compare_prompts.check_labeler(labeler, "v1.11.0", SIDE)
 
     def test_labeler_with_another_version_is_refused(self):
-        labeler = MagicMock(loaded_prompt=object(), prompt_version="v1.10.0")
+        labeler = MagicMock(loaded_prompt=object(), prompt_version="v1.10.0", model=HAIKU_45)
         with pytest.raises(compare_prompts.EvalSetupError):
-            compare_prompts.check_labeler(labeler, "v1.11.0")
-        compare_prompts.check_labeler(MagicMock(loaded_prompt=object(), prompt_version="v1.11.0"), "v1.11.0")
+            compare_prompts.check_labeler(labeler, "v1.11.0", SIDE)
+        compare_prompts.check_labeler(
+            MagicMock(loaded_prompt=object(), prompt_version="v1.11.0", model=HAIKU_45), "v1.11.0", SIDE
+        )
+
+    def test_labeler_with_another_model_is_refused(self):
+        labeler = MagicMock(loaded_prompt=object(), prompt_version="v1.11.0", model=HAIKU_45)
+        with pytest.raises(compare_prompts.EvalSetupError, match="runs"):
+            compare_prompts.check_labeler(labeler, "v1.11.0", H55_MEDIUM)
+
+    def test_labeler_with_another_effort_is_refused(self):
+        labeler = MagicMock(loaded_prompt=object(), prompt_version="v1.11.0", model=HAIKU_55, effort="medium")
+        with pytest.raises(compare_prompts.EvalSetupError, match="effort"):
+            compare_prompts.check_labeler(labeler, "v1.11.0", H55_LOW)
 
 
 class TestSelection:
@@ -543,6 +653,53 @@ class TestSelection:
         assert auto.prompt_example == "Some title" and not auto.stored_under_baseline
         skipped = compare_prompts.build_eval_article(self._row(labeling_status="skipped"), named, True, [])
         assert not skipped.stored_under_baseline
+
+
+class TestNoiseFloorModel:
+    ROWS = [
+        ("a", "claude-haiku-4-5-20251001"),
+        ("b", "claude-haiku-4-5"),
+        ("c", HAIKU_55),
+        ("d", "claude-haiku-5-5-preview"),
+        ("e", "claude-3-5-sonnet-20240620"),
+        ("f", None),
+    ]
+
+    @pytest.mark.parametrize(
+        "model,expected",
+        [("claude-haiku-4-5", {"a", "b"}), (HAIKU_45, {"a", "b"}), (HAIKU_55, {"c"})],
+    )
+    def test_stored_models_are_matched_by_table_key(self, model, expected):
+        """A variant id, or a model the table no longer lists, is not the baseline model."""
+        assert compare_prompts.labeled_by_model(self.ROWS, model) == expected
+
+    def test_load_articles_puts_only_the_baseline_prompt_and_model_in_the_floor(self):
+        from src.data_collection.models import Article, BrandLabel
+
+        def row(article_id):
+            return MagicMock(id=article_id, title="Some title", full_content="x" * 200,
+                             description=None, brands_mentioned=["Nike"], published_at=None,
+                             source_name="S", labeling_status="labeled")
+
+        articles_q, labels_q = MagicMock(), MagicMock()
+        articles_q.filter.return_value.all.return_value = [row("a1"), row("a2")]
+        labels_q.filter.return_value.distinct.return_value = [("a1", HAIKU_45), ("a2", HAIKU_55)]
+        session = MagicMock()
+        session.query.side_effect = lambda *cols: articles_q if cols[0] is Article else labels_q
+
+        specs = {"a1": compare_prompts.Spec(), "a2": compare_prompts.Spec()}
+        built = compare_prompts.load_articles(session, specs, "v1.10.0", HAIKU_45, [])
+
+        assert {a.article_id: a.stored_under_baseline for a in built} == {"a1": True, "a2": False}
+        # Compared by identity: == on a mapped column builds SQL instead of comparing
+        label_cols = [c.args for c in session.query.call_args_list if c.args[0] is not Article]
+        assert len(label_cols) == 1
+        assert label_cols[0][0] is BrandLabel.article_id and label_cols[0][1] is BrandLabel.model_version
+        clauses = labels_q.filter.call_args.args
+        assert any(
+            str(c.left) == "brand_labels.prompt_version" and c.right.value == "v1.10.0"
+            for c in clauses
+        )
 
 
 class TestCaseFile:
@@ -672,7 +829,7 @@ class TestMain:
             seen.append(baseline)
             raise compare_prompts.EvalSetupError("stop")
 
-        settings = MagicMock(prompt_version=override, labeling_model="m")
+        settings = MagicMock(prompt_version=override, labeling_model=HAIKU_45, labeling_effort="medium")
         manager = MagicMock()
         manager.get_production_version.return_value = "v1.10.0"
         with patch.object(compare_prompts, "labeling_settings", settings), \
@@ -698,8 +855,8 @@ class TestMain:
         labeler_cls.assert_not_called()
 
     def test_only_the_candidate_falling_back_is_refused(self, tmp_path):
-        good = MagicMock(loaded_prompt=object(), prompt_version="v1.10.0")
-        fallback = MagicMock(loaded_prompt=None, prompt_version="legacy")
+        good = MagicMock(loaded_prompt=object(), prompt_version="v1.10.0", model=HAIKU_45)
+        fallback = MagicMock(loaded_prompt=None, prompt_version="legacy", model=HAIKU_45)
         a, b, c = self._patches([_article()])
         with a, b, c, patch.object(compare_prompts, "ArticleLabeler", side_effect=[good, fallback]):
             code = compare_prompts.main(["--candidate", "v1.11.0", "--baseline", "v1.10.0"])
@@ -715,12 +872,14 @@ class TestMain:
             captured.update(max_cost_usd=max_cost_usd, bound=pair_bound(article))
             return [], False
 
-        good = lambda **kw: MagicMock(loaded_prompt=object(), prompt_version=kw["prompt_version"])  # noqa: E731
+        good = lambda **kw: MagicMock(  # noqa: E731
+            loaded_prompt=object(), prompt_version=kw["prompt_version"], model=kw["model"]
+        )
         a, b, c = self._patches([article])
         with a, b, c, patch.object(compare_prompts, "ArticleLabeler", side_effect=good), \
              patch.object(compare_prompts, "run_articles", side_effect=fake_run):
             compare_prompts.main(["--candidate", "v1.11.0", "--baseline", "v1.10.0", "--max-cost", "7",
-                                  "--output", str(tmp_path / "r")])
+                                  "--model", HAIKU_45, "--output", str(tmp_path / "r")])
         from src.labeling.config import TARGET_SPORTSWEAR_BRANDS
         from src.labeling.prompt_manager import PromptManager
 
@@ -730,13 +889,13 @@ class TestMain:
             + len(m.load_version(v).user_prompt)
             for v in ("v1.10.0", "v1.11.0")
         ]
-        expected = sum(comparator.worst_case_call_cost(article, n, MAX_TOKENS) for n in chars)
+        expected = sum(comparator.worst_case_call_cost(article, n, SIDE) for n in chars)
         assert captured == {"max_cost_usd": 7.0, "bound": pytest.approx(expected)}
 
     def test_run_writes_both_reports(self, tmp_path):
-        def make(model, max_tokens, prompt_version):
+        def make(model, max_tokens, prompt_version, effort):
             reply = [_esg("Nike")] if prompt_version == "v1.11.0" else []
-            fake = FakeLabeler([_ok(reply)])
+            fake = FakeLabeler([_ok(reply)], model=model)
             fake.loaded_prompt, fake.prompt_version = object(), prompt_version
             return fake
 
@@ -750,3 +909,47 @@ class TestMain:
         assert (tmp_path / "v1.10.0_vs_v1.11.0.json").exists()
         assert "Non-labeled -> labeled (1)" in (tmp_path / "v1.10.0_vs_v1.11.0.md").read_text()
 
+    def test_model_contrast_holds_the_prompt_and_varies_the_model(self, tmp_path):
+        built = []
+
+        def make(model, max_tokens, prompt_version, effort):
+            built.append((model, max_tokens, prompt_version, effort))
+            fake = FakeLabeler([_ok([_esg("Nike")])], model=model)
+            fake.loaded_prompt, fake.prompt_version, fake.effort = object(), prompt_version, effort
+            return fake
+
+        a, b, c = self._patches([_article(strata=(SAMPLE,))])
+        with a, b, c, patch.object(compare_prompts, "ArticleLabeler", side_effect=make):
+            code = compare_prompts.main(
+                ["--baseline", "v1.11.0", "--baseline-model", HAIKU_45, "--candidate-model", HAIKU_55,
+                 "--effort", "low", "--max-cost", "5", "--output", str(tmp_path / "models")]
+            )
+        assert code == 0
+        # Each side gets its model's own cap when --max-tokens is not given
+        # Effort goes only to the side whose model takes it
+        assert built == [(HAIKU_45, 2000, "v1.11.0", None), (HAIKU_55, 8000, "v1.11.0", "low")]
+        import json
+
+        config = json.loads((tmp_path / "models.json").read_text())["config"]
+        assert config["effort"] == {"baseline": None, "candidate": "low"}
+        md = (tmp_path / "models.md").read_text()
+        assert f"v1.11.0 on {HAIKU_45} (baseline) vs v1.11.0 on {HAIKU_55} (effort low) (candidate)" in md
+        # The sample drew no article stored under the baseline, so the floor says it is empty
+        assert "Noise floor: empty" in md
+
+    def test_effort_contrast_holds_the_prompt_and_model(self, tmp_path):
+        built = []
+
+        def make(model, max_tokens, prompt_version, effort):
+            built.append(effort)
+            fake = FakeLabeler([_ok([_esg("Nike")])], model=model)
+            fake.loaded_prompt, fake.prompt_version, fake.effort = object(), prompt_version, effort
+            return fake
+
+        a, b, c = self._patches([_article(strata=(SAMPLE,))])
+        with a, b, c, patch.object(compare_prompts, "ArticleLabeler", side_effect=make):
+            code = compare_prompts.main(
+                ["--baseline", "v1.11.0", "--model", HAIKU_55, "--baseline-effort", "medium",
+                 "--candidate-effort", "low", "--max-cost", "5", "--output", str(tmp_path / "effort")]
+            )
+        assert code == 0 and built == ["medium", "low"]

@@ -2604,6 +2604,15 @@ brand becoming judged. #122's v1.12.0 needs the same check.
    hardcoded fallback prompt and reports its version as `legacy`. It also refuses a run whose
    worst-case cost exceeds `--max-cost`, before any call.
 
+**Amended 2026-10-21 (#212, PR #217; architect-reviewed).** The harness also compares two calls
+(models, or one model at two efforts) under one prompt version; §1's "with the same model" holds
+for a prompt contrast. §4 becomes: the script refuses two sides that are equal or that differ in
+both prompt and call, and a model with no entry in `LABELING_MODELS`. §2 gains one criterion: no
+refusals, or each one read and explained. A refused reply is `failed`, which leaves it out of
+compliance and the newly-labeled rates, so without the criterion refusals would raise the
+candidate's figures. The noise floor counts articles stored under the baseline's prompt version
+and model.
+
 **Rejected.**
 - **Extending `eval_model_migration.py`.** Its stored-label baseline, single prompt version and
   two-way outcome would each need replacing. The new comparer reuses its pure category and

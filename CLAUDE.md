@@ -352,6 +352,7 @@ GDELT_TIMESPAN=3m, GDELT_MAX_RECORDS=250
 
 # Labeling
 ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-haiku-4-5-20251001
+LABELING_EFFORT=medium  # output_config.effort, sent only to a model that takes it (Haiku 5.5, #212)
 EMBEDDING_MODEL=text-embedding-3-small, LABELING_BATCH_SIZE=10
 
 # FP Classifier Pre-filter

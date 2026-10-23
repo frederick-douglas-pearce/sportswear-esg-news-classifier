@@ -400,6 +400,7 @@ class TestEvidenceExtraction:
 
 # Tests for ArticleLabeler class
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from src.labeling.labeler import ArticleLabeler, LabelingResult
@@ -454,13 +455,13 @@ class TestArticleLabelerInit:
         with patch("src.labeling.labeler.Anthropic"):
             labeler = ArticleLabeler(
                 api_key="test-key",
-                model="custom-model",
+                model="claude-haiku-5-5",
                 max_retries=5,
                 retry_delay=2.0,
                 max_tokens=3000,
             )
             assert labeler.api_key == "test-key"
-            assert labeler.model == "custom-model"
+            assert labeler.model == "claude-haiku-5-5"
             assert labeler.max_retries == 5
             assert labeler.retry_delay == 2.0
             assert labeler.max_tokens == 3000
@@ -497,8 +498,10 @@ class TestArticleLabelerLabelArticle:
         """Should successfully label article."""
         mock_client = MagicMock()
         mock_response = MagicMock()
+        mock_response.stop_reason = "end_turn"
         mock_response.content = [
             MagicMock(
+                type="text",
                 text=json.dumps(
                     {
                         "brand_analyses": [
@@ -1052,3 +1055,174 @@ class TestClassifyApiError:
 
         assert error_type == "connection"
         assert "network" in error_msg.lower()
+
+
+def _api_response(blocks, stop_reason="end_turn", input_tokens=100, output_tokens=50, stop_details=None):
+    """A Messages API response with the given (type, text) content blocks."""
+    response = MagicMock()
+    response.content = [MagicMock(type=t, text=text) for t, text in blocks]
+    response.stop_reason = stop_reason
+    response.stop_details = stop_details
+    response.usage.input_tokens = input_tokens
+    response.usage.output_tokens = output_tokens
+    return response
+
+
+_REPLY_JSON = json.dumps(
+    {
+        "brand_analyses": [
+            {"brand": "Nike", "is_sportswear_brand": True, "categories": {}, "reasoning": "r"}
+        ],
+        "article_summary": "s",
+    }
+)
+
+
+class TestModelRequests:
+    """The request and reply handling that differs between Haiku 4.5 and Haiku 5.5 (#212)."""
+
+    def _labeler(self, model, response=None, **kw):
+        client = MagicMock()
+        if response is not None:
+            client.messages.create.return_value = response
+        with patch("src.labeling.labeler.Anthropic", return_value=client):
+            return ArticleLabeler(api_key="test-key", model=model, **kw), client
+
+    def _label(self, labeler):
+        return labeler.label_article(title="T", content="Nike content " * 20, brands=["Nike"])
+
+    def test_haiku_4_5_sends_temperature_and_no_effort(self):
+        labeler, client = self._labeler("claude-haiku-4-5-20251001", _api_response([("text", _REPLY_JSON)]))
+        assert self._label(labeler).success
+        kwargs = client.messages.create.call_args.kwargs
+        # The production request, pinned whole: anything added to it fails here
+        assert kwargs.keys() == {"model", "max_tokens", "system", "messages", "temperature"}
+        assert kwargs["temperature"] == 0.0
+        assert kwargs["max_tokens"] == 2000
+
+    def test_haiku_5_5_sends_effort_and_no_sampling_parameters(self):
+        labeler, client = self._labeler(
+            "claude-haiku-5-5", _api_response([("text", _REPLY_JSON)]), effort="low"
+        )
+        assert self._label(labeler).success
+        kwargs = client.messages.create.call_args.kwargs
+        assert not {"temperature", "top_p", "top_k"} & kwargs.keys()
+        assert kwargs["extra_body"] == {"output_config": {"effort": "low"}}
+        # Thinking counts toward max_tokens, so the model's own cap is larger
+        assert kwargs["max_tokens"] == 8000
+
+    def test_reply_text_is_read_by_block_type(self):
+        """A model that thinks can start its reply with a thinking block, whose text is empty."""
+        response = _api_response([("thinking", ""), ("text", _REPLY_JSON)])
+        labeler, _ = self._labeler("claude-haiku-5-5", response)
+        result = self._label(labeler)
+        assert result.success and result.response.brand_analyses[0].brand == "Nike"
+        assert result.stop_reason == "end_turn"
+
+    @pytest.mark.parametrize(
+        "stop_details,category",
+        [
+            ({"type": "refusal", "category": "general_harms"}, "general_harms"),
+            # A newer SDK models stop_details as an object (#216)
+            (SimpleNamespace(type="refusal", category="cyber"), "cyber"),
+            (None, None),
+        ],
+    )
+    def test_refusal_is_a_failure_with_its_own_error_type(self, stop_details, category):
+        response = _api_response([], stop_reason="refusal", output_tokens=3, stop_details=stop_details)
+        labeler, _ = self._labeler("claude-haiku-5-5", response)
+        result = self._label(labeler)
+        assert not result.success
+        assert result.error_type == "refusal"
+        assert f"category: {category}" in result.error
+        assert result.output_tokens == 3 and labeler.total_output_tokens == 3
+
+    def test_stop_at_max_tokens_inside_thinking_is_a_max_tokens_failure(self):
+        response = _api_response([("thinking", "")], stop_reason="max_tokens", output_tokens=8000)
+        labeler, _ = self._labeler("claude-haiku-5-5", response)
+        result = self._label(labeler)
+        assert not result.success
+        assert result.error_type == "max_tokens" and result.stop_reason == "max_tokens"
+        assert "max_tokens (8000)" in result.error
+
+    def test_failures_are_stored_with_a_selectable_prefix(self):
+        """Neither failure is retried, so stored rows are found by these prefixes (#212)."""
+        from src.data_collection.models import FAILED_MAX_TOKENS_PREFIX, FAILED_REFUSAL_PREFIX
+
+        refused, _ = self._labeler("claude-haiku-5-5", _api_response([], stop_reason="refusal"))
+        assert self._label(refused).error.startswith(FAILED_REFUSAL_PREFIX)
+        cut, _ = self._labeler("claude-haiku-5-5", _api_response([("text", '{"brand_')], stop_reason="max_tokens"))
+        assert self._label(cut).error.startswith(FAILED_MAX_TOKENS_PREFIX)
+
+    def test_a_truncated_reply_that_parses_is_kept_with_a_warning(self, caplog):
+        labeler, _ = self._labeler(
+            "claude-haiku-5-5", _api_response([("text", _REPLY_JSON)], stop_reason="max_tokens")
+        )
+        with caplog.at_level("WARNING"):
+            result = self._label(labeler)
+        assert result.success and result.stop_reason == "max_tokens"
+        assert "stopped at max_tokens (8000) but parsed" in caplog.text
+
+    def test_unknown_model_is_refused_before_any_call(self):
+        with patch("src.labeling.labeler.Anthropic"):
+            with pytest.raises(ValueError, match="No pricing or request spec"):
+                ArticleLabeler(api_key="test-key", model="claude-unknown-1")
+
+    def test_invalid_effort_is_refused_for_a_model_that_takes_effort(self):
+        with patch("src.labeling.labeler.Anthropic"):
+            with pytest.raises(ValueError, match="Effort must be one of"):
+                ArticleLabeler(api_key="test-key", model="claude-haiku-5-5", effort="extreme")
+
+    def test_stats_are_priced_at_the_labelers_model(self):
+        from src.labeling.config import llm_cost_usd
+
+        labeler, _ = self._labeler(
+            "claude-haiku-5-5", _api_response([("text", _REPLY_JSON)], input_tokens=1000, output_tokens=500)
+        )
+        self._label(labeler)
+        assert labeler.get_stats()["estimated_cost_usd"] == pytest.approx(
+            llm_cost_usd(1000, 500, "claude-haiku-5-5")
+        )
+
+
+class TestLabelingModelSpec:
+    def test_a_dated_id_matches_its_family(self):
+        from src.labeling.config import LABELING_MODELS, labeling_model_spec
+
+        assert labeling_model_spec("claude-haiku-4-5-20251001") is LABELING_MODELS["claude-haiku-4-5"]
+
+    def test_an_alias_and_its_dated_snapshot_resolve_to_one_key(self):
+        from src.labeling.config import labeling_model_key
+
+        assert labeling_model_key("claude-haiku-4-5") == labeling_model_key("claude-haiku-4-5-20251001")
+        assert labeling_model_key("claude-haiku-4-5") != labeling_model_key("claude-haiku-5-5")
+
+    def test_the_retrospective_eval_candidate_has_a_spec(self):
+        """scripts/eval_model_migration.py builds a labeler for its default candidate."""
+        from scripts.eval_model_migration import DEFAULT_CANDIDATE_MODEL
+        from src.labeling.config import labeling_model_spec
+
+        assert labeling_model_spec(DEFAULT_CANDIDATE_MODEL).accepts_sampling
+
+    @pytest.mark.parametrize(
+        "model", ["claude-haiku-5-5-preview", "claude-haiku-5-5-2026", "claude-haiku-4-5x", "claude-haiku"]
+    )
+    def test_an_id_that_only_starts_with_a_key_is_refused(self, model):
+        """Only a key, or a key and a -YYYYMMDD snapshot date, is priced at the key's rates."""
+        from src.labeling.config import labeling_model_spec
+
+        with pytest.raises(ValueError, match="No pricing"):
+            labeling_model_spec(model)
+
+    def test_haiku_5_5_rates(self):
+        from src.labeling.config import llm_cost_usd
+
+        assert llm_cost_usd(1_000_000, 1_000_000, "claude-haiku-5-5") == pytest.approx(0.60)
+        assert llm_cost_usd(1_000_000, 1_000_000, "claude-haiku-4-5-20251001") == pytest.approx(6.00)
+
+    def test_no_tokens_cost_nothing_without_a_lookup(self):
+        from src.labeling.config import llm_cost_usd
+
+        assert llm_cost_usd(0, 0, "claude-unknown-1") == 0.0
+        with pytest.raises(ValueError):
+            llm_cost_usd(1, 0, "claude-unknown-1")
