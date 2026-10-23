@@ -4,6 +4,53 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-22: Candidate prompt v1.12.0 states a per-brand content type under a reply schema (#219, D037)
+
+**Prompt v1.12.0 is registered as a candidate; production is unchanged (v1.10.0) until its
+contrastive eval against v1.10.0 on Haiku 5.5.** v1.11.0 failed two evals because the verdict was
+written before the reasoning and read as brand identity (#215); prompt text alone did not move it.
+- Reply contract: each brand analysis writes `reasoning`, then a `content_type` (`other_entity`,
+  `mention_only`, `retail_only`, `product`, `financial`, `business`), constrained by
+  `prompts/labeling/v1.12.0/reply_schema.json` through structured outputs. The reply no longer
+  states `is_sportswear_brand` or `not_sportswear_reason`.
+- Derivation: `BrandAnalysis` sets `is_sportswear_brand` from `CONTENT_TYPE_RULES`
+  (`src/labeling/models.py`), derives `not_sportswear_reason` as `"<content_type>: <reasoning>"`, and
+  drops the categories of every type but `business`, recording them in `gated_categories`.
+  `dispose_reply` counts a content type as a verdict. Replies under earlier versions parse as before.
+- `financial` (#114): stock, earnings or analyst coverage with human-written analysis is sportswear
+  with no ESG categories; template financial content is `mention_only`.
+- Sentiment (#117): measures the brand's conduct, not the article's stance, in both directions; bare
+  "Criticism" is replaced by "credible criticism of conduct that fell short".
+- Labeler: a version whose `config.json` names `reply_schema_file` is called with
+  `output_config.format` (in `extra_body`, beside `effort`); versions without one are called exactly
+  as evaluated. `PromptVersion` carries the schema and its hash.
+- Harness: the report prints the schema hash with the prompt hashes (D036 §3 amended), the content
+  types stated, the categories kept on Product and financial cases, every category the gate dropped,
+  and the score an always-`true` answer would get on the Product cases. The worst-case cost counts
+  the schema as input.
+- Case file: 22 cases added, owner-ruled 2026-10-22. They are #118's corrections (#118's Mammut review was already a case), plus the five financial articles #215's run 2 gave Governance or Social. Under the new strata, `financial` (12) and `no_category` (3) should get no ESG category; `financial_gray` is scored on the verdict and its categories read by hand. A case can rule its brand's categories (`expected.categories`), which the report checks per reply under "Expected categories"; `partial_categories` (the UGG case, Social) does.
+- Evaluation (P1, v1.10.0 vs v1.12.0 on Haiku 5.5, six runs on 2026-10-22 and 2026-10-23, reports
+  `v1.10.0_vs_v1.12.0_haiku-5-5_*`): the system prompt was revised in place between runs (D036 §3; no
+  `labeling_runs` or `brand_labels` row recorded v1.12.0, checked 2026-10-22). The revisions:
+  - a one- or two-line mention in a market wrap, a place in a list of companies an event affects,
+    the goods or store in an incident the brand is not a party to, and automated valuation templates
+    are `mention_only`;
+  - an owned brand that is not tracked (UGG, Teva, Jordan Brand) is judged as its owner;
+  - an ESG event the article reports makes the type `business` however much of the article is
+    product, campaign or financial content, unless it is only recounted as history or background;
+  - a routine hire's pay package, and a governance topic named only in passing, are not Governance;
+  - one sentence on how a product is built and what that does makes it `product`.
+  Run 5 added that a party to the story is never `mention_only`; it moved template stock articles
+  and one-line mentions out of `mention_only`, and run 6 reverted it. Run 6 (the promoted text):
+  0 parse failures, refusals or truncated replies, 100% compliance, 40 of 42 scored cases (an
+  always-`true` answer scores 30), the ruled categories matched, 10 of 11 stable.
+- Case file rulings after P1: e434b12d (tariff refunds, Nike in a list of beneficiaries) re-ruled
+  `false`; 23c30b60 (Nike's CFO hire) `true` with no category; cdb26552 (UGG) rules Social in
+  `expected.categories`. The report's "Expected categories" section checks a case's ruled categories
+  on every reply, since a type that keeps no category drops a ruled label without the gate seeing it.
+- Pinned in `tests/test_content_type.py`: the v1.12.0 hashes (`6ab0c3af777b` / `f9e786d07439`, schema
+  `96064689a1f3`), the schema's enum against `ContentType`, and the request each model gets.
+
 ### 2026-10-22: Candidate prompt v1.11.0 revised, failed its second eval, not to be promoted
 
 **v1.11.0 failed its first eval (#215) and its text was revised in place (D036 §3: no

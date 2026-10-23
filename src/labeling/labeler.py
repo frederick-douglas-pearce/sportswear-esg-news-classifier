@@ -261,6 +261,13 @@ class ArticleLabeler:
             return self.loaded_prompt.user_prompt_hash
         return ""
 
+    @property
+    def reply_schema(self) -> dict | None:
+        """The loaded version's reply schema, or None for a version called without one."""
+        if self.loaded_prompt:
+            return self.loaded_prompt.reply_schema
+        return None
+
     def label_article(
         self,
         title: str,
@@ -427,8 +434,9 @@ class ArticleLabeler:
         """The Messages API request for this labeler's model.
 
         Haiku 4.5 takes temperature and errors on effort; Haiku 5.5 returns a 400 for a
-        non-default temperature and takes effort. The pinned SDK predates output_config as a
-        named argument, so it goes in extra_body (#216).
+        non-default temperature and takes effort. A prompt version with a reply schema is called
+        with structured outputs (D037). The pinned SDK predates output_config as a named
+        argument, so it goes in extra_body (#216).
         """
         params: dict = {
             "model": self.model,
@@ -442,6 +450,8 @@ class ArticleLabeler:
         output_config: dict = {}
         if self.model_spec.accepts_effort:
             output_config["effort"] = self.effort
+        if self.reply_schema is not None:
+            output_config["format"] = {"type": "json_schema", "schema": self.reply_schema}
         if output_config:
             params["extra_body"] = {"output_config": output_config}
         return params

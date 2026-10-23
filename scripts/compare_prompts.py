@@ -71,6 +71,7 @@ from src.evaluation.comparator import (  # noqa: E402
 from src.evaluation.diff_report import render_markdown  # noqa: E402
 from src.labeling.article_input import article_content, has_sufficient_content  # noqa: E402
 from src.labeling.config import (  # noqa: E402
+    ESG_CATEGORIES,
     TARGET_SPORTSWEAR_BRANDS,
     labeling_model_key,
     labeling_model_spec,
@@ -78,7 +79,7 @@ from src.labeling.config import (  # noqa: E402
 )
 from src.labeling.models import normalize_brand  # noqa: E402
 from src.labeling.labeler import EFFORT_LEVELS, ArticleLabeler  # noqa: E402
-from src.labeling.prompt_manager import PromptManager  # noqa: E402
+from src.labeling.prompt_manager import PromptManager, PromptVersion  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("compare_prompts")
@@ -114,11 +115,21 @@ def parse_case_file(data: dict) -> dict[str, Spec]:
     for case in data.get("cases", []):
         article_id = case["article_id"]
         expected = case.get("expected")
+        # Optional: the categories the brand should get, checked by the report when given
+        categories = expected.get("categories") if expected else None
+        if categories is not None:
+            unknown = set(categories) - set(ESG_CATEGORIES)
+            if unknown:
+                raise ValueError(f"Case {article_id}: unknown expected categories {sorted(unknown)}")
         specs[article_id] = Spec(
             strata={CASES, *case.get("strata", [])},
             repeats=int(case.get("repeats", 1)),
             expected=(
-                Expectation(expected["brand"], bool(expected["is_sportswear_brand"]))
+                Expectation(
+                    expected["brand"],
+                    bool(expected["is_sportswear_brand"]),
+                    tuple(categories) if categories is not None else None,
+                )
                 if expected
                 else None
             ),
@@ -188,6 +199,12 @@ def check_prompt_versions(baseline: str, candidate: str, manager: PromptManager)
         if loaded[version].version != version:
             raise EvalSetupError(f"Asked for {version}, loaded {loaded[version].version}")
     return loaded
+
+
+def prompt_hashes(version: PromptVersion) -> str:
+    """The hashes a promotion freezes: system/user, and the reply schema's when there is one."""
+    hashes = f"{version.system_prompt_hash}/{version.user_prompt_hash}"
+    return f"{hashes}/schema {version.reply_schema_hash}" if version.reply_schema_hash else hashes
 
 
 def check_labeler(labeler: ArticleLabeler, version: str, side: SideSettings) -> None:
@@ -465,6 +482,8 @@ def main(argv: list[str] | None = None) -> int:
     prompt_chars = {
         side: len(manager.get_formatted_system_prompt(version=v, brands=list(TARGET_SPORTSWEAR_BRANDS)))
         + len(loaded[v].user_prompt)
+        # A reply schema is input too (structured outputs, D037)
+        + (len(json.dumps(loaded[v].reply_schema)) if loaded[v].reply_schema else 0)
         for side, v in versions.items()
     }
     examples = prompt_examples(loaded[candidate].system_prompt + loaded[candidate].user_prompt)
@@ -551,10 +570,8 @@ def main(argv: list[str] | None = None) -> int:
         "candidate_max_tokens": sides["candidate"].max_tokens,
         # Sent only to a side whose model takes it
         "effort": {side: sides[side].effort for side in versions},
-        "baseline_hashes": f"{loaded[baseline].system_prompt_hash}/{loaded[baseline].user_prompt_hash}",
-        "candidate_hashes": (
-            f"{loaded[candidate].system_prompt_hash}/{loaded[candidate].user_prompt_hash}"
-        ),
+        "baseline_hashes": prompt_hashes(loaded[baseline]),
+        "candidate_hashes": prompt_hashes(loaded[candidate]),
         "stopped_early": stopped,
         "seed": args.seed,
         "sample_size": args.sample_size,

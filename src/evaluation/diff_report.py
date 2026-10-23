@@ -44,9 +44,29 @@ def _version_rows(summary: dict) -> list[str]:
             _num(c["tokens_most_brands"]["output_mean"]),
         ),
         ("Cost (USD)", f"${b['tokens']['cost_usd']:.2f}", f"${c['tokens']['cost_usd']:.2f}"),
+        ("Content types stated (brand entries)", _counts(b["content_types"]), _counts(c["content_types"])),
     ]
     lines = ["| Measure | Baseline | Candidate |", "|---|---|---|"]
     lines += [f"| {name} | {bv} | {cv} |" for name, bv, cv in rows]
+    return lines
+
+
+def _counts(counts: dict) -> str:
+    return ", ".join(f"{k} {v}" for k, v in counts.items()) or "none"
+
+
+def _category_list(title: str, by_side: dict, intro: str) -> list[str]:
+    lines = [f"## {title}", "", intro, ""]
+    for side in ("baseline", "candidate"):
+        items = by_side[side]
+        lines.append(f"- {side}: {len(items)}")
+        for item in items:
+            type_note = f" ({item['content_type']})" if item.get("content_type") else ""
+            lines.append(
+                f"  - {item['title']} (`{item['article_id']}`), {item['brand']}{type_note}: "
+                f"{', '.join(item['categories'])}. {item['explanation']}"
+            )
+    lines.append("")
     return lines
 
 
@@ -142,14 +162,46 @@ def render_markdown(summary: dict, config: dict) -> str:
         acc = summary["product_accuracy"][side]
         lines.append(
             f"- {side}: {acc['correct']} correct, {acc['wrong']} wrong, {acc['not_judged']} not "
-            f"judged ({_pct(acc['rate'])} of judged)"
+            f"judged ({_pct(acc['rate'])} of judged; answering `true` for every judged case "
+            f"scores {acc['always_true']}, {_pct(acc['always_true_rate'])})"
         )
         for miss in acc["misses"]:
             lines.append(
                 f"  - wrong: {miss['title']} (`{miss['article_id']}`), {miss['brand']} expected "
                 f"{miss['expected']}, got {miss['got']}. {miss['explanation']}"
             )
-    lines += ["", "## Prompt-example cases (reported apart from accuracy)", ""]
+    lines += [""]
+    lines += _category_list(
+        "Categories on Product, financial and no-category cases",
+        summary["case_categories"],
+        "Applicable categories kept on the expected brand of a Product, financial or no-category "
+        "case (on any brand, for a case that names none), per reply. There should be none.",
+    )
+    lines += [
+        "## Expected categories (cases that rule them)",
+        "",
+        "Per case: matched if every answered reply gives the expected brand exactly the ruled "
+        "categories. A reply that leaves the brand out or calls it not sportswear gives it none.",
+        "",
+    ]
+    for side in ("baseline", "candidate"):
+        block = summary["expected_categories"][side]
+        lines.append(f"- {side}: {block['matched']} of {block['cases']} cases matched")
+        for miss in block["misses"]:
+            type_note = f" ({miss['content_type']})" if miss.get("content_type") else ""
+            lines.append(
+                f"  - {miss['title']} (`{miss['article_id']}`), {miss['brand']}{type_note}: expected "
+                f"{', '.join(miss['expected']) or 'none'}; missing {', '.join(miss['missing']) or 'none'}, "
+                f"extra {', '.join(miss['extra']) or 'none'}. {miss['explanation']}"
+            )
+    lines.append("")
+    lines += _category_list(
+        "Categories the content type dropped (D037 gate)",
+        summary["gated_categories"],
+        "Applicable categories a reply gave a brand whose content type keeps none. Each is read: "
+        "a mistyped `business` article loses real labels here.",
+    )
+    lines += ["## Prompt-example cases (reported apart from accuracy)", ""]
     lines += [
         f"- {c['title']} (`{c['article_id']}`) looks like the source of: \"{c['example']}\""
         for c in summary["prompt_example_cases"]

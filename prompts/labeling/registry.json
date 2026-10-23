@@ -170,6 +170,20 @@
         "author": "system",
         "status": "candidate"
       }
+    },
+    "v1.12.0": {
+      "created_at": "2026-10-22T00:00:00Z",
+      "commit_message": "State a per-brand content type under a reply schema; derive is_sportswear_brand and the category gate in code",
+      "description": "Each brand analysis writes reasoning first, then a content_type (other_entity, mention_only, retail_only, product, financial, business), under structured outputs with reply_schema.json. is_sportswear_brand, not_sportswear_reason and the category gate derive from the content type in BrandAnalysis (D037): only business keeps categories, and the dropped ones are recorded. financial (stock, earnings or analyst coverage with human-written analysis) is true with no categories (#114); template financial content is mention_only. Sentiment measures the brand's conduct, not the article's stance, symmetrically (#117). Copies v1.11.0's Product-article rule into the product/retail_only types. Intended for claude-haiku-5-5 at effort medium (#212). Candidate, not production, until its contrastive eval against v1.10.0 (#219).",
+      "model_recommendations": {
+        "model": "claude-haiku-5-5",
+        "max_tokens": 8000,
+        "effort": "medium"
+      },
+      "tags": {
+        "author": "system",
+        "status": "candidate"
+      }
     }
   }
 }

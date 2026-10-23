@@ -1,13 +1,37 @@
 """Pydantic models for LLM labeling responses."""
 
+from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def normalize_brand(name: str) -> str:
     """Key for matching a brand name in a reply to one sent in the prompt."""
     return name.strip().casefold()
+
+
+class ContentType(StrEnum):
+    """What an article gives one brand, stated by a reply under prompt v1.12.0 and later (D037)."""
+
+    OTHER_ENTITY = "other_entity"
+    MENTION_ONLY = "mention_only"
+    RETAIL_ONLY = "retail_only"
+    PRODUCT = "product"
+    FINANCIAL = "financial"
+    BUSINESS = "business"
+
+
+# content type -> (is_sportswear_brand, categories kept). The one place a type's verdict is set;
+# only `business` keeps the categories the reply gave (D037)
+CONTENT_TYPE_RULES: dict[ContentType, tuple[bool, bool]] = {
+    ContentType.OTHER_ENTITY: (False, False),
+    ContentType.MENTION_ONLY: (False, False),
+    ContentType.RETAIL_ONLY: (False, False),
+    ContentType.PRODUCT: (True, False),
+    ContentType.FINANCIAL: (True, False),
+    ContentType.BUSINESS: (True, True),
+}
 
 
 class CategoryLabel(BaseModel):
@@ -58,6 +82,15 @@ class BrandAnalysis(BaseModel):
         default="",
         description="Brief explanation of classification decisions",
     )
+    content_type: ContentType | None = Field(
+        default=None,
+        description=(
+            "What the article gives this brand (v1.12.0 and later); when set, is_sportswear_brand, "
+            "not_sportswear_reason and the categories kept derive from it"
+        ),
+    )
+    # Applicable categories the content type dropped; derived, never part of a reply
+    gated_categories: list[str] = Field(default_factory=list, exclude=True)
 
     @field_validator("categories")
     @classmethod
@@ -72,6 +105,26 @@ class BrandAnalysis(BaseModel):
             raise ValueError(f"Missing required categories: {missing}")
         return v
 
+    @model_validator(mode="after")
+    def derive_from_content_type(self) -> "BrandAnalysis":
+        """Set the verdict and the category gate from the content type (D037).
+
+        A reply under an earlier prompt version has no content type and is left as parsed.
+        Idempotent: Pydantic re-runs this on an instance placed in a LabelingResponse, when the
+        gate has already emptied the categories, so a second run keeps the recorded list.
+        """
+        if self.content_type is None:
+            return self
+        sportswear, keeps_categories = CONTENT_TYPE_RULES[self.content_type]
+        self.is_sportswear_brand = sportswear
+        self.not_sportswear_reason = (
+            None if sportswear else f"{self.content_type.value}: {self.reasoning}".strip()
+        )
+        if not keeps_categories and self.categories:
+            self.gated_categories = self.get_applicable_categories()
+            self.categories = {}
+        return self
+
     def get_applicable_categories(self) -> list[str]:
         """Get list of categories that apply to this brand."""
         return [name for name, label in self.categories.items() if label.applies]
@@ -82,8 +135,8 @@ class LabelingResponse(BaseModel):
 
     brand_analyses: list[BrandAnalysis] = Field(
         description=(
-            "Analysis results per brand. Prompt v1.11.0 asks for every brand sent; earlier "
-            "versions ask the model to omit sportswear brands with no ESG content"
+            "Analysis results per brand. Prompt v1.11.0 and later ask for every brand sent; "
+            "earlier versions ask the model to omit sportswear brands with no ESG content"
         ),
     )
     article_summary: str = Field(

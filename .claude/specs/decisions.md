@@ -2598,7 +2598,8 @@ brand becoming judged. #122's v1.12.0 needs the same check.
    unjudged rate is reported for both versions.
 3. Freeze: the system and user prompt hashes promoted are the hashes evaluated, and a text change
    after the run needs a new run. A candidate's text may be edited in place only while no
-   `labeling_runs` or `brand_labels` row records its version.
+   `labeling_runs` or `brand_labels` row records its version. *(Amended by D037 §6: a version's
+   reply schema hash is frozen with its prompt hashes.)*
 4. The script refuses equal versions, a version that does not load, and a labeler that fell back to
    the hardcoded prompt, before any call: `ArticleLabeler` otherwise logs a warning, labels with the
    hardcoded fallback prompt and reports its version as `legacy`. It also refuses a run whose
@@ -2630,3 +2631,65 @@ and model.
   eval is rerun and the pin updated.
 - Out of scope: routing `eval_model_migration.py` through `dispose_reply`; folding
   `src/migration_eval/` into `src/evaluation/`; exposing `stop_reason` on `LabelingResult`.
+
+## D037: A Labeling Reply States a Per-Brand Content Type Under a Schema; `is_sportswear_brand` and the Category Gate Derive From It in Code (#114, #122)
+
+**Date:** 2026-10-22 · **Status:** proposed (architect review of #215's results, 2026-10-22; the
+owner agreed to the enum, `financial`, the code gate and including #117; accepted when v1.12.0
+passes its eval, #219) · **Issues:** #114, #117, #122, #192, #212, #215, #219
+
+**Context.** v1.11.0 asked the model to set `is_sportswear_brand` by a Product-article rule (D032).
+In two contrastive evals (#215), 7 of 8 retail-only cases came back `true`, each with reasoning
+that says "only retail details", and 5 product articles got Environmental, with reasoning that
+says "not corporate ESG news". Governance still landed on three financial articles (#114). The
+reply template emits the verdict before the reasoning, and every nearby signal reads the field as
+brand identity. Prompt text was revised once in between and did not move it: #122's class, where
+clearer instructions had already been tried. Both reply parse failures were malformed free-form
+JSON.
+
+**Decision.**
+1. From v1.12.0, each brand analysis carries a `content_type`: `other_entity`, `mention_only`,
+   `retail_only`, `product`, `financial` or `business` (`ContentType`, `src/labeling/models.py`).
+   `financial` (#114's other half) is stock, earnings or analyst coverage with human-written
+   analysis; template financial content stays `mention_only`. One mapping, `CONTENT_TYPE_RULES`,
+   gives each type its `is_sportswear_brand` and whether categories are kept. Only `business`
+   keeps them.
+2. The derivation lives in the response model (`BrandAnalysis`), at parse time, and overrides any
+   `is_sportswear_brand` the reply states. `dispose_reply` (D032), `save_brand_labels`, the
+   comparator and the migration comparer read `is_sportswear_brand` as before; `dispose_reply`
+   counts a content type as a verdict. A reply without `content_type` (v1.0–v1.11) parses as it
+   does today.
+3. The gate is reported, not silent: the analysis records the categories it dropped
+   (`gated_categories`, not part of a dump), and the eval report lists them, with the categories
+   kept on Product and financial cases, for a human read.
+4. `not_sportswear_reason` is derived as `"<content_type>: <reasoning>"`. The stored columns are
+   unchanged and no migration is needed.
+5. A version whose `config.json` names a `reply_schema_file` is called with structured outputs
+   (`output_config.format`, sent through `extra_body` beside `effort` while the SDK is 0.75.0,
+   #216). The schema is hand-written, puts `reasoning` before `content_type`, closes every object
+   and requires every property. Versions without a schema are called exactly as they were
+   evaluated.
+6. D036 §3 is amended: the reply schema's hash is frozen with the prompt hashes, and the eval
+   report prints it beside them.
+
+**Rejected.**
+- **A third prompt-only revision of v1.11.0.** Two runs showed the field order and naming, not
+  the rule's wording, decide the verdict.
+- **Sale listings counted as `true` (a policy change).** The owner rejected it: retail listings
+  would add noise to the labeled set and the FP data.
+- **Deriving in `dispose_reply`.** D032 keeps it prompt-independent, and the other readers of
+  `is_sportswear_brand` would diverge from it.
+- **An `esg` content type.** Categories already decide whether ESG applies; a second source for
+  the same fact invites contradictions.
+- **Generating the schema from the Pydantic model.** Structured outputs reject numeric bounds and
+  need `additionalProperties: false`; a hand-written file is also what gets hashed.
+
+**Consequences.**
+- Free-form JSON parse failures and invalid field values end for v1.12.0. Refusals and
+  `max_tokens` stops remain, handled as in #217.
+- Output tokens per brand rise slightly (every category object is required); immaterial at Haiku
+  5.5's rates.
+- A mistyped `business` article loses real ESG labels. The listing of gated categories is the
+  mitigation.
+- Under v1.11.0 and later, retail-only articles become `false_positive`. The reason prefix makes
+  that group separable in the FP export (#154 PR2).

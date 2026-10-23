@@ -459,6 +459,133 @@ class TestSummarize:
         assert "1 of 1 baseline non-labeled replies labeled by the candidate" in md
 
 
+def _typed(brand, content_type, applying=("environmental",)):
+    """A v1.12.0 brand analysis: the content type derives the verdict and the gate (D037)."""
+    categories = {
+        c: {"applies": c in applying, "sentiment": 1 if c in applying else None, "evidence": []}
+        for c in ("environmental", "social", "governance", "digital_transformation")
+    }
+    return BrandAnalysis.model_validate({
+        "brand": brand, "reasoning": f"{brand} {content_type}", "content_type": content_type,
+        "categories": categories, "confidence": 0.9,
+    })
+
+
+class TestContentTypeReport:
+    """What the report adds for a content-type candidate (#219, D037)."""
+
+    def test_record_reply_keeps_types_kept_categories_and_gated_ones(self):
+        r = _reply([_typed("Nike", "product"), _typed("Puma", "business")], brands=("Nike", "Puma"))
+        assert r.content_types == {"nike": "product", "puma": "business"}
+        assert r.gated == {"nike": ("environmental",)}
+        assert r.categories == {"nike": (), "puma": ("environmental",)}
+
+    def test_a_reply_without_types_records_none(self):
+        r = _reply([_esg("Nike")])
+        assert r.content_types == {} and r.gated == {}
+        assert r.categories == {"nike": ("environmental",)}
+
+    def test_summary_counts_types_and_lists_the_gate(self):
+        runs = [
+            _run(_article("1"), [_reply([_esg("Nike")])], [_reply([_typed("Nike", "financial", ("governance",))])]),
+            _run(_article("2"), [_reply([])], [_reply([_typed("Nike", "retail_only", ())])]),
+        ]
+        s = summarize(runs, **SIDES)
+        assert s["candidate"]["content_types"] == {"financial": 1, "retail_only": 1}
+        assert s["baseline"]["content_types"] == {}
+        [gated] = s["gated_categories"]["candidate"]
+        assert (gated["article_id"], gated["content_type"], gated["categories"]) == ("1", "financial", ["governance"])
+        assert s["gated_categories"]["baseline"] == []
+
+    def test_categories_on_product_and_financial_cases_are_listed(self):
+        expect = Expectation("Nike", True)
+        runs = [
+            _run(_article("1", strata=("product_true",), expected=expect), [_reply([_esg("Nike")])], [_reply([_typed("Nike", "product")])]),
+            _run(_article("2", strata=("financial",), expected=expect), [_reply([_esg("Nike")])], [_reply([_typed("Nike", "business")])]),
+            # a case outside the Product and financial strata is not checked
+            _run(_article("3", strata=("stability",), expected=expect), [_reply([_esg("Nike")])], [_reply([_esg("Nike")])]),
+            # a no-category case that names no brand is checked on every brand
+            _run(
+                _article("4", strata=("no_category",), brands=("Nike", "Puma")),
+                [_reply([_esg("Nike"), _no_esg("Puma")], brands=("Nike", "Puma"))],
+                [_reply([_typed("Nike", "mention_only"), _typed("Puma", "mention_only")], brands=("Nike", "Puma"))],
+            ),
+        ]
+        cats = summarize(runs, **SIDES)["case_categories"]
+        assert [(x["article_id"], x["brand"]) for x in cats["baseline"]] == [("1", "Nike"), ("2", "Nike"), ("4", "nike")]
+        assert [(x["article_id"], x["categories"]) for x in cats["candidate"]] == [("2", ["environmental"])]
+
+    def test_expected_categories_are_checked_per_reply(self):
+        social = Expectation("Nike", True, ("social",))
+        runs = [
+            # matched: the brand gets exactly the ruled category
+            _run(_article("1", expected=social), [_reply([_typed("Nike", "business", ("social",))])],
+                 [_reply([_typed("Nike", "business", ("social",))])]),
+            # a reply that leaves the brand out, and a content type that keeps no category
+            _run(_article("2", expected=social), [_reply([])], [_reply([_typed("Nike", "product", ("social",))])]),
+            # an extra category is a miss too
+            _run(_article("3", expected=social), [_reply([_typed("Nike", "business", ("social",))])],
+                 [_reply([_typed("Nike", "business", ("social", "governance"))])]),
+            # a case that rules no categories is not checked
+            _run(_article("4", expected=Expectation("Nike", True)), [_reply([_esg("Nike")])], [_reply([_esg("Nike")])]),
+        ]
+        cats = summarize(runs, **SIDES)["expected_categories"]
+        assert (cats["baseline"]["matched"], cats["baseline"]["cases"]) == (2, 3)
+        assert [m["article_id"] for m in cats["baseline"]["misses"]] == ["2"]
+        assert (cats["candidate"]["matched"], cats["candidate"]["cases"]) == (1, 3)
+        two, three = cats["candidate"]["misses"]
+        assert (two["content_type"], two["missing"], two["extra"]) == ("product", ["social"], [])
+        assert (three["missing"], three["extra"]) == ([], ["governance"])
+
+    def test_case_file_reads_expected_categories_and_refuses_unknown_ones(self):
+        case = {"article_id": "a", "expected": {"brand": "Deckers", "is_sportswear_brand": True, "categories": ["social"]}}
+        specs = compare_prompts.parse_case_file({"cases": [case]})
+        assert specs["a"].expected == Expectation("Deckers", True, ("social",))
+        case["expected"]["categories"] = ["sociall"]
+        with pytest.raises(ValueError, match="unknown expected categories"):
+            compare_prompts.parse_case_file({"cases": [case]})
+
+    def test_accuracy_reports_the_always_true_score(self):
+        runs = [
+            _run(_article("1", expected=Expectation("Nike", True)), [_reply([_no_esg("Nike")])], [_reply([_no_esg("Nike")])]),
+            _run(_article("2", expected=Expectation("Nike", False)), [_reply([_no_esg("Nike")])], [_reply([_not_sportswear("Nike")])]),
+            _run(_article("3", expected=Expectation("Nike", False)), [_reply([])], [_reply([_no_esg("Nike")])]),
+        ]
+        acc = summarize(runs, **SIDES)["product_accuracy"]
+        # over judged cases only: the baseline judged two, one expected true
+        assert (acc["baseline"]["always_true"], acc["baseline"]["always_true_rate"]) == (1, 0.5)
+        assert (acc["candidate"]["always_true"], acc["candidate"]["correct"]) == (1, 2)
+
+    def test_report_renders_the_new_sections(self):
+        runs = [_run(
+            _article("1", strata=("product_true",), expected=Expectation("Nike", True)),
+            [_reply([_esg("Nike")])],
+            [_reply([_typed("Nike", "product")])],
+        )]
+        config = {
+            "baseline": "v1.10.0", "candidate": "v1.12.0",
+            "baseline_model": HAIKU_55, "candidate_model": HAIKU_55,
+            "baseline_max_tokens": 8000, "candidate_max_tokens": 8000,
+            "effort": {"baseline": "medium", "candidate": "medium"},
+            "baseline_hashes": "a/b", "candidate_hashes": "c/d/schema e", "stopped_early": False,
+        }
+        md = render_markdown(summarize(runs, **SIDES), config)
+        assert "| Content types stated (brand entries) | none | product 1 |" in md
+        assert "answering `true` for every judged case scores 1, 100.0%" in md
+        assert "## Categories on Product, financial and no-category cases" in md
+        assert "## Categories the content type dropped (D037 gate)" in md
+        assert "## Expected categories (cases that rule them)" in md
+        assert "- candidate: 0 of 0 cases matched" in md
+        assert "T 1 (`1`), nike (product): environmental. Nike product" in md
+
+    def test_prompt_hashes_name_the_schema_when_there_is_one(self):
+        from src.labeling.prompt_manager import PromptManager
+
+        manager = PromptManager()
+        assert compare_prompts.prompt_hashes(manager.load_version("v1.11.0")) == "e3a32befdb40/0ede675fa4b0"
+        assert compare_prompts.prompt_hashes(manager.load_version("v1.12.0")).endswith("/schema 96064689a1f3")
+
+
 def _contrast(b_version, c_version, b_side, c_side):
     compare_prompts.check_contrast(
         {"baseline": b_version, "candidate": c_version}, {"baseline": b_side, "candidate": c_side}
@@ -759,6 +886,27 @@ class TestCaseFile:
         "3c93143f-4a9c-44f0-845b-3c7822450cfa": ("Patagonia", True),
         "efa10606-e4c9-4f33-9c7c-eaa46140e8b8": ("Merrell", True),
         "ed1e5bad-d330-43f9-bb87-d102c9691054": ("Reebok", True),
+        # #219: #118's corrections and #215 run 2's financial cases, owner-ruled 2026-10-22
+        "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0": ("Nike", False),
+        "b8891fbc-7d8a-40b2-9b9b-527d9d373858": ("Adidas", False),
+        "12396c87-b2a4-4563-ac1b-d2923202afe2": ("Nike", True),
+        "2df21233-ef21-4ec7-87b7-44334f90ac19": ("Nike", True),
+        "1ba1c2a2-ac8a-4077-ac44-11feae1a08ec": ("Nike", True),
+        "23c30b60-9671-4613-a93a-893d14830a14": ("Nike", True),
+        "a058da6e-8656-4dc7-901a-fc1d56d4b745": ("Nike", True),
+        "ea428de7-23a8-4004-80a7-5323c26e2f1a": ("Nike", True),
+        "9e973f0c-458b-4d3d-bf2a-55f3e3439149": ("Nike", True),
+        "eded2885-014c-45d1-8164-4bd6605a0618": ("Mountain Hardwear", True),
+        "3b4de2e6-78d4-47b9-bea1-fe298967a6d0": ("Nike", True),
+        "7dccbf22-de0e-4e60-acb5-f562b551fafc": ("Adidas", True),
+        "cfe9e317-aed2-4c28-9c7b-ca9450d14e59": ("Adidas", True),
+        "89330b08-e205-48b3-a233-ecce8b03b2d3": ("Cotopaxi", True),
+        "cdb26552-8643-4007-a403-4f0451447e2f": ("Deckers", True),
+        "3fee9d78-c7a8-4936-8ff0-2b14edadbcce": ("Nike", True),
+        "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72": ("Nike", True),
+        "e434b12d-eb59-4406-bd26-f3bad800aaf1": ("Nike", False),
+        "19832789-ca96-4c74-ba7a-7df0453c4874": ("Nike", True),
+        "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("Puma", True),
     }
 
     def test_expected_verdicts_are_pinned(self):
@@ -772,8 +920,9 @@ class TestCaseFile:
         }
         assert got == self.EXPECTED
 
-    def test_every_prompt_example_case_names_a_quote_in_the_candidate_prompt(self):
-        """The cases kept out of accuracy are kept out by a quote the v1.11.0 prompt really has."""
+    @pytest.mark.parametrize("version", ["v1.11.0", "v1.12.0"])
+    def test_every_prompt_example_case_names_a_quote_in_the_candidate_prompt(self, version):
+        """The cases kept out of accuracy are kept out by a quote the candidate prompt really has."""
         import json
         from pathlib import Path
 
@@ -783,7 +932,7 @@ class TestCaseFile:
         specs = compare_prompts.parse_case_file(
             json.loads((root / "prompts/labeling/eval_cases/product_and_stability.json").read_text())
         )
-        version = PromptManager(prompts_dir=root / "prompts" / "labeling").load_version("v1.11.0")
+        version = PromptManager(prompts_dir=root / "prompts" / "labeling").load_version(version)
         quotes = prompt_examples(version.system_prompt + version.user_prompt)
         flagged = {k: s for k, s in specs.items() if "prompt_example_source" in s.strata}
         assert flagged

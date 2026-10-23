@@ -43,9 +43,11 @@ class ReplyDisposition:
 
 
 def _states_a_verdict(analysis: BrandAnalysis) -> bool:
-    """Whether the reply judged this brand, rather than relying on the field default."""
+    """Whether the reply judged this brand, rather than relying on the field default. A content
+    type (v1.12.0 and later, D037) is a verdict."""
     return (
-        "is_sportswear_brand" in analysis.model_fields_set
+        analysis.content_type is not None
+        or "is_sportswear_brand" in analysis.model_fields_set
         or bool(analysis.get_applicable_categories())
     )
 
@@ -62,8 +64,8 @@ def dispose_reply(sent_brands: list[str], analyses: list[BrandAnalysis]) -> Repl
 
     Brand names are matched by `normalize_brand`; a name the reply spells differently
     counts as left out, which fails safe to unjudged. An analysis that neither sets
-    `is_sportswear_brand` (the model defaults it to True) nor has an applicable category
-    stated no verdict, so it counts as left out too.
+    `is_sportswear_brand` (the model defaults it to True) nor has an applicable category nor a
+    content type stated no verdict, so it counts as left out too.
     """
     unset = [a.brand for a in analyses if not _states_a_verdict(a)]
     analyses = [a for a in analyses if _states_a_verdict(a)]
