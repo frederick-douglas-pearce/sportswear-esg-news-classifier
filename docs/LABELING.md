@@ -283,7 +283,7 @@ v1.11.0's text was revised in place on 2026-10-22, after the first contrastive e
 
 ### Every brand judged (reply disposition)
 
-Prompt v1.11.0 asks for every brand in the prompt's brand list in `brand_analyses` exactly once, with `is_sportswear_brand` set, and for empty `categories` when no ESG category applies. Earlier versions (production is still v1.10.0) tell the model to leave out a sportswear brand with no ESG content, and v1.8.0 to v1.10.0 also a brand mentioned only as a competitor, reference point or context, which is not sportswear by the brand-verification rules. So a reply that leaves a brand out does not say what the brand was.
+Prompt v1.11.0 asks for every brand in the prompt's brand list in `brand_analyses` exactly once, with `is_sportswear_brand` set, and for empty `categories` when no ESG category applies. Earlier versions (v1.10.0 was production until v1.12.0 replaced it on 2026-10-23, #219) tell the model to leave out a sportswear brand with no ESG content, and v1.8.0 to v1.10.0 also a brand mentioned only as a competitor, reference point or context, which is not sportswear by the brand-verification rules. So a reply that leaves a brand out does not say what the brand was.
 
 The article's status is decided by `dispose_reply` (`src/labeling/disposition.py`, D032) under every prompt version. Brand names are matched ignoring case and surrounding space; a name the reply spells differently counts as left out, and so does an analysis that sets no `is_sportswear_brand` and no applicable category (the reply model defaults the field to true, which is not a verdict).
 

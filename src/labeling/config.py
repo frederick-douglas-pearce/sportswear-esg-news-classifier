@@ -225,9 +225,9 @@ class LabelingSettings(BaseModel):
         default_factory=lambda: os.getenv("OPENAI_API_KEY", "")
     )
 
-    # Model settings
+    # Model settings. The default is the model production prompt v1.12.0 was evaluated on (#219)
     labeling_model: str = Field(
-        default_factory=lambda: os.getenv("LABELING_MODEL", "claude-haiku-4-5-20251001")
+        default_factory=lambda: os.getenv("LABELING_MODEL", "claude-haiku-5-5")
     )
     # output_config.effort, sent only to a model that accepts it (Haiku 5.5's default is medium)
     labeling_effort: str = Field(

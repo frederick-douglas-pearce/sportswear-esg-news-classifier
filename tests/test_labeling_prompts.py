@@ -54,14 +54,14 @@ def manager():
 
 
 class TestRegistry:
-    def test_production_is_still_v1_10_0(self):
-        """v1.11.0 is a candidate until #192 PR2's contrastive eval."""
+    def test_production_is_v1_12_0(self):
+        """v1.12.0 passed its contrastive eval (#219); v1.11.0 failed its own (#215)."""
         registry = json.loads((PROMPTS_DIR / "registry.json").read_text())
-        assert registry["production"] == "v1.10.0"
+        assert registry["production"] == "v1.12.0"
 
-    def test_v1_11_0_is_registered_as_candidate(self, manager):
+    def test_v1_11_0_is_registered_and_superseded(self, manager):
         assert "v1.11.0" in manager.list_versions()
-        assert manager.get_version_info("v1.11.0")["tags"]["status"] == "candidate"
+        assert manager.get_version_info("v1.11.0")["tags"]["status"] == "superseded"
 
     def test_config_version_matches_directory(self):
         config = json.loads((PROMPTS_DIR / "v1.11.0" / "config.json").read_text())

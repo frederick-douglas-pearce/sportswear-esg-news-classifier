@@ -1092,17 +1092,19 @@ class TestModelRequests:
         return labeler.label_article(title="T", content="Nike content " * 20, brands=["Nike"])
 
     def test_haiku_4_5_sends_temperature_and_no_effort(self):
-        labeler, client = self._labeler("claude-haiku-4-5-20251001", _api_response([("text", _REPLY_JSON)]))
+        labeler, client = self._labeler(
+            "claude-haiku-4-5-20251001", _api_response([("text", _REPLY_JSON)]), prompt_version="v1.10.0"
+        )
         assert self._label(labeler).success
         kwargs = client.messages.create.call_args.kwargs
-        # The production request, pinned whole: anything added to it fails here
+        # v1.10.0's request (production until #219), pinned whole: anything added to it fails here
         assert kwargs.keys() == {"model", "max_tokens", "system", "messages", "temperature"}
         assert kwargs["temperature"] == 0.0
         assert kwargs["max_tokens"] == 2000
 
     def test_haiku_5_5_sends_effort_and_no_sampling_parameters(self):
         labeler, client = self._labeler(
-            "claude-haiku-5-5", _api_response([("text", _REPLY_JSON)]), effort="low"
+            "claude-haiku-5-5", _api_response([("text", _REPLY_JSON)]), effort="low", prompt_version="v1.10.0"
         )
         assert self._label(labeler).success
         kwargs = client.messages.create.call_args.kwargs

@@ -1,7 +1,7 @@
 {
   "prompt_type": "esg_labeling",
   "description": "ESG classification prompts for sportswear brand news articles",
-  "production": "v1.10.0",
+  "production": "v1.12.0",
   "versions": {
     "v1.0.0": {
       "created_at": "2025-01-09T00:00:00Z",
@@ -154,7 +154,7 @@
       },
       "tags": {
         "author": "system",
-        "status": "production"
+        "status": "superseded"
       }
     },
     "v1.11.0": {
@@ -168,13 +168,13 @@
       },
       "tags": {
         "author": "system",
-        "status": "candidate"
+        "status": "superseded"
       }
     },
     "v1.12.0": {
       "created_at": "2026-10-22T00:00:00Z",
       "commit_message": "State a per-brand content type under a reply schema; derive is_sportswear_brand and the category gate in code",
-      "description": "Each brand analysis writes reasoning first, then a content_type (other_entity, mention_only, retail_only, product, financial, business), under structured outputs with reply_schema.json. is_sportswear_brand, not_sportswear_reason and the category gate derive from the content type in BrandAnalysis (D037): only business keeps categories, and the dropped ones are recorded. financial (stock, earnings or analyst coverage with human-written analysis) is true with no categories (#114); template financial content is mention_only. Sentiment measures the brand's conduct, not the article's stance, symmetrically (#117). Copies v1.11.0's Product-article rule into the product/retail_only types. Intended for claude-haiku-5-5 at effort medium (#212). Candidate, not production, until its contrastive eval against v1.10.0 (#219).",
+      "description": "Each brand analysis writes reasoning first, then a content_type (other_entity, mention_only, retail_only, product, financial, business), under structured outputs with reply_schema.json. is_sportswear_brand, not_sportswear_reason and the category gate derive from the content type in BrandAnalysis (D037): only business keeps categories, and the dropped ones are recorded. financial (stock, earnings or analyst coverage with human-written analysis) is true with no categories (#114); template financial content is mention_only. Sentiment measures the brand's conduct, not the article's stance, symmetrically (#117). Copies v1.11.0's Product-article rule into the product/retail_only types. Intended for claude-haiku-5-5 at effort medium (#212). Edited in place between the six runs of its contrastive eval against v1.10.0 on Haiku 5.5 (#219) under D036 §3's precondition, checked 2026-10-22. Promoted 2026-10-23 on run 6 (report v1.10.0_vs_v1.12.0_haiku-5-5_2026-10-23_run6, hashes 6ab0c3af777b/f9e786d07439, schema 96064689a1f3): 0 parse failures, 100% every-brand compliance, 40 of 42 scored cases, the ruled categories matched. Evaluated with LABELING_MODEL=claude-haiku-5-5 and LABELING_EFFORT=medium; run it with those settings.",
       "model_recommendations": {
         "model": "claude-haiku-5-5",
         "max_tokens": 8000,
@@ -182,7 +182,7 @@
       },
       "tags": {
         "author": "system",
-        "status": "candidate"
+        "status": "production"
       }
     }
   }
