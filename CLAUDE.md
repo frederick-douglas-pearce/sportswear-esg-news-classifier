@@ -192,7 +192,7 @@ SQL query examples in `queries/` folder: `collection_queries.sql`, `labeling_que
 - `gdelt_client.py` - GDELT DOC 2.0 API wrapper (free, 3 months history)
 - `scraper.py` - Full article text extraction with language detection
 - `database.py` - PostgreSQL operations with SQLAlchemy
-- `models.py` - SQLAlchemy models (Article, CollectionRun, ArticleChunk, BrandLabel, LabelEvidence, LabelingRun)
+- `models.py` - SQLAlchemy models (Article, CollectionRun, ArticleChunk, BrandLabel, BrandJudgment, LabelEvidence, LabelingRun)
 - `collector.py` - Orchestrates API collection + scraping with in-memory deduplication and domain filtering
 
 **Domain Blacklist:** Low-quality or AI-generated content sources are blocked via `BLOCKED_DOMAINS` in `config.py`. Articles from blocked domains are filtered during collection and tracked in `CollectionStats.articles_blocked_domain`.
@@ -338,6 +338,7 @@ Core tests: test_api_client, test_gdelt_client, test_scraper, test_collector, te
 - **collection_runs**: Collection run statistics
 - **article_chunks**: Chunked text with embeddings (pgvector)
 - **brand_labels**: Per-brand ESG labels with sentiment
+- **brand_judgments**: Per-brand content type from the latest LLM reply, on every LLM-decided outcome (v1.12.0+, D038)
 - **label_evidence**: Supporting excerpts linked to chunks (rerank_score, match_method)
 - **labeling_runs**: Labeling batch tracking (per-outcome counts; `incomplete_replies` from migration 008)
 - **classifier_predictions**: ML classifier predictions audit trail
@@ -502,6 +503,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-10-24**: Each brand's content type is stored (#192, D038). A new `brand_judgments` table (migration 009; the pipeline's `init_db()` also creates it) holds one row per sent brand the reply judged, with reasoning, confidence, gated categories, prompt version, model and run, on every outcome the LLM decides, in the status write's session, replaced on relabel. `ReplyDisposition.judged` picks each brand's analysis. Readers of `brand_labels` are unchanged. Apply 009 before #192 PR3's backfill
 - **2026-10-24**: A labeling failure after chunking no longer strands the article (#222). The pipeline writes no `embedded`/`chunked` status before the LLM call, so after a transient error or an exception the article keeps the status it had (`pending` stays selectable, a re-run skip keeps its reason and `skipped_at`). `chunked`/`embedded` stay valid for `fix_label.py` as legacy statuses; none were stored. Blocks #192 PR3's backfill
 - **2026-10-23**: Prompt v1.12.0 is production, and `LABELING_MODEL` defaults to `claude-haiku-5-5` (#219): it passed its contrastive eval against v1.10.0 on Haiku 5.5 at effort medium (run 6; hashes `6ab0c3af777b` / `f9e786d07439`, schema `96064689a1f3`), after in-place revisions to the content-type boundaries between runs. The eval report checks a case's ruled categories (`expected.categories`). Run with `LABELING_MODEL=claude-haiku-5-5` and `LABELING_EFFORT=medium`. Next: #192 PR3's backfill
 - **2026-10-22**: Candidate prompt v1.12.0 (#219, D037): each brand analysis writes `reasoning`, then a `content_type` (`other_entity`, `mention_only`, `retail_only`, `product`, `financial`, `business`) under structured outputs (`reply_schema.json`, sent as `output_config.format`); `BrandAnalysis` derives `is_sportswear_brand` and `not_sportswear_reason` from it and drops the categories of every type but `business`, recording them for the eval report. Sentiment measures the brand's conduct, not the article's stance (#117). A version without a schema is called as before. Production unchanged (v1.10.0) until v1.12.0's eval on Haiku 5.5

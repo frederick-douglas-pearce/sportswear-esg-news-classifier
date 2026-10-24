@@ -4,6 +4,26 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-24: Each brand's content type is stored (#192, D038)
+
+**A new `brand_judgments` table records what the latest LLM reply judged each sent brand to be.**
+v1.12.0 gives every brand a `content_type` (D037), but only sportswear brands with an ESG category
+reached `brand_labels`, so a `product`, `financial` or non-sportswear brand's type was lost. Stored
+now, before #192 PR3's backfill relabels a few thousand articles, for the planned Product and
+Finance views.
+- One row per sent brand with a content type: `reasoning`, `confidence`, `gated_categories` (the
+  ESG categories the type dropped), `prompt_version`, `model`, `labeling_run_id`. `brand` is the
+  sent spelling. Migration `009_brand_judgments.sql`; the pipeline's `init_db()` also creates the
+  table, so a run before the SQL is applied does not fail.
+- Written on every outcome the LLM decides, in the session of the status write; replaced when the
+  article is labeled again. Pre-LLM paths, failed calls and dry runs write nothing (a dry run logs
+  the types). `ReplyDisposition.judged` picks each brand's analysis by `dispose_reply`'s own rules.
+- Replies under prompts before v1.12.0 state no type and write no rows. Articles labeled before
+  this have none (#224).
+- No reader of `brand_labels` changes: the scorecard, feed and exports are unaffected.
+- `_process_article` takes the run's id (`labeling_run_id`) and refuses to save an LLM outcome
+  without one.
+
 ### 2026-10-24: A labeling failure after chunking no longer strands the article (#222)
 
 **The pipeline writes no status between saving an article's chunks and deciding its outcome.** It

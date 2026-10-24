@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.orm import Session
+
 from src.data_collection.database import db
 from src.data_collection.models import (
     FP_ACTION_CONTINUED_TO_LLM,
@@ -31,10 +33,10 @@ from .chunker import ArticleChunker, Chunk
 from .classifier_client import ClassifierClient, ClassifierPredictionRecord, FPPredictionResult
 from .config import FP_FAILED_BATCH_THRESHOLD, check_fp_skip_threshold, labeling_settings
 from .database import LabelingDatabase, labeling_db
-from .disposition import FALSE_POSITIVE, LABELED, dispose_reply
+from .disposition import FALSE_POSITIVE, LABELED, ReplyDisposition, dispose_reply
 from .embedder import OpenAIEmbedder
 from .evidence_matcher import EvidenceMatcher, match_all_evidence
-from .labeler import ArticleLabeler, classify_api_error
+from .labeler import ArticleLabeler, LabelingResult, classify_api_error
 from .models import LabelingResponse
 from .reranker import CrossEncoderReranker
 
@@ -624,6 +626,7 @@ class LabelingPipeline:
 
         # Create labeling run record
         run = None
+        run_id = None
         if not dry_run:
             with self.database.db.get_session() as session:
                 run = self.database.create_labeling_run(
@@ -705,6 +708,7 @@ class LabelingPipeline:
                         skip_chunking=skip_chunking,
                         skip_embedding=skip_embedding,
                         fp_prefilter_result=fp_result,
+                        labeling_run_id=run_id,
                     )
 
                     stats.articles_processed += 1
@@ -839,6 +843,35 @@ class LabelingPipeline:
 
         return stats
 
+    def _save_judgments(
+        self,
+        session: Session,
+        article_id: UUID,
+        labeling_run_id: UUID | None,
+        disposition: ReplyDisposition,
+        label_result: LabelingResult,
+    ) -> None:
+        """Replace the article's brand judgments in the session its status is written in (D038)."""
+        if labeling_run_id is None:
+            raise ValueError(
+                f"Article {article_id}: saving an LLM outcome needs the labeling run's id"
+            )
+        self.database.save_brand_judgments(
+            session,
+            article_id,
+            labeling_run_id,
+            disposition.judged,
+            model=label_result.model,
+            prompt_version=label_result.prompt_version,
+        )
+
+    @staticmethod
+    def _log_judgments(article_id: UUID, disposition: ReplyDisposition) -> None:
+        """Log the content types a dry run would store (D038)."""
+        typed = {b: a.content_type.value for b, a in disposition.judged.items() if a.content_type}
+        if typed:
+            logger.info(f"[DRY RUN] Would save brand judgments for article {article_id}: {typed}")
+
     def _process_article(
         self,
         article: dict[str, Any],
@@ -846,6 +879,8 @@ class LabelingPipeline:
         skip_chunking: bool = False,
         skip_embedding: bool = False,
         fp_prefilter_result: tuple[bool, ClassifierPredictionRecord | None] | None = None,
+        *,
+        labeling_run_id: UUID | None = None,
     ) -> dict[str, Any]:
         """Process a single article through the labeling pipeline.
 
@@ -855,6 +890,8 @@ class LabelingPipeline:
             skip_chunking: Skip chunking for already-chunked articles
             skip_embedding: Skip embedding generation
             fp_prefilter_result: Precomputed FP classifier result from batch call
+            labeling_run_id: The run making the call, recorded on the brand judgments; required
+                when an outcome the LLM decides is saved (D038)
 
         Returns:
             Dict with processing results
@@ -1047,8 +1084,13 @@ class LabelingPipeline:
             logger.info(
                 f"Article {article_id} marked {disposition.status}: {disposition.reason}"
             )
-            if not dry_run:
+            if dry_run:
+                self._log_judgments(article_id, disposition)
+            else:
                 with self.database.db.get_session() as session:
+                    self._save_judgments(
+                        session, article_id, labeling_run_id, disposition, label_result
+                    )
                     self.database.update_article_labeling_status(
                         session, article_id, disposition.status, disposition.reason
                     )
@@ -1091,8 +1133,12 @@ class LabelingPipeline:
                 logger.info(
                     f"  (Filtered out {len(non_sportswear_brands)} non-sportswear brands)"
                 )
+            self._log_judgments(article_id, disposition)
         else:
             with self.database.db.get_session() as session:
+                self._save_judgments(
+                    session, article_id, labeling_run_id, disposition, label_result
+                )
                 # Save brand labels (only sportswear brands are saved)
                 db_labels = self.database.save_brand_labels(
                     session,

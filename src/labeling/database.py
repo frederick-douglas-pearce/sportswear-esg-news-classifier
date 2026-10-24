@@ -12,6 +12,7 @@ from src.data_collection.database import Database, db
 from src.data_collection.models import (
     Article,
     ArticleChunk,
+    BrandJudgment,
     BrandLabel,
     LabelEvidence,
     LabelingRun,
@@ -183,6 +184,53 @@ class LabelingDatabase:
 
         session.flush()
         return db_labels
+
+    def save_brand_judgments(
+        self,
+        session: Session,
+        article_id: UUID,
+        labeling_run_id: UUID,
+        judged: dict[str, BrandAnalysis],
+        model: str,
+        prompt_version: str,
+    ) -> list[BrandJudgment]:
+        """Replace the article's brand judgments with this reply's (D038).
+
+        Args:
+            session: Database session; the caller's status write shares it, so both commit
+                or roll back together
+            article_id: UUID of the article
+            labeling_run_id: UUID of the run that made the call
+            judged: The analysis deciding each sent brand, keyed by the sent spelling
+                (`ReplyDisposition.judged`)
+            model: Model that wrote the reply
+            prompt_version: Prompt version of the call
+
+        Returns:
+            The rows written: one per brand with a content type. A reply under a prompt
+            before v1.12.0 states none, so it writes none, and the article's earlier rows
+            are still removed, since they no longer describe its latest reply.
+        """
+        session.query(BrandJudgment).filter(BrandJudgment.article_id == article_id).delete()
+
+        rows = [
+            BrandJudgment(
+                article_id=article_id,
+                labeling_run_id=labeling_run_id,
+                brand=brand,
+                content_type=analysis.content_type.value,
+                reasoning=analysis.reasoning,
+                confidence=analysis.confidence,
+                gated_categories=list(analysis.gated_categories),
+                prompt_version=prompt_version,
+                model=model,
+            )
+            for brand, analysis in judged.items()
+            if analysis.content_type is not None
+        ]
+        session.add_all(rows)
+        session.flush()
+        return rows
 
     def save_evidence(
         self,
