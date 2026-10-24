@@ -758,15 +758,16 @@ class LabelingPipeline:
                     if error_type in TRANSIENT_ERROR_TYPES:
                         logger.warning(
                             f"[{error_type}] Transient error for article {article['id']}, "
-                            f"keeping as pending for retry: {error_msg}"
+                            f"keeping its status for retry: {error_msg}"
                         )
                     else:
                         logger.error(
                             f"[{error_type}] Failed to process article {article['id']}: {error_msg}"
                         )
                     stats.articles_failed += 1
-                    # This path never reached a status update, so the article is
-                    # still pending. articles_processed was not incremented
+                    # This path never reached a status update, so the article keeps the
+                    # status it had (#222): a pending article is still pending.
+                    # articles_processed was not incremented
                     # either — track it separately so the exit code can tell
                     # "retry has something to do" from "the batch is spent".
                     stats.articles_left_pending += 1
@@ -962,19 +963,16 @@ class LabelingPipeline:
                 chunk_embeddings = emb_result.embeddings
                 result["embeddings_count"] = len(chunk_embeddings)
 
-            # Save chunks to database
+            # Save chunks to database. No status is written here: the article keeps the one
+            # it had until its outcome is decided, so a failure after this point leaves it
+            # where it was ('pending' stays selectable, and a re-run skip keeps its reason,
+            # which update_article_labeling_status would clear) (#222)
             if not dry_run and chunks:
                 with self.database.db.get_session() as session:
                     db_chunks = self.database.save_chunks(
                         session, article_id, chunks, chunk_embeddings or None
                     )
                     chunk_ids = [c.id for c in db_chunks]
-
-                    # Update status
-                    status = "embedded" if chunk_embeddings else "chunked"
-                    self.database.update_article_labeling_status(
-                        session, article_id, status
-                    )
 
         # Step 3: Label with Claude
         labeler = self._ensure_labeler()
@@ -995,7 +993,7 @@ class LabelingPipeline:
             if error_type in TRANSIENT_ERROR_TYPES:
                 logger.warning(
                     f"[{error_type}] Transient error for article {article_id}, "
-                    f"keeping as pending for retry: {label_result.error}"
+                    f"keeping its status for retry: {label_result.error}"
                 )
             else:
                 logger.warning(

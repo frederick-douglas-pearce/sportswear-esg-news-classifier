@@ -1,6 +1,6 @@
 """Tests for the labeling pipeline orchestration."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -965,3 +965,104 @@ class TestStoredLabelingReasons:
             self._article(), fp_prefilter_result=(False, prediction)
         )
         assert self._stored(database) == [("false_positive", prediction.skip_reason)]
+
+
+class TestNoIntermediateStatus:
+    """An article keeps its status until the pipeline decides its outcome (#222).
+
+    The pipeline used to write `embedded`/`chunked` after saving chunks, before the LLM call;
+    a transient failure or an exception after that left the article at a status nothing selects,
+    and the write cleared a re-run skip's stored reason.
+    """
+
+    SKIPPED_AT = datetime(2026, 5, 1, tzinfo=timezone.utc)
+
+    def _setup(self, status, reason=None, skipped_at=None):
+        from types import SimpleNamespace
+
+        from src.labeling.database import LabelingDatabase
+
+        stored = SimpleNamespace(
+            labeling_status=status, labeling_error=reason, skipped_at=skipped_at, labeled_at=None
+        )
+        session = MagicMock()
+        # update_article_labeling_status reads the article through query().filter().first()
+        session.query.return_value.filter.return_value.first.return_value = stored
+        db = MagicMock()
+        db.get_session.return_value.__enter__.return_value = session
+        database = LabelingDatabase(db)
+        save_chunks = patch.object(database, "save_chunks", return_value=[MagicMock(), MagicMock()])
+        return stored, database, save_chunks
+
+    def _article(self):
+        return {
+            "id": uuid4(),
+            "title": "Test Article",
+            "full_content": "Test content " * 50,
+            "description": "Test description",
+            "brands_mentioned": ["Nike"],
+            "published_at": datetime.now(),
+            "source_name": "Test Source",
+        }
+
+    def _transient_labeler(self):
+        labeler = MagicMock()
+        labeler.label_article.return_value = LabelingResult(
+            success=False, error="Rate limited", error_type="rate_limit"
+        )
+        return labeler
+
+    def test_transient_failure_after_chunking_leaves_a_pending_article_pending(self):
+        stored, database, save_chunks = self._setup("pending")
+        pipeline = LabelingPipeline(database=database, labeler=self._transient_labeler())
+        with save_chunks as saved:
+            result = pipeline._process_article(self._article(), skip_embedding=True)
+        assert saved.called, "the article was chunked before the LLM call"
+        assert result["error_type"] == "rate_limit"
+        assert stored.labeling_status == "pending"
+
+    def test_exception_after_chunking_leaves_a_pending_article_pending(self):
+        stored, database, save_chunks = self._setup("pending")
+        labeler = MagicMock()
+        labeler.label_article.side_effect = RuntimeError("connection reset")
+        pipeline = LabelingPipeline(database=database, labeler=labeler)
+        with save_chunks as saved, pytest.raises(RuntimeError):
+            pipeline._process_article(self._article(), skip_embedding=True)
+        assert saved.called
+        assert stored.labeling_status == "pending"
+
+    def test_rerun_skip_that_fails_transiently_keeps_its_reason_and_skipped_at(self):
+        stored, database, save_chunks = self._setup(
+            "skipped", models.SKIP_NO_ESG_CONTENT, self.SKIPPED_AT
+        )
+        pipeline = LabelingPipeline(database=database, labeler=self._transient_labeler())
+        with save_chunks as saved:
+            pipeline._process_article(self._article(), skip_embedding=True)
+        assert saved.called
+        assert (stored.labeling_status, stored.labeling_error, stored.skipped_at) == (
+            "skipped", models.SKIP_NO_ESG_CONTENT, self.SKIPPED_AT
+        )
+
+    def test_a_decided_outcome_is_the_only_status_written(self):
+        """A reply that judges the brand still stores its outcome, and nothing before it."""
+        stored, database, save_chunks = self._setup("pending")
+        labeler = MagicMock()
+        labeler.label_article.return_value = MagicMock(
+            success=True,
+            response=LabelingResponse(
+                brand_analyses=[
+                    BrandAnalysis(brand="Nike", is_sportswear_brand=False,
+                                  not_sportswear_reason="Another company")
+                ],
+                article_summary="s",
+            ),
+            input_tokens=1,
+            output_tokens=1,
+        )
+        pipeline = LabelingPipeline(database=database, labeler=labeler)
+        with save_chunks, patch.object(
+            database, "update_article_labeling_status", wraps=database.update_article_labeling_status
+        ) as update:
+            pipeline._process_article(self._article(), skip_embedding=True)
+        assert [c.args[2] for c in update.call_args_list] == ["false_positive"]
+        assert stored.labeling_status == "false_positive"

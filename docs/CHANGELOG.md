@@ -4,6 +4,21 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-24: A labeling failure after chunking no longer strands the article (#222)
+
+**The pipeline writes no status between saving an article's chunks and deciding its outcome.** It
+used to set `embedded` (or `chunked`) before the LLM call. A transient labeling error, or an
+exception after that point, wrote nothing further, so the article stayed at a status nothing
+selects (labeling reads `pending` only): it left daily labeling and the FP export, while the log
+said "keeping as pending for retry". The write also cleared `labeling_error`, so re-running a
+`skipped` article (`--article-id`, and #192 PR3's backfill) erased the stored reason that
+`label_source` is derived from.
+- After a failure the article keeps the status it had: `pending` stays `pending`, and a re-run skip
+  keeps its reason and `skipped_at`. The log line says "keeping its status for retry".
+- `chunked` and `embedded` stay valid statuses for `fix_label.py`, described as legacy. No article
+  held either on 2026-10-24, so nothing needed repair.
+- Found in #192 PR3's design review; it blocks that backfill, where transient errors are likely.
+
 ### 2026-10-23: Prompt v1.12.0 is production, on Claude Haiku 5.5 (#219, #192)
 
 **The registry's `production` moves from v1.10.0 to v1.12.0, and `LABELING_MODEL` defaults to
