@@ -270,6 +270,40 @@ class LabelEvidence(Base):
         return f"<LabelEvidence(brand_label_id={self.brand_label_id!r}, category={self.category!r})>"
 
 
+class BrandJudgment(Base):
+    """What the latest LLM reply judged each sent brand to be (D038).
+
+    One row per sent brand the reply judged with a content type (prompt v1.12.0 and later, D037),
+    on every outcome the LLM decides, labeled or not; replaced when the article is labeled again.
+    `brand_labels` keeps only sportswear brands with an ESG category, so this is the only record
+    of a `product`, `financial` or non-sportswear brand. The sportswear verdict is not stored: it
+    derives from `content_type` (CONTENT_TYPE_RULES in src/labeling/models.py).
+    """
+
+    __tablename__ = "brand_judgments"
+    __table_args__ = (
+        Index("ix_brand_judgments_article_brand", "article_id", "brand", unique=True),
+        Index("ix_brand_judgments_brand_content_type", "brand", "content_type"),
+        Index("ix_brand_judgments_labeling_run_id", "labeling_run_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    article_id = Column(UUID(as_uuid=True), ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
+    labeling_run_id = Column(UUID(as_uuid=True), ForeignKey("labeling_runs.id"), nullable=False)
+    brand = Column(String(100), nullable=False)  # as sent (articles.brands_mentioned), not as replied
+    content_type = Column(String(20), nullable=False)  # a ContentType value (src/labeling/models.py)
+    reasoning = Column(Text, nullable=False)
+    confidence = Column(Float)
+    # ESG categories the reply gave that the content type dropped (D037); names only
+    gated_categories = Column(ARRAY(String), nullable=False, default=list)
+    prompt_version = Column(String(20), nullable=False)
+    model = Column(String(100), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return f"<BrandJudgment(article_id={self.article_id!r}, brand={self.brand!r}, content_type={self.content_type!r})>"
+
+
 class LabelingRun(Base):
     """Log of each labeling batch run."""
 

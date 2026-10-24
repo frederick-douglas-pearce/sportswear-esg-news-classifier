@@ -79,6 +79,25 @@ Supporting text excerpts:
 | `excerpt` | Text | Evidence quote |
 | `relevance_score` | Float | Match confidence |
 
+### brand_judgments
+
+What the latest LLM reply judged each sent brand to be (prompt v1.12.0 and later, D037/D038). One
+row per sent brand with a content type, on every outcome the LLM decides (labeled or not),
+replaced when the article is labeled again. Migration `009_brand_judgments.sql`; the labeling
+pipeline's `init_db()` also creates it.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID | Primary key |
+| `article_id` | UUID | Foreign key to articles (cascade delete) |
+| `labeling_run_id` | UUID | Foreign key to labeling_runs: the run that made the call |
+| `brand` | String | Brand as sent (`articles.brands_mentioned`), unique per article |
+| `content_type` | String | `other_entity`, `mention_only`, `retail_only`, `product`, `financial`, `business`; the last three are sportswear |
+| `reasoning` | Text | The reply's reasoning for the type |
+| `confidence` | Float | LLM confidence (0-1) |
+| `gated_categories` | String[] | ESG categories the reply gave that the type dropped (D037) |
+| `prompt_version`, `model` | String | The call's prompt version and model |
+
 ### labeling_runs
 
 Tracks labeling batches with statistics and cost estimates.
@@ -163,6 +182,15 @@ SELECT brand,
 FROM brand_labels
 GROUP BY brand
 ORDER BY total_labels DESC;"
+
+# A brand's product articles (brand_judgments, D038)
+docker exec esg_news_db psql -U postgres -d esg_news -c "
+SELECT a.published_at::date, LEFT(a.title, 60) as title, LEFT(bj.reasoning, 80) as reasoning
+FROM brand_judgments bj
+JOIN articles a ON a.id = bj.article_id
+WHERE bj.brand = 'Nike' AND bj.content_type = 'product'
+ORDER BY a.published_at DESC
+LIMIT 10;"
 
 # Recent labeling runs
 docker exec esg_news_db psql -U postgres -d esg_news -c "

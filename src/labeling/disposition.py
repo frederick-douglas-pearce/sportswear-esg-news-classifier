@@ -40,6 +40,9 @@ class ReplyDisposition:
     # Brands returned with no is_sportswear_brand and no applicable category; they count
     # as left out
     unset: list[str] = field(default_factory=list)
+    # The analysis that decides each sent brand, keyed by the sent spelling: sportswear wins a
+    # conflict, otherwise the first; left-out, unset and unsent brands have no entry (D038)
+    judged: dict[str, BrandAnalysis] = field(default_factory=dict)
 
 
 def _states_a_verdict(analysis: BrandAnalysis) -> bool:
@@ -73,6 +76,14 @@ def dispose_reply(sent_brands: list[str], analyses: list[BrandAnalysis]) -> Repl
     returned_keys = {normalize_brand(a.brand) for a in analyses}
     omitted = [name for key, name in sent_keys.items() if key not in returned_keys]
     unsent = [a.brand for a in analyses if normalize_brand(a.brand) not in sent_keys]
+    judged: dict[str, BrandAnalysis] = {}
+    for a in analyses:
+        name = sent_keys.get(normalize_brand(a.brand))
+        if name is None:
+            continue
+        current = judged.get(name)
+        if current is None or (a.is_sportswear_brand and not current.is_sportswear_brand):
+            judged[name] = a
 
     if not analyses:
         return ReplyDisposition(
@@ -92,6 +103,7 @@ def dispose_reply(sent_brands: list[str], analyses: list[BrandAnalysis]) -> Repl
         "unsent": unsent,
         "conflicting": conflicting,
         "unset": unset,
+        "judged": judged,
     }
 
     if sportswear:

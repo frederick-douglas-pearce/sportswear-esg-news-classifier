@@ -2634,9 +2634,10 @@ and model.
 
 ## D037: A Labeling Reply States a Per-Brand Content Type Under a Schema; `is_sportswear_brand` and the Category Gate Derive From It in Code (#114, #122)
 
-**Date:** 2026-10-22 · **Status:** proposed (architect review of #215's results, 2026-10-22; the
-owner agreed to the enum, `financial`, the code gate and including #117; accepted when v1.12.0
-passes its eval, #219) · **Issues:** #114, #117, #122, #192, #212, #215, #219
+**Date:** 2026-10-22 · **Status:** accepted 2026-10-23, when v1.12.0 passed its eval and was
+promoted (#219, #221); proposed in the architect review of #215's results, 2026-10-22, where the
+owner agreed to the enum, `financial`, the code gate and including #117; §4 amended by D038 ·
+**Issues:** #114, #117, #122, #192, #212, #215, #219
 
 **Context.** v1.11.0 asked the model to set `is_sportswear_brand` by a Product-article rule (D032).
 In two contrastive evals (#215), 7 of 8 retail-only cases came back `true`, each with reasoning
@@ -2693,3 +2694,57 @@ JSON.
   mitigation.
 - Under v1.11.0 and later, retail-only articles become `false_positive`. The reason prefix makes
   that group separable in the FP export (#154 PR2).
+
+## D038: Each Brand's Content Type Is Stored in Its Own Table, Replaced per Reply; It Amends D037 §4 (#192)
+
+**Date:** 2026-10-24 · **Status:** accepted (architect review, 2026-10-24; the owner agreed to
+every point below) · **Issues:** #192, #219, #224
+
+**Context.** v1.12.0 (D037, production since 2026-10-23) gives every brand sent a `content_type`,
+but only sportswear brands with an ESG category reach `brand_labels` (`save_brand_labels`). The
+type of a `product`, `financial` or non-sportswear brand was lost, even beside a label on a
+`labeled` article, and on a `false_positive` survived only inside the article-level reason (cut
+at 500 characters). Product and Finance views are planned (per-brand selection by type, likely on
+a site apart from the ESG scorecard), and #192 PR3's backfill is to spend promotional credits on
+a few thousand relabels before 2026-11-02, so the types had to be stored before it runs.
+
+**Decision.**
+1. A new table, `brand_judgments` (`BrandJudgment`, `src/data_collection/models.py`; migration
+   009): one row per sent brand the reply judged with a content type, with `reasoning`,
+   `confidence`, the names of the categories the type dropped (`gated_categories`), the prompt
+   version, the model and the labeling run. `brand` is the sent spelling (`brands_mentioned`),
+   not the reply's.
+2. It is written on every outcome the LLM decides (`labeled`, each LLM skip, `false_positive`),
+   in the same session as the status write, so both commit or roll back together. Paths the LLM
+   does not decide (insufficient content, no brands, the FP pre-filter, title dedup, failed or
+   transient calls) and dry runs write nothing.
+3. A write replaces the article's rows: they describe its latest reply, and readers need no
+   "latest" logic. A reply that states no content type (an empty reply, or a version before
+   v1.12.0) writes none, and still removes the article's earlier rows.
+4. Which analysis decides a sent brand comes from `dispose_reply` (`ReplyDisposition.judged`), by
+   the rules that decide the status: matched by `normalize_brand`, sportswear wins a conflict,
+   otherwise the first; left-out, unset and unsent brands have no entry.
+5. Not stored: `is_sportswear_brand` and `not_sportswear_reason`, which derive from the type
+   (`CONTENT_TYPE_RULES`); a CHECK constraint on `content_type`, which would be a third copy of
+   the enum. A row needs a labeling run, so `_process_article` refuses to save an LLM outcome
+   without one.
+6. D037 §4 ("The stored columns are unchanged and no migration is needed") is amended by this.
+
+**Rejected.**
+- **A JSON column on `articles`.** No provenance per judgment, and every ORM read of `articles`
+  fails until the column is added; a new table is created by the pipeline's `init_db()`.
+  `provenance.py` already declines stored columns that a relabel must re-sync.
+- **Widening `brand_labels` to every judged brand.** Its readers count rows as ESG labels: the
+  scorecard's `article_count`, the feed's brand lists, the `esg-labels` export and
+  `cleanup_false_positives.py` would all change.
+- **Append-only history.** Every reader would need the latest reply per article; history would
+  keep only what relabels overwrite, and prompt comparisons run outside the database (D036).
+
+**Consequences.**
+- v1.12.0 states no product or finance sentiment: sentiment is per ESG category, and the gate
+  drops it. A Finance view's sentiment needs a later prompt version and its eval.
+- Articles labeled before this table have no judgments, and nothing relabels them (#224).
+  Non-labeled v1.12.0 articles from 2026-10-23 until this deploys are added to #192 PR3's cohort.
+- A status changed by hand (`fix_label.py`, `review_labels.py`) leaves the judgments in place, as
+  it leaves `brand_labels`; views can filter on `articles.labeling_status` (#143).
+- A labeling run row can no longer be deleted while judgments name it; nothing deletes them.

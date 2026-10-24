@@ -766,7 +766,9 @@ class TestStoredLabelingReasons:
     def test_empty_brand_analyses(self):
         database = MagicMock()
         pipeline = LabelingPipeline(database=database, labeler=self._labeler_returning([]))
-        result = pipeline._process_article(self._article(), skip_chunking=True, skip_embedding=True)
+        result = pipeline._process_article(
+            self._article(), skip_chunking=True, skip_embedding=True, labeling_run_id=uuid4()
+        )
         assert self._stored(database) == [("skipped", models.SKIP_NO_ESG_CONTENT)]
         # An empty reply leaves out every brand sent, so it counts as incomplete (D032)
         assert result["incomplete_reply"] is True
@@ -791,7 +793,7 @@ class TestStoredLabelingReasons:
         labeler = self._labeler_returning([self._sportswear("Nike", True), self._sportswear("Adidas", False)])
         result = LabelingPipeline(database=database, labeler=labeler)._process_article(
             self._article(brands_mentioned=["Nike", "Adidas", "Puma"]),
-            skip_chunking=True, skip_embedding=True,
+            skip_chunking=True, skip_embedding=True, labeling_run_id=uuid4(),
         )
         assert self._stored(database) == [("labeled",)]
         assert result["labeled"] is True
@@ -822,7 +824,9 @@ class TestStoredLabelingReasons:
             reasoning="Sportswear, no ESG content",
         )]
         pipeline = LabelingPipeline(database=database, labeler=self._labeler_returning(analyses))
-        pipeline._process_article(self._article(), skip_chunking=True, skip_embedding=True)
+        pipeline._process_article(
+            self._article(), skip_chunking=True, skip_embedding=True, labeling_run_id=uuid4()
+        )
         assert self._stored(database) == [("skipped", models.SKIP_NO_ESG_CATEGORIES)]
 
     @staticmethod
@@ -841,7 +845,8 @@ class TestStoredLabelingReasons:
         database = MagicMock()
         labeler = self._labeler_returning([self._not_sportswear("Puma")])
         result = LabelingPipeline(database=database, labeler=labeler)._process_article(
-            self._article(brands_mentioned=["Puma", "Nike"]), skip_chunking=True, skip_embedding=True
+            self._article(brands_mentioned=["Puma", "Nike"]), skip_chunking=True, skip_embedding=True,
+            labeling_run_id=uuid4(),
         )
         assert self._stored(database) == [("skipped", models.SKIP_INCOMPLETE_JUDGMENT)]
         assert result["skipped"] is True and result["false_positive"] is False
@@ -851,7 +856,8 @@ class TestStoredLabelingReasons:
         database = MagicMock()
         labeler = self._labeler_returning([self._not_sportswear("Puma")])
         result = LabelingPipeline(database=database, labeler=labeler)._process_article(
-            self._article(brands_mentioned=["Puma"]), skip_chunking=True, skip_embedding=True
+            self._article(brands_mentioned=["Puma"]), skip_chunking=True, skip_embedding=True,
+            labeling_run_id=uuid4(),
         )
         assert self._stored(database) == [("false_positive", "Puma: the animal")]
         assert result["false_positive"] is True
@@ -1062,7 +1068,7 @@ class TestNoIntermediateStatus:
         pipeline = LabelingPipeline(database=database, labeler=labeler)
         with save_chunks, patch.object(
             database, "update_article_labeling_status", wraps=database.update_article_labeling_status
-        ) as update:
-            pipeline._process_article(self._article(), skip_embedding=True)
+        ) as update, patch.object(database, "save_brand_judgments"):
+            pipeline._process_article(self._article(), skip_embedding=True, labeling_run_id=uuid4())
         assert [c.args[2] for c in update.call_args_list] == ["false_positive"]
         assert stored.labeling_status == "false_positive"
