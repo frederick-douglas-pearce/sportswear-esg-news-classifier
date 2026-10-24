@@ -889,7 +889,7 @@ class TestArticleLabelerStats:
     def test_cost_estimation(self):
         """Should estimate cost correctly."""
         with patch("src.labeling.labeler.Anthropic"):
-            labeler = ArticleLabeler(api_key="test-key")
+            labeler = ArticleLabeler(api_key="test-key", model="claude-haiku-4-5-20251001")
             labeler.total_input_tokens = 1_000_000  # 1M tokens
             labeler.total_output_tokens = 1_000_000  # 1M tokens
 
