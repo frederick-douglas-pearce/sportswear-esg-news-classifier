@@ -190,9 +190,9 @@ class TestReplySchema:
 
 
 class TestV1_12_0:
-    def test_registered_as_candidate_and_not_production(self, manager):
-        assert manager.get_version_info("v1.12.0")["tags"]["status"] == "candidate"
-        assert manager.get_production_version() != "v1.12.0"
+    def test_registered_as_production(self, manager):
+        assert manager.get_version_info("v1.12.0")["tags"]["status"] == "production"
+        assert manager.get_production_version() == "v1.12.0"
 
     def test_config_names_the_schema(self):
         config = json.loads((PROMPTS_DIR / "v1.12.0" / "config.json").read_text())

@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' case does), and the report checks every reply against them. #118's Mammut rope review was already a product_true case.",
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'category_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' case does), and the report checks every reply against them. #118's Mammut rope review was already a product_true case.",
   "cases": [
     {
       "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
@@ -598,10 +598,10 @@
     {
       "article_id": "cfe9e317-aed2-4c28-9c7b-ca9450d14e59",
       "strata": [
-        "product_true"
+        "category_gray"
       ],
       "repeats": 1,
-      "note": "#118: adidas x Sole Play collab; owner-ruled 2026-10-22",
+      "note": "#118: adidas x Sole Play collab; owner-ruled true 2026-10-22. Was product_true (no category); moved to category_gray 2026-10-23 after #219's P1 run 6 kept Social for adidas's Business Track program: one interview answer from the founder it supports, so Social is defensible but borderline, and the categories are read, not checked",
       "expected": {
         "brand": "Adidas",
         "is_sportswear_brand": true

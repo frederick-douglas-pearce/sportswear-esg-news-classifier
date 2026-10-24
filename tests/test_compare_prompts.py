@@ -1045,7 +1045,7 @@ class TestMain:
         def make(model, max_tokens, prompt_version, effort):
             reply = [_esg("Nike")] if prompt_version == "v1.11.0" else []
             fake = FakeLabeler([_ok(reply)], model=model)
-            fake.loaded_prompt, fake.prompt_version = object(), prompt_version
+            fake.loaded_prompt, fake.prompt_version, fake.effort = object(), prompt_version, effort
             return fake
 
         a, b, c = self._patches([_article(strata=(SAMPLE,))])

@@ -217,7 +217,7 @@ prompts/labeling/
     ├── config.json, system_prompt.txt, user_prompt.txt (v1.12.0 also reply_schema.json, D037)
 ```
 
-**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Run `scripts/compare_prompts.py` and judge the report against D036 → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.10.0; v1.11.0 failed its eval (#215) and is not to be promoted; v1.12.0 (a per-brand content type under a reply schema, D037) is the candidate (#219)
+**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Run `scripts/compare_prompts.py` and judge the report against D036 → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.12.0 (a per-brand content type under a reply schema, D037), evaluated on `claude-haiku-5-5` at effort medium (#219); v1.11.0 failed its eval (#215) and was never promoted
 
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
@@ -351,7 +351,7 @@ NEWSDATA_API_KEY, DATABASE_URL, MAX_API_CALLS_PER_DAY=200, SCRAPE_DELAY_SECONDS=
 GDELT_TIMESPAN=3m, GDELT_MAX_RECORDS=250
 
 # Labeling
-ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-haiku-4-5-20251001
+ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-haiku-5-5  # production prompt v1.12.0 was evaluated on Haiku 5.5 at effort medium (#219)
 LABELING_EFFORT=medium  # output_config.effort, sent only to a model that takes it (Haiku 5.5, #212)
 EMBEDDING_MODEL=text-embedding-3-small, LABELING_BATCH_SIZE=10
 
@@ -502,6 +502,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-10-23**: Prompt v1.12.0 is production, and `LABELING_MODEL` defaults to `claude-haiku-5-5` (#219): it passed its contrastive eval against v1.10.0 on Haiku 5.5 at effort medium (run 6; hashes `6ab0c3af777b` / `f9e786d07439`, schema `96064689a1f3`), after in-place revisions to the content-type boundaries between runs. The eval report checks a case's ruled categories (`expected.categories`). Run with `LABELING_MODEL=claude-haiku-5-5` and `LABELING_EFFORT=medium`. Next: #192 PR3's backfill
 - **2026-10-22**: Candidate prompt v1.12.0 (#219, D037): each brand analysis writes `reasoning`, then a `content_type` (`other_entity`, `mention_only`, `retail_only`, `product`, `financial`, `business`) under structured outputs (`reply_schema.json`, sent as `output_config.format`); `BrandAnalysis` derives `is_sportswear_brand` and `not_sportswear_reason` from it and drops the categories of every type but `business`, recording them for the eval report. Sentiment measures the brand's conduct, not the article's stance (#117). A version without a schema is called as before. Production unchanged (v1.10.0) until v1.12.0's eval on Haiku 5.5
 - **2026-10-22**: Candidate prompt v1.11.0 revised in place after failing its first contrastive eval (#215): a sale listing that also describes the product is `is_sportswear_brand: true` and a line of specs is a retail detail (the Brooks example moved to the true side, the Skechers example dropped), and judging every brand is not a reason to find a category for it. Four expected verdicts in the case file ruled `true` by the owner, and six cases added (five `false`, one `true`). The revised text failed its second eval (7 of 22 Product cases wrong, all on the `false` side), so v1.11.0 stays frozen as the evaluated record and v1.12.0 supersedes it. Production unchanged (v1.10.0)
 - **2026-10-20**: Contrastive evaluation of labeling prompt versions (#192 PR2a, D036). `scripts/compare_prompts.py` + `src/evaluation/` label the same articles fresh under a baseline and a candidate prompt, write nothing to the database, and report four-class transitions (unjudged vs judged skips, plus failed calls), the newly-labeled rate, sportswear flips, compliance, duplicates, truncation at `max_tokens`, stability and Product-article accuracy; before any call it refuses equal versions, an unloadable version, a labeler that fell back to the hardcoded prompt, and a worst-case cost over `--max-cost`. A promotion is judged against D036's criteria, and the hashes evaluated are the hashes promoted (v1.11.0's are pinned in `tests/test_labeling_prompts.py`). Named cases: `prompts/labeling/eval_cases/`. `labeling_runs.incomplete_replies` stores the run summary's counter (migration 008; apply before running). `src/labeling/article_input.py` holds the content rule the pipeline and the comparison share, and `llm_cost_usd` in `src/labeling/config.py` prices tokens from the one rate table. Production prompt unchanged (v1.10.0)

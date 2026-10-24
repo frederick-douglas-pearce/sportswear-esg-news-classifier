@@ -4,6 +4,23 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-23: Prompt v1.12.0 is production, on Claude Haiku 5.5 (#219, #192)
+
+**The registry's `production` moves from v1.10.0 to v1.12.0, and `LABELING_MODEL` defaults to
+`claude-haiku-5-5`.** v1.12.0 passed its contrastive eval against v1.10.0 on Haiku 5.5 at effort
+medium (run 6, report `v1.10.0_vs_v1.12.0_haiku-5-5_2026-10-23_run6`; hashes `6ab0c3af777b` /
+`f9e786d07439`, schema `96064689a1f3`), which is the call it is promoted with.
+- Run the labeler with `LABELING_MODEL=claude-haiku-5-5` and `LABELING_EFFORT=medium`. An
+  environment that still sets the Haiku 4.5 model would run v1.12.0 on a model it was not evaluated
+  on; set the environment before this merges (v1.10.0 on Haiku 5.5 was itself evaluated, #212's run
+  M, so that order is safe).
+- `registry.json`: v1.12.0's status is `production`; v1.10.0 and v1.11.0 are `superseded`.
+- Case file: cfe9e317 (the adidas x Sole Play collab) moves from `product_true` to a new
+  `category_gray` stratum. Its verdict stays `true` and scored; Social for adidas's Business Track
+  program, which run 6 kept, is borderline (one interview answer from the founder it supports), so
+  its categories are read rather than checked.
+- Next: #192 PR3's one-time backfill relabels stored articles under v1.12.0.
+
 ### 2026-10-22: Candidate prompt v1.12.0 states a per-brand content type under a reply schema (#219, D037)
 
 **Prompt v1.12.0 is registered as a candidate; production is unchanged (v1.10.0) until its
