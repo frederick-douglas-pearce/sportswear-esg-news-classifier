@@ -163,8 +163,8 @@ def list_statuses() -> None:
     """Print valid labeling statuses with descriptions."""
     descriptions = {
         "pending": "Awaiting processing",
-        "chunked": "Text chunked, awaiting embedding",
-        "embedded": "Embeddings generated, awaiting labeling",
+        "chunked": "Legacy: chunked, awaiting labeling (the pipeline no longer writes it, #222)",
+        "embedded": "Legacy: embedded, awaiting labeling (the pipeline no longer writes it, #222)",
         "labeled": "Successfully labeled with ESG categories",
         "skipped": "No ESG content for a sportswear brand, or not established (no LLM reply, or one that did not settle the brand); see labeling_error (UNJUDGED_SKIP_REASONS)",
         "false_positive": "Not actually about the sportswear brand (e.g., 'Vans' = vehicles)",
