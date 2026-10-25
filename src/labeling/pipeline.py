@@ -69,6 +69,29 @@ def _fp_skip_reason(probability: float, threshold: float, confidence_level: str 
     return f"{lead}: probability {probability:.3f} < threshold {threshold}"
 
 
+def _billed(labeler: Any) -> tuple[int, int, int] | None:
+    """The labeler's running input tokens, output tokens and calls; None if it keeps none."""
+    totals = tuple(
+        getattr(labeler, name, None)
+        for name in ("total_input_tokens", "total_output_tokens", "total_api_calls")
+    )
+    return totals if all(isinstance(t, int) for t in totals) else None
+
+
+def _add_billed(stats: "LabelingStats", labeler: Any, before: tuple[int, int, int] | None) -> None:
+    """Add what the labeler was billed since ``before`` to the stats, for an article whose
+    processing raised after its call returned."""
+    after = _billed(labeler)
+    if before is None or after is None:
+        return
+    input_tokens, output_tokens, calls = (a - b for a, b in zip(after, before))
+    stats.llm_calls += calls
+    if input_tokens or output_tokens:
+        stats.llm_calls_with_usage += calls
+    stats.input_tokens += input_tokens
+    stats.output_tokens += output_tokens
+
+
 @dataclass
 class LabelingStats:
     """Statistics from a labeling run."""
@@ -79,11 +102,14 @@ class LabelingStats:
     articles_false_positive: int = 0
     articles_failed: int = 0
     articles_deduplicated: int = 0  # Articles skipped as title duplicates
-    # Articles whose processing raised before any status update. They are still
-    # `pending`, so a retry can pick them up — unlike articles_failed, which
-    # have been marked failed and are spent. Keeping them apart is what lets
-    # the exit code say whether retrying this batch can accomplish anything.
+    # Articles whose processing raised before any status update, or (keep_status_without_reply)
+    # whose call failed with no reply. They keep their status, so a retry can pick them up —
+    # unlike articles_failed, which have been marked failed and are spent. Keeping them apart is
+    # what lets the exit code say whether retrying this batch can accomplish anything.
     articles_left_pending: int = 0
+    # The subset of articles_left_pending left by an error that is not transient: retrying it
+    # without a change (a key, credit, the code) fails the same way
+    articles_left_non_transient: int = 0
     brands_labeled: int = 0
     false_positive_brands: int = 0
     chunks_created: int = 0
@@ -609,6 +635,7 @@ class LabelingPipeline:
         dedupe_titles: bool = True,
         run_tag: str | None = None,
         run_config: dict[str, Any] | None = None,
+        keep_status_without_reply: bool = False,
     ) -> LabelingStats:
         """Run the full labeling pipeline.
 
@@ -619,14 +646,19 @@ class LabelingPipeline:
             skip_chunking: Skip chunking for already-chunked articles
             skip_embedding: Skip embedding generation
             prefilter: If False, skip novelty scoring and the FP pre-filter: no FP call, no
-                classifier_predictions row, and every article continues to the LLM (#192 backfill,
-                D039)
+                classifier_predictions row, and every article that passes the content and brand
+                checks continues to the LLM (#192 backfill, D039)
             dedupe_titles: If False, skip title deduplication, so no article is set to
                 'deduplicated'
             run_tag: Stored as the run's config["run_tag"]; daily_labeling's run outcomes leave
                 tagged runs out
             run_config: The caller's data, stored under the run's config["run_config"], where it
                 cannot replace a key the pipeline writes
+            keep_status_without_reply: If True, a call that failed with no reply (an
+                authentication or account error, a 4xx, an unexpected error) leaves the article's
+                status as it was and counts it in articles_left_pending, instead of writing
+                'failed'. A reply the labeler could not use (a refusal, a parse failure, a
+                max_tokens stop) is still 'failed'
 
         Returns:
             LabelingStats with results
@@ -724,6 +756,7 @@ class LabelingPipeline:
                 )
 
             for article in article_data:
+                billed_before = _billed(labeler)
                 try:
                     # Get precomputed FP result for this article
                     fp_result = fp_prefilter_results.get(article["id"])
@@ -735,6 +768,7 @@ class LabelingPipeline:
                         skip_embedding=skip_embedding,
                         fp_prefilter_result=fp_result,
                         labeling_run_id=run_id,
+                        keep_status_without_reply=keep_status_without_reply,
                     )
 
                     stats.articles_processed += 1
@@ -750,7 +784,11 @@ class LabelingPipeline:
                     elif result["skipped"]:
                         stats.articles_skipped += 1
                     else:
-                        stats.articles_failed += 1
+                        if result.get("status_kept"):
+                            stats.articles_left_pending += 1
+                            stats.articles_left_non_transient += 1
+                        else:
+                            stats.articles_failed += 1
                         if result.get("error"):
                             error_type = result.get("error_type", "unknown")
                             stats.errors.append(
@@ -794,6 +832,10 @@ class LabelingPipeline:
                         logger.error(
                             f"[{error_type}] Failed to process article {article['id']}: {error_msg}"
                         )
+                        stats.articles_left_non_transient += 1
+                    # A call that returned before the exception was billed; its result is lost,
+                    # so count it from the labeler's totals
+                    _add_billed(stats, labeler, billed_before)
                     stats.articles_failed += 1
                     # This path never reached a status update, so the article keeps the
                     # status it had (#222): a pending article is still pending.
@@ -907,6 +949,7 @@ class LabelingPipeline:
         fp_prefilter_result: tuple[bool, ClassifierPredictionRecord | None] | None = None,
         *,
         labeling_run_id: UUID | None = None,
+        keep_status_without_reply: bool = False,
     ) -> dict[str, Any]:
         """Process a single article through the labeling pipeline.
 
@@ -918,6 +961,8 @@ class LabelingPipeline:
             fp_prefilter_result: Precomputed FP classifier result from batch call
             labeling_run_id: The run making the call, recorded on the brand judgments; required
                 when an outcome the LLM decides is saved (D038)
+            keep_status_without_reply: As label_articles'; the result's "status_kept" says the
+                status was left as it was
 
         Returns:
             Dict with processing results
@@ -1059,6 +1104,13 @@ class LabelingPipeline:
                     f"[{error_type}] Transient error for article {article_id}, "
                     f"keeping its status for retry: {label_result.error}"
                 )
+            elif keep_status_without_reply and label_result.stop_reason is None:
+                # No reply came back, so nothing about the article decided the failure
+                logger.error(
+                    f"[{error_type}] Call failed with no reply for article {article_id}, "
+                    f"keeping its status: {label_result.error}"
+                )
+                result["status_kept"] = True
             else:
                 logger.warning(
                     f"[{error_type}] Labeling failed for article {article_id}: {label_result.error}"

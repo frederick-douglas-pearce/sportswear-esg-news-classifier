@@ -1,6 +1,7 @@
 """Tests for the labeling pipeline orchestration."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -1167,3 +1168,120 @@ class TestBackfillArguments:
         assert prefilter.called and novelty.called and dedupe.called
         config = database.create_labeling_run.call_args.kwargs["config"]
         assert set(config) == self.DEFAULT_CONFIG_KEYS
+
+
+class TestKeepStatusWithoutReply:
+    """keep_status_without_reply: a call that failed with no reply keeps the article's status
+    (#192 backfill, D039 point 5)."""
+
+    CREDIT = "Bad request (400): Your credit balance is too low to access the Anthropic API"
+
+    def _article(self):
+        return {
+            "id": uuid4(), "title": "Puma backs a recycling scheme", "full_content": "Test content " * 50,
+            "description": None, "brands_mentioned": ["Puma"], "published_at": None, "source_name": "s",
+        }
+
+    def _labeler(self, result):
+        labeler = MagicMock()
+        labeler.label_article.return_value = result
+        return labeler
+
+    def _process(self, result, **kwargs):
+        database = MagicMock()
+        pipeline = LabelingPipeline(database=database, labeler=self._labeler(result))
+        out = pipeline._process_article(self._article(), skip_chunking=True, **kwargs)
+        statuses = [c.args[2] for c in database.update_article_labeling_status.call_args_list]
+        return out, statuses
+
+    @pytest.mark.parametrize(
+        ("error_type", "error"),
+        [("api_error", CREDIT), ("authentication", "API authentication failed: invalid x-api-key"),
+         ("unknown", "Unexpected error: ValueError: x")],
+    )
+    def test_no_reply_keeps_the_status_when_set(self, error_type, error):
+        result = LabelingResult(success=False, error=error, error_type=error_type)
+        out, statuses = self._process(result, keep_status_without_reply=True)
+        assert statuses == []
+        assert out["status_kept"] is True
+        # the default writes failed
+        out, statuses = self._process(result)
+        assert statuses == ["failed"]
+        assert not out.get("status_kept")
+
+    @pytest.mark.parametrize(
+        ("error_type", "error", "stop_reason"),
+        [
+            ("refusal", f"{models.FAILED_REFUSAL_PREFIX} (refusal, category: cyber)", "refusal"),
+            ("max_tokens", f"{models.FAILED_MAX_TOKENS_PREFIX} (8000); failed to parse LLM response", "max_tokens"),
+            (None, "Failed to parse LLM response", "end_turn"),
+        ],
+    )
+    def test_a_reply_that_could_not_be_used_is_still_failed(self, error_type, error, stop_reason):
+        result = LabelingResult(success=False, error=error, error_type=error_type, stop_reason=stop_reason)
+        out, statuses = self._process(result, keep_status_without_reply=True)
+        assert statuses == ["failed"]
+        assert not out.get("status_kept")
+
+    def _run(self, labeler, articles, **kwargs):
+        database = MagicMock()
+        by_id = {a["id"]: SimpleNamespace(**a, category=[]) for a in articles}
+        database.get_article_by_id.side_effect = lambda session, aid: by_id.get(aid)
+        pipeline = LabelingPipeline(database=database, labeler=labeler)
+        with patch("src.labeling.pipeline.db"), patch.object(pipeline, "_ensure_labeler", return_value=labeler):
+            stats = pipeline.label_articles(
+                article_ids=list(by_id), prefilter=False, dedupe_titles=False, skip_chunking=True, **kwargs
+            )
+        return stats, database
+
+    def test_label_articles_counts_kept_articles_as_left_by_an_error_that_is_not_transient(self):
+        labeler = self._labeler(LabelingResult(success=False, error=self.CREDIT, error_type="api_error"))
+        labeler.model, labeler.effort = "claude-haiku-5-5", "medium"
+        stats, database = self._run(labeler, [self._article() for _ in range(3)], keep_status_without_reply=True)
+        assert (stats.articles_left_pending, stats.articles_left_non_transient, stats.articles_failed) == (3, 3, 0)
+        assert stats.errors_by_type == {"api_error": 3}
+        assert all(c.args[2] != "failed" for c in database.update_article_labeling_status.call_args_list)
+
+    def test_a_transient_failure_is_not_counted_as_not_transient(self):
+        labeler = self._labeler(LabelingResult(success=False, error="Rate limited", error_type="rate_limit"))
+        labeler.model, labeler.effort = "claude-haiku-5-5", "medium"
+        stats, _ = self._run(labeler, [self._article()], keep_status_without_reply=True)
+        assert stats.articles_left_non_transient == 0
+
+    def test_an_exception_after_a_billed_call_counts_its_tokens(self):
+        """The call's result is lost when processing raises, so its tokens come from the labeler."""
+
+        class Labeler:
+            model, effort = "claude-haiku-5-5", "medium"
+            model_spec = SimpleNamespace(accepts_effort=True)
+            prompt_version, prompt_system_hash, prompt_user_hash = "v1.12.0", "s", "u"
+
+            def __init__(self):
+                self.total_input_tokens = self.total_output_tokens = self.total_api_calls = 0
+
+            def label_article(self, **kwargs):
+                self.total_input_tokens += 1000
+                self.total_output_tokens += 200
+                self.total_api_calls += 1
+                return LabelingResult(
+                    success=True, input_tokens=1000, output_tokens=200, stop_reason="end_turn",
+                    response=LabelingResponse(brand_analyses=[BrandAnalysis(
+                        brand="Puma", is_sportswear_brand=False, not_sportswear_reason="the animal",
+                    )], article_summary="s"),
+                )
+
+        articles = [self._article(), self._article()]
+        failing = articles[0]["id"]
+        labeler = Labeler()
+
+        def save(session, article_id, *args, **kwargs):
+            if article_id == failing:
+                raise RuntimeError("database went away")
+
+        with patch.object(LabelingPipeline, "_save_judgments", side_effect=save):
+            stats, database = self._run(labeler, articles)
+        assert (stats.llm_calls, stats.llm_calls_with_usage) == (2, 2)
+        assert (stats.input_tokens, stats.output_tokens) == (2000, 400)
+        assert stats.articles_left_non_transient == 1
+        recorded = database.complete_labeling_run.call_args.args
+        assert recorded[6:9] == (2, 2000, 400)  # llm_calls, input and output tokens

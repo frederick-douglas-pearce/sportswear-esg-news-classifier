@@ -7,12 +7,22 @@ unjudged skips at a reason a reply writes, LLM-decided ``false_positive`` rows, 
 written since the production version's first run. Human-ruled rows, rows a human may have moved
 by hand, and rows with human-reviewed labels are left out. Each article goes through
 ``LabelingPipeline.label_articles`` with the FP pre-filter, novelty scoring and title
-deduplication bypassed, so ``dispose_reply`` decides every status and no status is set here.
+deduplication bypassed, so ``dispose_reply`` decides the status of every reply; a reply the
+labeler could not use is written ``failed`` by the pipeline, and no status is set here. Each
+batch is decided again just before it is labeled, so a row moved by hand during the run is
+dropped rather than overwritten.
 
-Runs are tagged ``192-backfill`` (``daily_labeling`` leaves tagged runs out of its metrics), and
-each run's config records every article's status, reason and arm from before the relabel. The
-cohort is derived again on each invocation: an article whose call failed transiently is still in
-it, and every other outcome leaves it.
+Runs are tagged ``192-backfill`` (``daily_labeling``'s run outcomes leave tagged runs out; its
+LLM analysis samples articles by ``labeled_at``/``skipped_at``, so it includes relabeled ones
+while the backfill runs), and each run's config records every article's status, reason and arm
+from before the relabel. The cohort is derived again on each invocation: an article whose call
+failed transiently, or whose processing raised, is still in it, and every other outcome leaves
+it. A call that fails with no reply for a reason that is not transient (a revoked key, credit
+used up) keeps the article's status, and so does an exception that is not transient; either
+stops the invocation after its batch.
+
+Run one invocation at a time: nothing locks the cohort, so a second one would pay again for the
+same articles (the cap still holds, since it counts the other's unfinished runs).
 
 Usage:
     # Cohort, exclusions and cost bounds; no API call, no write:
@@ -24,6 +34,10 @@ Usage:
 
     # What the tagged runs did so far:
     uv run python scripts/backfill_relabel.py --report
+
+Exit codes: 0 done, 2 refused (nothing sent to the API), 3 stopped before a batch that would pass
+--max-cost, 4 stopped after a batch left articles by an error that is not transient. An uncaught
+error exits 1.
 """
 
 import argparse
@@ -57,10 +71,11 @@ logger = logging.getLogger("backfill_relabel")
 RUN_TAG = "192-backfill"
 DEFAULT_BATCH_SIZE = 25
 
-# Exit codes
+# Exit codes. 1 is left to an uncaught error
 EXIT_DONE = 0
-EXIT_STOPPED_AT_CAP = 1  # some batches ran, the next would pass --max-cost
 EXIT_REFUSED = 2  # nothing was sent to the API
+EXIT_STOPPED_AT_CAP = 3  # some batches ran, the next would pass --max-cost
+EXIT_ABORTED = 4  # a batch left articles by an error that is not transient
 
 
 class BackfillRefused(RuntimeError):
@@ -118,7 +133,20 @@ def registry_settings(manager: PromptManager) -> RunSettings:
 
 def build_labeler(version: str) -> ArticleLabeler:
     """The labeler the cron would build: model and effort from the environment."""
-    return ArticleLabeler(prompt_version=version)
+    try:
+        return ArticleLabeler(prompt_version=version)
+    except ValueError as e:  # no API key, or an effort the model does not take
+        raise BackfillRefused(f"Cannot build the labeler: {e}; refusing to run") from e
+
+
+def stored_bound(runs: list[LabelingRun]) -> datetime | None:
+    """The bound the first tagged run recorded, so every invocation uses the same one."""
+    if not runs:
+        return None
+    value = ((runs[0].config or {}).get("run_config") or {}).get("bound")
+    if not value:
+        raise BackfillRefused(f"Tagged run {runs[0].id} recorded no bound; refusing to run")
+    return datetime.fromisoformat(value)
 
 
 def first_run_started_at(session, prompt_version: str) -> datetime | None:
@@ -194,7 +222,14 @@ def print_cohort(cohort: provenance.BackfillCohort, ids: list[str], per_call: di
     print("\nLeft out:")
     for reason, n in sorted(cohort.excluded.items()):
         print(f"  {reason}: {n}")
-    print(f"Selected articles with non-human brand_labels rows (left as they are): {cohort.stale_labels}")
+    if cohort.hand_move_reasons:
+        print(f"Possible hand moves by the reason's first {provenance.HAND_MOVE_REASON_CHARS} characters (top 20):")
+        for reason, n in cohort.hand_move_reasons.most_common(20):
+            print(f"  {n}: {reason!r}")
+    print(
+        "Selected articles with non-human brand_labels rows (replaced if relabeled labeled, "
+        f"otherwise kept): {cohort.stale_labels}"
+    )
     if per_call:
         values = list(per_call.values())
         print(
@@ -212,19 +247,26 @@ def run_batches(
     batch_size: int,
     max_cost: float,
 ) -> int:
-    """Label the ids batch by batch, stopping before a batch whose worst case would pass the cap."""
-    for n, batch in enumerate(batches(ids, batch_size)):
-        worst = sum(per_call[i] for i in batch)
+    """Label the ids batch by batch, stopping before a batch whose worst case would pass the cap,
+    and after one that left articles by an error that is not transient."""
+    ran = 0
+    for batch in batches(ids, batch_size):
         with db.get_session() as session:
+            batch, dropped = provenance.recheck_backfill_batch(session, cohort, batch)
             spend = spend_of(tagged_runs(session))
+        if dropped:
+            logger.warning(f"Dropped {len(dropped)} articles that changed since selection: {dropped}")
+        if not batch:
+            continue
+        worst = sum(per_call[i] for i in batch)
         if spend.usd + worst > max_cost:
             message = (
                 f"Spend so far ${spend.usd:.2f} + next batch's worst case ${worst:.2f} exceeds "
                 f"--max-cost ${max_cost:.2f}"
             )
-            if n == 0:
+            if ran == 0:
                 raise BackfillRefused(f"{message}; refusing to run")
-            logger.warning(f"{message}; stopping after {n} batches")
+            logger.warning(f"{message}; stopping after {ran} batches")
             return EXIT_STOPPED_AT_CAP
         run_config = {
             "judged_skip_cutoff": cohort.judged_skip_cutoff.isoformat()
@@ -234,21 +276,31 @@ def run_batches(
             "batch_worst_case_usd": worst,
             # Written with the run row, before any article in it is processed
             "prior": {i: cohort.prior[i] for i in batch},
+            "dropped": dropped,
         }
-        logger.info(f"Batch {n + 1}: {len(batch)} articles, worst case ${worst:.2f}")
-        pipeline.label_articles(
+        logger.info(f"Batch {ran + 1}: {len(batch)} articles, worst case ${worst:.2f}")
+        stats = pipeline.label_articles(
             article_ids=[UUID(i) for i in batch],
             prefilter=False,
             dedupe_titles=False,
             run_tag=RUN_TAG,
             run_config=run_config,
+            keep_status_without_reply=True,
         )
+        ran += 1
+        if stats.articles_left_non_transient:
+            logger.error(
+                f"Batch {ran} left {stats.articles_left_non_transient} articles by an error that "
+                f"is not transient ({stats.errors_by_type}); stopping. First error: "
+                f"{stats.errors[0] if stats.errors else 'none recorded'}"
+            )
+            return EXIT_ABORTED
     return EXIT_DONE
 
 
 def backfill_report(session, tag: str = RUN_TAG) -> dict:
     """What the tagged runs did: prior to current status and source by arm, content types, failed
-    outcomes by arm, and the articles still unjudged."""
+    outcomes by arm, and the articles still unjudged, split by whether a later pass retries them."""
     runs = tagged_runs(session, tag)
     prior: dict[str, list] = {}
     for run in runs:
@@ -260,18 +312,25 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
         "transitions": Counter(),
         "content_types": Counter(),
         "failed_by_arm": Counter(),
-        "still_unjudged": [],
+        # skipped again at or after the bound: not retried
+        "unjudged_left_out": [],
+        # never relabeled (a transient failure, an exception, a batch cut off): retried
+        "unjudged_retried": [],
     }
     if not prior:
         return report
+    bound = stored_bound(runs)
     latest = provenance.latest_prediction_subquery("fp")
     rows = (
-        session.query(Article.id, Article.labeling_status, Article.labeling_error, latest.c.action_taken, latest.c.skip_reason)
+        session.query(
+            Article.id, Article.labeling_status, Article.labeling_error, Article.skipped_at,
+            latest.c.action_taken, latest.c.skip_reason,
+        )
         .outerjoin(latest, latest.c.article_id == Article.id)
         .filter(Article.id.in_([UUID(i) for i in prior]))
         .all()
     )
-    for article_id, status, reason, fp_action, fp_skip_reason in rows:
+    for article_id, status, reason, skipped_at, fp_action, fp_skip_reason in rows:
         old_status, _, arm = prior[str(article_id)]
         if status in (*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS):
             source = provenance.derive_label_source(
@@ -283,7 +342,8 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
         if status == "failed":
             report["failed_by_arm"][arm] += 1
         if source == provenance.UNJUDGED:
-            report["still_unjudged"].append(str(article_id))
+            retried = skipped_at is None or provenance.as_utc(skipped_at) < provenance.as_utc(bound)
+            report["unjudged_retried" if retried else "unjudged_left_out"].append(str(article_id))
     run_ids = [run.id for run in runs]
     report["content_types"] = Counter(
         dict(
@@ -305,8 +365,11 @@ def print_report(report: dict) -> None:
     for content_type, n in sorted(report["content_types"].items()):
         print(f"  {content_type}: {n}")
     print("Failed by arm: " + (", ".join(f"{a} {n}" for a, n in sorted(report["failed_by_arm"].items())) or "none"))
-    print(f"Still unjudged (left out of later passes): {len(report['still_unjudged'])}")
-    for article_id in report["still_unjudged"]:
+    print(f"Still unjudged, skipped again (not retried): {len(report['unjudged_left_out'])}")
+    for article_id in report["unjudged_left_out"]:
+        print(f"  {article_id}")
+    print(f"Still unjudged, not yet relabeled (retried next invocation): {len(report['unjudged_retried'])}")
+    for article_id in report["unjudged_retried"]:
         print(f"  {article_id}")
 
 
@@ -351,8 +414,9 @@ def main(argv: list[str] | None = None) -> int:
         with db.get_session() as session:
             cutoff = first_run_started_at(session, settings.version)
             runs = tagged_runs(session)
-            # The first tagged run's start, so the cohort does not move between invocations
-            bound = runs[0].started_at if runs else started
+            # The bound the first tagged run recorded, so the cohort does not move between
+            # invocations; this invocation's start when there is none
+            bound = stored_bound(runs) or started
             cohort = provenance.select_backfill_cohort(session, judged_skip_cutoff=cutoff, bound=bound)
             observed = observed_cost_per_call(session, settings)
             spend = spend_of(runs)

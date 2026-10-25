@@ -224,7 +224,7 @@ WHERE articles_processed > 0
 ORDER BY started_at DESC
 LIMIT 10;
 
--- #192 backfill runs (tagged; daily_labeling leaves them out, D039)
+-- #192 backfill runs (tagged; daily_labeling's run outcomes leave them out, D039)
 -- An unfinished run recorded no cost; the script counts it at its batch's worst case
 SELECT
     started_at AT TIME ZONE 'America/Los_Angeles' AS started_local,

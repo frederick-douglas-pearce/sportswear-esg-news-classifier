@@ -16,20 +16,34 @@ the rest, the report).
   writes, `false_positive` rows sourced `llm` or `pre_classifier`, and judged skips since the
   production version's first run; each needs no `brand_judgments` row, a brand, and content the
   pipeline would send. Left out and reported: `HUMAN_RULINGS` ids whatever their status, other
-  `human` rows, human-reviewed labels, pre-LLM skips, and possible hand moves (a negative whose
-  reason no LLM or FP path writes with that status), until #143's audit log.
-- **Pipeline.** `label_articles` takes `prefilter`, `dedupe_titles`, `run_tag` and `run_config`;
-  the defaults leave every caller as it was. The backfill bypasses novelty, the FP pre-filter and
-  title dedup, so `dispose_reply` decides every status and no `classifier_predictions` row is
-  written. The tag is `config["run_tag"]`, and the caller's data is under `config["run_config"]`.
-- **One pass.** Every outcome but a transient failure leaves the cohort; a skip still unjudged is
-  dated past the bound (the first tagged run's start) and listed by the report, not retried.
+  `human` rows, human-reviewed labels, pre-LLM skips, and possible hand moves (fail-closed: a
+  negative whose reason is not a reply's `"<brand>: <reason>"` for a brand the article mentions),
+  until #143's audit log. Each batch is decided again just before it is labeled, so a row moved by
+  hand during the run is dropped.
+- **Pipeline.** `label_articles` takes `prefilter`, `dedupe_titles`, `run_tag`, `run_config` and
+  `keep_status_without_reply`; the defaults leave every caller as it was. The backfill bypasses
+  novelty, the FP pre-filter and title dedup, so `dispose_reply` decides the status of every reply
+  (a reply the labeler could not use is `failed`) and no `classifier_predictions` row is written.
+  With `keep_status_without_reply`, a call that fails with no reply (a revoked key, credit used
+  up) keeps the article's status instead of writing `failed`. The tag is `config["run_tag"]`, and
+  the caller's data is under `config["run_config"]`. A call whose article then raises is counted in
+  the run's tokens.
+- **One pass.** Every outcome but a transient failure or a raised exception leaves the cohort; a
+  skip still unjudged is dated past the bound (recorded by the first tagged run) and not retried.
+  An error that is not transient stops the invocation after its batch. The report lists every row
+  still unjudged, split by whether the next invocation retries it.
 - **Records and refusals.** Each run records its articles' status, reason and arm from before the
-  relabel. Before any call the script refuses a prompt fallback, a non-production version, a
-  model, effort or `max_tokens` unlike the registry's `model_recommendations`, an observed cost per
-  call above the worst case, and spend past `--max-cost` (finished tagged runs at their recorded
-  cost, unfinished ones at their batch's worst case, read before every batch).
-- **Daily metrics.** `daily_labeling`'s run outcomes leave tagged runs out, finished or not.
+  relabel. Before any call the script refuses a labeler it cannot build, a prompt fallback, a
+  non-production version, a production entry with no `model_recommendations` model or
+  `max_tokens`, or a model, effort or `max_tokens` unlike them, an unfinished tagged run with no
+  recorded worst case or a first one with no bound, an observed cost per call above the worst
+  case, `--batch-size` or `--limit` below 1, and spend past
+  `--max-cost` (finished tagged runs at their recorded cost, unfinished ones at their batch's
+  worst case, read before every batch). Exit codes: 0 done, 2 refused, 3 at the cap, 4 stopped
+  after an error that is not transient.
+- **Daily metrics.** `daily_labeling`'s run outcomes leave tagged runs out, finished or not. Its
+  LLM analysis samples by `labeled_at`/`skipped_at`, so it samples relabeled articles while the
+  backfill runs (`AGENT_LLM_ANALYSIS=false` avoids that).
 - **Shared helpers.** `fp_export_query` moved to `provenance.py` (the export's output is
   unchanged); `check_labeler` and `prompt_input_chars` are in `src/labeling/labeler.py`, and
   `worst_case_call_cost_usd` beside `llm_cost_usd`, used by the contrastive eval too.

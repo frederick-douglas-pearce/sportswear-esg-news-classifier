@@ -61,7 +61,7 @@ def decide(**overrides) -> BackfillDecision:
         labeling_error=models.SKIP_NO_ESG_CONTENT,
         source=UNJUDGED,
         skipped_at=BEFORE,
-        brand_count=1,
+        brands=["Puma"],
         sufficient_content=True,
         has_judgments=False,
         human_labels=False,
@@ -94,21 +94,89 @@ class TestBackfillArm:
     def test_llm_decided_false_positive(self, source):
         assert decide(**{**FP, "source": source}) == BackfillDecision(ARM_FALSE_POSITIVE)
 
-    def test_a_classifier_skip_reason_on_an_llm_sourced_negative_is_not_a_hand_move(self):
-        """The FP classifier writes that reason with this status, so it is in the pipeline's form."""
-        assert decide(**{**FP, "labeling_error": FP_SKIP_REASON}).arm == ARM_FALSE_POSITIVE
+    def test_a_classifier_skip_reason_on_an_llm_sourced_negative_is_a_possible_hand_move(self):
+        """Not a reply's form, so fail-closed leaves it out (D039 point 3)."""
+        assert decide(**{**FP, "labeling_error": FP_SKIP_REASON}) == BackfillDecision(
+            None, EXCLUDED_POSSIBLE_HAND_MOVE
+        )
 
     @pytest.mark.parametrize("source", [FP_CLASSIFIER, RULE])
     def test_classifier_only_and_keyword_sweep_negatives_are_not_candidates(self, source):
         assert decide(**{**FP, "source": source}) == NOT_A_CANDIDATE
 
     @pytest.mark.parametrize(
-        "reason", [None, *EVERY_SKIP_REASON, f"{models.DEDUP_REASON_PREFIX} (similar to article x)"]
+        "reason",
+        [
+            None,
+            "",
+            *EVERY_SKIP_REASON,
+            f"{models.DEDUP_REASON_PREFIX} (similar to article x)",
+            "Fixed: Anta brand was a Santa substring",
+            "Asics: other_entity: not this article's brand",
+            "Puma - the animal",
+        ],
     )
-    def test_a_negative_with_a_reason_no_llm_path_writes_is_a_possible_hand_move(self, reason):
+    def test_a_negative_whose_reason_is_not_a_replys_form_is_a_possible_hand_move(self, reason):
         assert decide(**{**FP, "labeling_error": reason}) == BackfillDecision(
             None, EXCLUDED_POSSIBLE_HAND_MOVE
         )
+
+    def test_a_move_from_failed_keeps_the_labelers_error_and_is_a_possible_hand_move(self):
+        """Each reason the pipeline writes with `failed`, from the code that writes it."""
+        from anthropic import AuthenticationError, BadRequestError
+        from httpx import Request, Response
+
+        from src.labeling.labeler import ArticleLabeler, classify_api_error
+
+        request = Request("POST", "https://api.anthropic.com/v1/messages")
+        api_errors = [
+            BadRequestError("credit balance is too low", response=Response(400, request=request), body=None),
+            AuthenticationError("invalid x-api-key", response=Response(401, request=request), body=None),
+        ]
+        labeler = ArticleLabeler(api_key="test", prompt_version="v1.12.0")
+        replies = [
+            SimpleNamespace(text="", input_tokens=1, output_tokens=1, stop_reason="refusal", refusal_category="cyber"),
+            SimpleNamespace(text="not json", input_tokens=1, output_tokens=1, stop_reason="max_tokens", refusal_category=None),
+            SimpleNamespace(text="not json", input_tokens=1, output_tokens=1, stop_reason="end_turn", refusal_category=None),
+        ]
+        errors = [classify_api_error(e)[1] for e in api_errors]
+        for reply in replies:
+            with patch.object(labeler, "_call_api_with_retry", return_value=reply):
+                errors.append(labeler.label_article("Puma", "content " * 30, ["Puma"]).error)
+        assert errors[2].startswith(models.FAILED_REFUSAL_PREFIX)
+        assert errors[3].startswith(models.FAILED_MAX_TOKENS_PREFIX)
+        assert errors[4] == "Failed to parse LLM response"
+        for error in errors:
+            assert decide(**{**FP, "labeling_error": error}).excluded == EXCLUDED_POSSIBLE_HAND_MOVE, error
+
+    @pytest.mark.parametrize(
+        ("reason", "brands"),
+        [
+            ("Puma: x; Nike: y", ["Nike", "Puma"]),
+            ("puma : x", ["Puma"]),  # matched as normalize_brand matches
+            (" PUMA: x", ["Puma"]),
+        ],
+    )
+    def test_a_replys_form_for_a_sent_brand_is_selected(self, reason, brands):
+        assert decide(**{**FP, "labeling_error": reason, "brands": brands}).arm == ARM_FALSE_POSITIVE
+
+    def test_the_reason_dispose_reply_writes_is_selected(self):
+        from src.labeling.disposition import dispose_reply
+        from src.labeling.models import BrandAnalysis
+
+        brands = ["Puma", "Vans"]
+        disposition = dispose_reply(brands, [
+            BrandAnalysis(brand=b, is_sportswear_brand=False, not_sportswear_reason="another meaning")
+            for b in brands
+        ])
+        assert disposition.status == "false_positive"
+        assert decide(**{**FP, "labeling_error": disposition.reason, "brands": brands}).arm == ARM_FALSE_POSITIVE
+
+    def test_the_brand_key_is_normalize_brands(self):
+        from src.labeling.models import normalize_brand
+
+        for name in ("Puma", " PUMA ", "Under Armour", "ASICS"):
+            assert provenance._brand_key(name) == normalize_brand(name)
 
     def test_dedup_prefix_is_the_text_the_pipeline_writes(self):
         assert models.DEDUP_REASON_PREFIX == "Duplicate title"
@@ -154,7 +222,7 @@ class TestBackfillArm:
     @pytest.mark.parametrize("arm_row", [{}, FP, JUDGED])
     def test_each_arm_needs_no_human_label_brands_content_and_no_judgment(self, arm_row):
         assert decide(**arm_row, human_labels=True).excluded == EXCLUDED_HUMAN_LABELS
-        assert decide(**arm_row, brand_count=0).excluded == EXCLUDED_NO_BRANDS
+        assert decide(**arm_row, brands=[]).excluded == EXCLUDED_NO_BRANDS
         assert decide(**arm_row, sufficient_content=False).excluded == EXCLUDED_INSUFFICIENT_CONTENT
         assert decide(**arm_row, has_judgments=True).excluded == EXCLUDED_HAS_JUDGMENTS
         assert decide(**arm_row).arm is not None
@@ -173,7 +241,7 @@ class TestBackfillArm:
 
 
 def row(status="skipped", reason=models.SKIP_NO_ESG_CONTENT, *, article_id=None, fp_action=None,
-        fp_skip_reason=None, skipped_at=BEFORE, created_at=BEFORE, brands=1, chars=500):
+        fp_skip_reason=None, skipped_at=BEFORE, created_at=BEFORE, brands=("Puma",), chars=500):
     return BackfillRow(
         article_id=article_id or str(uuid4()),
         labeling_status=status,
@@ -182,7 +250,7 @@ def row(status="skipped", reason=models.SKIP_NO_ESG_CONTENT, *, article_id=None,
         fp_skip_reason=fp_skip_reason,
         skipped_at=skipped_at,
         created_at=created_at,
-        brand_count=brands,
+        brands=list(brands),
         content_chars=chars,
         sufficient_content=chars >= 100,
     )
@@ -226,6 +294,12 @@ class TestBuildBackfillCohort:
         assert cohort.prior[f_pre.article_id] == ["false_positive", LLM_FP_REASON, ARM_FALSE_POSITIVE]
         assert cohort.content_chars[u.article_id] == 700
         assert cohort.excluded == {EXCLUDED_POSSIBLE_HAND_MOVE: 1, EXCLUDED_HUMAN: 1, EXCLUDED_HUMAN_LABELS: 1}
+        assert cohort.left_out == {
+            hand.article_id: EXCLUDED_POSSIBLE_HAND_MOVE,
+            ruled.article_id: EXCLUDED_HUMAN,
+            human_labeled.article_id: EXCLUDED_HUMAN_LABELS,
+        }
+        assert cohort.hand_move_reasons == {"": 1}
         assert cohort.by_reason[(ARM_FALSE_POSITIVE, LLM)] == 1
         assert cohort.by_reason[(ARM_FALSE_POSITIVE, PRE_CLASSIFIER)] == 1
         assert cohort.by_reason[(ARM_UNJUDGED, models.SKIP_NO_ESG_CONTENT)] == 1
@@ -233,9 +307,45 @@ class TestBuildBackfillCohort:
         # the human-labeled article is not selected, so only f_pre counts
         assert cohort.stale_labels == 1
 
+    def test_hand_move_reasons_are_tallied_by_their_start(self):
+        long = "Fixed: " + "x" * 80
+        cohort = cohort_of([row("false_positive", long, skipped_at=None) for _ in range(2)])
+        assert cohort.hand_move_reasons == {long[: provenance.HAND_MOVE_REASON_CHARS]: 2}
+
+
+class TestRecheckBatch:
+    """Each batch is decided again before it is labeled (D039 point 5)."""
+
+    def test_a_row_changed_since_selection_is_dropped(self):
+        rows = [row() for _ in range(4)]
+        cohort = cohort_of(rows)
+        moved, reviewed, gone, same = (r.article_id for r in sorted(rows, key=lambda r: r.article_id))
+        fresh = {r.article_id: r for r in rows}
+        # a human moved one by hand, reviewed another's labels, and a third left the cohort's rows
+        fresh[moved] = row("false_positive", "Fixed: not Puma", article_id=moved)
+        del fresh[gone]
+        fresh_cohort = cohort_of(list(fresh.values()), human_labeled=[reviewed])
+        with patch.object(provenance, "_cohort_from_db", return_value=fresh_cohort) as read:
+            kept, dropped = provenance.recheck_backfill_batch(MagicMock(), cohort, cohort.ids)
+        assert read.call_args.kwargs == {
+            "judged_skip_cutoff": CUTOFF, "bound": BOUND, "ids": cohort.ids,
+        }
+        assert kept == [same]
+        assert dropped == {moved: EXCLUDED_POSSIBLE_HAND_MOVE, reviewed: EXCLUDED_HUMAN_LABELS, gone: "changed"}
+
+    def test_a_row_whose_reason_changed_is_dropped(self):
+        original = row()
+        cohort = cohort_of([original])
+        changed = row(reason=models.SKIP_INCOMPLETE_JUDGMENT, article_id=original.article_id)
+        with patch.object(provenance, "_cohort_from_db", return_value=cohort_of([changed])):
+            assert provenance.recheck_backfill_batch(MagicMock(), cohort, cohort.ids) == (
+                [], {original.article_id: "changed"}
+            )
+
 
 class TestOnePassEnds:
-    """A pass ends because every outcome but a transient failure leaves the cohort (B1)."""
+    """A pass ends because every outcome but a transient failure or a raised exception leaves
+    the cohort."""
 
     def test_only_the_transient_row_is_selected_again(self):
         ids = {k: str(uuid4()) for k in ("labeled", "judged", "unjudged", "negative", "failed", "transient")}
@@ -266,7 +376,7 @@ class TestOnePassEnds:
         assert ids["unjudged"] in cohort_of(after, judged=judged, bound=AFTER + timedelta(hours=1)).ids
 
     def test_backfill_outcomes_derive_as_their_new_source(self):
-        """No FP prediction is written, so a row keeps its era's source (review Q3)."""
+        """No FP prediction is written, so a row keeps its era's source (D039 point 4)."""
         assert derive_label_source("labeled", None, None) == PRE_CLASSIFIER
         assert derive_label_source("labeled", None, models.FP_ACTION_CONTINUED_TO_LLM) == LLM
         assert derive_label_source("skipped", models.SKIP_NO_ESG_CATEGORIES, None) == PRE_CLASSIFIER
@@ -279,10 +389,58 @@ class TestOnePassEnds:
         assert derive_label_source("skipped", models.SKIP_NO_ESG_CONTENT, None) == UNJUDGED
 
 
+    def test_a_skip_write_moves_skipped_at_to_the_write(self):
+        """The bound ends a pass only because a skip written again refreshes skipped_at."""
+        from src.labeling.database import LabelingDatabase
+
+        stored = SimpleNamespace(
+            labeling_status="skipped", labeling_error=models.SKIP_NO_ESG_CONTENT, skipped_at=BEFORE, labeled_at=None
+        )
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = stored
+        before = datetime.now(UTC)
+        LabelingDatabase(MagicMock()).update_article_labeling_status(
+            session, uuid4(), "skipped", models.SKIP_NO_ESG_CONTENT
+        )
+        assert before <= stored.skipped_at <= datetime.now(UTC)
+
+
 class TestExportQueryMove:
     def test_the_export_reads_provenances_query(self):
         assert export_script.fp_export_query is provenance.fp_export_query
         assert not hasattr(script, "fp_export_query")
+
+    @staticmethod
+    def _before_the_move(session, since=None):
+        """fp_export_query's body as it was in scripts/export_training_data.py."""
+        from sqlalchemy import and_
+
+        from src.data_collection.models import Article
+
+        base_filter = Article.scrape_status == "success"
+        if since:
+            base_filter = and_(base_filter, Article.created_at >= since)
+        latest = provenance.latest_prediction_subquery("fp")
+        return (
+            session.query(Article, latest.c.action_taken, latest.c.skip_reason, latest.c.created_at)
+            .outerjoin(latest, latest.c.article_id == Article.id)
+            .filter(base_filter)
+            .filter(Article.labeling_status.in_([*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS]))
+            .order_by(Article.id)
+        )
+
+    @pytest.mark.parametrize("since", [None, BEFORE])
+    def test_the_moved_query_compiles_to_the_same_sql(self, since):
+        from sqlalchemy.dialects import postgresql
+        from sqlalchemy.orm import Session
+
+        def sql(query):
+            return str(query.statement.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+        session = Session()
+        moved = sql(provenance.fp_export_query(session, since))
+        assert moved == sql(self._before_the_move(session, since))
+        assert "ORDER BY articles.id" in moved
 
 
 class TestSharedLabelerHelpers:
@@ -328,18 +486,27 @@ class TestSharedLabelerHelpers:
 # --- the script ---------------------------------------------------------------------------
 
 RECS = {"model": "claude-haiku-5-5", "max_tokens": 8000, "effort": "medium"}
+BUILD_LABELER = script.build_labeler  # the real one, before the env fixture patches it
 GOOD_LABELER = dict(loaded_prompt=object(), prompt_version="v1.12.0", model="claude-haiku-5-5",
                     effort="medium", max_tokens=8000)
 
 
-def tagged_run(cost=None, worst=None, completed=True):
+def tagged_run(cost=None, worst=None, completed=True, started_at=BOUND, bound=BOUND):
     return SimpleNamespace(
         id=uuid4(),
-        started_at=BOUND,
+        started_at=started_at,
         completed_at=AFTER if completed else None,
         estimated_cost_usd=cost,
-        config={"run_tag": script.RUN_TAG, "run_config": {"batch_worst_case_usd": worst}},
+        config={"run_tag": script.RUN_TAG, "run_config": {
+            "batch_worst_case_usd": worst, "bound": bound.isoformat() if bound else None,
+        }},
     )
+
+
+def stats(**counts):
+    from src.labeling.pipeline import LabelingStats
+
+    return LabelingStats(**counts)
 
 
 @pytest.fixture
@@ -361,26 +528,51 @@ def env():
          patch.object(script, "labeling_settings", SimpleNamespace(prompt_version=None)), \
          patch.object(script, "build_labeler", return_value=labeler) as m.build_labeler, \
          patch.object(script, "prompt_input_chars", return_value=3000) as m.prompt_input_chars, \
-         patch.object(script, "worst_case_call_cost_usd", return_value=0.1), \
+         patch.object(script, "worst_case_call_cost_usd", return_value=0.1) as m.worst_case, \
          patch.object(script, "first_run_started_at", return_value=CUTOFF), \
          patch.object(script, "tagged_runs", return_value=[]) as m.tagged_runs, \
          patch.object(script, "observed_cost_per_call", return_value=0.002) as m.observed, \
          patch.object(script.provenance, "select_backfill_cohort", return_value=cohort) as m.select, \
+         patch.object(script.provenance, "recheck_backfill_batch",
+                      side_effect=lambda session, cohort, ids: (list(ids), {})) as m.recheck, \
          patch.object(script, "backfill_report", return_value={
-             "runs": 0, "transitions": {}, "content_types": {}, "failed_by_arm": {}, "still_unjudged": []
+             "runs": 0, "transitions": {}, "content_types": {}, "failed_by_arm": {},
+             "unjudged_left_out": [], "unjudged_retried": [],
          }), \
          patch.object(script, "LabelingPipeline") as m.pipeline_cls:
         m.label_articles = m.pipeline_cls.return_value.label_articles
+        m.label_articles.return_value = stats()
         yield m
 
 
 class TestScriptRefusals:
-    """Every refusal comes before any labeler call."""
+    """Each refusal here comes before the pipeline is built, so nothing is sent to the API."""
 
     def assert_refused(self, env, argv=("--max-cost", "100")):
         assert script.main(list(argv)) == script.EXIT_REFUSED
         env.pipeline_cls.assert_not_called()
-        env.labeler.label_article.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "argv",
+        [("--limit", "0"), ("--limit", "-1"), ("--batch-size", "0")],
+    )
+    def test_a_limit_or_batch_size_below_one(self, env, argv):
+        self.assert_refused(env, argv=("--max-cost", "100", *argv))
+        env.select.assert_not_called()
+
+    def test_an_unfinished_tagged_run_without_a_worst_case(self, env):
+        env.tagged_runs.return_value = [tagged_run(completed=False)]
+        self.assert_refused(env)
+
+    def test_a_tagged_run_without_a_bound(self, env):
+        env.tagged_runs.return_value = [tagged_run(cost=0.0, bound=None)]
+        self.assert_refused(env)
+
+    def test_a_labeler_that_cannot_be_built(self, env):
+        """A missing API key raises ValueError in ArticleLabeler: a refusal, not exit 1."""
+        env.build_labeler.side_effect = BUILD_LABELER
+        with patch.object(script, "ArticleLabeler", side_effect=ValueError("ANTHROPIC_API_KEY is required")):
+            self.assert_refused(env)
 
     @pytest.mark.parametrize(
         "labeler",
@@ -406,7 +598,7 @@ class TestScriptRefusals:
         env.manager.get_version_info.return_value = {}
         self.assert_refused(env)
 
-    def test_the_labeler_is_built_for_production_and_checked_against_the_registry(self, env):
+    def test_the_labeler_is_built_for_the_production_version(self, env):
         assert script.main(["--max-cost", "100"]) == script.EXIT_DONE
         env.build_labeler.assert_called_once_with("v1.12.0")
         env.prompt_input_chars.assert_called_once_with(env.manager, "v1.12.0")
@@ -430,12 +622,17 @@ class TestScriptRefusals:
 
 class TestScriptRun:
     def test_dry_run_makes_no_call_and_no_write(self, env):
-        assert script.main(["--dry-run"]) == script.EXIT_DONE
+        assert script.main(["--dry-run", "--max-cost", "100"]) == script.EXIT_DONE
         env.pipeline_cls.assert_not_called()
-        env.label_articles.assert_not_called()
-        session = env.db.get_session.return_value.__enter__.return_value
-        session.add.assert_not_called()
-        session.commit.assert_not_called()
+        env.select.assert_called_once()
+
+    def test_each_articles_worst_case_uses_its_content_and_the_registry_settings(self, env):
+        env.cohort.content_chars[env.ids[0]] = 1234
+        script.main(["--dry-run"])
+        calls = env.worst_case.call_args_list
+        assert len(calls) == len(env.ids)
+        assert calls[0].args == (3000, 1234, 8000, "claude-haiku-5-5")
+        assert {c.args for c in calls[1:]} == {(3000, 500, 8000, "claude-haiku-5-5")}
 
     def test_each_batch_is_labeled_through_the_bypassed_pipeline_with_its_prior_values(self, env):
         assert script.main(["--max-cost", "100", "--batch-size", "4"]) == script.EXIT_DONE
@@ -445,12 +642,49 @@ class TestScriptRun:
         for c, batch in zip(calls, [env.ids[0:4], env.ids[4:8], env.ids[8:]]):
             assert c.kwargs["article_ids"] == [UUID(i) for i in batch]
             assert (c.kwargs["prefilter"], c.kwargs["dedupe_titles"]) == (False, False)
+            assert c.kwargs["keep_status_without_reply"] is True
             assert c.kwargs["run_tag"] == "192-backfill"
             run_config = c.kwargs["run_config"]
             assert run_config["prior"] == {i: ["skipped", models.SKIP_NO_ESG_CONTENT, ARM_UNJUDGED] for i in batch}
             assert run_config["batch_worst_case_usd"] == pytest.approx(0.1 * len(batch))
             assert run_config["bound"] == BOUND.isoformat()
             assert run_config["judged_skip_cutoff"] == CUTOFF.isoformat()
+            assert run_config["dropped"] == {}
+        assert [c.args[2] for c in env.recheck.call_args_list] == [env.ids[0:4], env.ids[4:8], env.ids[8:]]
+
+    def test_a_row_the_recheck_drops_is_not_labeled_and_is_recorded(self, env):
+        dropped = {env.ids[1]: "changed"}
+        env.recheck.side_effect = lambda session, cohort, ids: (
+            [i for i in ids if i not in dropped], {i: w for i, w in dropped.items() if i in ids}
+        )
+        assert script.main(["--max-cost", "100", "--batch-size", "4"]) == script.EXIT_DONE
+        first = env.label_articles.call_args_list[0].kwargs
+        assert first["article_ids"] == [UUID(i) for i in (env.ids[0], env.ids[2], env.ids[3])]
+        assert first["run_config"]["dropped"] == dropped
+        assert env.ids[1] not in first["run_config"]["prior"]
+        assert first["run_config"]["batch_worst_case_usd"] == pytest.approx(0.3)
+
+    def test_a_batch_the_recheck_empties_is_not_run(self, env):
+        env.recheck.side_effect = lambda session, cohort, ids: ([], {i: "changed" for i in ids})
+        assert script.main(["--max-cost", "100"]) == script.EXIT_DONE
+        env.label_articles.assert_not_called()
+
+    def test_a_batch_left_by_an_error_that_is_not_transient_stops_the_invocation(self, env):
+        env.label_articles.return_value = stats(
+            articles_left_pending=4, articles_left_non_transient=4, errors_by_type={"api_error": 4},
+            errors=["Article x [api_error]: Bad request (400): credit balance is too low"],
+        )
+        assert script.main(["--max-cost", "100", "--batch-size", "4"]) == script.EXIT_ABORTED
+        assert env.label_articles.call_count == 1
+
+    def test_a_transient_failure_does_not_stop_the_invocation(self, env):
+        env.label_articles.return_value = stats(articles_left_pending=4, errors_by_type={"rate_limit": 4})
+        assert script.main(["--max-cost", "100", "--batch-size", "4"]) == script.EXIT_DONE
+        assert env.label_articles.call_count == 3
+
+    def test_the_exit_codes_are_distinct_and_leave_1_to_an_uncaught_error(self):
+        codes = [script.EXIT_DONE, script.EXIT_REFUSED, script.EXIT_STOPPED_AT_CAP, script.EXIT_ABORTED]
+        assert codes == [0, 2, 3, 4]
 
     def test_limit(self, env):
         script.main(["--max-cost", "100", "--limit", "3"])
@@ -465,6 +699,7 @@ class TestScriptRun:
         def label(**kwargs):
             # the batch's run is cut off: no completed_at, so no recorded cost
             runs.append(tagged_run(worst=kwargs["run_config"]["batch_worst_case_usd"], completed=False))
+            return stats()
 
         env.label_articles.side_effect = label
         # batches of 5 at 0.1 each: the second would bring the worst case to 1.0
@@ -474,15 +709,18 @@ class TestScriptRun:
     def test_finished_runs_count_at_their_recorded_cost(self, env):
         runs = []
         env.tagged_runs.side_effect = lambda *a: list(runs)
-        env.label_articles.side_effect = lambda **kw: runs.append(tagged_run(cost=0.05))
+        env.label_articles.side_effect = lambda **kw: runs.append(tagged_run(cost=0.05)) or stats()
         assert script.main(["--max-cost", "0.65", "--batch-size", "5"]) == script.EXIT_DONE
         assert env.label_articles.call_count == 2
 
-    def test_the_bound_is_the_first_tagged_runs_start(self, env):
-        first = tagged_run(cost=0.0)
-        env.tagged_runs.return_value = [first, tagged_run(cost=0.0)]
+    def test_the_bound_is_the_one_the_first_tagged_run_recorded(self, env):
+        # the first run started after the bound it recorded (the cohort took time to build), and
+        # a later run recorded another
+        first = tagged_run(cost=0.0, started_at=BOUND + timedelta(minutes=5), bound=BOUND)
+        later = tagged_run(cost=0.0, started_at=AFTER, bound=AFTER)
+        env.tagged_runs.return_value = [first, later]
         script.main(["--dry-run"])
-        assert env.select.call_args.kwargs == {"judged_skip_cutoff": CUTOFF, "bound": first.started_at}
+        assert env.select.call_args.kwargs == {"judged_skip_cutoff": CUTOFF, "bound": BOUND}
 
     def test_without_a_tagged_run_the_bound_is_this_invocations_start(self, env):
         before = datetime.now(UTC)
@@ -565,6 +803,7 @@ class TestAgainstPostgres:
                 action_taken=models.FP_ACTION_CONTINUED_TO_LLM,
             ))
             hand = self._article(session, created, "false_positive", models.SKIP_NO_ESG_CONTENT)
+            from_failed = self._article(session, created, "false_positive", "Failed to parse LLM response")
             j = self._article(session, created, "skipped", models.SKIP_NO_ESG_CATEGORIES, skipped_at=BETWEEN)
             judged = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=BEFORE)
             run = self._run(session, created, prompt_version="v1.12.0")
@@ -584,8 +823,9 @@ class TestAgainstPostgres:
 
             cohort = provenance.select_backfill_cohort(session, judged_skip_cutoff=CUTOFF, bound=BOUND)
             ids = {name: str(a.id) for name, a in {
-                "u": u, "f": f, "j": j, "stale": stale, "hand": hand, "judged": judged,
-                "reviewed": reviewed, "short": short, "late": late, "unscraped": unscraped,
+                "u": u, "f": f, "j": j, "stale": stale, "hand": hand, "from_failed": from_failed,
+                "judged": judged, "reviewed": reviewed, "short": short, "late": late,
+                "unscraped": unscraped,
             }.items()}
 
         ours = {str(i) for i in created.articles}
@@ -595,35 +835,85 @@ class TestAgainstPostgres:
             ARM_FALSE_POSITIVE: sorted([ids["f"], ids["stale"]]),
             ARM_JUDGED_SKIP: [ids["j"]],
         }
-        for name in ("hand", "judged", "reviewed", "short", "late", "unscraped"):
+        for name in ("hand", "from_failed", "judged", "reviewed", "short", "late", "unscraped"):
             assert ids[name] not in cohort.prior
+        assert {cohort.left_out[ids[n]] for n in ("hand", "from_failed")} == {EXCLUDED_POSSIBLE_HAND_MOVE}
+        assert cohort.left_out[ids["judged"]] == EXCLUDED_HAS_JUDGMENTS
+        assert cohort.left_out[ids["reviewed"]] == EXCLUDED_HUMAN_LABELS
+        assert cohort.left_out[ids["short"]] == EXCLUDED_INSUFFICIENT_CONTENT
+        assert cohort.left_out[ids["late"]] == EXCLUDED_SKIPPED_AFTER_BOUND
         assert cohort.content_chars[ids["u"]] == len("content " * 30)
-        assert cohort.excluded[EXCLUDED_POSSIBLE_HAND_MOVE] >= 1
         assert cohort.excluded[provenance.EXCLUDED_NOT_SCRAPED] >= 1
         assert cohort.stale_labels >= 1
 
-    def test_tagged_run_queries_and_the_report(self, database):
+    def test_the_recheck_reads_the_batchs_rows_again(self, database):
         db, created = database
         with db.get_session() as session:
-            settings = script.RunSettings("v1.12.0", "claude-haiku-5-5", "medium", 8000)
+            moved, reviewed, same = (
+                self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=BEFORE)
+                for _ in range(3)
+            )
+            session.commit()
+            ids = sorted(str(a.id) for a in (moved, reviewed, same))
+            cohort = provenance.select_backfill_cohort(session, judged_skip_cutoff=CUTOFF, bound=BOUND)
+            assert all(i in cohort.prior for i in ids)
+
+            # during the run, a human moves one by hand and reviews another's labels
+            moved.labeling_status, moved.labeling_error = "false_positive", "Fixed: not the brand"
+            session.add(models.BrandLabel(article_id=reviewed.id, brand="Puma", labeled_by="human"))
+            session.commit()
+            kept, dropped = provenance.recheck_backfill_batch(session, cohort, ids)
+            names = {str(moved.id): "moved", str(reviewed.id): "reviewed", str(same.id): "same"}
+
+        assert [names[i] for i in kept] == ["same"]
+        assert {names[i]: why for i, why in dropped.items()} == {
+            "moved": EXCLUDED_POSSIBLE_HAND_MOVE, "reviewed": EXCLUDED_HUMAN_LABELS,
+        }
+
+    def test_tagged_run_queries_and_the_report(self, database):
+        db, created = database
+        # a version no other test's runs use, so every run under it is ours
+        version = f"vt-{uuid4().hex[:12]}"
+        model = "claude-haiku-5-5"
+        with db.get_session() as session:
+            settings = script.RunSettings(version, model, "medium", 8000)
             untagged = self._run(
-                session, created, prompt_version="v1.12.0", started_at=CUTOFF, completed_at=CUTOFF,
-                llm_calls_made=4, estimated_cost_usd=0.008, config={"model": "claude-haiku-5-5"},
+                session, created, prompt_version=version, started_at=CUTOFF, completed_at=CUTOFF,
+                llm_calls_made=4, estimated_cost_usd=0.008, config={"model": model},
+            )
+            # None of these may set the cutoff or the observed cost: a tagged run that started
+            # first, an unfinished untagged run, and an untagged run on another model
+            self._run(
+                session, created, prompt_version=version, started_at=BEFORE, completed_at=BEFORE,
+                llm_calls_made=1, estimated_cost_usd=9.0, config={"model": model, "run_tag": "another-tag"},
+            )
+            self._run(
+                session, created, prompt_version=version, started_at=BETWEEN,
+                llm_calls_made=1, estimated_cost_usd=7.0, config={"model": model},
+            )
+            self._run(
+                session, created, prompt_version=version, started_at=BETWEEN, completed_at=BETWEEN,
+                llm_calls_made=1, estimated_cost_usd=5.0, config={"model": "claude-haiku-4-5-20251001"},
             )
             u = self._article(session, created, "skipped", models.SKIP_NO_ESG_CATEGORIES, skipped_at=AFTER)
             f = self._article(session, created, "failed", "Model declined the request: x")
+            left = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=AFTER)
+            retried = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=BEFORE)
+            unjudged = ["skipped", models.SKIP_NO_ESG_CONTENT, ARM_UNJUDGED]
             tagged = self._run(
-                session, created, prompt_version="v1.12.0", started_at=BOUND, completed_at=AFTER,
+                session, created, prompt_version=version, started_at=BOUND, completed_at=AFTER,
                 llm_calls_made=2, estimated_cost_usd=0.5,
-                config={"model": "claude-haiku-5-5", "run_tag": script.RUN_TAG, "run_config": {
-                    "batch_worst_case_usd": 1.0,
-                    "prior": {str(u.id): ["skipped", models.SKIP_NO_ESG_CONTENT, ARM_UNJUDGED],
+                config={"model": model, "run_tag": script.RUN_TAG, "run_config": {
+                    "batch_worst_case_usd": 1.0, "bound": BOUND.isoformat(),
+                    "prior": {str(u.id): unjudged, str(left.id): unjudged, str(retried.id): unjudged,
                               str(f.id): ["false_positive", LLM_FP_REASON, ARM_FALSE_POSITIVE]},
                 }},
             )
             unfinished = self._run(
-                session, created, prompt_version="v1.12.0", started_at=AFTER,
-                config={"run_tag": script.RUN_TAG, "run_config": {"batch_worst_case_usd": 0.75}},
+                session, created, prompt_version=version, started_at=AFTER,
+                config={"run_tag": script.RUN_TAG, "run_config": {
+                    "batch_worst_case_usd": 0.75, "bound": BOUND.isoformat(),
+                }},
             )
             session.add(models.BrandJudgment(
                 article_id=u.id, labeling_run_id=tagged.id, brand="Puma", content_type="product",
@@ -634,18 +924,19 @@ class TestAgainstPostgres:
             runs = [r for r in script.tagged_runs(session) if r.id in created.runs]
             assert [r.id for r in runs] == [tagged.id, unfinished.id]
             assert script.spend_of(runs).usd == pytest.approx(1.25)
-            # untagged runs only; tagged ones from other tests could not be told apart, so the
-            # first-run query is checked against our run's start
-            assert script.first_run_started_at(session, "v1.12.0") <= untagged.started_at
-            observed = script.observed_cost_per_call(session, settings)
-            assert observed is not None
+            assert script.stored_bound(runs) == BOUND
+            assert script.first_run_started_at(session, version) == untagged.started_at
+            assert script.observed_cost_per_call(session, settings) == pytest.approx(0.008 / 4)
 
             with patch.object(script, "tagged_runs", return_value=runs):
                 report = script.backfill_report(session)
+            left_id, retried_id = str(left.id), str(retried.id)
         assert report["transitions"] == {
             (ARM_UNJUDGED, "skipped", "skipped", PRE_CLASSIFIER): 1,
+            (ARM_UNJUDGED, "skipped", "skipped", UNJUDGED): 2,
             (ARM_FALSE_POSITIVE, "false_positive", "failed", None): 1,
         }
         assert report["failed_by_arm"] == {ARM_FALSE_POSITIVE: 1}
         assert report["content_types"] == {"product": 1}
-        assert report["still_unjudged"] == []
+        assert report["unjudged_left_out"] == [left_id]
+        assert report["unjudged_retried"] == [retried_id]

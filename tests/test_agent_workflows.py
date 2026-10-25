@@ -2419,12 +2419,17 @@ class TestTaggedRunsAreNotDailyLabeling:
         # a window no other test writes into
         start = datetime(2001, 1, 1, tzinfo=timezone.utc)
         tagged = {"run_tag": "192-backfill"}
+        # a second window holding only tagged runs, one finished and one running
+        tagged_only = start + timedelta(hours=1)
         runs = [
             LabelingRun(started_at=start, completed_at=start, articles_processed=2, articles_labeled=2,
                         status="success", estimated_cost_usd=0.01, config={"model": "m"}),
             LabelingRun(started_at=start, completed_at=start, articles_processed=7, articles_labeled=7,
                         status="partial", estimated_cost_usd=0.5, config=tagged),
             LabelingRun(started_at=start, status="running", config=tagged),
+            LabelingRun(started_at=tagged_only, completed_at=tagged_only, articles_processed=3,
+                        status="success", estimated_cost_usd=0.2, config=tagged),
+            LabelingRun(started_at=tagged_only, status="running", config=tagged),
         ]
         with database.get_session() as session:
             session.add_all(runs)
@@ -2433,6 +2438,8 @@ class TestTaggedRunsAreNotDailyLabeling:
         try:
             with patch.object(daily_labeling, "db", database):
                 outcomes = daily_labeling._read_run_outcomes(start, start + timedelta(minutes=1))
+                # neither tagged run is a daily run, so the window has none: not counts_unavailable
+                assert daily_labeling._read_run_outcomes(tagged_only, tagged_only + timedelta(minutes=1)) is None
         finally:
             with database.get_session() as session:
                 session.query(LabelingRun).filter(LabelingRun.id.in_(ids)).delete(synchronize_session=False)
