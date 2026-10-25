@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from src.data_collection.database import db
 from src.data_collection.models import (
+    DEDUP_REASON_PREFIX,
     FP_ACTION_CONTINUED_TO_LLM,
     FP_ACTION_DISABLED,
     FP_ACTION_FAILED,
@@ -297,7 +298,7 @@ class LabelingPipeline:
                 # Mark as deduplicated in database (distinct from 'skipped' to exclude from exports)
                 if not dry_run:
                     with self.database.db.get_session() as session:
-                        skip_reason = f"Duplicate title (similar to article {duplicate_of})"
+                        skip_reason = f"{DEDUP_REASON_PREFIX} (similar to article {duplicate_of})"
                         self.database.update_article_labeling_status(
                             session, article_id, "deduplicated", skip_reason
                         )
@@ -603,6 +604,11 @@ class LabelingPipeline:
         article_ids: list[UUID] | None = None,
         skip_chunking: bool = False,
         skip_embedding: bool = False,
+        *,
+        prefilter: bool = True,
+        dedupe_titles: bool = True,
+        run_tag: str | None = None,
+        run_config: dict[str, Any] | None = None,
     ) -> LabelingStats:
         """Run the full labeling pipeline.
 
@@ -612,6 +618,15 @@ class LabelingPipeline:
             article_ids: Specific articles to label (overrides batch_size)
             skip_chunking: Skip chunking for already-chunked articles
             skip_embedding: Skip embedding generation
+            prefilter: If False, skip novelty scoring and the FP pre-filter: no FP call, no
+                classifier_predictions row, and every article continues to the LLM (#192 backfill,
+                D039)
+            dedupe_titles: If False, skip title deduplication, so no article is set to
+                'deduplicated'
+            run_tag: Stored as the run's config["run_tag"]; daily_labeling's run outcomes leave
+                tagged runs out
+            run_config: The caller's data, stored under the run's config["run_config"], where it
+                cannot replace a key the pipeline writes
 
         Returns:
             LabelingStats with results
@@ -628,21 +643,29 @@ class LabelingPipeline:
         run = None
         run_id = None
         if not dry_run:
+            config = {
+                "batch_size": batch_size,
+                "skip_chunking": skip_chunking,
+                "skip_embedding": skip_embedding,
+                "article_ids": [str(id) for id in article_ids] if article_ids else None,
+                # labeling_runs has no model column; the run's cost is priced at this
+                # model, and effort is what was sent to it, if it takes effort (#212)
+                "model": labeler.model,
+                "effort": labeler.effort if labeler.model_spec.accepts_effort else None,
+            }
+            # Recorded only when set, so a default run's config is as before
+            if not prefilter:
+                config["prefilter"] = False
+            if not dedupe_titles:
+                config["dedupe_titles"] = False
+            if run_tag is not None:
+                config["run_tag"] = run_tag
+            if run_config is not None:
+                config["run_config"] = run_config
             with self.database.db.get_session() as session:
                 run = self.database.create_labeling_run(
                     session,
-                    config={
-                        "batch_size": batch_size,
-                        "skip_chunking": skip_chunking,
-                        "skip_embedding": skip_embedding,
-                        "article_ids": [str(id) for id in article_ids]
-                        if article_ids
-                        else None,
-                        # labeling_runs has no model column; the run's cost is priced at this
-                        # model, and effort is what was sent to it, if it takes effort (#212)
-                        "model": labeler.model,
-                        "effort": labeler.effort if labeler.model_spec.accepts_effort else None,
-                    },
+                    config=config,
                     prompt_version=labeler.prompt_version,
                     prompt_system_hash=labeler.prompt_system_hash,
                     prompt_user_hash=labeler.prompt_user_hash,
@@ -681,21 +704,24 @@ class LabelingPipeline:
             logger.info(f"Fetched {len(article_data)} articles for processing")
 
             # Deduplicate by title similarity (reduces redundant LLM calls)
-            article_data, duplicates = self._deduplicate_by_title(
-                article_data, dry_run=dry_run
-            )
-            stats.articles_deduplicated = len(duplicates)
+            if dedupe_titles:
+                article_data, duplicates = self._deduplicate_by_title(
+                    article_data, dry_run=dry_run
+                )
+                stats.articles_deduplicated = len(duplicates)
 
-            logger.info(f"Processing {len(article_data)} articles after deduplication")
+                logger.info(f"Processing {len(article_data)} articles after deduplication")
 
-            # Compute novelty scores BEFORE FP classification
-            # This ensures we capture novelty for ALL articles, including those filtered as false positives
-            novelty_scores = self._compute_novelty_batch(article_data)
+            fp_prefilter_results: dict[UUID, tuple[bool, ClassifierPredictionRecord | None]] = {}
+            if prefilter:
+                # Compute novelty scores BEFORE FP classification
+                # This ensures we capture novelty for ALL articles, including those filtered as false positives
+                novelty_scores = self._compute_novelty_batch(article_data)
 
-            # Run FP classifier batch pre-filter (single API call for all articles)
-            fp_prefilter_results = self._run_fp_prefilter_batch(
-                article_data, novelty_scores=novelty_scores, dry_run=dry_run
-            )
+                # Run FP classifier batch pre-filter (single API call for all articles)
+                fp_prefilter_results = self._run_fp_prefilter_batch(
+                    article_data, novelty_scores=novelty_scores, dry_run=dry_run
+                )
 
             for article in article_data:
                 try:
@@ -949,7 +975,8 @@ class LabelingPipeline:
         if fp_prefilter_result is not None:
             should_continue, fp_prediction = fp_prefilter_result
         else:
-            # Fallback: no precomputed result (shouldn't happen in normal flow)
+            # No precomputed result: label_articles ran with prefilter=False (the #192 backfill,
+            # D039), or the caller passed none. The article continues to the LLM.
             should_continue, fp_prediction = True, None
 
         if fp_prediction is not None:

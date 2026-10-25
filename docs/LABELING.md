@@ -115,6 +115,39 @@ uv run python scripts/compare_prompts.py --candidate v1.11.0 \
 - **Report** (`data/evaluation/comparisons/`, not committed): outcome transitions over four classes (`labeled`, judged skip, unjudged skip, `false_positive`) plus `failed` for a call that errored or did not parse; the newly-labeled rate over the baseline's non-labeled replies, by class; per-brand sportswear flips; category flips on brands both versions labeled, and brands only one labeled; sentiment agreement; every-brand compliance (no sent brand left out, as `labeling_runs.incomplete_replies` counts) and duplicate entries per version; output tokens, including on the most-brands articles, with a reply counted as truncated when the API stopped it at `max_tokens` (output tokens include thinking, so the count is not the test); refusals, apart from parse failures; stability across repeats, with a case the spend cap cut short marked incomplete; Product-article accuracy per case (correct, wrong, or not judged when no reply judged the brand), leaving out cases whose article is the source of a quoted example in the candidate prompt; the score answering `true` for every judged Product case would get, the bar a rule has to beat; for a content-type candidate (v1.12.0, D037), the content types stated, the categories kept on the expected brand of a Product, financial or no-category case, or on any brand of one that names none (there should be none), and every category the content type dropped, each to be read; for a case that rules its brand's categories (`expected.categories` in the case file), whether every reply gave exactly those, with what was missing or extra (a type that keeps no category loses a ruled label silently, since the gate only lists categories a reply gave); a noise floor (random-sample articles stored as labeled under the baseline prompt and model whose fresh baseline call answered, and how many of those it still labels); cost.
 - **Criteria (D036).** No parse failures; no refusals, or each one read and explained (a refused reply is `failed`, which leaves it out of compliance and the newly-labeled rates, so refusals would otherwise flatter the candidate); no reply at `max_tokens`; candidate every-brand compliance at least 95%; each stability case consistent across repeats or explained; each Product-article case on its expected side or the miss explained; a human reads every labeled to non-labeled and non-labeled to labeled transition and every per-brand sportswear flip. The prompt hashes promoted are the hashes evaluated, and so is the reply schema's hash for a version that has one (the report prints it as `system/user/schema <hash>`); a text or schema change after the run needs a new run.
 
+## Backfill Relabel (#192, D039)
+
+`scripts/backfill_relabel.py` relabels, under the production prompt, the rows whose status the labeling LLM decided, or could decide, with no stored judgment per brand (`brand_judgments`, D038). The cohort is derived on each invocation (`select_backfill_cohort` in `src/data_collection/provenance.py`), from the FP export's rows and `label_source`:
+
+| Arm | Rows |
+|---|---|
+| `unjudged` | `unjudged` skips at a reason a reply writes ("No ESG content found", "No sportswear brand ESG content", "Some brands not judged; the rest not sportswear") |
+| `false_positive` | `false_positive` rows sourced `llm` or `pre_classifier` |
+| `judged_skip` | judged skips (`llm`/`pre_classifier`) skipped since the production version's first run |
+
+Every arm needs no `brand_judgments` row, at least one brand, and content the pipeline would send. Left out and reported, never relabeled: `HUMAN_RULINGS` ids whatever their status and other `human` rows; articles with a `brand_labels` row a human reviewed or wrote; skips the pipeline writes before any LLM call; and **possible hand moves**, `false_positive` rows whose reason no LLM or FP path writes with that status (none, a skip reason, a title-duplicate reason), since `fix_label.py update` keeps the old reason, until #143's audit log records such moves.
+
+Each article goes through `LabelingPipeline.label_articles(prefilter=False, dedupe_titles=False)`: no novelty score, no FP call, no `classifier_predictions` row, no title dedup, so `dispose_reply` decides every status and the script sets none. A relabeled row keeps its era's `label_source` (`llm` or `pre_classifier`).
+
+```bash
+# Cohort by arm, reason and month, what is left out, and the cost bounds; no API call, no write
+uv run python scripts/backfill_relabel.py --dry-run
+
+# A first slice, then the rest; stops before a batch whose worst case would take spend past --max-cost
+uv run python scripts/backfill_relabel.py --limit 50 --max-cost 5
+uv run python scripts/backfill_relabel.py --max-cost 30
+
+# What the tagged runs did so far
+uv run python scripts/backfill_relabel.py --report
+```
+
+- **Runs.** One `labeling_runs` row per batch (`--batch-size`, default 25), tagged `config["run_tag"] = "192-backfill"`; `daily_labeling` leaves tagged runs out of its metrics. Each run's `config["run_config"]` records every article's status, reason and arm from before the relabel (`prior`), and the batch's worst-case cost.
+- **One pass.** Every outcome but a transient failure leaves the cohort: an LLM-decided outcome writes judgments, a failure is `failed`, and a skip still unjudged is dated past the bound (the first tagged run's start), so it is not retried; the report lists those. A transient failure keeps its status and is retried by the next invocation.
+- **Refusals before any call.** A labeler that fell back to the hardcoded prompt or loaded another version; `LABELING_PROMPT_VERSION` naming a version that is not production; a model, effort or `max_tokens` unlike the production entry's `model_recommendations` in `registry.json` (set `LABELING_MODEL` and `LABELING_EFFORT` to match); a recorded cost per call, over finished untagged runs of that version on that model, above the mean worst case per call; and spend so far plus the first batch's worst case above `--max-cost`. A run needs `--max-cost`.
+- **Spend** is the recorded cost of finished tagged runs plus each unfinished one at its recorded batch worst case, read before every batch, so the cap holds across invocations. The worst case (`worst_case_call_cost_usd`, shared with the contrastive eval) covers the LLM call; a run's recorded cost also carries a small embedding estimate.
+- **Before the run:** apply `migrations/009_brand_judgments.sql`.
+- **Report** (printed at the end of a run, or with `--report`): prior → current status and source by arm, brand judgments by content type, `failed` outcomes by arm, and the articles still unjudged.
+
 ## Exporting Training Data
 
 Export labeled data for ML classifier training:

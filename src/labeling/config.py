@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import os
 import re
 from pathlib import Path
@@ -125,6 +126,20 @@ def llm_cost_usd(input_tokens: int, output_tokens: int, model: str) -> float:
         input_tokens / 1_000_000 * spec.input_cost_per_mtok
         + output_tokens / 1_000_000 * spec.output_cost_per_mtok
     )
+
+
+def worst_case_call_cost_usd(
+    prompt_chars: int, content_chars: int, max_tokens: int, model: str
+) -> float:
+    """An upper bound on one call's cost: a generous input estimate and a full output.
+
+    The input estimate divides by the model's fewest characters per token, since the same text
+    counts as more tokens on Haiku 5.5 than on Haiku 4.5. The contrastive eval and the #192
+    backfill both bound their spend with it.
+    """
+    chars_per_token = labeling_model_spec(model).min_chars_per_token
+    input_tokens = math.ceil((prompt_chars + content_chars) / chars_per_token)
+    return llm_cost_usd(input_tokens, max_tokens, model)
 
 # Recorded as threshold_used (NOT NULL) for every article of an FP pre-filter
 # batch that raises, whether the API call failed or a later step did (saving a

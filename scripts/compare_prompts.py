@@ -72,13 +72,18 @@ from src.evaluation.diff_report import render_markdown  # noqa: E402
 from src.labeling.article_input import article_content, has_sufficient_content  # noqa: E402
 from src.labeling.config import (  # noqa: E402
     ESG_CATEGORIES,
-    TARGET_SPORTSWEAR_BRANDS,
     labeling_model_key,
     labeling_model_spec,
     labeling_settings,
 )
 from src.labeling.models import normalize_brand  # noqa: E402
-from src.labeling.labeler import EFFORT_LEVELS, ArticleLabeler  # noqa: E402
+from src.labeling.labeler import (  # noqa: E402
+    EFFORT_LEVELS,
+    ArticleLabeler,
+    LabelerMismatchError,
+    prompt_input_chars,
+)
+from src.labeling.labeler import check_labeler as shared_check_labeler  # noqa: E402
 from src.labeling.prompt_manager import PromptManager, PromptVersion  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -209,21 +214,14 @@ def prompt_hashes(version: PromptVersion) -> str:
 
 def check_labeler(labeler: ArticleLabeler, version: str, side: SideSettings) -> None:
     """Refuse a labeler that fell back to the hardcoded prompt, loaded another version, or runs
-    another model or effort.
+    another model or effort (`src.labeling.labeler.check_labeler`).
 
-    `ArticleLabeler` logs a warning and carries on with the hardcoded prompt when a version
-    fails to load, so a mistyped version would otherwise compare production with itself.
+    A fallback to the hardcoded prompt would otherwise compare production with itself.
     """
-    if labeler.loaded_prompt is None or labeler.prompt_version != version:
-        raise EvalSetupError(
-            f"Labeler for {version} loaded {labeler.prompt_version!r}; refusing to run"
-        )
-    if labeler.model != side.model:
-        raise EvalSetupError(f"Labeler for {side.model} runs {labeler.model!r}; refusing to run")
-    if side.effort is not None and labeler.effort != side.effort:
-        raise EvalSetupError(
-            f"Labeler for effort {side.effort} runs effort {labeler.effort!r}; refusing to run"
-        )
+    try:
+        shared_check_labeler(labeler, version, model=side.model, effort=side.effort)
+    except LabelerMismatchError as e:
+        raise EvalSetupError(str(e)) from e
 
 
 @dataclasses.dataclass(frozen=True)
@@ -479,13 +477,7 @@ def main(argv: list[str] | None = None) -> int:
     except EvalSetupError as e:
         logger.error(str(e))
         return 2
-    prompt_chars = {
-        side: len(manager.get_formatted_system_prompt(version=v, brands=list(TARGET_SPORTSWEAR_BRANDS)))
-        + len(loaded[v].user_prompt)
-        # A reply schema is input too (structured outputs, D037)
-        + (len(json.dumps(loaded[v].reply_schema)) if loaded[v].reply_schema else 0)
-        for side, v in versions.items()
-    }
+    prompt_chars = {side: prompt_input_chars(manager, v) for side, v in versions.items()}
     examples = prompt_examples(loaded[candidate].system_prompt + loaded[candidate].user_prompt)
 
     specs = parse_case_file(json.loads(args.case_file.read_text())) if args.case_file else {}

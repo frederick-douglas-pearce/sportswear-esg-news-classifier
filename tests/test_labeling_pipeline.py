@@ -1072,3 +1072,98 @@ class TestNoIntermediateStatus:
             pipeline._process_article(self._article(), skip_embedding=True, labeling_run_id=uuid4())
         assert [c.args[2] for c in update.call_args_list] == ["false_positive"]
         assert stored.labeling_status == "false_positive"
+
+
+class TestBackfillArguments:
+    """label_articles' bypass and tagging arguments for the #192 backfill (D039)."""
+
+    DEFAULT_CONFIG_KEYS = {
+        "batch_size", "skip_chunking", "skip_embedding", "article_ids", "model", "effort",
+    }
+
+    def _article(self, title="Puma backs a recycling scheme"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id=uuid4(), title=title, full_content="Test content " * 50, description=None,
+            brands_mentioned=["Puma"], published_at=None, source_name="s", category=[],
+        )
+
+    def _run(self, articles, settings=None, **kwargs):
+        """label_articles over the given articles; returns (pipeline, database, process mock)."""
+        database = MagicMock()
+        by_id = {a.id: a for a in articles}
+        database.get_article_by_id.side_effect = lambda session, aid: by_id.get(aid)
+        pipeline = LabelingPipeline(database=database)
+        with patch("src.labeling.pipeline.db"), \
+             patch.object(pipeline, "_ensure_labeler") as labeler, \
+             patch.object(pipeline, "_process_article", return_value={"labeled": True, "brands_count": 1}) as process:
+            labeler.return_value.model = "claude-haiku-5-5"
+            labeler.return_value.effort = "medium"
+            pipeline.label_articles(article_ids=[a.id for a in articles], **kwargs)
+        return pipeline, database, process, labeler.return_value
+
+    def test_prefilter_off_builds_no_fp_client_or_scorer_with_both_enabled(self):
+        from src.labeling.config import labeling_settings
+
+        enabled = labeling_settings.model_copy(
+            update={"fp_classifier_enabled": True, "novelty_enabled": True, "fp_skip_llm_threshold": None}
+        )
+        articles = [self._article(), self._article("Nike opens a factory")]
+        with patch("src.labeling.pipeline.labeling_settings", enabled), \
+             patch("src.labeling.pipeline.ClassifierClient") as client_cls, \
+             patch("src.labeling.pipeline.NoveltyScorer") as scorer_cls, \
+             patch("src.labeling.pipeline.Path") as path_cls, \
+             patch.object(LabelingPipeline, "_save_classifier_prediction") as saved:
+            path_cls.return_value.exists.return_value = True
+            _, _, process, _ = self._run(articles, prefilter=False)
+            client_cls.assert_not_called()
+            scorer_cls.assert_not_called()
+            saved.assert_not_called()
+            assert [c.kwargs["fp_prefilter_result"] for c in process.call_args_list] == [None, None]
+
+            # Control: the same settings with the pre-filter on do reach the FP client
+            client_cls.return_value.predict_fp_batch.return_value = []
+            self._run(articles)
+            client_cls.assert_called_once()
+
+    def test_dedupe_off_writes_no_deduplicated_status(self):
+        twins = [self._article("Puma backs a recycling scheme"), self._article("Puma backs a recycling scheme")]
+        with patch.object(LabelingPipeline, "_run_fp_prefilter_batch", return_value={}), \
+             patch.object(LabelingPipeline, "_compute_novelty_batch", return_value={}):
+            _, database, process, _ = self._run(twins, dedupe_titles=False)
+            statuses = [c.args[2] for c in database.update_article_labeling_status.call_args_list]
+            assert "deduplicated" not in statuses
+            assert process.call_count == 2
+
+            # Control: deduplication on sets the second twin to deduplicated
+            _, database, process, _ = self._run(twins)
+            statuses = [c.args[2] for c in database.update_article_labeling_status.call_args_list]
+            assert statuses == ["deduplicated"]
+            assert process.call_count == 1
+
+    def test_run_config_cannot_replace_a_pipeline_key(self):
+        article = self._article()
+        caller = {"model": "another-model", "effort": "max", "article_ids": ["not-this"], "prior": {}}
+        with patch.object(LabelingPipeline, "_run_fp_prefilter_batch", return_value={}), \
+             patch.object(LabelingPipeline, "_compute_novelty_batch", return_value={}):
+            _, database, _, labeler = self._run(
+                [article], prefilter=False, dedupe_titles=False, run_tag="192-backfill", run_config=caller
+            )
+        config = database.create_labeling_run.call_args.kwargs["config"]
+        assert config["model"] == labeler.model
+        assert config["effort"] == labeler.effort
+        assert config["article_ids"] == [str(article.id)]
+        assert config["run_tag"] == "192-backfill"
+        assert config["run_config"] == caller
+        assert (config["prefilter"], config["dedupe_titles"]) == (False, False)
+
+    def test_defaults_are_unchanged(self):
+        article = self._article()
+        with patch.object(LabelingPipeline, "_run_fp_prefilter_batch", return_value={}) as prefilter, \
+             patch.object(LabelingPipeline, "_compute_novelty_batch", return_value={}) as novelty, \
+             patch.object(LabelingPipeline, "_deduplicate_by_title", return_value=([], [])) as dedupe:
+            _, database, _, _ = self._run([article])
+        assert prefilter.called and novelty.called and dedupe.called
+        config = database.create_labeling_run.call_args.kwargs["config"]
+        assert set(config) == self.DEFAULT_CONFIG_KEYS

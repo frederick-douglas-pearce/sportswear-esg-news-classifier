@@ -224,6 +224,45 @@ WHERE articles_processed > 0
 ORDER BY started_at DESC
 LIMIT 10;
 
+-- #192 backfill runs (tagged; daily_labeling leaves them out, D039)
+-- An unfinished run recorded no cost; the script counts it at its batch's worst case
+SELECT
+    started_at AT TIME ZONE 'America/Los_Angeles' AS started_local,
+    status,
+    completed_at IS NULL AS unfinished,
+    articles_processed,
+    articles_labeled,
+    articles_skipped,
+    articles_false_positive,
+    articles_failed,
+    ROUND(estimated_cost_usd::numeric, 4) AS cost_usd,
+    ROUND((config->'run_config'->>'batch_worst_case_usd')::numeric, 4) AS worst_case_usd
+FROM labeling_runs
+WHERE config->>'run_tag' = '192-backfill'
+ORDER BY started_at;
+
+-- #192 backfill: each article's status before the relabel (recorded per batch) and now
+-- A retried article is in more than one run; its first record is its status before the backfill
+WITH prior AS (
+    SELECT DISTINCT ON (p.key)
+        p.key::uuid AS article_id,
+        p.value->>0 AS prior_status,
+        p.value->>2 AS arm
+    FROM labeling_runs r
+    CROSS JOIN LATERAL json_each(r.config->'run_config'->'prior') AS p
+    WHERE r.config->>'run_tag' = '192-backfill'
+    ORDER BY p.key, r.started_at
+)
+SELECT
+    prior.arm,
+    prior.prior_status,
+    a.labeling_status AS status,
+    COUNT(*) AS articles
+FROM prior
+JOIN articles a ON a.id = prior.article_id
+GROUP BY 1, 2, 3
+ORDER BY 1, 2, 3;
+
 -- ---------------------------------------------------------------------------
 -- Labels with Article Context
 -- ---------------------------------------------------------------------------

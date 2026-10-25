@@ -4,6 +4,37 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-25: Backfill tooling for #192's relabel (#192 PR3, D039)
+
+**`scripts/backfill_relabel.py` relabels, under the production prompt, the rows whose status the
+LLM decided, or could decide, with no stored judgment per brand.** It is #192's last criterion
+("re-run through the normal pipeline ... No status is set directly"), widened by the owner to the
+LLM-decided negatives. The run itself follows this change, owner-gated (dry run, a first slice,
+the rest, the report).
+- **Cohort** (`select_backfill_cohort`, `src/data_collection/provenance.py`), derived on each
+  invocation from the FP export's rows and `label_source`: unjudged skips at a reason a reply
+  writes, `false_positive` rows sourced `llm` or `pre_classifier`, and judged skips since the
+  production version's first run; each needs no `brand_judgments` row, a brand, and content the
+  pipeline would send. Left out and reported: `HUMAN_RULINGS` ids whatever their status, other
+  `human` rows, human-reviewed labels, pre-LLM skips, and possible hand moves (a negative whose
+  reason no LLM or FP path writes with that status), until #143's audit log.
+- **Pipeline.** `label_articles` takes `prefilter`, `dedupe_titles`, `run_tag` and `run_config`;
+  the defaults leave every caller as it was. The backfill bypasses novelty, the FP pre-filter and
+  title dedup, so `dispose_reply` decides every status and no `classifier_predictions` row is
+  written. The tag is `config["run_tag"]`, and the caller's data is under `config["run_config"]`.
+- **One pass.** Every outcome but a transient failure leaves the cohort; a skip still unjudged is
+  dated past the bound (the first tagged run's start) and listed by the report, not retried.
+- **Records and refusals.** Each run records its articles' status, reason and arm from before the
+  relabel. Before any call the script refuses a prompt fallback, a non-production version, a
+  model, effort or `max_tokens` unlike the registry's `model_recommendations`, an observed cost per
+  call above the worst case, and spend past `--max-cost` (finished tagged runs at their recorded
+  cost, unfinished ones at their batch's worst case, read before every batch).
+- **Daily metrics.** `daily_labeling`'s run outcomes leave tagged runs out, finished or not.
+- **Shared helpers.** `fp_export_query` moved to `provenance.py` (the export's output is
+  unchanged); `check_labeler` and `prompt_input_chars` are in `src/labeling/labeler.py`, and
+  `worst_case_call_cost_usd` beside `llm_cost_usd`, used by the contrastive eval too.
+- Apply `migrations/009_brand_judgments.sql` before the run.
+
 ### 2026-10-24: Each brand's content type is stored (#192, D038)
 
 **A new `brand_judgments` table records what the latest LLM reply judged each sent brand to be.**

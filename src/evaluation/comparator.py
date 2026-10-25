@@ -25,7 +25,7 @@ from src.data_collection.models import SKIP_NO_ESG_CATEGORIES, UNJUDGED_SKIP_REA
 from src.labeling.disposition import FALSE_POSITIVE, LABELED, SKIPPED, dispose_reply
 from src.labeling.labeler import REFUSAL_ERROR_TYPE, LabelingResult
 from src.labeling.models import normalize_brand
-from src.labeling.config import labeling_model_spec, llm_cost_usd
+from src.labeling.config import llm_cost_usd, worst_case_call_cost_usd
 from src.migration_eval.compare import compare_article, decisions_from_response
 from src.migration_eval.models import BrandDecision
 
@@ -248,14 +248,8 @@ def matching_prompt_example(title: str, examples: list[str]) -> str | None:
 
 
 def worst_case_call_cost(article: EvalArticle, prompt_chars: int, side: SideSettings) -> float:
-    """An upper bound on one call's cost: a generous input estimate and a full output.
-
-    The input estimate divides by the model's fewest characters per token, since the same text
-    counts as more tokens on Haiku 5.5 than on Haiku 4.5.
-    """
-    chars_per_token = labeling_model_spec(side.model).min_chars_per_token
-    input_tokens = math.ceil((prompt_chars + len(article.content)) / chars_per_token)
-    return llm_cost_usd(input_tokens, side.max_tokens, side.model)
+    """An upper bound on one call's cost (`worst_case_call_cost_usd`) at the side's model and cap."""
+    return worst_case_call_cost_usd(prompt_chars, len(article.content), side.max_tokens, side.model)
 
 
 def worst_case_cost(
