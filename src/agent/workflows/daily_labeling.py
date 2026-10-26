@@ -134,6 +134,9 @@ def _read_run_outcomes(started_at: datetime, ended_at: datetime) -> dict[str, An
     The window is bounded at both ends so a concurrently started labeling run
     (the standalone labeling cron) is not attributed to this workflow.
 
+    A run with a `run_tag` in its config (the #192 backfill, D039) is not daily
+    labeling, so it is left out of every count here, finished or not.
+
     Returns None when no completed run row exists — a dry run writes none, so
     the caller falls back to parsed stdout.
     """
@@ -162,6 +165,7 @@ def _read_run_outcomes(started_at: datetime, ended_at: datetime) -> dict[str, An
                     ) AS incomplete
                 FROM labeling_runs
                 WHERE started_at >= :started_at AND started_at <= :ended_at
+                    AND (config->>'run_tag') IS NULL
             """),
             {"started_at": started_at, "ended_at": ended_at},
         ).fetchone()

@@ -67,6 +67,10 @@ UNJUDGED_SKIP_REASONS = frozenset({
 # The one skip that follows an explicit sportswear judgment by the LLM.
 JUDGED_SKIP_REASONS = frozenset({SKIP_NO_ESG_CATEGORIES})
 
+# Prefix of the reason a title duplicate is stored with ('deduplicated' status); the id of the
+# article it duplicates follows. Never reword it.
+DEDUP_REASON_PREFIX = "Duplicate title"
+
 # Prefixes of the errors the labeler stores in articles.labeling_error with a 'failed' status for
 # a reply the model declined, and for one that stopped at max_tokens and did not parse. The rest of
 # the message (refusal category, the cap) follows the prefix. Neither is retried: select them with

@@ -1165,6 +1165,24 @@ class TestModelRequests:
         assert result.success and result.stop_reason == "max_tokens"
         assert "stopped at max_tokens (8000) but parsed" in caplog.text
 
+    def test_a_reply_whose_parse_raises_keeps_its_usage_and_stop_reason(self):
+        labeler, _ = self._labeler(
+            "claude-haiku-5-5",
+            _api_response([("text", _REPLY_JSON)], input_tokens=1000, output_tokens=200),
+        )
+        with patch.object(labeler, "_parse_response", side_effect=TypeError("unexpected shape")):
+            result = self._label(labeler)
+        assert not result.success and result.error_type == "unknown"
+        assert (result.input_tokens, result.output_tokens, result.stop_reason) == (1000, 200, "end_turn")
+        assert labeler.total_api_calls == 1
+
+    def test_a_call_that_raises_has_no_usage_or_stop_reason(self):
+        labeler, _ = self._labeler("claude-haiku-5-5", None)
+        with patch.object(labeler, "_call_api_with_retry", side_effect=RuntimeError("connection reset")):
+            result = self._label(labeler)
+        assert not result.success
+        assert (result.input_tokens, result.output_tokens, result.stop_reason) == (0, 0, None)
+
     def test_unknown_model_is_refused_before_any_call(self):
         with patch("src.labeling.labeler.Anthropic"):
             with pytest.raises(ValueError, match="No pricing or request spec"):

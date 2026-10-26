@@ -338,6 +338,7 @@ class ArticleLabeler:
             )
 
         # Call Claude API with retry
+        reply = None
         try:
             reply = self._call_api_with_retry(user_prompt, system_prompt)
             self.total_input_tokens += reply.input_tokens
@@ -402,10 +403,15 @@ class ArticleLabeler:
         except Exception as e:
             error_type, error_msg = classify_api_error(e)
             logger.error(f"[{error_type}] Labeling failed: {error_msg}")
+            # An exception after the call returned is a reply that could not be used:
+            # its usage was billed and its stop_reason says a reply came back
             return LabelingResult(
                 success=False,
                 error=error_msg,
                 error_type=error_type,
+                input_tokens=reply.input_tokens if reply else 0,
+                output_tokens=reply.output_tokens if reply else 0,
+                stop_reason=reply.stop_reason if reply else None,
                 model=self.model,
                 prompt_version=self.prompt_version,
                 prompt_system_hash=self.prompt_system_hash,
@@ -842,3 +848,55 @@ class ArticleLabeler:
         self.total_input_tokens = 0
         self.total_output_tokens = 0
         self.total_api_calls = 0
+
+
+class LabelerMismatchError(ValueError):
+    """A labeler is not the one a run asked for; nothing has been sent to the API."""
+
+
+def check_labeler(
+    labeler: ArticleLabeler,
+    version: str,
+    *,
+    model: str,
+    effort: str | None = None,
+    max_tokens: int | None = None,
+) -> None:
+    """Refuse a labeler that fell back to the hardcoded prompt, loaded another version, or runs
+    another model, effort or output cap.
+
+    `ArticleLabeler` logs a warning and carries on with the hardcoded prompt when a version
+    fails to load, so a mistyped version would otherwise run production's prompt, or none. An
+    `effort` or `max_tokens` of None is not checked.
+
+    Raises:
+        LabelerMismatchError: naming what differs.
+    """
+    if labeler.loaded_prompt is None or labeler.prompt_version != version:
+        raise LabelerMismatchError(
+            f"Labeler for {version} loaded {labeler.prompt_version!r}; refusing to run"
+        )
+    if labeler.model != model:
+        raise LabelerMismatchError(f"Labeler for {model} runs {labeler.model!r}; refusing to run")
+    if effort is not None and labeler.effort != effort:
+        raise LabelerMismatchError(
+            f"Labeler for effort {effort} runs effort {labeler.effort!r}; refusing to run"
+        )
+    if max_tokens is not None and labeler.max_tokens != max_tokens:
+        raise LabelerMismatchError(
+            f"Labeler for max_tokens {max_tokens} runs max_tokens {labeler.max_tokens!r}; "
+            "refusing to run"
+        )
+
+
+def prompt_input_chars(manager: PromptManager, version: str) -> int:
+    """Characters a call under `version` sends besides the article: the system prompt as the
+    labeler formats it, the user prompt template, and the reply schema when there is one
+    (structured outputs, D037). The worst-case cost bounds add the article's content to it.
+    """
+    loaded = manager.load_version(version)
+    return (
+        len(manager.get_formatted_system_prompt(version=version, brands=list(TARGET_SPORTSWEAR_BRANDS)))
+        + len(loaded.user_prompt)
+        + (len(json.dumps(loaded.reply_schema)) if loaded.reply_schema else 0)
+    )

@@ -48,7 +48,11 @@ from sqlalchemy import and_, or_
 from src.data_collection import provenance
 from src.data_collection.database import db
 from src.data_collection.models import Article, BrandLabel
-from src.data_collection.provenance import derive_label_source, human_verified_ids
+from src.data_collection.provenance import (
+    derive_label_source,
+    fp_export_query,
+    human_verified_ids,
+)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -190,30 +194,6 @@ def build_fp_dataset(
         records.append(record)
 
     return FPExport(records, report)
-
-
-def fp_export_query(session, since: datetime | None = None):
-    """Articles the FP export reads, each with its latest FP prediction, in a fixed order.
-
-    The order matters: the training splits use ``train_test_split(random_state=42)``, which
-    assigns rows by position, so an unordered query would split the same data differently.
-    """
-    base_filter = Article.scrape_status == "success"
-    if since:
-        base_filter = and_(base_filter, Article.created_at >= since)
-
-    latest = provenance.latest_prediction_subquery("fp")
-    return (
-        session.query(Article, latest.c.action_taken, latest.c.skip_reason, latest.c.created_at)
-        .outerjoin(latest, latest.c.article_id == Article.id)
-        .filter(base_filter)
-        .filter(
-            Article.labeling_status.in_(
-                [*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS]
-            )
-        )
-        .order_by(Article.id)
-    )
 
 
 def export_false_positive_data(

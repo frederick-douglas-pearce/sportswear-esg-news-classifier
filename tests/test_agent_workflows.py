@@ -2381,3 +2381,71 @@ class TestStepFailureContract:
         assert "Step 'one' failed: " + "A" * 500 in result.error
         assert "Step 'two' failed: " + "B" * 500 in result.error
         assert result.error.count("truncated") == 2
+
+
+class TestTaggedRunsAreNotDailyLabeling:
+    """_read_run_outcomes leaves out runs with a run_tag, finished or not (#192 backfill, D039)."""
+
+    def test_the_tag_filter_is_in_the_where_clause(self):
+        from src.agent.workflows import daily_labeling
+
+        with patch.object(daily_labeling, "db") as db:
+            session = db.get_session.return_value.__enter__.return_value
+            session.execute.return_value.fetchone.return_value = None
+            daily_labeling._read_run_outcomes(datetime.now(timezone.utc), datetime.now(timezone.utc))
+        sql = " ".join(str(session.execute.call_args.args[0]).split())
+        where = sql.index("FROM labeling_runs WHERE ")
+        assert "AND (config->>'run_tag') IS NULL" in sql[where:]
+        # in WHERE, not in a FILTER: an unfinished tagged run must not count toward `unfinished`
+        assert "run_tag" not in sql[:where]
+
+    @pytest.mark.skipif(
+        __import__("os").environ.get("RUN_DB_TESTS") != "1",
+        reason="Database tests require PostgreSQL. Set RUN_DB_TESTS=1 to run.",
+    )
+    def test_against_postgres(self):
+        import os
+        from datetime import timedelta
+
+        from src.agent.workflows import daily_labeling
+        from src.data_collection.database import Database
+        from src.data_collection.models import LabelingRun
+
+        # Never DATABASE_URL: it may point at production
+        database = Database(database_url=os.environ.get(
+            "TEST_DATABASE_URL", "postgresql://postgres:postgres@localhost:5434/esg_news_test"
+        ))
+        database.init_db()
+        # a window no other test writes into
+        start = datetime(2001, 1, 1, tzinfo=timezone.utc)
+        tagged = {"run_tag": "192-backfill"}
+        # a second window holding only tagged runs, one finished and one running
+        tagged_only = start + timedelta(hours=1)
+        runs = [
+            LabelingRun(started_at=start, completed_at=start, articles_processed=2, articles_labeled=2,
+                        status="success", estimated_cost_usd=0.01, config={"model": "m"}),
+            LabelingRun(started_at=start, completed_at=start, articles_processed=7, articles_labeled=7,
+                        status="partial", estimated_cost_usd=0.5, config=tagged),
+            LabelingRun(started_at=start, status="running", config=tagged),
+            LabelingRun(started_at=tagged_only, completed_at=tagged_only, articles_processed=3,
+                        status="success", estimated_cost_usd=0.2, config=tagged),
+            LabelingRun(started_at=tagged_only, status="running", config=tagged),
+        ]
+        with database.get_session() as session:
+            session.add_all(runs)
+            session.flush()
+            ids = [r.id for r in runs]
+        try:
+            with patch.object(daily_labeling, "db", database):
+                outcomes = daily_labeling._read_run_outcomes(start, start + timedelta(minutes=1))
+                # neither tagged run is a daily run, so the window has none: not counts_unavailable
+                assert daily_labeling._read_run_outcomes(tagged_only, tagged_only + timedelta(minutes=1)) is None
+        finally:
+            with database.get_session() as session:
+                session.query(LabelingRun).filter(LabelingRun.id.in_(ids)).delete(synchronize_session=False)
+        assert outcomes["run_count"] == 1
+        assert outcomes["articles_processed"] == 2 and outcomes["articles_labeled"] == 2
+        # neither the partial tagged run nor the unfinished one makes the daily run incomplete
+        assert outcomes["incomplete_runs"] == 0 and outcomes["any_run_incomplete"] is False
+        assert outcomes["counts_unavailable"] is False
+        assert outcomes["estimated_cost_usd"] == pytest.approx(0.01)

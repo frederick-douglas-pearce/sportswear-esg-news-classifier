@@ -2748,3 +2748,116 @@ a few thousand relabels before 2026-11-02, so the types had to be stored before 
 - A status changed by hand (`fix_label.py`, `review_labels.py`) leaves the judgments in place, as
   it leaves `brand_labels`; views can filter on `articles.labeling_status` (#143).
 - A labeling run row can no longer be deleted while judgments name it; nothing deletes them.
+
+## D039: #192's Backfill Relabels One Derived Cohort Through `dispose_reply`, With the Pre-filter, Novelty and Title Dedup Bypassed (#192)
+
+**Date:** 2026-10-25 · **Status:** accepted (architect review, 2026-10-25; the owner approved the
+plan and each point below on 2026-10-25, and points 3, 5 and 7 as revised after code review the
+same day) · **Issues:** #192, #154, #143, #224
+
+**Context.** #192's last criterion: after v1.12.0's promotion, the cohort #154 PR1 excludes as
+unjudged is "re-run through the normal pipeline under the new version, so those rows get explicit
+judgments. No status is set directly." The owner widened it to the `false_positive` rows the LLM
+decided (decided under v1.10.0's contradictory product rule, and with no stored content type),
+and D038 added the v1.12.0 skips written before `brand_judgments` existed. The owner's cutoff
+("rows written before the first v1.12.0 run") cannot select by time: a `false_positive` write
+records no timestamp (`update_article_labeling_status` sets `skipped_at` for `skipped` only), and
+D038's addition is after that run.
+
+**Decision.**
+1. **One cohort, derived** (`select_backfill_cohort`, `src/data_collection/provenance.py`), from the
+   FP export's own rows (`fp_export_query`, moved there from the export script) and sources
+   (`derive_label_source`, with `human_verified_ids`). `backfill_arm` decides each row:
+   - **U**: an `unjudged` skip at a reason a reply writes (`LLM_REACHABLE_UNJUDGED_REASONS`);
+   - **F**: a `false_positive` sourced `llm` or `pre_classifier`;
+   - **J**: a judged skip (`llm`/`pre_classifier`) with `skipped_at` at or after the production
+     version's first untagged run.
+
+   Every arm needs no `brand_judgments` row, at least one brand, and content the pipeline would
+   send (`has_sufficient_content`). The arm table is the one place a later backfill adds an arm
+   (#224).
+2. **Never relabeled**: every `HUMAN_RULINGS` key whatever its current status, a row sourced
+   `human`, and an article with a `brand_labels` row a human reviewed or wrote. Human labels are
+   ground truth.
+3. **Possible hand moves are left out of F, fail-closed.** `fix_label.py update` changes the
+   status and keeps the reason, so a row moved by hand keeps a reason the LLM did not write, and
+   relabeling it would erase the only trace of the human's correction. F therefore takes only a
+   reason in the form a reply writes (`dispose_reply`, and every pipeline version since
+   false-positive detection): `"<brand>: <reason>"` per brand, joined by `"; "`, whose first part
+   names a brand the article mentions (`possible_hand_move`). Every other reason is a possible hand
+   move: a move from `failed` (the labeler's error), from `skipped` or `deduplicated`, a reason a
+   human wrote, none, and an FP classifier skip's reason on a row the classifier did not decide.
+   This is a stand-in until #143's audit log records the move; the rows are reported, not
+   selected, and the dry run lists their reasons.
+4. **"Normal pipeline" means `dispose_reply` decides the status of every reply**, through
+   `_process_article`; a reply the labeler could not use (a refusal, a parse failure, a
+   `max_tokens` stop) is written `failed` by the pipeline. `label_articles(prefilter=False,
+   dedupe_titles=False)` skips novelty scoring, the FP pre-filter and title deduplication, so no FP
+   call is made, no `classifier_predictions` row is written (a relabeled row keeps its era's
+   source), and no article becomes `deduplicated`. The script sets no status.
+5. **One pass, ending without an id list.** The cohort is derived again on each invocation. Every
+   outcome but a transient failure, a call that failed with no reply, or a raised exception leaves
+   it: an LLM-decided outcome writes judgments (D038), a reply the labeler could not use is
+   `failed`, and a skip still unjudged gets `skipped_at` past the bound. The bound for U and J is
+   the one the first `192-backfill` run recorded (this invocation's start before there is one); a
+   NULL `skipped_at` is before it, and F is not time-bounded. A transient failure, or an exception
+   `label_articles` catches while processing the article (#222), keeps its status and is retried by
+   the next invocation. A call that fails with no reply for a reason that is not transient (a
+   revoked key, credit used up) keeps the status too
+   (`label_articles(keep_status_without_reply=True)`), since writing `failed` would take the
+   article out of the cohort and the FP export for good; that, or an exception that is not
+   transient, stops the invocation after its batch. Each batch is decided again by `backfill_arm`
+   just before it is labeled, with the same cutoff and bound, and a row whose arm, status or reason
+   changed is dropped and logged, and recorded in the run config when the rest of its batch still
+   runs, so a human's move during the run is not overwritten. The report lists every row still
+   unjudged, split into those skipped again (not retried) and those not yet relabeled (retried).
+6. **Runs are tagged** (`config["run_tag"] = "192-backfill"`), and `daily_labeling`'s run outcomes
+   leave every tagged run out in their `WHERE` clause, finished or not. The caller's data is stored
+   under `config["run_config"]`, where it cannot replace a key the pipeline writes; it records each
+   article's status, reason and arm from before the relabel, the rows the batch's recheck dropped,
+   the bound, and the batch's worst-case cost.
+7. **Refusals before any call** (`scripts/backfill_relabel.py`): the labeler cannot be built (no
+   API key), fell back to the hardcoded prompt or loaded another version; `LABELING_PROMPT_VERSION`
+   names a version that is not production; the production entry has no `model_recommendations`
+   model or `max_tokens`; the labeler's model, effort or `max_tokens` differ from them (the one
+   source); a tagged run is unfinished and recorded no worst case, or the first recorded no bound;
+   the recorded cost per call of finished untagged runs of that version on that model exceeds the
+   mean worst case per call; `--batch-size` or `--limit` is below 1; and spend so far plus the
+   first batch's worst case exceeds `--max-cost`. Spend is the recorded cost of finished tagged
+   runs plus each unfinished one at its recorded batch worst case, read between batches, so the cap
+   holds across invocations for every call that returned usage: a run's tokens include a call
+   whose article then raised (counted from the labeler's totals). A labeler retry after a
+   client-side timeout may be billed and is not recorded. The worst case is
+   `worst_case_call_cost_usd`, shared with the contrastive eval, and covers the LLM call; a run's
+   recorded cost also carries a small embedding estimate. Exit codes: 0 done, 2 refused, 3 stopped
+   at the cap, 4 stopped after a batch left articles by an error that is not transient.
+8. **Owner decision 7's cutoff is replaced** by no-judgment plus point 5's bound (owner approval,
+   2026-10-25).
+
+**Rejected.**
+- **Excluding articles in an earlier tagged run's `article_ids`.** It would drop a transient
+  failure, and every article of a batch that crashed, for good; point 5 ends the pass without it.
+- **The status path with the pre-filter on.** The FP classifier would score its own training rows
+  and its skips would replace LLM decisions in the cohort meant to correct them.
+- **Setting statuses from a stored reply.** The criterion forbids it, and there is no stored reply.
+
+**Consequences.**
+- Readers keyed on `labeled_at` or `skipped_at` see a row relabeled `labeled` or `skipped` as
+  recent, among them the labeled and skipped samples of the LLM analysis in `src/agent/llm.py`. A
+  row relabeled `false_positive` keeps its old `skipped_at` (a `false_positive` write sets none),
+  so the analysis's false-positive sample does not. `AGENT_LLM_ANALYSIS=false` while the backfill
+  runs avoids the rest; leaving relabeled articles out of those samples is noted on #224. The
+  scorecard's window is by `published_at`, so it does not see them as recent. Newly labeled
+  historical articles appear in the website feed (owner-accepted).
+- `brand_labels` rows on an article relabeled `labeled` are replaced; on one whose new outcome is
+  not `labeled` they stay. The website feed and the training exports that read the table filter on
+  `labeled`; `label_articles.py --stats`'s brand-label count and the ad-hoc queries in `queries/`
+  count them.
+- A row the possible-hand-move test leaves out, if the LLM in fact decided it, keeps its v1.10.0
+  decision until #143 can tell the two apart. The test is fail-closed, so that includes an LLM
+  negative whose reason is an FP classifier skip's.
+- An F row whose relabel is a refusal, a parse failure or a `max_tokens` stop is written `failed`,
+  which takes it out of the FP training negatives and the cohort; the report counts these by arm,
+  and recovering them is #224's.
+- Nothing locks the cohort: run one invocation at a time. A second one would pay again for the
+  same articles; the cap still holds, since it counts the other's unfinished runs.
