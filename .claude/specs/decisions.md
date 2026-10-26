@@ -2796,20 +2796,21 @@ D038's addition is after that run.
    call is made, no `classifier_predictions` row is written (a relabeled row keeps its era's
    source), and no article becomes `deduplicated`. The script sets no status.
 5. **One pass, ending without an id list.** The cohort is derived again on each invocation. Every
-   outcome but a transient failure or a raised exception leaves it: an LLM-decided outcome writes
-   judgments (D038), a reply the labeler could not use is `failed`, and a skip still unjudged gets
-   `skipped_at` past the bound. The bound for U and J is the one the first `192-backfill` run
-   recorded (this invocation's start before there is one); a NULL `skipped_at` is before it, and F
-   is not time-bounded. A transient failure, or an exception `label_articles` catches while
-   processing the article (#222), keeps its status and is retried by the next invocation. A call
-   that fails with no reply for a reason that is not transient (a revoked key, credit used up)
-   keeps the status too (`label_articles(keep_status_without_reply=True)`), since writing `failed`
-   would take the article out of the cohort and the FP export for good; that, or an exception
-   that is not transient, stops the invocation after its batch. Each batch is decided again by
-   `backfill_arm` just before it is labeled, with the same cutoff and bound, and a row whose arm,
-   status or reason changed is dropped and recorded, so a human's move during the run is not
-   overwritten. The report lists every row still unjudged, split into those skipped again (not
-   retried) and those not yet relabeled (retried).
+   outcome but a transient failure, a call that failed with no reply, or a raised exception leaves
+   it: an LLM-decided outcome writes judgments (D038), a reply the labeler could not use is
+   `failed`, and a skip still unjudged gets `skipped_at` past the bound. The bound for U and J is
+   the one the first `192-backfill` run recorded (this invocation's start before there is one); a
+   NULL `skipped_at` is before it, and F is not time-bounded. A transient failure, or an exception
+   `label_articles` catches while processing the article (#222), keeps its status and is retried by
+   the next invocation. A call that fails with no reply for a reason that is not transient (a
+   revoked key, credit used up) keeps the status too
+   (`label_articles(keep_status_without_reply=True)`), since writing `failed` would take the
+   article out of the cohort and the FP export for good; that, or an exception that is not
+   transient, stops the invocation after its batch. Each batch is decided again by `backfill_arm`
+   just before it is labeled, with the same cutoff and bound, and a row whose arm, status or reason
+   changed is dropped and logged, and recorded in the run config when the rest of its batch still
+   runs, so a human's move during the run is not overwritten. The report lists every row still
+   unjudged, split into those skipped again (not retried) and those not yet relabeled (retried).
 6. **Runs are tagged** (`config["run_tag"] = "192-backfill"`), and `daily_labeling`'s run outcomes
    leave every tagged run out in their `WHERE` clause, finished or not. The caller's data is stored
    under `config["run_config"]`, where it cannot replace a key the pipeline writes; it records each

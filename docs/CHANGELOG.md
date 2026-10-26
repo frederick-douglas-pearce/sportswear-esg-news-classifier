@@ -27,11 +27,14 @@ the rest, the report).
   With `keep_status_without_reply`, a call that fails with no reply (a revoked key, credit used
   up) keeps the article's status instead of writing `failed`. The tag is `config["run_tag"]`, and
   the caller's data is under `config["run_config"]`. A call whose article then raises is counted in
-  the run's tokens.
-- **One pass.** Every outcome but a transient failure or a raised exception leaves the cohort; a
-  skip still unjudged is dated past the bound (recorded by the first tagged run) and not retried.
-  An error that is not transient stops the invocation after its batch. The report lists every row
-  still unjudged, split by whether the next invocation retries it.
+  the run's tokens. A reply whose parse raised is `failed` with its tokens and stop reason, for
+  every caller of `label_article`: daily runs record its cost, and the contrastive eval counts it
+  as a parse failure and in its spend.
+- **One pass.** Every outcome but a transient failure, a call that failed with no reply, or a
+  raised exception leaves the cohort; a skip still unjudged is dated past the bound (recorded by
+  the first tagged run) and not retried. An error that is not transient stops the invocation after
+  its batch. The report lists every row still unjudged, split by whether the next invocation
+  retries it.
 - **Records and refusals.** Each run records its articles' status, reason and arm from before the
   relabel. Before any call the script refuses a labeler it cannot build, a prompt fallback, a
   non-production version, a production entry with no `model_recommendations` model or
