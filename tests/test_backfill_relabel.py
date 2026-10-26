@@ -761,6 +761,17 @@ class TestSpendOf:
         assert spend.usd == pytest.approx(0.75)
         assert [w for _, w in spend.unfinished] == [0.5]
 
+    def test_tagged_runs_are_read_in_start_order(self):
+        # The bound is the first tagged run's, so the order is the query's, not the heap's
+        from sqlalchemy.dialects import postgresql
+        from sqlalchemy.orm import Query, Session
+
+        queries = []
+        with patch.object(Query, "all", lambda query: queries.append(query) or []):
+            script.tagged_runs(Session())
+        sql = " ".join(str(queries[0].statement.compile(dialect=postgresql.dialect())).split())
+        assert sql.endswith("ORDER BY labeling_runs.started_at")
+
 
 # --- against PostgreSQL -----------------------------------------------------------------------
 
