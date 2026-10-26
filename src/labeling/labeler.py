@@ -338,6 +338,7 @@ class ArticleLabeler:
             )
 
         # Call Claude API with retry
+        reply = None
         try:
             reply = self._call_api_with_retry(user_prompt, system_prompt)
             self.total_input_tokens += reply.input_tokens
@@ -402,10 +403,15 @@ class ArticleLabeler:
         except Exception as e:
             error_type, error_msg = classify_api_error(e)
             logger.error(f"[{error_type}] Labeling failed: {error_msg}")
+            # An exception after the call returned is a reply that could not be used:
+            # its usage was billed and its stop_reason says a reply came back
             return LabelingResult(
                 success=False,
                 error=error_msg,
                 error_type=error_type,
+                input_tokens=reply.input_tokens if reply else 0,
+                output_tokens=reply.output_tokens if reply else 0,
+                stop_reason=reply.stop_reason if reply else None,
                 model=self.model,
                 prompt_version=self.prompt_version,
                 prompt_system_hash=self.prompt_system_hash,

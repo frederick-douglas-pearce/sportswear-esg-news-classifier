@@ -78,10 +78,10 @@ JUDGED = dict(labeling_error=models.SKIP_NO_ESG_CATEGORIES, source=LLM, skipped_
 
 class TestBackfillArm:
     @pytest.mark.parametrize("reason", sorted(provenance.LLM_REACHABLE_UNJUDGED_REASONS))
-    def test_unjudged_skip_at_a_reason_a_reply_writes(self, reason):
+    def test_unjudged_skip_at_a_reason_a_reply_writes_or_wrote(self, reason):
         assert decide(labeling_error=reason) == BackfillDecision(ARM_UNJUDGED)
 
-    def test_the_reachable_reasons_are_the_unjudged_ones_a_reply_writes(self):
+    def test_the_reachable_reasons_are_the_unjudged_ones_a_reply_writes_or_wrote(self):
         assert provenance.LLM_REACHABLE_UNJUDGED_REASONS == {
             models.SKIP_NO_ESG_CONTENT, models.SKIP_NO_SPORTSWEAR_BRAND, models.SKIP_INCOMPLETE_JUDGMENT,
         }
@@ -344,8 +344,8 @@ class TestRecheckBatch:
 
 
 class TestOnePassEnds:
-    """A pass ends because every outcome but a transient failure or a raised exception leaves
-    the cohort."""
+    """A pass ends because every outcome but a transient failure, a call that failed with no
+    reply, or a raised exception leaves the cohort."""
 
     def test_only_the_transient_row_is_selected_again(self):
         ids = {k: str(uuid4()) for k in ("labeled", "judged", "unjudged", "negative", "failed", "transient")}

@@ -1285,3 +1285,22 @@ class TestKeepStatusWithoutReply:
         assert stats.articles_left_non_transient == 1
         recorded = database.complete_labeling_run.call_args.args
         assert recorded[6:9] == (2, 2000, 400)  # llm_calls, input and output tokens
+
+    def test_a_reply_whose_parse_raises_is_failed_and_its_tokens_recorded(self):
+        """A reply came back, so the article is not kept as one with no reply, and the call is billed."""
+        from src.labeling.labeler import ArticleLabeler
+
+        response = MagicMock()
+        response.content = [MagicMock(type="text", text="{}")]
+        response.stop_reason, response.stop_details = "end_turn", None
+        response.usage.input_tokens, response.usage.output_tokens = 1000, 200
+        client = MagicMock()
+        client.messages.create.return_value = response
+        with patch("src.labeling.labeler.Anthropic", return_value=client):
+            labeler = ArticleLabeler(api_key="test-key", model="claude-haiku-5-5")
+        with patch.object(labeler, "_parse_response", side_effect=TypeError("unexpected shape")):
+            stats, database = self._run(labeler, [self._article()], keep_status_without_reply=True)
+        assert [c.args[2] for c in database.update_article_labeling_status.call_args_list] == ["failed"]
+        assert (stats.articles_failed, stats.articles_left_pending, stats.articles_left_non_transient) == (1, 0, 0)
+        assert (stats.input_tokens, stats.output_tokens) == (1000, 200)
+        assert database.complete_labeling_run.call_args.args[6:9] == (1, 1000, 200)

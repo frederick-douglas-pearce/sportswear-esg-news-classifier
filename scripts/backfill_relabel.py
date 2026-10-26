@@ -16,10 +16,10 @@ Runs are tagged ``192-backfill`` (``daily_labeling``'s run outcomes leave tagged
 LLM analysis samples articles by ``labeled_at``/``skipped_at``, so it includes relabeled ones
 while the backfill runs), and each run's config records every article's status, reason and arm
 from before the relabel. The cohort is derived again on each invocation: an article whose call
-failed transiently, or whose processing raised, is still in it, and every other outcome leaves
-it. A call that fails with no reply for a reason that is not transient (a revoked key, credit
-used up) keeps the article's status, and so does an exception that is not transient; either
-stops the invocation after its batch.
+failed transiently or with no reply, or whose processing raised, is still in it, and every other
+outcome leaves it. A call that fails with no reply for a reason that is not transient (a revoked
+key, credit used up) keeps the article's status rather than writing ``failed``, and either that
+or an exception that is not transient stops the invocation after its batch.
 
 Run one invocation at a time: nothing locks the cohort, so a second one would pay again for the
 same articles (the cap still holds, since it counts the other's unfinished runs).
