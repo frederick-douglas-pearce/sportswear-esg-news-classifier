@@ -114,6 +114,8 @@ class TestBackfillArm:
             "Fixed: Anta brand was a Santa substring",
             "Asics: other_entity: not this article's brand",
             "Puma - the animal",
+            "Puma",  # the first part is a sent brand, with no ": " after it
+            "Puma; Nike: the swoosh",
         ],
     )
     def test_a_negative_whose_reason_is_not_a_replys_form_is_a_possible_hand_move(self, reason):
@@ -447,6 +449,11 @@ class TestSharedLabelerHelpers:
     LABELER = dict(loaded_prompt=object(), prompt_version="v1.12.0", model="claude-haiku-5-5",
                    effort="medium", max_tokens=8000)
 
+    def test_a_labeler_with_no_loaded_prompt_is_refused_whatever_version_it_reports(self):
+        labeler = MagicMock(**{**self.LABELER, "loaded_prompt": None})
+        with pytest.raises(LabelerMismatchError, match="v1.12.0"):
+            check_labeler(labeler, "v1.12.0", model="claude-haiku-5-5", effort="medium")
+
     def test_max_tokens_is_checked_when_given(self):
         labeler = MagicMock(**{**self.LABELER, "max_tokens": 4000})
         with pytest.raises(LabelerMismatchError, match="max_tokens"):
@@ -594,8 +601,10 @@ class TestScriptRefusals:
             self.assert_refused(env)
         env.build_labeler.assert_not_called()
 
-    def test_a_registry_entry_without_recommendations(self, env):
-        env.manager.get_version_info.return_value = {}
+    @pytest.mark.parametrize("missing", [None, "model", "max_tokens"])
+    def test_a_registry_entry_without_recommendations(self, env, missing):
+        recs = {} if missing is None else {k: v for k, v in RECS.items() if k != missing}
+        env.manager.get_version_info.return_value = {"model_recommendations": recs}
         self.assert_refused(env)
 
     def test_the_labeler_is_built_for_the_production_version(self, env):
@@ -664,6 +673,12 @@ class TestScriptRun:
         assert env.ids[1] not in first["run_config"]["prior"]
         assert first["run_config"]["batch_worst_case_usd"] == pytest.approx(0.3)
 
+    def test_an_empty_cohort_has_nothing_to_relabel(self, env, capsys):
+        env.cohort.selected[ARM_UNJUDGED] = []
+        assert script.main(["--max-cost", "100"]) == script.EXIT_DONE
+        env.pipeline_cls.assert_not_called()
+        assert "Nothing to relabel" in capsys.readouterr().out
+
     def test_a_batch_the_recheck_empties_is_not_run(self, env):
         env.recheck.side_effect = lambda session, cohort, ids: ([], {i: "changed" for i in ids})
         assert script.main(["--max-cost", "100"]) == script.EXIT_DONE
@@ -705,6 +720,13 @@ class TestScriptRun:
         # batches of 5 at 0.1 each: the second would bring the worst case to 1.0
         assert script.main(["--max-cost", "0.9", "--batch-size", "5"]) == script.EXIT_STOPPED_AT_CAP
         assert env.label_articles.call_count == 1
+
+    def test_the_first_batch_over_the_cap_at_its_recheck_is_a_refusal(self, env):
+        """Another invocation's spend can grow between main's check and the first batch."""
+        env.tagged_runs.side_effect = [[], [tagged_run(cost=0.5)]]
+        # main sees 0 + 1.0 <= 1.2; the first batch sees 0.5 + 1.0
+        assert script.main(["--max-cost", "1.2"]) == script.EXIT_REFUSED
+        env.label_articles.assert_not_called()
 
     def test_finished_runs_count_at_their_recorded_cost(self, env):
         runs = []
@@ -900,6 +922,15 @@ class TestAgainstPostgres:
             left = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=AFTER)
             retried = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=BEFORE)
             unjudged = ["skipped", models.SKIP_NO_ESG_CONTENT, ARM_UNJUDGED]
+            # Inserted before the run that started first, so the order is the query's. It records
+            # u again with other values (moved by hand between invocations): u's first record wins
+            unfinished = self._run(
+                session, created, prompt_version=version, started_at=AFTER,
+                config={"run_tag": script.RUN_TAG, "run_config": {
+                    "batch_worst_case_usd": 0.75, "bound": BOUND.isoformat(),
+                    "prior": {str(u.id): ["false_positive", LLM_FP_REASON, ARM_FALSE_POSITIVE]},
+                }},
+            )
             tagged = self._run(
                 session, created, prompt_version=version, started_at=BOUND, completed_at=AFTER,
                 llm_calls_made=2, estimated_cost_usd=0.5,
@@ -907,12 +938,6 @@ class TestAgainstPostgres:
                     "batch_worst_case_usd": 1.0, "bound": BOUND.isoformat(),
                     "prior": {str(u.id): unjudged, str(left.id): unjudged, str(retried.id): unjudged,
                               str(f.id): ["false_positive", LLM_FP_REASON, ARM_FALSE_POSITIVE]},
-                }},
-            )
-            unfinished = self._run(
-                session, created, prompt_version=version, started_at=AFTER,
-                config={"run_tag": script.RUN_TAG, "run_config": {
-                    "batch_worst_case_usd": 0.75, "bound": BOUND.isoformat(),
                 }},
             )
             session.add(models.BrandJudgment(

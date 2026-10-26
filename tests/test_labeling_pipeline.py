@@ -1248,6 +1248,17 @@ class TestKeepStatusWithoutReply:
         stats, _ = self._run(labeler, [self._article()], keep_status_without_reply=True)
         assert stats.articles_left_non_transient == 0
 
+    def test_a_transient_exception_is_not_counted_as_not_transient(self):
+        from anthropic import APITimeoutError
+        from httpx import Request
+
+        labeler = self._labeler(None)
+        labeler.model, labeler.effort = "claude-haiku-5-5", "medium"
+        labeler.label_article.side_effect = APITimeoutError(request=Request("POST", "https://api.anthropic.com"))
+        stats, _ = self._run(labeler, [self._article()], keep_status_without_reply=True)
+        assert stats.errors_by_type == {"timeout": 1}
+        assert (stats.articles_left_pending, stats.articles_left_non_transient) == (1, 0)
+
     def test_an_exception_after_a_billed_call_counts_its_tokens(self):
         """The call's result is lost when processing raises, so its tokens come from the labeler."""
 
