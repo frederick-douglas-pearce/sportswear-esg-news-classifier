@@ -12,10 +12,12 @@ from scripts import backfill_relabel as script
 from scripts import export_training_data as export_script
 from src.data_collection import models, provenance
 from src.data_collection.provenance import (
+    ARM_FAILED,
     ARM_FALSE_POSITIVE,
     ARM_JUDGED_SKIP,
     ARM_UNJUDGED,
     EXCLUDED_DETERMINISTIC,
+    EXCLUDED_FAILED_IN_BACKFILL,
     EXCLUDED_HAS_JUDGMENTS,
     EXCLUDED_HUMAN,
     EXCLUDED_HUMAN_LABELS,
@@ -37,6 +39,7 @@ from src.data_collection.provenance import (
     backfill_arm,
     build_backfill_cohort,
     derive_label_source,
+    tried_reasons,
 )
 from src.labeling.labeler import LabelerMismatchError, check_labeler, prompt_input_chars
 
@@ -50,6 +53,7 @@ LLM_FP_REASON = "Puma: other_entity: Puma here is the animal"
 FP_SKIP_REASON = "Likely false positive (low risk): probability 0.120 < threshold 0.53"
 RULED_FP = next(i for i, s in HUMAN_RULINGS.items() if s == "false_positive")
 RULED_SKIPPED = next(i for i, s in HUMAN_RULINGS.items() if s == "skipped")
+AUTH_ERROR = "API authentication failed: Error code: 401 - invalid x-api-key"
 EVERY_SKIP_REASON = sorted(models.UNJUDGED_SKIP_REASONS | models.JUDGED_SKIP_REASONS)
 
 
@@ -74,6 +78,7 @@ def decide(**overrides) -> BackfillDecision:
 
 FP = dict(labeling_status="false_positive", labeling_error=LLM_FP_REASON, source=LLM, skipped_at=None)
 JUDGED = dict(labeling_error=models.SKIP_NO_ESG_CATEGORIES, source=LLM, skipped_at=BETWEEN)
+FAILED = dict(labeling_status="failed", labeling_error=AUTH_ERROR, source=None, skipped_at=None)
 
 
 class TestBackfillArm:
@@ -199,7 +204,7 @@ class TestBackfillArm:
         assert decide(**{**JUDGED, "skipped_at": naive}).arm == ARM_JUDGED_SKIP
         assert decide(**{**JUDGED, "skipped_at": naive - timedelta(seconds=1)}) == NOT_A_CANDIDATE
 
-    @pytest.mark.parametrize("status", ["labeled", "failed", "pending", "deduplicated"])
+    @pytest.mark.parametrize("status", ["labeled", "pending", "deduplicated", "unlabelable"])
     def test_other_statuses_are_not_candidates(self, status):
         assert decide(labeling_status=status, source=LLM) == NOT_A_CANDIDATE
 
@@ -216,12 +221,13 @@ class TestBackfillArm:
             # a manual mark, or a ruling still in force, derives as human
             dict(**{**FP, "source": HUMAN}),
             dict(source=HUMAN),
+            dict(article_id=RULED_FP, **FAILED),
         ],
     )
     def test_human_ruled_rows_are_left_out_whatever_their_status(self, row):
         assert decide(**row) == BackfillDecision(None, EXCLUDED_HUMAN)
 
-    @pytest.mark.parametrize("arm_row", [{}, FP, JUDGED])
+    @pytest.mark.parametrize("arm_row", [{}, FP, JUDGED, FAILED])
     def test_each_arm_needs_no_human_label_brands_content_and_no_judgment(self, arm_row):
         assert decide(**arm_row, human_labels=True).excluded == EXCLUDED_HUMAN_LABELS
         assert decide(**arm_row, brands=[]).excluded == EXCLUDED_NO_BRANDS
@@ -241,6 +247,28 @@ class TestBackfillArm:
         """A false_positive write records no timestamp, so a stale skipped_at decides nothing."""
         assert decide(**{**FP, "skipped_at": AFTER}).arm == ARM_FALSE_POSITIVE
 
+    @pytest.mark.parametrize("reason", [AUTH_ERROR, "Failed to parse LLM response", None])
+    def test_a_failed_row_whatever_its_error(self, reason):
+        assert decide(**{**FAILED, "labeling_error": reason}) == BackfillDecision(ARM_FAILED)
+
+    def test_a_failed_row_is_not_time_bounded(self):
+        assert decide(**{**FAILED, "skipped_at": AFTER}).arm == ARM_FAILED
+
+    def test_a_failed_row_a_tagged_run_failed_with_another_reason_is_not_retried(self):
+        assert decide(**FAILED, tried_reason=models.SKIP_NO_ESG_CONTENT) == BackfillDecision(
+            None, EXCLUDED_FAILED_IN_BACKFILL
+        )
+        assert decide(**FAILED, tried_reason="Bad request (400): credit balance is too low").excluded == (
+            EXCLUDED_FAILED_IN_BACKFILL
+        )
+
+    def test_a_failed_row_whose_status_a_tagged_run_kept_is_retried(self):
+        assert decide(**FAILED, tried_reason=AUTH_ERROR) == BackfillDecision(ARM_FAILED)
+
+    @pytest.mark.parametrize("arm_row", [{}, FP, JUDGED])
+    def test_a_tried_reason_decides_nothing_outside_arm_x(self, arm_row):
+        assert decide(**arm_row, tried_reason="something else").arm is not None
+
 
 def row(status="skipped", reason=models.SKIP_NO_ESG_CONTENT, *, article_id=None, fp_action=None,
         fp_skip_reason=None, skipped_at=BEFORE, created_at=BEFORE, brands=("Puma",), chars=500):
@@ -258,7 +286,7 @@ def row(status="skipped", reason=models.SKIP_NO_ESG_CONTENT, *, article_id=None,
     )
 
 
-def cohort_of(rows, judged=(), human_labeled=(), labeled=(), bound=BOUND):
+def cohort_of(rows, judged=(), human_labeled=(), labeled=(), bound=BOUND, tried=None):
     return build_backfill_cohort(
         sorted(rows, key=lambda r: r.article_id),
         judged_ids=set(judged),
@@ -266,7 +294,13 @@ def cohort_of(rows, judged=(), human_labeled=(), labeled=(), bound=BOUND):
         label_ids=set(labeled),
         judged_skip_cutoff=CUTOFF,
         bound=bound,
+        tried=tried,
     )
+
+
+def tried_after(cohort):
+    """What the tagged runs of a pass over the cohort record: each article's prior reason."""
+    return tried_reasons([{"run_config": {"prior": cohort.prior}}])
 
 
 class TestBuildBackfillCohort:
@@ -309,6 +343,24 @@ class TestBuildBackfillCohort:
         # the human-labeled article is not selected, so only f_pre counts
         assert cohort.stale_labels == 1
 
+    def test_failed_rows_are_arm_x_with_no_label_source(self):
+        long_error = "Bad request (400): Error code: 400 - " + "x" * 80
+        failed = [row("failed", AUTH_ERROR, skipped_at=None), row("failed", long_error, skipped_at=None)]
+        with patch.object(provenance, "derive_label_source", wraps=derive_label_source) as derive:
+            cohort = cohort_of(failed)
+        derive.assert_not_called()
+        assert cohort.selected[ARM_FAILED] == sorted(r.article_id for r in failed)
+        assert cohort.ids == cohort.selected[ARM_FAILED]
+        assert cohort.prior[failed[0].article_id] == ["failed", AUTH_ERROR, ARM_FAILED]
+        assert cohort.by_reason == {
+            (ARM_FAILED, AUTH_ERROR[: provenance.HAND_MOVE_REASON_CHARS]): 1,
+            (ARM_FAILED, long_error[: provenance.HAND_MOVE_REASON_CHARS]): 1,
+        }
+
+    def test_arm_x_comes_last(self):
+        u, x = row(), row("failed", AUTH_ERROR, skipped_at=None)
+        assert cohort_of([x, u]).ids == [u.article_id, x.article_id]
+
     def test_hand_move_reasons_are_tallied_by_their_start(self):
         long = "Fixed: " + "x" * 80
         cohort = cohort_of([row("false_positive", long, skipped_at=None) for _ in range(2)])
@@ -330,7 +382,7 @@ class TestRecheckBatch:
         with patch.object(provenance, "_cohort_from_db", return_value=fresh_cohort) as read:
             kept, dropped = provenance.recheck_backfill_batch(MagicMock(), cohort, cohort.ids)
         assert read.call_args.kwargs == {
-            "judged_skip_cutoff": CUTOFF, "bound": BOUND, "ids": cohort.ids,
+            "judged_skip_cutoff": CUTOFF, "bound": BOUND, "tried": {}, "ids": cohort.ids,
         }
         assert kept == [same]
         assert dropped == {moved: EXCLUDED_POSSIBLE_HAND_MOVE, reviewed: EXCLUDED_HUMAN_LABELS, gone: "changed"}
@@ -373,9 +425,37 @@ class TestOnePassEnds:
             before[-1],
         ]
         judged = [ids["labeled"], ids["judged"], ids["negative"]]
-        assert cohort_of(after, judged=judged).ids == [ids["transient"]]
+        tried = tried_after(first)
+        assert cohort_of(after, judged=judged, tried=tried).ids == [ids["transient"]]
         # The bound is what lets the still-unjudged row go: measured from a later start, it returns
-        assert ids["unjudged"] in cohort_of(after, judged=judged, bound=AFTER + timedelta(hours=1)).ids
+        later = cohort_of(after, judged=judged, bound=AFTER + timedelta(hours=1), tried=tried)
+        assert ids["unjudged"] in later.ids
+        # and the tagged runs' record is what lets the row they failed go
+        assert ids["failed"] in cohort_of(after, judged=judged).ids
+
+    def test_only_the_arm_x_row_whose_status_was_kept_is_selected_again(self):
+        ids = {k: str(uuid4()) for k in ("judged", "unusable", "kept")}
+        first = cohort_of([row("failed", AUTH_ERROR, article_id=i, skipped_at=None) for i in ids.values()])
+        assert sorted(first.ids) == sorted(ids.values())
+        after = [
+            row("false_positive", "Puma: other_entity: the animal", article_id=ids["judged"], skipped_at=None),
+            row("failed", "Failed to parse LLM response", article_id=ids["unusable"], skipped_at=None),
+            row("failed", AUTH_ERROR, article_id=ids["kept"], skipped_at=None),
+        ]
+        second = cohort_of(after, judged=[ids["judged"]], tried=tried_after(first))
+        assert second.ids == [ids["kept"]]
+        assert second.left_out[ids["unusable"]] == EXCLUDED_FAILED_IN_BACKFILL
+        assert second.left_out[ids["judged"]] == EXCLUDED_HAS_JUDGMENTS
+
+    def test_tried_reasons_keeps_each_articles_first_record(self):
+        a, b = str(uuid4()), str(uuid4())
+        configs = [
+            None,
+            {"run_tag": "192-backfill"},
+            {"run_config": {"prior": {a: ["failed", AUTH_ERROR, ARM_FAILED]}}},
+            {"run_config": {"prior": {a: ["failed", "later", ARM_FAILED], b: ["skipped", None, ARM_UNJUDGED]}}},
+        ]
+        assert tried_reasons(configs) == {a: AUTH_ERROR, b: None}
 
     def test_backfill_outcomes_derive_as_their_new_source(self):
         """No FP prediction is written, so a row keeps its era's source (D039 point 4)."""
@@ -544,7 +624,7 @@ def env():
                       side_effect=lambda session, cohort, ids: (list(ids), {})) as m.recheck, \
          patch.object(script, "backfill_report", return_value={
              "runs": 0, "transitions": {}, "content_types": {}, "failed_by_arm": {},
-             "unjudged_left_out": [], "unjudged_retried": [],
+             "unjudged_left_out": [], "unjudged_retried": [], "failed_retried": [],
          }), \
          patch.object(script, "LabelingPipeline") as m.pipeline_cls:
         m.label_articles = m.pipeline_cls.return_value.label_articles
@@ -742,7 +822,14 @@ class TestScriptRun:
         later = tagged_run(cost=0.0, started_at=AFTER, bound=AFTER)
         env.tagged_runs.return_value = [first, later]
         script.main(["--dry-run"])
-        assert env.select.call_args.kwargs == {"judged_skip_cutoff": CUTOFF, "bound": BOUND}
+        assert env.select.call_args.kwargs == {"judged_skip_cutoff": CUTOFF, "bound": BOUND, "tried": {}}
+
+    def test_the_cohort_is_selected_with_what_the_tagged_runs_tried(self, env):
+        run = tagged_run(cost=0.1)
+        run.config["run_config"]["prior"] = {"a": ["failed", AUTH_ERROR, ARM_FAILED]}
+        env.tagged_runs.return_value = [run]
+        assert script.main(["--dry-run"]) == script.EXIT_DONE
+        assert env.select.call_args.kwargs["tried"] == {"a": AUTH_ERROR}
 
     def test_without_a_tagged_run_the_bound_is_this_invocations_start(self, env):
         before = datetime.now(UTC)
@@ -852,13 +939,18 @@ class TestAgainstPostgres:
             short = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, content="short")
             late = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=AFTER)
             unscraped = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, scrape="failed")
+            x = self._article(session, created, "failed", AUTH_ERROR)
+            failed_in_backfill = self._article(session, created, "failed", "Failed to parse LLM response")
             session.commit()
 
-            cohort = provenance.select_backfill_cohort(session, judged_skip_cutoff=CUTOFF, bound=BOUND)
+            cohort = provenance.select_backfill_cohort(
+                session, judged_skip_cutoff=CUTOFF, bound=BOUND,
+                tried={str(failed_in_backfill.id): models.SKIP_NO_ESG_CONTENT},
+            )
             ids = {name: str(a.id) for name, a in {
                 "u": u, "f": f, "j": j, "stale": stale, "hand": hand, "from_failed": from_failed,
                 "judged": judged, "reviewed": reviewed, "short": short, "late": late,
-                "unscraped": unscraped,
+                "unscraped": unscraped, "x": x, "failed_in_backfill": failed_in_backfill,
             }.items()}
 
         ours = {str(i) for i in created.articles}
@@ -867,9 +959,12 @@ class TestAgainstPostgres:
             ARM_UNJUDGED: [ids["u"]],
             ARM_FALSE_POSITIVE: sorted([ids["f"], ids["stale"]]),
             ARM_JUDGED_SKIP: [ids["j"]],
+            ARM_FAILED: [ids["x"]],
         }
-        for name in ("hand", "from_failed", "judged", "reviewed", "short", "late", "unscraped"):
+        for name in ("hand", "from_failed", "judged", "reviewed", "short", "late", "unscraped",
+                     "failed_in_backfill"):
             assert ids[name] not in cohort.prior
+        assert cohort.left_out[ids["failed_in_backfill"]] == EXCLUDED_FAILED_IN_BACKFILL
         assert {cohort.left_out[ids[n]] for n in ("hand", "from_failed")} == {EXCLUDED_POSSIBLE_HAND_MOVE}
         assert cohort.left_out[ids["judged"]] == EXCLUDED_HAS_JUDGMENTS
         assert cohort.left_out[ids["reviewed"]] == EXCLUDED_HUMAN_LABELS
@@ -932,7 +1027,10 @@ class TestAgainstPostgres:
             f = self._article(session, created, "failed", "Model declined the request: x")
             left = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=AFTER)
             retried = self._article(session, created, "skipped", models.SKIP_NO_ESG_CONTENT, skipped_at=BEFORE)
+            x_kept = self._article(session, created, "failed", AUTH_ERROR)
+            x_unusable = self._article(session, created, "failed", "Failed to parse LLM response")
             unjudged = ["skipped", models.SKIP_NO_ESG_CONTENT, ARM_UNJUDGED]
+            failed = ["failed", AUTH_ERROR, ARM_FAILED]
             # Inserted before the run that started first, so the order is the query's. It records
             # u again with other values (moved by hand between invocations): u's first record wins
             unfinished = self._run(
@@ -948,7 +1046,8 @@ class TestAgainstPostgres:
                 config={"model": model, "run_tag": script.RUN_TAG, "run_config": {
                     "batch_worst_case_usd": 1.0, "bound": BOUND.isoformat(),
                     "prior": {str(u.id): unjudged, str(left.id): unjudged, str(retried.id): unjudged,
-                              str(f.id): ["false_positive", LLM_FP_REASON, ARM_FALSE_POSITIVE]},
+                              str(f.id): ["false_positive", LLM_FP_REASON, ARM_FALSE_POSITIVE],
+                              str(x_kept.id): failed, str(x_unusable.id): failed},
                 }},
             )
             session.add(models.BrandJudgment(
@@ -966,13 +1065,16 @@ class TestAgainstPostgres:
 
             with patch.object(script, "tagged_runs", return_value=runs):
                 report = script.backfill_report(session)
-            left_id, retried_id = str(left.id), str(retried.id)
+            left_id, retried_id, x_kept_id = str(left.id), str(retried.id), str(x_kept.id)
         assert report["transitions"] == {
             (ARM_UNJUDGED, "skipped", "skipped", PRE_CLASSIFIER): 1,
             (ARM_UNJUDGED, "skipped", "skipped", UNJUDGED): 2,
             (ARM_FALSE_POSITIVE, "false_positive", "failed", None): 1,
+            (ARM_FAILED, "failed", "failed", None): 2,
         }
-        assert report["failed_by_arm"] == {ARM_FALSE_POSITIVE: 1}
+        # the row the run failed counts as failed; the row whose status it kept is retried
+        assert report["failed_by_arm"] == {ARM_FALSE_POSITIVE: 1, ARM_FAILED: 1}
+        assert report["failed_retried"] == [x_kept_id]
         assert report["content_types"] == {"product": 1}
         assert report["unjudged_left_out"] == [left_id]
         assert report["unjudged_retried"] == [retried_id]

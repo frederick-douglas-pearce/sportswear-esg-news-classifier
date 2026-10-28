@@ -26,7 +26,7 @@ An owner-attested cutoff ("articles before this date were reviewed") is delibera
 It is weaker than a per-article human ruling; the export offers it as a separate opt-in tier.
 
 The FP export's query (``fp_export_query``) lives here, and so does the #192 backfill's cohort
-(``select_backfill_cohort``, D039), which reads the same rows and sources.
+(``select_backfill_cohort``, D039), which reads the same rows and sources, plus ``failed`` rows.
 """
 
 from collections import Counter
@@ -68,6 +68,8 @@ EXCLUDED_BY_DEFAULT = frozenset({FP_CLASSIFIER, UNJUDGED, RULE})
 # Labeling statuses the FP export reads, and the class each one is.
 FP_POSITIVE_STATUSES = ("labeled", "skipped")
 FP_NEGATIVE_STATUS = "false_positive"
+# Not an FP training label: the backfill's arm X reads it (#86)
+FAILED_STATUS = "failed"
 
 # Human rulings with no audit log yet: article id -> the status the human ruled. A ruling counts
 # only while the article still has that status, so a later relabel is not called human.
@@ -212,36 +214,42 @@ def latest_prediction_subquery(classifier_type: str):
     )
 
 
-def fp_export_query(session, since: datetime | None = None):
+def fp_export_query(session, since: datetime | None = None, *, also_failed: bool = False):
     """Articles the FP export reads, each with its latest FP prediction, in a fixed order.
 
     The order matters: the training splits use ``train_test_split(random_state=42)``, which
     assigns rows by position, so an unordered query would split the same data differently. The
-    #192 backfill selects its cohort from the same rows (``select_backfill_cohort``).
+    #192 backfill selects its cohort from the same rows (``select_backfill_cohort``), plus the
+    ``failed`` rows (``also_failed``), which the export never reads.
     """
     base_filter = Article.scrape_status == "success"
     if since:
         base_filter = and_(base_filter, Article.created_at >= since)
+    statuses = [*FP_POSITIVE_STATUSES, FP_NEGATIVE_STATUS, *([FAILED_STATUS] if also_failed else [])]
 
     latest = latest_prediction_subquery("fp")
     return (
         session.query(Article, latest.c.action_taken, latest.c.skip_reason, latest.c.created_at)
         .outerjoin(latest, latest.c.article_id == Article.id)
         .filter(base_filter)
-        .filter(Article.labeling_status.in_([*FP_POSITIVE_STATUSES, FP_NEGATIVE_STATUS]))
+        .filter(Article.labeling_status.in_(statuses))
         .order_by(Article.id)
     )
 
 
 # --- The #192 backfill cohort (D039) ---------------------------------------------------------
 # Rows whose stored status the LLM decided, or could decide, without a stored judgment for each
-# brand: the backfill relabels them under the production prompt. One arm table, so a later
-# backfill (#224) adds an arm rather than a second selection.
+# brand, and failed calls the LLM never judged (#86): the backfill relabels them under the
+# production prompt. One arm table, so a later backfill (#224) adds an arm rather than a second
+# selection.
 
 ARM_UNJUDGED = "unjudged"  # U: a skip that never judged sportswear status, at a reason a reply writes
 ARM_FALSE_POSITIVE = "false_positive"  # F: an LLM-decided negative
 ARM_JUDGED_SKIP = "judged_skip"  # J: a judged skip written since the production version's first run
-BACKFILL_ARMS = (ARM_UNJUDGED, ARM_FALSE_POSITIVE, ARM_JUDGED_SKIP)
+ARM_FAILED = "failed"  # X: a failed call the LLM never judged, most with no reply at all (#86)
+BACKFILL_ARMS = (ARM_UNJUDGED, ARM_FALSE_POSITIVE, ARM_JUDGED_SKIP, ARM_FAILED)
+# Statuses an arm reads
+BACKFILL_STATUSES = ("skipped", FP_NEGATIVE_STATUS, FAILED_STATUS)
 
 # Unjudged reasons a reply writes, or wrote (SKIP_NO_SPORTSWEAR_BRAND: the pipeline before #200).
 # The other two are written before any LLM call, and a relabel would write them again.
@@ -257,6 +265,7 @@ EXCLUDED_INSUFFICIENT_CONTENT = "insufficient_content"
 EXCLUDED_HAS_JUDGMENTS = "has_judgments"  # a brand_judgments row exists: relabeled, or decided since D038
 EXCLUDED_SKIPPED_AFTER_BOUND = "skipped_after_bound"  # skipped at or after the bound (U and J only)
 EXCLUDED_NOT_SCRAPED = "not_scraped"  # at a cohort status, but outside the FP export's scrape filter
+EXCLUDED_FAILED_IN_BACKFILL = "failed_in_backfill"  # a tagged run wrote this failure (X only)
 
 
 def _brand_key(name: str) -> str:
@@ -311,21 +320,27 @@ def backfill_arm(
     human_labels: bool,
     judged_skip_cutoff: datetime | None,
     bound: datetime,
+    tried_reason: str | None = None,
 ) -> BackfillDecision:
     """The backfill arm of one row, or why it is left out (D039).
 
-    ``source`` is ``derive_label_source``'s, with ``human_verified`` from ``human_verified_ids``.
+    ``source`` is ``derive_label_source``'s, with ``human_verified`` from ``human_verified_ids``
+    (None for a ``failed`` row, which has no FP training label).
     ``judged_skip_cutoff`` is the production prompt version's first run (None: no J arm).
     ``bound`` ends the pass: a U or J row skipped at or after it is not selected, so a row the
     backfill skipped again, and a skip the cron writes meanwhile, are not retried. A NULL
     ``skipped_at`` is before every bound.
+    ``tried_reason`` is the reason a tagged run recorded for the row before relabeling it (None:
+    no tagged run has). It ends arm X's pass, since a ``failed`` write records no timestamp.
     """
-    if labeling_status not in ("skipped", FP_NEGATIVE_STATUS):
+    if labeling_status not in BACKFILL_STATUSES:
         return NOT_A_CANDIDATE
     if source == HUMAN or article_id in HUMAN_RULINGS:
         return BackfillDecision(None, EXCLUDED_HUMAN)
 
-    if labeling_status == "skipped" and source == UNJUDGED:
+    if labeling_status == FAILED_STATUS:
+        arm = ARM_FAILED
+    elif labeling_status == "skipped" and source == UNJUDGED:
         if labeling_error not in LLM_REACHABLE_UNJUDGED_REASONS:
             return BackfillDecision(None, EXCLUDED_DETERMINISTIC)
         arm = ARM_UNJUDGED
@@ -355,8 +370,17 @@ def backfill_arm(
         return BackfillDecision(None, EXCLUDED_HAS_JUDGMENTS)
     # F needs no bound: every reply writes judgments or another status, and a row with no reply
     # keeps its status to be retried
-    if arm != ARM_FALSE_POSITIVE and skipped_at is not None and as_utc(skipped_at) >= as_utc(bound):
+    if (
+        arm in (ARM_UNJUDGED, ARM_JUDGED_SKIP)
+        and skipped_at is not None
+        and as_utc(skipped_at) >= as_utc(bound)
+    ):
         return BackfillDecision(None, EXCLUDED_SKIPPED_AFTER_BOUND)
+    # X: a row a tagged run tried that is now failed with another reason was failed by that run
+    # (a reply the labeler could not use), so it is not retried. A row whose status the run kept
+    # (a transient failure, a call with no reply, an exception) still has the recorded reason.
+    if arm == ARM_FAILED and tried_reason is not None and labeling_error != tried_reason:
+        return BackfillDecision(None, EXCLUDED_FAILED_IN_BACKFILL)
     return BackfillDecision(arm)
 
 
@@ -390,7 +414,8 @@ class BackfillCohort:
     prior: dict[str, list[str | None]] = field(default_factory=dict)
     content_chars: dict[str, int] = field(default_factory=dict)
     excluded: Counter = field(default_factory=Counter)
-    # (arm, stored reason) for U and J; (arm, label source) for F, whose reasons are free text
+    # (arm, stored reason) for U and J; (arm, label source) for F, whose reasons are free text;
+    # (arm, the reason's first HAND_MOVE_REASON_CHARS) for X, whose errors carry request ids
     by_reason: Counter = field(default_factory=Counter)
     # (arm, UTC year-month the article was collected)
     by_month: Counter = field(default_factory=Counter)
@@ -401,6 +426,8 @@ class BackfillCohort:
     # the first HAND_MOVE_REASON_CHARS of each possible hand move's reason, so the owner sees what
     # the fail-closed test left out
     hand_move_reasons: Counter = field(default_factory=Counter)
+    # article id -> the reason the first tagged run to relabel it recorded (arm X's pass end)
+    tried: dict[str, str | None] = field(default_factory=dict)
 
     @property
     def ids(self) -> list[str]:
@@ -416,15 +443,18 @@ def build_backfill_cohort(
     label_ids: set[str],
     judged_skip_cutoff: datetime | None,
     bound: datetime,
+    tried: dict[str, str | None] | None = None,
 ) -> BackfillCohort:
-    """The cohort over rows in id order; ``backfill_arm`` decides each row."""
+    """The cohort over rows in id order; ``backfill_arm`` decides each row. ``tried`` is
+    ``tried_reasons`` over the tagged runs so far."""
     rows = list(rows)
-    cohort = BackfillCohort(judged_skip_cutoff=judged_skip_cutoff, bound=bound)
+    tried = dict(tried or {})
+    cohort = BackfillCohort(judged_skip_cutoff=judged_skip_cutoff, bound=bound, tried=tried)
     verified = human_verified_ids((r.article_id, r.labeling_status) for r in rows)
     for r in rows:
-        if r.labeling_status not in ("skipped", FP_NEGATIVE_STATUS):
+        if r.labeling_status not in BACKFILL_STATUSES:
             continue
-        source = derive_label_source(
+        source = None if r.labeling_status == FAILED_STATUS else derive_label_source(
             r.labeling_status,
             r.labeling_error,
             r.fp_action,
@@ -444,6 +474,7 @@ def build_backfill_cohort(
             human_labels=r.article_id in human_label_ids,
             judged_skip_cutoff=judged_skip_cutoff,
             bound=bound,
+            tried_reason=tried.get(r.article_id),
         )
         if decision.excluded:
             cohort.excluded[decision.excluded] += 1
@@ -456,7 +487,13 @@ def build_backfill_cohort(
         cohort.selected[arm].append(r.article_id)
         cohort.prior[r.article_id] = [r.labeling_status, r.labeling_error, arm]
         cohort.content_chars[r.article_id] = r.content_chars
-        cohort.by_reason[(arm, source if arm == ARM_FALSE_POSITIVE else r.labeling_error)] += 1
+        if arm == ARM_FALSE_POSITIVE:
+            reason_key = source
+        elif arm == ARM_FAILED:
+            reason_key = (r.labeling_error or "")[:HAND_MOVE_REASON_CHARS]
+        else:
+            reason_key = r.labeling_error
+        cohort.by_reason[(arm, reason_key)] += 1
         month = as_utc(r.created_at).strftime("%Y-%m") if r.created_at else "unknown"
         cohort.by_month[(arm, month)] += 1
         if r.article_id in label_ids:
@@ -464,15 +501,32 @@ def build_backfill_cohort(
     return cohort
 
 
+def tried_reasons(run_configs: Iterable[dict | None]) -> dict[str, str | None]:
+    """Article id -> the reason the first tagged run to relabel it recorded, from the runs'
+    configs in start order. A retried article's first record is its reason from before the
+    backfill."""
+    tried: dict[str, str | None] = {}
+    for config in run_configs:
+        for article_id, values in (((config or {}).get("run_config") or {}).get("prior") or {}).items():
+            tried.setdefault(article_id, values[1])
+    return tried
+
+
 def _cohort_from_db(
-    session, *, judged_skip_cutoff: datetime | None, bound: datetime, ids: list[str] | None = None
+    session,
+    *,
+    judged_skip_cutoff: datetime | None,
+    bound: datetime,
+    tried: dict[str, str | None] | None = None,
+    ids: list[str] | None = None,
 ) -> BackfillCohort:
-    """``build_backfill_cohort`` over the FP export's rows, or only those with the given ids."""
+    """``build_backfill_cohort`` over the FP export's rows and the ``failed`` rows, or only
+    those with the given ids."""
     # Imported here: the labeling package's __init__ loads the whole pipeline, and the FP export
     # imports this module without needing it
     from src.labeling.article_input import article_content, has_sufficient_content
 
-    query = fp_export_query(session).options(
+    query = fp_export_query(session, also_failed=True).options(
         load_only(
             Article.id,
             Article.labeling_status,
@@ -518,19 +572,25 @@ def _cohort_from_db(
         label_ids=article_ids(BrandLabel.article_id),
         judged_skip_cutoff=judged_skip_cutoff,
         bound=bound,
+        tried=tried,
     )
 
 
 def select_backfill_cohort(
-    session, *, judged_skip_cutoff: datetime | None, bound: datetime
+    session,
+    *,
+    judged_skip_cutoff: datetime | None,
+    bound: datetime,
+    tried: dict[str, str | None] | None = None,
 ) -> BackfillCohort:
-    """The #192 backfill cohort from the database (D039): the FP export's rows, decided by
-    ``backfill_arm``, plus a count of rows at a cohort status outside the export's scrape filter.
+    """The #192 backfill cohort from the database (D039): the FP export's rows and the
+    ``failed`` rows (#86), decided by ``backfill_arm``, plus a count of rows at a cohort status
+    outside the export's scrape filter.
     """
-    cohort = _cohort_from_db(session, judged_skip_cutoff=judged_skip_cutoff, bound=bound)
+    cohort = _cohort_from_db(session, judged_skip_cutoff=judged_skip_cutoff, bound=bound, tried=tried)
     not_scraped = (
         session.query(func.count(Article.id))
-        .filter(Article.labeling_status.in_(["skipped", FP_NEGATIVE_STATUS]))
+        .filter(Article.labeling_status.in_(BACKFILL_STATUSES))
         .filter(or_(Article.scrape_status.is_(None), Article.scrape_status != "success"))
         .scalar()
     )
@@ -550,7 +610,11 @@ def recheck_backfill_batch(
     overwritten. Why: its exclusion, or ``changed``.
     """
     fresh = _cohort_from_db(
-        session, judged_skip_cutoff=cohort.judged_skip_cutoff, bound=cohort.bound, ids=ids
+        session,
+        judged_skip_cutoff=cohort.judged_skip_cutoff,
+        bound=cohort.bound,
+        tried=cohort.tried,
+        ids=ids,
     )
     kept, dropped = [], {}
     for i in ids:

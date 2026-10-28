@@ -3,8 +3,9 @@
 
 The cohort (``select_backfill_cohort`` in ``src/data_collection/provenance.py``) is the rows whose
 status the labeling LLM decided, or could decide, with no stored judgment for each brand:
-unjudged skips at a reason a reply writes, LLM-decided ``false_positive`` rows, and judged skips
-written since the production version's first run. Human-ruled rows, rows a human may have moved
+unjudged skips at a reason a reply writes, LLM-decided ``false_positive`` rows, judged skips
+written since the production version's first run, and ``failed`` rows the LLM never judged (#86).
+Human-ruled rows, rows a human may have moved
 by hand, and rows with human-reviewed labels are left out. Each article goes through
 ``LabelingPipeline.label_articles`` with the FP pre-filter, novelty scoring and title
 deduplication bypassed, so ``dispose_reply`` decides the status of every reply; a reply the
@@ -300,7 +301,8 @@ def run_batches(
 
 def backfill_report(session, tag: str = RUN_TAG) -> dict:
     """What the tagged runs did: prior to current status and source by arm, content types, failed
-    outcomes by arm, and the articles still unjudged, split by whether a later pass retries them."""
+    outcomes by arm, and the articles still unjudged or still failed, split by whether a later
+    pass retries them."""
     runs = tagged_runs(session, tag)
     prior: dict[str, list] = {}
     for run in runs:
@@ -316,6 +318,8 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
         "unjudged_left_out": [],
         # never relabeled (a transient failure, an exception, a batch cut off): retried
         "unjudged_retried": [],
+        # arm X rows still failed with the reason recorded before the relabel: retried
+        "failed_retried": [],
     }
     if not prior:
         return report
@@ -331,7 +335,7 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
         .all()
     )
     for article_id, status, reason, skipped_at, fp_action, fp_skip_reason in rows:
-        old_status, _, arm = prior[str(article_id)]
+        old_status, old_reason, arm = prior[str(article_id)]
         if status in (*provenance.FP_POSITIVE_STATUSES, provenance.FP_NEGATIVE_STATUS):
             source = provenance.derive_label_source(
                 status, reason, fp_action, fp_skip_reason, article_id=article_id
@@ -339,8 +343,11 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
         else:
             source = None
         report["transitions"][(arm, old_status, status, source)] += 1
-        if status == "failed":
-            report["failed_by_arm"][arm] += 1
+        if status == provenance.FAILED_STATUS:
+            if arm == provenance.ARM_FAILED and reason == old_reason:
+                report["failed_retried"].append(str(article_id))
+            else:
+                report["failed_by_arm"][arm] += 1
         if source == provenance.UNJUDGED:
             retried = skipped_at is None or provenance.as_utc(skipped_at) < provenance.as_utc(bound)
             report["unjudged_retried" if retried else "unjudged_left_out"].append(str(article_id))
@@ -370,6 +377,9 @@ def print_report(report: dict) -> None:
         print(f"  {article_id}")
     print(f"Still unjudged, not yet relabeled (retried next invocation): {len(report['unjudged_retried'])}")
     for article_id in report["unjudged_retried"]:
+        print(f"  {article_id}")
+    print(f"Still failed, not yet relabeled (retried next invocation): {len(report['failed_retried'])}")
+    for article_id in report["failed_retried"]:
         print(f"  {article_id}")
 
 
@@ -417,7 +427,12 @@ def main(argv: list[str] | None = None) -> int:
             # The bound the first tagged run recorded, so the cohort does not move between
             # invocations; this invocation's start when there is none
             bound = stored_bound(runs) or started
-            cohort = provenance.select_backfill_cohort(session, judged_skip_cutoff=cutoff, bound=bound)
+            cohort = provenance.select_backfill_cohort(
+                session,
+                judged_skip_cutoff=cutoff,
+                bound=bound,
+                tried=provenance.tried_reasons(run.config for run in runs),
+            )
             observed = observed_cost_per_call(session, settings)
             spend = spend_of(runs)
     except (BackfillRefused, LabelerMismatchError) as e:

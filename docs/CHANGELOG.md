@@ -4,6 +4,27 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-27: The backfill relabels `failed` rows (#86)
+
+**`scripts/backfill_relabel.py` takes a fourth arm, `failed`: rows whose labeling call failed, so
+the LLM never judged them.** This is #86's one-off backfill (option 3), run under the production
+prompt before the promotional API credits expire on 2026-11-02. On 2026-10-27 the arm selects 119
+rows. 117 failed with no reply: a credit balance too low or a usage limit (98, 2025-12 to
+2026-04) and an invalid key (19, 2026-04-16 to 17). The other 2 failed to parse.
+- **Cohort.** `fp_export_query(also_failed=True)` adds `failed` rows for the backfill only; the FP
+  export's rows are unchanged. A `failed` row has no label source. It is left out when it is human,
+  has a human-reviewed label, has no brands, has too little content, or has a judgment.
+- **One pass.** A failed write records no timestamp, so the bound cannot end arm X's pass.
+  `tried_reasons` reads the reason each article had before the first tagged run that relabeled it.
+  A `failed` row whose reason differs from that one was failed by the backfill itself (an unusable
+  reply), so it is left out (`failed_in_backfill`). A row whose status a run kept still has its
+  recorded reason, so it is retried. The same rule makes an arm U, F or J row that the backfill
+  wrote `failed` leave the cohort.
+- **Report.** `failed` rows whose status a run kept are listed as retried, apart from the `failed`
+  outcomes by arm.
+- **Not changed.** The cron still selects only `pending`, and a new failure is still terminal. The
+  retry policy (#86 options 1 and 2) is still open.
+
 ### 2026-10-25: Backfill tooling for #192's relabel (#192 PR3, D039)
 
 **`scripts/backfill_relabel.py` relabels, under the production prompt, the rows whose status the
