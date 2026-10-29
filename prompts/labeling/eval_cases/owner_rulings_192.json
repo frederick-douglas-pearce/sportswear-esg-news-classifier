@@ -1,0 +1,753 @@
+{
+  "description": "Named cases for #230 (D040): the owner's policy rulings from #192's backfill review (2026-10-27 to 28), one case per source row, with the owner's ruling as 'expected' (the human-reviewed brand_labels where they exist). Strata name the ruling ('ruling_1' to 'ruling_9'). 'expected.categories' rules the applicable categories and 'expected.sentiments' their sentiments; ruling 3's sentiments are not ruled (copies of one story may differ) and are read by hand. The ruling 7 and ruling 8 cases test whether the model follows a named instruction (Allbirds and Spyder are named in v1.13.0), not whether it generalizes. 'allbirds_reference' cases are Allbirds named only as a reference point, ruled false_positive in the same review. The ruling 9 case is gray: reported, not scored. On 7de2362b the expected brand is Converse; Nike's labels are read by hand. 'title' is the stored title, kept so the prompt-example check runs without the database; the harness reads the title from the article.",
+  "cases": [
+    {
+      "article_id": "20dc82b4-23db-4514-a79c-b559f7a3cb40",
+      "title": "Nike-owned Converse to cut jobs as it reorganizes its teams",
+      "strata": [
+        "ruling_1"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; v1.12.0-era LLM gave Digital 0 for Nike's distribution-center cuts",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": [
+          "social"
+        ],
+        "sentiments": {
+          "social": -1
+        }
+      }
+    },
+    {
+      "article_id": "7de2362b-3ba8-4dcd-8bdd-694ac3b16d68",
+      "title": "Nike Could Be One Step Closer to a Converse Sale , According to Filing",
+      "strata": [
+        "ruling_1"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; the LLM gave Converse no label; Nike's labels (owner: Social -1) are read by hand",
+      "expected": {
+        "brand": "Converse",
+        "is_sportswear_brand": true,
+        "categories": [
+          "social"
+        ],
+        "sentiments": {
+          "social": -1
+        }
+      }
+    },
+    {
+      "article_id": "26daa219-5160-430d-af73-c3f831c10393",
+      "title": "Frasers Group builds 6 % stake in Puma as Mike Ashley targets turnaround at struggling sportswear brand",
+      "strata": [
+        "ruling_1",
+        "ruling_3"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; also ruling 3: Frasers and Anta stakes are Governance, owner ruled 0",
+      "expected": {
+        "brand": "Puma",
+        "is_sportswear_brand": true,
+        "categories": [
+          "social",
+          "governance"
+        ],
+        "sentiments": {
+          "social": -1,
+          "governance": 0
+        }
+      }
+    },
+    {
+      "article_id": "a70e6272-10e9-4077-b5b5-7877440e3fae",
+      "title": "Nike Stock Sinks as Sales Pressure Mounts. Its $2.5 Billion Cost-Cutting Is Set To Bring More Layoffs.",
+      "strata": [
+        "ruling_1"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; Nike's 2027 layoffs, reported with stock figures",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": [
+          "social"
+        ],
+        "sentiments": {
+          "social": -1
+        }
+      }
+    },
+    {
+      "article_id": "de4528d7-280c-4924-853d-95d341be2022",
+      "title": "Berger Montague PC Investigates Under Armour, Inc’s Board of Directors for Breach of Fiduciary Duty (NYSE: UA)",
+      "strata": [
+        "ruling_2"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 2: a data breach is Digital -1, and Governance when the subject is board oversight; the LLM gave Governance only",
+      "expected": {
+        "brand": "Under Armour",
+        "is_sportswear_brand": true,
+        "categories": [
+          "governance",
+          "digital_transformation"
+        ],
+        "sentiments": {
+          "governance": -1,
+          "digital_transformation": -1
+        }
+      }
+    },
+    {
+      "article_id": "7445aca0-ec06-4d6d-9933-c935944e09be",
+      "title": "Adidas Boosts AI Innovation and Digital Transformation as Revenue Nears €25 bn",
+      "strata": [
+        "ruling_2",
+        "ruling_5"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 2 (positive side: digital infrastructure is Digital +1) and ruling 5 (one sentence on compliance tracking does not carry Social)",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": [
+          "digital_transformation"
+        ],
+        "sentiments": {
+          "digital_transformation": 1
+        }
+      }
+    },
+    {
+      "article_id": "c7c4d22d-cb03-4b73-a5ff-05d06d402917",
+      "title": "Lululemon names former Nike executive Heidi ONeill as new CEO",
+      "strata": [
+        "ruling_3"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": true,
+        "categories": [
+          "governance"
+        ]
+      }
+    },
+    {
+      "article_id": "cc938f72-aa6e-4ef1-aa88-48d226fc8e4e",
+      "title": "Lululemon says it picks former Nike executive as next CEO",
+      "strata": [
+        "ruling_3"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": true,
+        "categories": [
+          "governance"
+        ]
+      }
+    },
+    {
+      "article_id": "925b8c15-2b18-4a3b-a0b2-ab9977402bab",
+      "title": "Lululemon names Nike vet Heidi ONeill CEO",
+      "strata": [
+        "ruling_3"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": true,
+        "categories": [
+          "governance"
+        ]
+      }
+    },
+    {
+      "article_id": "6fbe3e58-45b2-4152-9d7a-3e45f4191612",
+      "title": "Lululemon names former Nike executive ONeill its next CEO",
+      "strata": [
+        "ruling_3"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": true,
+        "categories": [
+          "governance"
+        ]
+      }
+    },
+    {
+      "article_id": "af3a3548-2e10-4786-a35e-1de14fd598d8",
+      "title": "Brooks Running Delivers 14% Growth in First Half of 2026",
+      "strata": [
+        "ruling_4",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 4: sponsorships, brand events and celebrity pieces that only mention a program are not Social; Brooks' own youth meet, owner ruled a judged skip",
+      "expected": {
+        "brand": "Brooks Running",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "159cd128-f30a-412f-b94f-cead2fd15739",
+      "title": "Adidas Extends Footwear, Apparel Sponsorship of Overtime Elite High School Basketball Leagues",
+      "strata": [
+        "ruling_4",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 4: sponsorships, brand events and celebrity pieces that only mention a program are not Social; Adidas' Overtime Elite sponsorship, owner ruled a judged skip",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "4ea31398-2774-49f9-a38d-a97404ece306",
+      "title": "Patrick Mahomes' Wife Brittany Stuns While Modeling Form-Fitting Adidas Wear",
+      "strata": [
+        "ruling_4",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 4: sponsorships, brand events and celebrity pieces that only mention a program are not Social; celebrity piece, owner ruled a judged skip",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "367e1182-7d43-412e-ba93-a99067732e4c",
+      "title": "Brittany Mahomes, wife of Kansas City Chiefs quarterback Patrick Mahomes, poses for a photo .",
+      "strata": [
+        "ruling_4",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 4: sponsorships, brand events and celebrity pieces that only mention a program are not Social; celebrity piece, owner ruled a judged skip",
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "7aabb199-fae3-4a94-abbd-e009761b8e93",
+      "title": "Athleta Hosts International Women Day Cold Plunge Supporting Bay Area Girl Programs",
+      "strata": [
+        "ruling_4"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 4: a quantified donation to a third-party charity is Social +1",
+      "expected": {
+        "brand": "Athleta",
+        "is_sportswear_brand": true,
+        "categories": [
+          "social"
+        ],
+        "sentiments": {
+          "social": 1
+        }
+      }
+    },
+    {
+      "article_id": "baf68bd8-87d4-440e-89ee-596f00c2a475",
+      "title": "Sumitomo Mitsui Trust Group Inc . Sells 5 , 059 Shares of lululemon athletica inc . $LULU",
+      "strata": [
+        "ruling_6"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; summary reports PFAS",
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "95da51df-784e-4da4-99fa-5870bf260f13",
+      "title": "Murphy Pohlad Asset Management LLC Buys Shares of 47,635 NIKE, Inc. $NKE",
+      "strata": [
+        "ruling_6"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; summary reports an emissions vote",
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "4eff3601-7090-4373-aa0e-45660875e428",
+      "title": "Deckers Outdoor Sees Unusually High Options Volume (NYSE:DECK)",
+      "strata": [
+        "ruling_6"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; the LLM judged it financial",
+      "expected": {
+        "brand": "Deckers",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "e3cdcf6b-555c-4728-a09c-d7222bef76fe",
+      "title": "Columbia Sportswear (NASDAQ:COLM) Issues Q1 2026 Earnings Guidance",
+      "strata": [
+        "ruling_6"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; the LLM judged it financial",
+      "expected": {
+        "brand": "Columbia Sportswear",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "edfc9c0e-01c2-425c-8aef-f5fa4b06340e",
+      "title": "Columbia Sportswear (NASDAQ:COLM) Shares Gap Up After Earnings Beat",
+      "strata": [
+        "ruling_6"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; the LLM judged it financial",
+      "expected": {
+        "brand": "Columbia Sportswear",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "b896fbc9-cb88-4346-8be4-80d6e35faf14",
+      "title": "AI name changes serve as a reliable red flag for short-selling funds",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "d2873bbb-5c94-4343-ad8d-4feb83f36c59",
+      "title": "Allbirds as 2026 approaches : a pivot from footwear to AI infrastructure",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "c4f1b564-34ac-4c85-96d5-8763fb142146",
+      "title": "Allbirds becomes Smartbird , names new CEO amid AI shift",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "dec87309-3c65-4723-ae6b-2a461570aee6",
+      "title": "Allbirds cools off as investors gauge if an AI press release is worth a +500 % pop ( BIRD : NASDAQ ) ",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "60e1f528-2205-4922-8ca1-702f40751f9c",
+      "title": "Allbirds Is Now an AI Company , and That Should Strike Fear Into Anyone Investing in Its Competition",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "f36b2b69-7e4d-4173-a804-94a297954747",
+      "title": "Allbirds Is Reborn as Smartbird",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "56129a38-cb46-484f-8ecd-544d4fe6182d",
+      "title": "Allbirds Meme - Stock Price Spike on AI Pivot Could Inspire Copycats",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "26b954bc-b255-49e8-a11f-a95c02eb22b2",
+      "title": "Allbirds pivots to AI compute after $50M financing deal",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "0fe46113-cc55-457b-84d9-4b9aa043279c",
+      "title": "Allbirds Rebrands as Smartbird and Enters AI Computing Infrastructure Market",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "666c3315-b36e-47eb-a338-ef62813b17e1",
+      "title": "Allbirds Rebrands as Smartbird , Completes IP Sale to American Exchange",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "76204e0b-c8f1-46a2-b00d-921badaa3d76",
+      "title": "Allbirds renames itself Smartbird in AI pivot",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "6a0cbd28-e9c8-403b-8b0f-a5fe966a00f5",
+      "title": "Allbirds says it ditching footwear and pivoting to become an AI company",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "85aa4594-49eb-4323-b2fe-dcef4466c42b",
+      "title": "Allbirds secures $50M financing facility to expand to AI compute infrastructure ( BIRD : NASDAQ ) ",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "ab9b199b-5bd7-4dc1-afd4-72826255d424",
+      "title": "Allbirds shares soar 580 % after pivot from shoes to AI",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "e64d0acb-8746-478f-8b16-b24c7bfea396",
+      "title": "Allbirds stock takes flight after announcing new CEO and name change",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "8f5ec01f-1e3c-486e-9f93-d98f8bdd36e6",
+      "title": "Allbirds to exit footwear , shift focus to AI infrastructure",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "42c53c5c-1903-45ca-9349-73c9d252c213",
+      "title": "Engadget Podcast : Allbirds goes from shoes to AI",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "2bfbbec7-7f4b-41ae-86a8-f71dc883e668",
+      "title": "Is Allbirds Stock a Buy , Sell , or Hold Amid Major Pivot to NewBird AI ? ",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "c0090f16-211c-46cf-b6e3-d71a2a5e0fad",
+      "title": "Shoe Brand Allbirds Announces Pivot to AI ; Stock Rises Almost 600 Percent",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "8185da14-35cd-45a4-8ec5-554d8be16524",
+      "title": "The CEO of Allbirds’ new AI biz has a plan, but no employees",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "4b6a517e-8ea5-416a-9cee-c01553bdc621",
+      "title": "The familiar strategy behind the Allbirds AI pivot",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "8e5eafab-599c-4955-a074-3cb56aef968a",
+      "title": "Why Allbirds is shifting from shoes to AI - RetailDetail EU",
+      "strata": [
+        "ruling_7"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "e611a949-b58e-4f65-a771-ec6c29a10e10",
+      "title": "Shuffle Board: Former Allbirds CEO Heads to Sorel, and Kohl’s Appoints a New COO",
+      "strata": [
+        "allbirds_reference"
+      ],
+      "repeats": 1,
+      "note": "#192 review: Allbirds named only as a reference point (former CEO, another company's rebrand, the meme-stock season); owner ruled false_positive; not ruling 7 itself",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "6e18e893-6f0e-4d3e-a052-f271b220fdc7",
+      "title": "Myseum takes flight after Allbirds in fresh AI rebrand wave",
+      "strata": [
+        "allbirds_reference"
+      ],
+      "repeats": 1,
+      "note": "#192 review: Allbirds named only as a reference point (former CEO, another company's rebrand, the meme-stock season); owner ruled false_positive; not ruling 7 itself",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "fd48d9a7-4993-4651-b770-5d232e70d918",
+      "title": "The Next Allbirds : Myseum Stock Soars in Newest Pivot to AI",
+      "strata": [
+        "allbirds_reference"
+      ],
+      "repeats": 1,
+      "note": "#192 review: Allbirds named only as a reference point (former CEO, another company's rebrand, the meme-stock season); owner ruled false_positive; not ruling 7 itself",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "2f503c9b-356d-45e7-a77b-d1b2f33f8af8",
+      "title": "It not just Allbirds - another meme - stock season is on the horizon , Vanda Research says",
+      "strata": [
+        "allbirds_reference"
+      ],
+      "repeats": 1,
+      "note": "#192 review: Allbirds named only as a reference point (former CEO, another company's rebrand, the meme-stock season); owner ruled false_positive; not ruling 7 itself",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "8d1baf3f-afc0-41b0-aa18-77bb9026371b",
+      "title": "Allbirds, Once Valued at $4B, Sells for Just $39M",
+      "strata": [
+        "ruling_7",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; the sale of the shoe business is sportswear business news, owner ruled a judged skip",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "d8f3fe26-b6c4-430d-b77a-912794ff5b30",
+      "title": "Allbirds , once worth $7b , sells its assets for $68m , will wind down",
+      "strata": [
+        "ruling_7",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; the sale of the shoe business is sportswear business news, owner ruled a judged skip",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "23d82ecf-d2f7-4ae4-9b8a-93abda969b11",
+      "title": "American Exchange Is Set to Acquire Allbirds for $39 Million . Here What Investors Need to Know . ",
+      "strata": [
+        "ruling_7",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; the sale of the shoe business is sportswear business news, owner ruled a judged skip",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "27c31c75-d82e-4293-bb69-d10bde2d16d1",
+      "title": "Why Allbirds is eating crow",
+      "strata": [
+        "ruling_7",
+        "no_category"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 7: a former brand that left the category is another entity; the sale of the shoe business is sportswear business news, owner ruled a judged skip",
+      "expected": {
+        "brand": "Allbirds",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "e781a7b3-4b00-4cef-981a-369817b48b58",
+      "title": "What Do Bikers Really Think About The Can - Am Spyder ? ",
+      "strata": [
+        "ruling_8"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 8: the Can-Am Spyder is another company's product line, other_entity even in a review; the LLM called it product",
+      "expected": {
+        "brand": "Spyder",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "a4fd8d33-925f-4982-9bd8-21b3d537842d",
+      "title": "Puma Marketing Strategy",
+      "strata": [
+        "ruling_9"
+      ],
+      "repeats": 1,
+      "note": "#230 ruling 9 (gray, the owner called it borderline): an evergreen marketing explainer on a blog is not news; reported, not scored"
+    }
+  ]
+}

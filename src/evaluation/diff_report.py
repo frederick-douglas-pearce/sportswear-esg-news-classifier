@@ -124,6 +124,8 @@ def render_markdown(summary: dict, config: dict) -> str:
         ],
         f"- Prompt hashes: baseline {config['baseline_hashes']}, candidate {config['candidate_hashes']}",
         f"- Articles: {summary['articles']}; stopped early by the spend cap: {config['stopped_early']}",
+        f"- Case files: {', '.join(config.get('case_files') or []) or 'none'}",
+        f"- Commit: {config.get('commit') or 'unknown'}",
         "",
         "## By version",
         "",
@@ -150,12 +152,13 @@ def render_markdown(summary: dict, config: dict) -> str:
         "",
         _noise_floor(summary["noise_floor"]),
         "",
-        "## Product-article accuracy (cases with an expected side, prompt-example cases excluded)",
+        "## Sportswear-verdict accuracy (cases with an expected side, prompt-example cases excluded)",
         "",
         "Per case: correct if every reply that judged the brand is on the expected side; not judged "
         "if no reply judged it (v1.10.0 leaves out a sportswear brand with no ESG content). The rate "
-        "is over judged cases. Only the candidate's prompt examples are excluded, so baseline "
-        "accuracy is context only.",
+        "is over judged cases, from every case file. Only the candidate's prompt examples are "
+        "excluded, so baseline accuracy is context only. The table splits it by stratum, so the "
+        "Product-article cases (`product_*`) read apart from the others.",
         "",
     ]
     for side in ("baseline", "candidate"):
@@ -167,9 +170,27 @@ def render_markdown(summary: dict, config: dict) -> str:
         )
         for miss in acc["misses"]:
             lines.append(
-                f"  - wrong: {miss['title']} (`{miss['article_id']}`), {miss['brand']} expected "
-                f"{miss['expected']}, got {miss['got']}. {miss['explanation']}"
+                f"  - wrong: {miss['title']} (`{miss['article_id']}`) [{', '.join(miss['strata'])}], "
+                f"{miss['brand']} expected {miss['expected']}, got {miss['got']}. {miss['explanation']}"
             )
+        for item in acc["not_judged_cases"]:
+            lines.append(
+                f"  - not judged: {item['title']} (`{item['article_id']}`) "
+                f"[{', '.join(item['strata'])}], {item['brand']} expected {item['expected']}"
+            )
+    lines += ["", "| Stratum | Baseline correct / wrong / not judged | Candidate correct / wrong / not judged |", "|---|---|---|"]
+    strata = sorted(
+        set(summary["product_accuracy"]["baseline"]["by_stratum"])
+        | set(summary["product_accuracy"]["candidate"]["by_stratum"])
+    )
+    for stratum in strata:
+        cells = []
+        for side in ("baseline", "candidate"):
+            n = summary["product_accuracy"][side]["by_stratum"].get(
+                stratum, {"correct": 0, "wrong": 0, "not_judged": 0}
+            )
+            cells.append(f"{n['correct']} / {n['wrong']} / {n['not_judged']}")
+        lines.append(f"| {stratum} | {cells[0]} | {cells[1]} |")
     lines += [""]
     lines += _category_list(
         "Categories on Product, financial and no-category cases",
@@ -194,6 +215,30 @@ def render_markdown(summary: dict, config: dict) -> str:
                 f"{', '.join(miss['expected']) or 'none'}; missing {', '.join(miss['missing']) or 'none'}, "
                 f"extra {', '.join(miss['extra']) or 'none'}. {miss['explanation']}"
             )
+    lines += [
+        "",
+        "## Expected sentiments (cases that rule them)",
+        "",
+        "Per case: matched if every answered reply that kept a ruled category gives it the ruled "
+        "sentiment; not assessed if no reply kept one (the category miss is counted above).",
+        "",
+    ]
+    for side in ("baseline", "candidate"):
+        block = summary["expected_sentiments"][side]
+        lines.append(
+            f"- {side}: {block['matched']} matched, {block['mismatched']} mismatched, "
+            f"{block['not_assessed']} not assessed, of {block['cases']} cases"
+        )
+        for miss in block["misses"]:
+            got = "; ".join(
+                f"{m['category']} expected {m['expected']}, got {m['got']}" for m in miss["mismatches"]
+            )
+            lines.append(
+                f"  - {miss['title']} (`{miss['article_id']}`), {miss['brand']}: {got}. "
+                f"{miss['explanation']}"
+            )
+        for item in block["not_assessed_cases"]:
+            lines.append(f"  - not assessed: {item['title']} (`{item['article_id']}`), {item['brand']}")
     lines.append("")
     lines += _category_list(
         "Categories the content type dropped (D037 gate)",

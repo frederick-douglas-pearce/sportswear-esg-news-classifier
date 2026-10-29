@@ -8,13 +8,16 @@ written to the database. A promotion is judged against D036's criteria by a huma
 report.
 
 Articles come from any combination of:
-  --case-file      named cases (ids, repeats, an expected verdict for one brand)
+  --case-file      named cases (ids, repeats, an expected verdict for one brand, optionally its
+                   categories and their sentiments); repeat the flag to score several files
+                   in one run
   --article-ids    ad-hoc ids
   --sample-size    a seeded random sample of recent articles the labeling LLM replied on
                    (label source llm or unjudged, pre-LLM skips left out), within --since-days
   --most-brands    the articles the labeling LLM replied on with the most brands mentioned,
                    from the whole database
-  --human-rulings  the articles a human ruled on in #182 (src/data_collection/provenance.py)
+  --human-rulings  the articles a human ruled on in #182 and #192's review
+                   (HUMAN_RULINGS, src/data_collection/provenance.py)
 
 Usage:
     # Selection and worst-case cost, no API call:
@@ -26,6 +29,12 @@ Usage:
     uv run python scripts/compare_prompts.py --candidate v1.11.0 \\
         --case-file prompts/labeling/eval_cases/product_and_stability.json \\
         --sample-size 100 --most-brands 10 --human-rulings --max-cost 10
+
+    # Two case files in one run (#230):
+    uv run python scripts/compare_prompts.py --baseline v1.12.0 --candidate v1.13.0 \\
+        --case-file prompts/labeling/eval_cases/product_and_stability.json \\
+        --case-file prompts/labeling/eval_cases/owner_rulings_192.json \\
+        --sample-size 100 --most-brands 10 --human-rulings --dry-run
 
     # Two models under one prompt version (#212):
     uv run python scripts/compare_prompts.py --baseline v1.11.0 \\
@@ -41,6 +50,7 @@ import dataclasses
 import json
 import logging
 import random
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -115,10 +125,12 @@ class Spec:
 
 
 def parse_case_file(data: dict) -> dict[str, Spec]:
-    """Case-file JSON -> {article_id: Spec}. Each case needs an article_id."""
+    """Case-file JSON -> {article_id: Spec}. Each case needs an article_id, once per file."""
     specs: dict[str, Spec] = {}
     for case in data.get("cases", []):
         article_id = case["article_id"]
+        if article_id in specs:
+            raise ValueError(f"Case {article_id} appears more than once in the file")
         expected = case.get("expected")
         # Optional: the categories the brand should get, checked by the report when given
         categories = expected.get("categories") if expected else None
@@ -126,6 +138,20 @@ def parse_case_file(data: dict) -> dict[str, Spec]:
             unknown = set(categories) - set(ESG_CATEGORIES)
             if unknown:
                 raise ValueError(f"Case {article_id}: unknown expected categories {sorted(unknown)}")
+        # Optional: the sentiment of a ruled category (#230), checked by the report when given
+        sentiments = expected.get("sentiments") if expected else None
+        if sentiments is not None:
+            if categories is None:
+                raise ValueError(f"Case {article_id}: expected sentiments need expected categories")
+            unruled = set(sentiments) - set(categories)
+            if unruled:
+                raise ValueError(
+                    f"Case {article_id}: expected sentiments for categories not in expected "
+                    f"categories {sorted(unruled)}"
+                )
+            bad = {c: v for c, v in sentiments.items() if v not in (-1, 0, 1) or isinstance(v, bool)}
+            if bad:
+                raise ValueError(f"Case {article_id}: expected sentiments must be -1, 0 or 1, got {bad}")
         specs[article_id] = Spec(
             strata={CASES, *case.get("strata", [])},
             repeats=int(case.get("repeats", 1)),
@@ -133,7 +159,8 @@ def parse_case_file(data: dict) -> dict[str, Spec]:
                 Expectation(
                     expected["brand"],
                     bool(expected["is_sportswear_brand"]),
-                    tuple(categories) if categories is not None else None,
+                    tuple(sorted(categories)) if categories is not None else None,
+                    tuple(sorted(sentiments.items())) if sentiments else None,
                 )
                 if expected
                 else None
@@ -142,6 +169,59 @@ def parse_case_file(data: dict) -> dict[str, Spec]:
             prompt_example=case.get("prompt_example"),
         )
     return specs
+
+
+def merge_case_specs(specs: dict[str, Spec], incoming: dict[str, Spec], source: str) -> None:
+    """Merge one case file's specs into those already read (#230).
+
+    An article in two files keeps one expectation: the two must be equal, or one file must have
+    none. Any other difference is refused, so a run never scores a case against a ruling it did
+    not choose. Strata are joined, the larger repeat count is kept and the notes are concatenated.
+    """
+    for article_id, new in incoming.items():
+        old = specs.get(article_id)
+        if old is None:
+            specs[article_id] = new
+            continue
+        if old.expected and new.expected and old.expected != new.expected:
+            raise EvalSetupError(
+                f"Case {article_id}: {source} expects {new.expected}, an earlier case file "
+                f"expects {old.expected}"
+            )
+        if old.prompt_example and new.prompt_example and old.prompt_example != new.prompt_example:
+            raise EvalSetupError(f"Case {article_id}: {source} names a different prompt example")
+        old.strata |= new.strata
+        old.repeats = max(old.repeats, new.repeats)
+        old.expected = old.expected or new.expected
+        old.prompt_example = old.prompt_example or new.prompt_example
+        old.note = "; ".join(n for n in (old.note, new.note) if n)
+
+
+def read_case_files(paths: list[Path]) -> dict[str, Spec]:
+    """Every case file's specs, merged in the order given; a file that does not parse is refused."""
+    specs: dict[str, Spec] = {}
+    for path in paths:
+        try:
+            incoming = parse_case_file(json.loads(path.read_text()))
+        except (OSError, ValueError, KeyError) as e:
+            raise EvalSetupError(f"Case file {path}: {e}") from e
+        merge_case_specs(specs, incoming, str(path))
+    return specs
+
+
+def git_commit() -> str | None:
+    """The checked-out commit, recorded with the report so a run can be traced (#230)."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=Path(__file__).parent,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return out.stdout.strip() or None
 
 
 def merge_spec(specs: dict[str, Spec], article_id: str, stratum: str) -> None:
@@ -436,7 +516,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--baseline-effort", default=None, help="Baseline effort (default: --effort)")
     p.add_argument("--candidate-effort", default=None, help="Candidate effort (default: --effort)")
-    p.add_argument("--case-file", type=Path)
+    p.add_argument(
+        "--case-file",
+        type=Path,
+        action="append",
+        default=[],
+        help="A case file; repeat to score several in one run (an article's expectations must agree)",
+    )
     p.add_argument("--article-ids", help="Comma-separated article ids")
     p.add_argument("--sample-size", type=int, default=0)
     p.add_argument("--most-brands", type=int, default=0)
@@ -480,8 +566,8 @@ def main(argv: list[str] | None = None) -> int:
     prompt_chars = {side: prompt_input_chars(manager, v) for side, v in versions.items()}
     examples = prompt_examples(loaded[candidate].system_prompt + loaded[candidate].user_prompt)
 
-    specs = parse_case_file(json.loads(args.case_file.read_text())) if args.case_file else {}
     try:
+        specs = read_case_files(args.case_file)
         with db.get_session() as session:
             select_specs(session, args, specs)
             articles = load_articles(session, specs, baseline, sides["baseline"].model, examples)
@@ -569,7 +655,8 @@ def main(argv: list[str] | None = None) -> int:
         "sample_size": args.sample_size,
         "most_brands": args.most_brands,
         "human_rulings": args.human_rulings,
-        "case_file": str(args.case_file) if args.case_file else None,
+        "case_files": [str(p) for p in args.case_file],
+        "commit": git_commit(),
         "max_cost_usd": args.max_cost,
         "run_at": datetime.now(timezone.utc).isoformat(),
     }

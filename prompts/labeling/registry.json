@@ -184,6 +184,20 @@
         "author": "system",
         "status": "production"
       }
+    },
+    "v1.13.0": {
+      "created_at": "2026-10-29T00:00:00Z",
+      "commit_message": "State the owner's policy rulings from #192's backfill review (#230, D040)",
+      "description": "v1.12.0 with the owner's rulings from #192's backfill review stated in the system prompt (#230, D040); user prompt and reply schema unchanged. Layoffs and job cuts are Social, usually -1, including cuts made to automate or adopt AI, which are not Digital Transformation (ruling 1). A data breach or cybersecurity incident is Digital -1, and Governance when the subject is board oversight (2). An activist shareholder, a stake that concentrates ownership or a board fight is Governance even when framed as stock news, and a CEO pick made during a board fight is Governance (3). A brand-hosted one-off event, a sponsorship or a celebrity piece that only mentions a program is not Social; a quantified donation to a third-party charity is (4). A single passing sentence carries no category (5). A template stock page with an appended news summary is mention_only (6). Allbirds' AI pivot is another entity; the sale of its shoe brand is sportswear news (7). Spyder may be the Can-Am motorcycle, and another company's product line is other_entity even in a review (8). Candidate, not production: its contrastive eval against v1.12.0 is judged against D040's bar. No in-place edit yet; D036 §3's precondition (no labeling_runs or brand_labels row records v1.13.0) checked 2026-10-29.",
+      "model_recommendations": {
+        "model": "claude-haiku-5-5",
+        "max_tokens": 8000,
+        "effort": "medium"
+      },
+      "tags": {
+        "author": "system",
+        "status": "candidate"
+      }
     }
   }
 }

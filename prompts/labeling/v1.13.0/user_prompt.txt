@@ -1,0 +1,67 @@
+Analyze this news article for ESG classifications for each brand mentioned.
+
+**Article Title**: {title}
+**Publication Date**: {published_at}
+**Source**: {source_name}
+**Brands to Analyze**: {brands}
+
+**Article Content**:
+{content}
+
+---
+
+Judge EVERY brand listed in "Brands to Analyze". For each one, FIRST write `reasoning` on what the article gives that brand, THEN set its `content_type`, and only then fill in `categories`. Every listed brand appears in `brand_analyses` exactly once.
+
+Respond in the following JSON format:
+
+```json
+{{
+  "brand_analyses": [
+    {{
+      "brand": "Brand Name",
+      "reasoning": "The article reports the brand's new supplier code of conduct and an audit of its factories.",
+      "content_type": "business",
+      "categories": {{
+        "environmental": {{"applies": false, "sentiment": null, "evidence": []}},
+        "social": {{"applies": true, "sentiment": 1, "evidence": ["Direct quote from article...", "Another supporting quote..."]}},
+        "governance": {{"applies": true, "sentiment": 0, "evidence": ["Direct quote..."]}},
+        "digital_transformation": {{"applies": false, "sentiment": null, "evidence": []}}
+      }},
+      "confidence": 0.85
+    }},
+    {{
+      "brand": "Adidas",
+      "reasoning": "For Adidas, the article gives only a product name, a sale price and a link.",
+      "content_type": "retail_only",
+      "categories": {{
+        "environmental": {{"applies": false, "sentiment": null, "evidence": []}},
+        "social": {{"applies": false, "sentiment": null, "evidence": []}},
+        "governance": {{"applies": false, "sentiment": null, "evidence": []}},
+        "digital_transformation": {{"applies": false, "sentiment": null, "evidence": []}}
+      }},
+      "confidence": 0.9
+    }},
+    {{
+      "brand": "Puma",
+      "reasoning": "The article is about a puma (the wildcat), not Puma sportswear.",
+      "content_type": "other_entity",
+      "categories": {{
+        "environmental": {{"applies": false, "sentiment": null, "evidence": []}},
+        "social": {{"applies": false, "sentiment": null, "evidence": []}},
+        "governance": {{"applies": false, "sentiment": null, "evidence": []}},
+        "digital_transformation": {{"applies": false, "sentiment": null, "evidence": []}}
+      }},
+      "confidence": 0.95
+    }}
+  ],
+  "article_summary": "1-2 sentence summary of the article's main themes"
+}}
+```
+
+Important reminders:
+- `content_type` is one of `other_entity`, `mention_only`, `retail_only`, `product`, `financial`, `business`, decided by "Content Type" in your instructions. Write `reasoning` first and choose the type it supports.
+- Only a `business` brand keeps ESG categories. For every other content type, set `applies: false` for every category.
+- For a `business` brand, set `applies: true` only if the article contains clear, relevant ESG information for that category. A business article with no ESG content (a store opening, a sponsorship) gets `applies: false` for every category.
+- Sentiment must be -1, 0, or 1 when applies is true; null when applies is false. It measures the brand's conduct, not the article's stance toward the brand.
+- Evidence quotes MUST be exact text from the article
+- **CRITICAL: Every brand in "Brands to Analyze" must appear in `brand_analyses` exactly once.** Use each brand name exactly as it is written in that list. A brand mentioned only as a competitor, reference point, or context (e.g. "Nike's biggest Chinese challenger") is `mention_only`. Never leave a brand out of the reply.

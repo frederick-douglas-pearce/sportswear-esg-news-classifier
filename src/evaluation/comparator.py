@@ -85,6 +85,8 @@ class Expectation:
     is_sportswear_brand: bool
     # The applicable ESG categories the brand should get, or None when the case rules none
     categories: tuple[str, ...] | None = None
+    # (category, sentiment) pairs for ruled categories whose sentiment the case also rules (#230)
+    sentiments: tuple[tuple[str, int], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,8 @@ class ReplyRecord:
     content_types: dict[str, str] = field(default_factory=dict)
     # normalized brand -> applicable categories kept, and those the content type dropped
     categories: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # normalized brand -> {applicable category kept: its sentiment}
+    sentiments: dict[str, dict[str, int | None]] = field(default_factory=dict)
     gated: dict[str, tuple[str, ...]] = field(default_factory=dict)
     omitted: tuple[str, ...] = ()
     unset: tuple[str, ...] = ()
@@ -194,7 +198,7 @@ def record_reply(sent_brands: list[str], result: LabelingResult) -> ReplyRecord:
     # Sportswear wins over a conflicting entry, as in dispose_reply
     for analysis in disposition.sportswear:
         verdicts[normalize_brand(analysis.brand)] = True
-    explanations, content_types, categories, gated = {}, {}, {}, {}
+    explanations, content_types, categories, sentiments, gated = {}, {}, {}, {}, {}
     for analysis in analyses:
         key = normalize_brand(analysis.brand)
         text = analysis.reasoning
@@ -203,7 +207,9 @@ def record_reply(sent_brands: list[str], result: LabelingResult) -> ReplyRecord:
         explanations.setdefault(key, text)
         if analysis.content_type is not None:
             content_types.setdefault(key, analysis.content_type.value)
-        categories.setdefault(key, tuple(analysis.get_applicable_categories()))
+        applicable = analysis.get_applicable_categories()
+        categories.setdefault(key, tuple(applicable))
+        sentiments.setdefault(key, {c: analysis.categories[c].sentiment for c in applicable})
         if analysis.gated_categories:
             gated.setdefault(key, tuple(analysis.gated_categories))
     counts = Counter(normalize_brand(a.brand) for a in analyses)
@@ -216,6 +222,7 @@ def record_reply(sent_brands: list[str], result: LabelingResult) -> ReplyRecord:
         explanations=explanations,
         content_types=content_types,
         categories=categories,
+        sentiments=sentiments,
         gated=gated,
         omitted=tuple(disposition.omitted),
         unset=tuple(disposition.unset),
@@ -527,6 +534,50 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
         cases = matched + len({m["article_id"] for m in misses})
         return {"cases": cases, "matched": matched, "misses": misses}
 
+    def expected_sentiments(side: str) -> dict:
+        """Per case that rules sentiments: matched if every answered reply that kept a ruled
+        category gives it the ruled sentiment, mismatched if any gives another, and not assessed
+        if no reply kept one (that miss is counted under expected categories)."""
+        matched, mismatched, not_assessed = [], [], []
+        for r in paired:
+            exp = r.article.expected
+            if exp is None or not exp.sentiments:
+                continue
+            key = normalize_brand(exp.brand)
+            assessed, wrong = 0, []
+            for x in getattr(r, side):
+                if x.outcome == FAILED:
+                    continue
+                kept = x.sentiments.get(key, {})
+                for category, want in exp.sentiments:
+                    if category not in kept:
+                        continue
+                    assessed += 1
+                    if kept[category] != want:
+                        wrong.append({"category": category, "expected": want, "got": kept[category]})
+            entry = {**_brief(r), "brand": exp.brand, "strata": sorted(r.article.strata)}
+            if wrong:
+                mismatched.append({
+                    **entry,
+                    "mismatches": wrong,
+                    "explanation": next(
+                        (x.explanations.get(key, "") for x in getattr(r, side) if key in x.explanations),
+                        "",
+                    ),
+                })
+            elif assessed:
+                matched.append(entry)
+            else:
+                not_assessed.append(entry)
+        return {
+            "cases": len(matched) + len(mismatched) + len(not_assessed),
+            "matched": len(matched),
+            "mismatched": len(mismatched),
+            "not_assessed": len(not_assessed),
+            "misses": mismatched,
+            "not_assessed_cases": not_assessed,
+        }
+
     stability = []
     for r in paired:
         if r.article.repeats < 2:
@@ -559,6 +610,7 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
             entry = {
                 **_brief(r),
                 "brand": exp.brand,
+                "strata": sorted(r.article.strata),
                 "expected": exp.is_sportswear_brand,
                 "got": verdicts,
                 "explanation": next(
@@ -574,7 +626,14 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
         judged = len(correct) + len(wrong)
         # What answering `true` for every judged case would score: the bar a rule has to beat
         always_true = sum(1 for e in correct + wrong if e["expected"])
+        by_stratum: dict[str, dict[str, int]] = {}
+        for outcome, entries in (("correct", correct), ("wrong", wrong), ("not_judged", not_judged)):
+            for e in entries:
+                for stratum in e["strata"]:
+                    counts = by_stratum.setdefault(stratum, {"correct": 0, "wrong": 0, "not_judged": 0})
+                    counts[outcome] += 1
         return {
+            "by_stratum": dict(sorted(by_stratum.items())),
             "always_true": always_true,
             "always_true_rate": _rate(always_true, judged),
             "cases": judged + len(not_judged),
@@ -614,6 +673,10 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
         "expected_categories": {
             "baseline": expected_categories("baseline"),
             "candidate": expected_categories("candidate"),
+        },
+        "expected_sentiments": {
+            "baseline": expected_sentiments("baseline"),
+            "candidate": expected_sentiments("candidate"),
         },
         "gated_categories": {"baseline": gated("baseline"), "candidate": gated("candidate")},
         "prompt_example_cases": [

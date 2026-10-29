@@ -4,6 +4,30 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-29: Candidate prompt v1.13.0 states the owner's rulings from #192's review (#230, D040)
+
+**Candidate v1.13.0 states eight policy rulings the owner made in #192's backfill review; production
+stays v1.12.0 until its contrastive eval against v1.12.0 meets D040's bar.** Only the system prompt
+changes; the user prompt and reply schema are v1.12.0's.
+- **Rulings.** Layoffs and job cuts are Social, usually -1, automation-driven cuts included. A
+  data breach is Digital Transformation -1, and Governance when the board's oversight is the
+  subject. An activist or ownership-concentrating stake, or a board fight, is Governance. A
+  brand-hosted event, a sponsorship or a celebrity piece is not Social; a quantified charity
+  donation is. A single passing sentence carries no category. A template stock page with an
+  appended news summary is `mention_only`. Allbirds' AI pivot is another entity, and a name that
+  is another company's product line (the Can-Am Spyder) is `other_entity`. Each is placed where it
+  overrides the earlier rule it would otherwise lose to (D040 point 1).
+- **Cases.** `prompts/labeling/eval_cases/owner_rulings_192.json`: one case per source row, with
+  the owner's ruling as the expected outcome (`ruling_1` to `ruling_9` strata; ruling 9 is gray).
+- **Harness** (`scripts/compare_prompts.py`, `src/evaluation/`). `--case-file` may be repeated:
+  an article in two files must have equal expectations, or one file none, and an id twice in one
+  file is refused. A case may rule sentiments (`expected.sentiments`), reported as matched,
+  mismatched or not assessed. The accuracy section, now titled "Sportswear-verdict accuracy",
+  lists each miss's strata and counts by stratum. The report records the case files and the
+  commit. A case file that does not parse now exits 2 instead of raising.
+- **D040** fixes the promotion bar before the run, with a falsifier: if v1.12.0 already meets
+  85% of the scored ruling cases, promotion is reconsidered.
+
 ### 2026-10-28: The owner's rulings from #192's backfill review are recorded as human (#192)
 
 **`HUMAN_RULINGS` (`src/data_collection/provenance.py`) adds 86 rulings from the owner's review of

@@ -2861,3 +2861,90 @@ D038's addition is after that run.
   and recovering them is #224's.
 - Nothing locks the cohort: run one invocation at a time. A second one would pay again for the
   same articles; the cap still holds, since it counts the other's unfinished runs.
+
+## D040: The Owner's Rulings From #192's Review Are Labeling Policy, Stated in Candidate v1.13.0 and Judged Against a Bar Fixed Before Its Eval (#230)
+
+**Date:** 2026-10-29 · **Status:** accepted (architect review, 2026-10-29: approve with changes;
+the owner approved the plan on 2026-10-29 and set point 3's threshold) · **Issues:** #230, #192,
+#154, #227
+
+**Context.** The owner's review of #192's backfill (2026-10-27 to 28) made policy rulings that
+production prompt v1.12.0 does not state, or states differently (#230). Each names the articles
+it came from, and the human-reviewed `brand_labels` on them hold the owner's categories and
+sentiments. `docs/LABELING.md` has no section for category policy, and D036's criteria judge
+transitions and Product cases, not the categories and sentiments these rulings are about.
+
+**Decision.**
+1. **Rulings 1 to 8 are labeling policy**, stated in candidate prompt v1.13.0 (a copy of v1.12.0
+   whose user prompt and reply schema are unchanged):
+   - (1) layoffs and job cuts are Social, usually -1, including cuts made to automate or adopt AI,
+     which are not Digital Transformation;
+   - (2) a data breach or cybersecurity incident is Digital Transformation -1, and Governance as
+     well when the subject is the board's oversight of it;
+   - (3) an activist shareholder, a stake that concentrates ownership or a board fight is
+     Governance even when it is framed as stock news, with sentiment from the article's framing,
+     and a CEO pick made during a board fight is Governance;
+   - (4) a sponsorship, a one-off event the brand hosts (young participants included) or a
+     celebrity piece that only mentions a program is not Social, and a quantified donation to a
+     third-party charity is;
+   - (5) a single passing sentence carries no category;
+   - (6) a template stock page is `mention_only` even with an appended news summary;
+   - (7) a company that left the sportswear category is another entity in stories about its new
+     business (Allbirds' AI pivot), while the sale of its shoe brand is sportswear news;
+   - (8) a name that is another company's product line is `other_entity`, even in a review.
+
+   Ruling 9 (an evergreen marketing explainer is not news) is borderline in the owner's own words
+   and is a gray-zone case only. Each ruling is placed where it overrides the earlier rule it
+   would otherwise lose to. In particular, ruling 6 is in the "ESG content decides first"
+   paragraph and in the `financial` key test as well as in the template block, because those two
+   decide first. Allbirds and Spyder are named, as Puma and Vans are: a model cannot infer the
+   pivot from a general rule.
+2. **The cases** are `prompts/labeling/eval_cases/owner_rulings_192.json`: one per source row,
+   with the owner's ruling as the expected outcome. The Allbirds ids are those #192's 2026-10-28
+   record lists: 22 pivot rows and 4 sale rows (ruling 7), and 4 rows naming Allbirds only as a
+   reference point (`allbirds_reference`). No quoted example in the candidate prompt may match a
+   case title, since a matching case leaves the accuracy count.
+3. **The bar, fixed before the run.** v1.13.0 is promoted only if its contrastive eval against
+   v1.12.0 (same model, Haiku 5.5 at effort medium; the 63 existing cases and these cases in one
+   run) meets:
+   - D036 §2's criteria;
+   - each scored ruling case on its expected side, with its ruled categories and its ruled
+     sentiments, or the miss read and explained;
+   - no new miss on the existing cases compared with v1.12.0 in the same run;
+   - ruling 3's sentiments and ruling 9 read by hand;
+   - the dry run lists no ruling case as a prompt-example case.
+
+   **Falsifier:** if v1.12.0 already meets the expected outcome on at least 85% of the scored
+   ruling cases, the rulings are not needed in the prompt, and promotion is reconsidered rather
+   than assumed (threshold set by the owner).
+4. **Amends D036: the case-file contract.**
+   - `--case-file` may be repeated. An article in two files keeps one expectation: the two must
+     be equal, or one file must have none. Any other difference, and an id listed twice in one
+     file, is refused before the database is read.
+   - An optional `expected.sentiments` (`{category: -1|0|1}`, each category also in
+     `expected.categories`) is reported per side as matched, mismatched or not assessed (no reply
+     kept the category; that miss is counted under categories).
+   - The accuracy section is computed over every case file. It lists each miss's strata and
+     counts by stratum, so D036's per-Product-case criterion still reads the `product_*` strata.
+   - The report records the case files and the commit the run was made from. The run is made
+     from the merged commit, not from a branch, because D036 does not trust harness numbers
+     before the harness is reviewed.
+5. **Promotion is a second PR** on #230, made only on a run that meets point 3 and with the
+   owner's approval. It pins v1.13.0's hashes. No backfill relabel.
+
+**Rejected.**
+- **A second eval run per case file.** It splits the report and draws two samples.
+- **Merging the new cases into `product_and_stability.json`.** That file is about the Product
+  rule.
+- **A general former-brand rule without names.** A model cannot infer the pivot.
+- **More than one expected brand per case** (7de2362b names Nike and Converse). The case scores
+  Converse, whose label the LLM left out, and Nike's labels are read by hand.
+
+**Consequences.**
+- With no backfill, stored labels mix v1.12.0 and v1.13.0 policy. Rulings 6 and 7 move positives
+  to negatives, which is a note for #154 PR2's training data.
+- Once layoffs score Social -1, the scorecard steps down for brands cutting jobs. The 14-day
+  window carries the change in within two weeks.
+- Allbirds stays in the tracked brands, so coverage of its AI business keeps arriving and costing
+  LLM calls. A collection-side or FP-side filter is a possible follow-up, not part of #230.
+- #227 (stored text that never names the brand) is a scraping fix and stays out of scope.
