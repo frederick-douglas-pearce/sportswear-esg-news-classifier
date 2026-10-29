@@ -4,6 +4,20 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-28: The owner's rulings from #192's backfill review are recorded as human (#192)
+
+**`HUMAN_RULINGS` (`src/data_collection/provenance.py`) adds 86 rulings from the owner's review of
+#192's backfill, for 110 in all (49 `false_positive`, 44 `skipped`, 17 `labeled`).** The record is
+#192's comment of 2026-10-28. It lists all 89 rulings; the 3 `unlabelable` rulings (#227's case)
+are left out of the code list, since no export reads that status.
+- **Already applied in the database.** Status changes used `fix_label.py`. Negatives went through
+  `cleanup_false_positives.py --mark-false-positive`. The five label changes were written with
+  `human_reviewed = true`, with quoted evidence.
+- **Effect.** The FP export reads these rows as `human` while each keeps its ruled status, and
+  the backfill leaves them out (`human`: 93 on a dry run). `compare_prompts.py --human-rulings`
+  now evaluates 110 articles instead of 24.
+- **Policy rulings** from the same review are #230, for the next prompt version.
+
 ### 2026-10-27: The backfill relabels `failed` rows (#86)
 
 **`scripts/backfill_relabel.py` takes a fourth arm, `failed`: rows whose labeling call failed, so
