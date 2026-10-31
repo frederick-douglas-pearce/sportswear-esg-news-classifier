@@ -81,6 +81,10 @@ FAILED_MAX_TOKENS_PREFIX = "Reply stopped at max_tokens"
 # Reasons scripts/cleanup_false_positives.py stores with a 'false_positive' status: a hand-picked
 # list of ids, and a keyword-pattern sweep (the prefix is followed by the brand and the pattern).
 FP_REASON_MANUAL = "Manually marked as false positive"
+# Reason scripts/fix_label.py --manual stores with a 'skipped' status: a human ruled the article
+# sportswear with no ESG category (#234). FP_REASON_MANUAL is its marker for 'false_positive'.
+# Not a SKIP_* constant: no pipeline path writes it. Never reword it.
+MANUAL_SKIP_REASON = "Manually ruled: sportswear, no ESG category"
 FP_REASON_AUTO_DETECTED_PREFIX = "Auto-detected:"
 
 # classifier_predictions.action_taken values the FP pre-filter writes.

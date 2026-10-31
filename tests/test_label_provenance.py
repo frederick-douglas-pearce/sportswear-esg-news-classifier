@@ -84,6 +84,11 @@ class TestStoredLiterals:
         assert models.FP_REASON_MANUAL == "Manually marked as false positive"
         assert models.FP_REASON_AUTO_DETECTED_PREFIX == "Auto-detected:"
 
+    def test_manual_skip_reason(self):
+        """fix_label.py --manual's human marker for 'skipped' (#234); stored rows match its text."""
+        assert models.MANUAL_SKIP_REASON == "Manually ruled: sportswear, no ESG category"
+        assert models.MANUAL_SKIP_REASON not in models.UNJUDGED_SKIP_REASONS | models.JUDGED_SKIP_REASONS
+
 
 class TestDeriveLabelSource:
     @pytest.mark.parametrize(
