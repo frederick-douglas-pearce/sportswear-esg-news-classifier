@@ -1,7 +1,10 @@
 """Tests for the contrastive prompt evaluation (#192 PR2, D036): src/evaluation/ and
 scripts/compare_prompts.py. No live API: labelers are fakes returning canned results."""
 
+import hashlib
+import subprocess
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,6 +45,14 @@ HAIKU_45 = "claude-haiku-4-5-20251001"
 HAIKU_55 = "claude-haiku-5-5"
 SIDE = SideSettings(model=HAIKU_45, max_tokens=MAX_TOKENS)
 SIDES = {"baseline": SIDE, "candidate": SIDE}
+# The real reader; every other test runs against a clean tree, since a paid run refuses a dirty one
+REAL_GIT_STATE = compare_prompts.git_state
+
+
+@pytest.fixture(autouse=True)
+def _clean_tree():
+    with patch.object(compare_prompts, "git_state", return_value={"commit": "abc123", "dirty": False}):
+        yield
 
 
 def _esg(brand, sentiment=1):
@@ -1263,6 +1274,15 @@ class TestOwnerRulingScoring:
         with pytest.raises(compare_prompts.EvalSetupError, match="Case a"):
             compare_prompts.read_case_files([first, second])
 
+    def test_case_files_carry_a_prompt_example_over_and_refuse_a_different_one(self, tmp_path):
+        first = self._write(tmp_path, "one.json", [{"article_id": "a", "strata": ["x"]}])
+        second = self._write(tmp_path, "two.json", [{"article_id": "a", "prompt_example": "a quote"}])
+        assert compare_prompts.read_case_files([first, second])["a"].prompt_example == "a quote"
+        assert compare_prompts.read_case_files([second, first])["a"].prompt_example == "a quote"
+        third = self._write(tmp_path, "three.json", [{"article_id": "a", "prompt_example": "another"}])
+        with pytest.raises(compare_prompts.EvalSetupError, match="different prompt example"):
+            compare_prompts.read_case_files([second, third])
+
     def test_a_case_file_that_does_not_parse_is_a_setup_error(self, tmp_path):
         bad = self._write(tmp_path, "bad.json", [_case(categories=["sociall"])])
         with pytest.raises(compare_prompts.EvalSetupError, match="bad.json"):
@@ -1323,9 +1343,9 @@ class TestOwnerRulingScoring:
         assert "not judged: T 2 (`2`) [cases, ruling_7], Nike expected False" in md
         assert "| ruling_7 | 0 / 1 / 0 | 0 / 0 / 1 |" in md
         assert "## Expected sentiments (cases that rule them)" in md
-        assert "- baseline: 0 matched, 1 mismatched, 0 not assessed, of 1 cases" in md
+        assert "- baseline: 0 matched, 1 mismatched, 0 not assessed, 0 unanswered, of 1 cases" in md
         assert "T 1 (`1`), Nike: social expected -1, got 0." in md
-        assert "- candidate: 1 matched, 0 mismatched, 0 not assessed, of 1 cases" in md
+        assert "- candidate: 1 matched, 0 mismatched, 0 not assessed, 0 unanswered, of 1 cases" in md
 
     def test_a_report_without_case_files_or_commit_says_so(self):
         runs = [_run(_article("1"), [_reply([])], [_reply([])])]
@@ -1358,7 +1378,6 @@ class TestOwnerRulingScoring:
         with patch.object(compare_prompts.db, "get_session", _session), \
              patch.object(compare_prompts, "select_specs"), \
              patch.object(compare_prompts, "load_articles", side_effect=load), \
-             patch.object(compare_prompts, "git_commit", return_value="abc123"), \
              patch.object(compare_prompts, "ArticleLabeler", side_effect=make):
             code = compare_prompts.main(
                 ["--candidate", "v1.11.0", "--baseline", "v1.10.0", "--max-cost", "5",
@@ -1367,9 +1386,144 @@ class TestOwnerRulingScoring:
         assert code == 0 and set(seen) == {"a", "b"}
         config = json.loads((tmp_path / "r.json").read_text())["config"]
         assert config["case_files"] == [str(first), str(second)] and config["commit"] == "abc123"
+        assert config["dirty"] is False
+        assert config["case_file_sha256"] == {
+            str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in (first, second)
+        }
 
-    def test_git_commit_reads_the_checkout(self):
-        commit = compare_prompts.git_commit()
-        assert commit is None or (len(commit) == 40 and all(ch in "0123456789abcdef" for ch in commit))
-        with patch.object(compare_prompts.subprocess, "run", side_effect=OSError("no git")):
-            assert compare_prompts.git_commit() is None
+    def test_a_paid_run_from_a_dirty_tree_is_refused_before_the_database(self, tmp_path):
+        case = self._write(tmp_path, "one.json", [_case("a")])
+        session = MagicMock(side_effect=AssertionError("no database"))
+        argv = ["--baseline", "v1.10.0", "--candidate", "v1.11.0", "--case-file", str(case)]
+        with patch.object(compare_prompts, "git_state", return_value={"commit": "abc123", "dirty": True}), \
+             patch.object(compare_prompts.db, "get_session", session):
+            assert compare_prompts.main([*argv, "--max-cost", "5"]) == 2
+        session.assert_not_called()
+        # A dry run from the same tree goes ahead and reports it
+        with patch.object(compare_prompts, "git_state", return_value={"commit": "abc123", "dirty": True}), \
+             patch.object(compare_prompts.db, "get_session", _session), \
+             patch.object(compare_prompts, "select_specs"), \
+             patch.object(compare_prompts, "load_articles", return_value=[]):
+            assert compare_prompts.main([*argv, "--dry-run"]) == 0
+
+    def test_git_state_reads_the_commit_and_tracked_changes_from_the_scripts_checkout(self):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append((cmd, kw["cwd"]))
+            out = "f" * 40 + "\n" if cmd[1] == "rev-parse" else " M prompts/x.txt\n"
+            return MagicMock(stdout=out)
+
+        with patch.object(compare_prompts.subprocess, "run", side_effect=run):
+            assert REAL_GIT_STATE() == {"commit": "f" * 40, "dirty": True}
+        assert [c for c, _ in calls] == [
+            ["git", "rev-parse", "HEAD"], ["git", "status", "--porcelain", "--untracked-files=no"]
+        ]
+        assert {cwd for _, cwd in calls} == {Path(compare_prompts.__file__).parent}
+        with patch.object(compare_prompts.subprocess, "run", return_value=MagicMock(stdout="")):
+            assert REAL_GIT_STATE() == {"commit": None, "dirty": False}
+
+    @pytest.mark.parametrize("error", [OSError("no git"), subprocess.CalledProcessError(128, "git")])
+    def test_git_state_is_unknown_when_git_fails(self, error):
+        with patch.object(compare_prompts.subprocess, "run", side_effect=error):
+            assert REAL_GIT_STATE() == {"commit": None, "dirty": None}
+
+    def test_report_names_a_dirty_tree_and_each_case_files_hash(self):
+        runs = [_run(_article("1"), [_reply([])], [_reply([])])]
+        config = {
+            "baseline": "v1.12.0", "candidate": "v1.13.0",
+            "baseline_model": HAIKU_55, "candidate_model": HAIKU_55,
+            "baseline_max_tokens": 8000, "candidate_max_tokens": 8000,
+            "effort": {"baseline": "medium", "candidate": "medium"},
+            "baseline_hashes": "a/b", "candidate_hashes": "c/d", "stopped_early": False,
+            "case_files": ["one.json"], "commit": "abc123", "dirty": True,
+            "case_file_sha256": {"one.json": "ff00"},
+        }
+        md = render_markdown(summarize(runs, **SIDES), config)
+        assert "- Commit: abc123 (uncommitted changes in the tree)" in md
+        assert "  - `one.json` sha256 ff00" in md
+
+    def test_a_failed_reply_records_no_categories_or_sentiments(self):
+        failed = record_reply(["Nike"], LabelingResult(success=False, error="x"))
+        assert failed.outcome == FAILED and failed.categories == {} and failed.sentiments == {}
+
+    def test_a_case_whose_replies_all_failed_is_unanswered_not_matched(self):
+        social = Expectation("Nike", True, ("social",), (("social", -1),))
+        fail = record_reply(["Nike"], LabelingResult(success=False, error="x"))
+        runs = [
+            _run(_article("1", strata=("ruling_1",), expected=social), [fail, fail],
+                 [_reply([_ruled("Nike", {"social": -1})])]),
+        ]
+        s = summarize(runs, **SIDES)
+        b = s["expected_categories"]["baseline"]
+        assert (b["cases"], b["matched"], b["unanswered"], b["misses"]) == (1, 0, 1, [])
+        assert [x["article_id"] for x in b["unanswered_cases"]] == ["1"]
+        sb = s["expected_sentiments"]["baseline"]
+        assert (sb["cases"], sb["matched"], sb["not_assessed"], sb["unanswered"]) == (1, 0, 0, 1)
+        rb = s["rulings"]["baseline"]
+        assert (rb["passed"], rb["failed"], rb["unanswered"], rb["rate"]) == (0, 0, 1, None)
+        assert s["expected_categories"]["candidate"]["matched"] == 1
+
+    def test_ruling_roll_up_needs_verdict_categories_and_sentiments_on_every_answered_reply(self):
+        social = Expectation("Nike", True, ("social",), (("social", -1),))
+        fail = record_reply(["Nike"], LabelingResult(success=False, error="x"))
+        runs = [
+            # passes: every answered reply right; a failed repeat is left out
+            _run(_article("1", strata=("cases", "ruling_1"), expected=social),
+                 [_reply([_ruled("Nike", {"social": -1})]), fail], [_reply([_ruled("Nike", {"social": -1})])]),
+            # wrong sentiment on one repeat
+            _run(_article("2", strata=("ruling_1",), expected=social),
+                 [_reply([_ruled("Nike", {"social": -1})]), _reply([_ruled("Nike", {"social": 0})])],
+                 [_reply([_ruled("Nike", {"social": -1})])]),
+            # an extra category
+            _run(_article("3", strata=("ruling_1", "ruling_3"), expected=social),
+                 [_reply([_ruled("Nike", {"social": -1, "governance": 0})])],
+                 [_reply([_ruled("Nike", {"social": -1})])]),
+            # the right side and no categories ruled
+            _run(_article("4", strata=("ruling_7",), expected=Expectation("Nike", False)),
+                 [_reply([_not_sportswear("Nike")])], [_reply([_no_esg("Nike")])]),
+            # the brand left out of the reply is not a pass
+            _run(_article("5", strata=("ruling_4",), expected=Expectation("Nike", True, ())),
+                 [_reply([])], [_reply([_no_esg("Nike")])]),
+            # excluded: gray, a non-ruling stratum, ruling 9, and a prompt-example case
+            _run(_article("6", strata=("ruling_9",)), [_reply([])], [_reply([])]),
+            _run(_article("7", strata=("allbirds_reference",), expected=Expectation("Nike", False)),
+                 [_reply([])], [_reply([])]),
+            _run(_article("8", strata=("ruling_8",), expected=Expectation("Nike", False),
+                          prompt_example="an example"),
+                 [_reply([])], [_reply([])]),
+        ]
+        s = summarize(runs, **SIDES)["rulings"]
+        b, c = s["baseline"], s["candidate"]
+        assert (b["cases"], b["passed"], b["failed"], b["unanswered"]) == (5, 2, 3, 0)
+        assert b["rate"] == 2 / 5
+        assert [x["article_id"] for x in b["failed_cases"]] == ["2", "3", "5"]
+        assert b["by_ruling"] == {
+            "ruling_1": {"passed": 1, "failed": 2, "unanswered": 0},
+            "ruling_3": {"passed": 0, "failed": 1, "unanswered": 0},
+            "ruling_4": {"passed": 0, "failed": 1, "unanswered": 0},
+            "ruling_7": {"passed": 1, "failed": 0, "unanswered": 0},
+        }
+        assert list(b["by_ruling"]) == ["ruling_1", "ruling_3", "ruling_4", "ruling_7"]
+        assert (c["passed"], c["failed"], c["rate"]) == (4, 1, 4 / 5)
+        assert [x["article_id"] for x in c["failed_cases"]] == ["4"]
+
+    @pytest.mark.parametrize("passed,verdict", [(17, "meets the threshold"), (16, "is below the threshold")])
+    def test_report_states_the_falsifier_against_the_baseline_rate(self, passed, verdict):
+        runs = [
+            _run(_article(str(i), strata=("ruling_1",), expected=Expectation("Nike", True)),
+                 [_reply([_no_esg("Nike")] if i < passed else [_not_sportswear("Nike")])],
+                 [_reply([_no_esg("Nike")])])
+            for i in range(20)
+        ]
+        config = {
+            "baseline": "v1.12.0", "candidate": "v1.13.0",
+            "baseline_model": HAIKU_55, "candidate_model": HAIKU_55,
+            "baseline_max_tokens": 8000, "candidate_max_tokens": 8000,
+            "effort": {"baseline": "medium", "candidate": "medium"},
+            "baseline_hashes": "a/b", "candidate_hashes": "c/d", "stopped_early": False,
+        }
+        md = render_markdown(summarize(runs, **SIDES), config)
+        assert "## Owner rulings (D040)" in md
+        assert f"- Falsifier: baseline {passed * 5}.0% {verdict}" in md
+        assert f"| ruling_1 | {passed} / {20 - passed} / 0 | 20 / 0 / 0 |" in md

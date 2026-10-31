@@ -20,10 +20,10 @@ RULING_PHRASES = {
     1: "Does the article report job cuts, layoffs, or closures that cost jobs at the brand?",
     2: "a data breach or cybersecurity incident at the brand is Digital Transformation with negative sentiment (-1)",
     3: "an activist shareholder, a stake that concentrates ownership in one holder, or a fight over board seats or control",
-    4: "a one-off event is a brand event, not a youth program",
+    4: "a hosted event is a brand event, not a youth program",
     5: "A single passing sentence does not carry a category, whatever the category.",
     6: "a news summary appended to a template stock page",
-    7: "An article about that AI business, its stock or its new name is NOT about the sportswear brand.",
+    7: "IS about the sportswear brand, even when it also reports the AI pivot",
     8: "Could be the Can-Am Spyder (a three-wheeled motorcycle)",
 }
 
@@ -113,8 +113,26 @@ class TestCandidate:
         assert "appended under template data are not human-written analysis" in key_test
         assert "**Template pages with an appended news summary** → `mention_only`" in text
 
-    def test_v1_12_0_text_is_unchanged(self):
-        """v1.13.0 is a copy: the production text it was made from stays as evaluated (#219)."""
+    def test_job_cuts_are_stated_where_they_override_the_earlier_rules(self, v1_13_0):
+        """Reported cuts decide the content type and survive the passing-sentence rule; cost-cutting
+        language without cuts does not count (#234's re-ruling of fbefe459, architect review A1)."""
+        text = v1_13_0.system_prompt
+        esg_first = text[text.index("**ESG content decides first:**"):]
+        esg_first = esg_first[: esg_first.index("\n")]
+        assert "or job cuts it announces or carries out, its content type is `business`" in esg_first
+        assert "Cost-cutting language with no cuts reported" in text
+        assert "A reported workforce reduction is not a passing sentence" in text
+
+    def test_allbirds_sale_in_the_subject_wins_over_the_pivot(self, v1_13_0):
+        """#234's line: the sale in the subject decides; a passing mention of it does not."""
+        line = next(x for x in v1_13_0.system_prompt.splitlines() if x.startswith("- **Allbirds**"))
+        assert "unless the sale of the shoe business is part of its subject" in line
+        assert "Only a story about the AI business that mentions the sale in passing" in line
+
+    def test_v1_12_0_text_is_not_v1_13_0s(self):
+        """v1.13.0's rulings were added to a copy, not to production v1.12.0. That v1.12.0 is
+        unchanged byte for byte is pinned by its hashes in tests/test_content_type.py
+        (V1_12_0_SYSTEM_HASH and its siblings)."""
         system = (PROMPTS_DIR / "v1.12.0" / "system_prompt.txt").read_text()
         assert "Does the article report job cuts" not in system
         assert '"Elliott takes $1B stake in Lululemon"' in system
@@ -130,13 +148,14 @@ class TestCaseFile:
         assert got == EXPECTED
 
     def test_allbirds_cases_follow_the_review(self, specs):
-        """22 pivot rows and 4 sale rows (ruling 7), and 4 rows naming Allbirds as a reference."""
+        """16 pivot rows and 10 sale rows (ruling 7; #234 moved 6 from pivot to sale), and 4 rows
+        naming Allbirds as a reference."""
         allbirds = [s for s in specs.values() if s.expected and s.expected.brand == "Allbirds"]
         pivot = [s for s in allbirds if "ruling_7" in s.strata and not s.expected.is_sportswear_brand]
         sale = [s for s in allbirds if "ruling_7" in s.strata and s.expected.is_sportswear_brand]
         reference = [s for s in allbirds if "allbirds_reference" in s.strata]
-        assert (len(pivot), len(sale), len(reference), len(allbirds)) == (22, 4, 4, 30)
-        assert all(s.expected.categories == () for s in sale)
+        assert (len(pivot), len(sale), len(reference), len(allbirds)) == (16, 10, 4, 30)
+        assert all(s.expected.categories == () and "no_category" in s.strata for s in sale)
         assert all(not s.expected.is_sportswear_brand for s in reference)
 
     def test_every_ruling_has_a_case_and_ruling_9_is_unscored(self, specs):
@@ -162,6 +181,27 @@ class TestCaseFile:
         assert quotes
         hits = {c["article_id"]: matching_prompt_example(c["title"], quotes) for c in cases}
         assert {k: v for k, v in hits.items() if v} == {}
+
+    def test_every_case_is_an_owner_ruling_on_the_same_side(self, specs):
+        """Each case is a ruled article, and its expectation is the ruling (#234): not sportswear
+        is false_positive, sportswear with no category a judged skip, and categories labeled."""
+        from src.data_collection.provenance import HUMAN_RULINGS
+
+        ruled = {k: s.expected for k, s in specs.items() if s.expected}
+        assert len(ruled) == len(specs) - 1  # the gray ruling 9 case has no expectation
+        for article_id, expected in ruled.items():
+            if not expected.is_sportswear_brand:
+                want = "false_positive"
+            else:
+                want = "labeled" if expected.categories else "skipped"
+            assert HUMAN_RULINGS.get(article_id) == want, article_id
+
+    def test_fbefe459_scores_ruling_1s_boundary_from_the_product_case_file(self):
+        """Puma's job cuts inside an earnings summary (#234's re-ruling) count toward ruling 1."""
+        product = compare_prompts.parse_case_file(json.loads(PRODUCT_CASE_FILE.read_text()))
+        puma = product["fbefe459-5ddf-4e05-b092-1bbc31b823cb"]
+        assert "ruling_1" in puma.strata
+        assert puma.expected == Expectation("Puma", True, ("social",), (("social", -1),))
 
     def test_sentiments_parse_as_sorted_pairs(self, specs):
         puma = specs["26daa219-5160-430d-af73-c3f831c10393"].expected

@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import logging
 import random
@@ -209,19 +210,31 @@ def read_case_files(paths: list[Path]) -> dict[str, Spec]:
     return specs
 
 
-def git_commit() -> str | None:
-    """The checked-out commit, recorded with the report so a run can be traced (#230)."""
+def _git(*args: str) -> str | None:
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-            cwd=Path(__file__).parent,
+            ["git", *args], capture_output=True, text=True, check=True, cwd=Path(__file__).parent
         )
     except (OSError, subprocess.CalledProcessError):
         return None
-    return out.stdout.strip() or None
+    return out.stdout
+
+
+def git_state() -> dict[str, object]:
+    """The checked-out commit, and whether tracked files differ from it, read before any call and
+    recorded with the report so a run names the tree it was made from (#230, D040). Each is None
+    when git cannot tell."""
+    commit = _git("rev-parse", "HEAD")
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "commit": (commit or "").strip() or None,
+        "dirty": None if status is None else bool(status.strip()),
+    }
+
+
+def file_sha256(paths: list[Path]) -> dict[str, str]:
+    """Each case file's sha256, so a later change to case data is visible against the report."""
+    return {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
 def merge_spec(specs: dict[str, Spec], article_id: str, stratum: str) -> None:
@@ -568,6 +581,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         specs = read_case_files(args.case_file)
+        case_hashes = file_sha256(args.case_file)
+        tree = git_state()
+        if tree["dirty"] and not args.dry_run:
+            raise EvalSetupError(
+                f"Tracked files differ from commit {tree['commit']}: commit them before a run, so "
+                "the report names the prompt and cases it evaluated"
+            )
         with db.get_session() as session:
             select_specs(session, args, specs)
             articles = load_articles(session, specs, baseline, sides["baseline"].model, examples)
@@ -579,6 +599,7 @@ def main(argv: list[str] | None = None) -> int:
     bound = worst_case_cost(articles, calls_per_article)
     calls = 2 * sum(a.repeats for a in articles)
     logger.info(f"{len(articles)} articles, {calls} calls; worst-case cost ${bound:.2f}")
+    logger.info(f"  commit {tree['commit'] or 'unknown'}" + (", uncommitted changes" if tree["dirty"] else ""))
     for side, version in versions.items():
         logger.info(
             f"  {side}: {version} on {sides[side].model}, max_tokens {sides[side].max_tokens}, "
@@ -656,7 +677,9 @@ def main(argv: list[str] | None = None) -> int:
         "most_brands": args.most_brands,
         "human_rulings": args.human_rulings,
         "case_files": [str(p) for p in args.case_file],
-        "commit": git_commit(),
+        "commit": tree["commit"],
+        "dirty": tree["dirty"],
+        "case_file_sha256": case_hashes,
         "max_cost_usd": args.max_cost,
         "run_at": datetime.now(timezone.utc).isoformat(),
     }

@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for #230 (D040): the owner's policy rulings from #192's backfill review (2026-10-27 to 28), one case per source row, with the owner's ruling as 'expected' (the human-reviewed brand_labels where they exist). Strata name the ruling ('ruling_1' to 'ruling_9'). 'expected.categories' rules the applicable categories and 'expected.sentiments' their sentiments; ruling 3's sentiments are not ruled (copies of one story may differ) and are read by hand. The ruling 7 and ruling 8 cases test whether the model follows a named instruction (Allbirds and Spyder are named in v1.13.0), not whether it generalizes. 'allbirds_reference' cases are Allbirds named only as a reference point, ruled false_positive in the same review. The ruling 9 case is gray: reported, not scored. On 7de2362b the expected brand is Converse; Nike's labels are read by hand. 'title' is the stored title, kept so the prompt-example check runs without the database; the harness reads the title from the article.",
+  "description": "Named cases for #230 (D040): the owner's policy rulings from #192's backfill review (2026-10-27 to 28), one case per source row, with the owner's ruling as 'expected' (the human-reviewed brand_labels where they exist). Strata name the ruling ('ruling_1' to 'ruling_9'). 'expected.categories' rules the applicable categories and 'expected.sentiments' their sentiments; the four Lululemon copies (ruling 3) rule Governance but not its sentiment, since the owner accepts differing sentiment across copies; each note records the owner's reviewed value, read by hand. D040's roll-up scores each 'ruling_1' to 'ruling_8' case on its verdict, ruled categories and ruled sentiments; 'allbirds_reference' and the gray case are outside it. Corrected by #234 (2026-10-30): the six Allbirds rows whose subject includes the sale of the shoe business are sportswear with no category. The ruling 7 and ruling 8 cases test whether the model follows a named instruction (Allbirds and Spyder are named in v1.13.0), not whether it generalizes. 'allbirds_reference' cases are Allbirds named only as a reference point, ruled false_positive in the same review. The ruling 9 case is gray: reported, not scored. On 7de2362b the expected brand is Converse; Nike's labels are read by hand. 'title' is the stored title, kept so the prompt-example check runs without the database; the harness reads the title from the article.",
   "cases": [
     {
       "article_id": "20dc82b4-23db-4514-a79c-b559f7a3cb40",
@@ -8,7 +8,7 @@
         "ruling_1"
       ],
       "repeats": 1,
-      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; v1.12.0-era LLM gave Digital 0 for Nike's distribution-center cuts",
+      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; per #230, the LLM gave Digital 0 for Nike's distribution-center cuts",
       "expected": {
         "brand": "Nike",
         "is_sportswear_brand": true,
@@ -27,7 +27,7 @@
         "ruling_1"
       ],
       "repeats": 1,
-      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; the LLM gave Converse no label; Nike's labels (owner: Social -1) are read by hand",
+      "note": "#230 ruling 1: layoffs are Social -1 (workforce), automation-driven cuts included; per #230, the LLM gave Converse no label; Nike's labels (owner: Social -1) are read by hand",
       "expected": {
         "brand": "Converse",
         "is_sportswear_brand": true,
@@ -87,7 +87,7 @@
         "ruling_2"
       ],
       "repeats": 1,
-      "note": "#230 ruling 2: a data breach is Digital -1, and Governance when the subject is board oversight; the LLM gave Governance only",
+      "note": "#230 ruling 2: a data breach is Digital -1, and Governance when the subject is board oversight; per #230, the LLM gave Governance only",
       "expected": {
         "brand": "Under Armour",
         "is_sportswear_brand": true,
@@ -128,7 +128,7 @@
         "ruling_3"
       ],
       "repeats": 1,
-      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; its sentiment is not scored (the owner accepts differing sentiment across copies) and is read by hand: the owner's reviewed label is Governance -1",
       "expected": {
         "brand": "Lululemon",
         "is_sportswear_brand": true,
@@ -144,7 +144,7 @@
         "ruling_3"
       ],
       "repeats": 1,
-      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; its sentiment is not scored (the owner accepts differing sentiment across copies) and is read by hand: the owner's reviewed label is Governance -1",
       "expected": {
         "brand": "Lululemon",
         "is_sportswear_brand": true,
@@ -160,7 +160,7 @@
         "ruling_3"
       ],
       "repeats": 1,
-      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; its sentiment is not scored (the owner accepts differing sentiment across copies) and is read by hand: the owner's reviewed label is Governance 0",
       "expected": {
         "brand": "Lululemon",
         "is_sportswear_brand": true,
@@ -176,7 +176,7 @@
         "ruling_3"
       ],
       "repeats": 1,
-      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; sentiment follows each copy's framing and is read by hand",
+      "note": "#230 ruling 3: a CEO pick amid the board fight with Wilson and Elliott is Governance; its sentiment is not scored (the owner accepts differing sentiment across copies) and is read by hand: the owner's reviewed label is Governance 0",
       "expected": {
         "brand": "Lululemon",
         "is_sportswear_brand": true,
@@ -297,7 +297,7 @@
         "ruling_6"
       ],
       "repeats": 1,
-      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; the LLM judged it financial",
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; per #230, the LLM judged it financial",
       "expected": {
         "brand": "Deckers",
         "is_sportswear_brand": false
@@ -310,7 +310,7 @@
         "ruling_6"
       ],
       "repeats": 1,
-      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; the LLM judged it financial",
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; per #230, the LLM judged it financial; its stored text has no appended news section, so it checks the template rule itself rather than the appended-summary carve-out",
       "expected": {
         "brand": "Columbia Sportswear",
         "is_sportswear_brand": false
@@ -323,7 +323,7 @@
         "ruling_6"
       ],
       "repeats": 1,
-      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; the LLM judged it financial",
+      "note": "#230 ruling 6: a template stock page is false_positive even with an appended news summary; per #230, the LLM judged it financial",
       "expected": {
         "brand": "Columbia Sportswear",
         "is_sportswear_brand": false
@@ -346,13 +346,15 @@
       "article_id": "d2873bbb-5c94-4343-ad8d-4feb83f36c59",
       "title": "Allbirds as 2026 approaches : a pivot from footwear to AI infrastructure",
       "strata": [
-        "ruling_7"
+        "ruling_7",
+        "no_category"
       ],
       "repeats": 1,
-      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "note": "#230 ruling 7: the sale of the shoe business is part of the article's subject, so it is sportswear even though it also reports the AI pivot; re-ruled a judged skip by #234 (2026-10-30), was false_positive in #192's review",
       "expected": {
         "brand": "Allbirds",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true,
+        "categories": []
       }
     },
     {
@@ -424,13 +426,15 @@
       "article_id": "26b954bc-b255-49e8-a11f-a95c02eb22b2",
       "title": "Allbirds pivots to AI compute after $50M financing deal",
       "strata": [
-        "ruling_7"
+        "ruling_7",
+        "no_category"
       ],
       "repeats": 1,
-      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "note": "#230 ruling 7: the sale of the shoe business is part of the article's subject, so it is sportswear even though it also reports the AI pivot; re-ruled a judged skip by #234 (2026-10-30), was false_positive in #192's review",
       "expected": {
         "brand": "Allbirds",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true,
+        "categories": []
       }
     },
     {
@@ -450,13 +454,15 @@
       "article_id": "666c3315-b36e-47eb-a338-ef62813b17e1",
       "title": "Allbirds Rebrands as Smartbird , Completes IP Sale to American Exchange",
       "strata": [
-        "ruling_7"
+        "ruling_7",
+        "no_category"
       ],
       "repeats": 1,
-      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "note": "#230 ruling 7: the sale of the shoe business is part of the article's subject, so it is sportswear even though it also reports the AI pivot; re-ruled a judged skip by #234 (2026-10-30), was false_positive in #192's review",
       "expected": {
         "brand": "Allbirds",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true,
+        "categories": []
       }
     },
     {
@@ -476,13 +482,15 @@
       "article_id": "6a0cbd28-e9c8-403b-8b0f-a5fe966a00f5",
       "title": "Allbirds says it ditching footwear and pivoting to become an AI company",
       "strata": [
-        "ruling_7"
+        "ruling_7",
+        "no_category"
       ],
       "repeats": 1,
-      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "note": "#230 ruling 7: the sale of the shoe business is part of the article's subject, so it is sportswear even though it also reports the AI pivot; re-ruled a judged skip by #234 (2026-10-30), was false_positive in #192's review",
       "expected": {
         "brand": "Allbirds",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true,
+        "categories": []
       }
     },
     {
@@ -528,13 +536,15 @@
       "article_id": "8f5ec01f-1e3c-486e-9f93-d98f8bdd36e6",
       "title": "Allbirds to exit footwear , shift focus to AI infrastructure",
       "strata": [
-        "ruling_7"
+        "ruling_7",
+        "no_category"
       ],
       "repeats": 1,
-      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "note": "#230 ruling 7: the sale of the shoe business is part of the article's subject, so it is sportswear even though it also reports the AI pivot; re-ruled a judged skip by #234 (2026-10-30), was false_positive in #192's review",
       "expected": {
         "brand": "Allbirds",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true,
+        "categories": []
       }
     },
     {
@@ -554,13 +564,15 @@
       "article_id": "2bfbbec7-7f4b-41ae-86a8-f71dc883e668",
       "title": "Is Allbirds Stock a Buy , Sell , or Hold Amid Major Pivot to NewBird AI ? ",
       "strata": [
-        "ruling_7"
+        "ruling_7",
+        "no_category"
       ],
       "repeats": 1,
-      "note": "#230 ruling 7: a former brand that left the category is another entity; an AI-pivot story, owner ruled false_positive (#192, 2026-10-27)",
+      "note": "#230 ruling 7: the sale of the shoe business is part of the article's subject, so it is sportswear even though it also reports the AI pivot; re-ruled a judged skip by #234 (2026-10-30), was false_positive in #192's review",
       "expected": {
         "brand": "Allbirds",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true,
+        "categories": []
       }
     },
     {
@@ -734,7 +746,7 @@
         "ruling_8"
       ],
       "repeats": 1,
-      "note": "#230 ruling 8: the Can-Am Spyder is another company's product line, other_entity even in a review; the LLM called it product",
+      "note": "#230 ruling 8: the Can-Am Spyder is another company's product line, other_entity even in a review; per #230, the LLM called it product",
       "expected": {
         "brand": "Spyder",
         "is_sportswear_brand": false

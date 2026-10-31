@@ -4,27 +4,38 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
-### 2026-10-29: Candidate prompt v1.13.0 states the owner's rulings from #192's review (#230, D040)
+### 2026-10-31: Candidate prompt v1.13.0 states the owner's rulings from #192's review (#230, D040)
 
 **Candidate v1.13.0 states eight policy rulings the owner made in #192's backfill review; production
 stays v1.12.0 until its contrastive eval against v1.12.0 meets D040's bar.** Only the system prompt
 changes; the user prompt and reply schema are v1.12.0's.
-- **Rulings.** Layoffs and job cuts are Social, usually -1, automation-driven cuts included. A
-  data breach is Digital Transformation -1, and Governance when the board's oversight is the
-  subject. An activist or ownership-concentrating stake, or a board fight, is Governance. A
-  brand-hosted event, a sponsorship or a celebrity piece is not Social; a quantified charity
-  donation is. A single passing sentence carries no category. A template stock page with an
-  appended news summary is `mention_only`. Allbirds' AI pivot is another entity, and a name that
-  is another company's product line (the Can-Am Spyder) is `other_entity`. Each is placed where it
+- **Rulings.** Job cuts the brand announces or carries out are Social, usually -1, wherever the
+  article reports them, automation-driven cuts included; cost-cutting language with no cuts
+  reported is not job cuts. A data breach is Digital Transformation -1, and Governance when the
+  board's oversight is the subject. An activist or ownership-concentrating stake, or a board
+  fight, is Governance. A sponsorship, a brand-hosted event (a yearly one too) or a celebrity
+  piece that only mentions a program is not Social; a quantified donation to a third-party
+  charity is, even at a brand event. A single passing sentence carries no category, except a
+  reported workforce reduction. A template stock page with an appended news summary is
+  `mention_only`. Allbirds' AI pivot is another entity unless the sale of the shoe business is
+  part of the article's subject (#234's line), and a name that is another company's product
+  line (the Can-Am Spyder) is `other_entity`. Each is placed where it
   overrides the earlier rule it would otherwise lose to (D040 point 1).
 - **Cases.** `prompts/labeling/eval_cases/owner_rulings_192.json`: one case per source row, with
-  the owner's ruling as the expected outcome (`ruling_1` to `ruling_9` strata; ruling 9 is gray).
+  the owner's ruling as the expected outcome (`ruling_1` to `ruling_9` strata; ruling 9 is gray),
+  following #234's re-rulings: ruling 7 has 16 pivot rows and 10 sale rows. `fbefe459` in
+  `product_and_stability.json` joins `ruling_1` with its Social -1 sentiment. A test checks every
+  case against `HUMAN_RULINGS`.
 - **Harness** (`scripts/compare_prompts.py`, `src/evaluation/`). `--case-file` may be repeated:
   an article in two files must have equal expectations, or one file none, and an id twice in one
   file is refused. A case may rule sentiments (`expected.sentiments`), reported as matched,
   mismatched or not assessed. The accuracy section, now titled "Sportswear-verdict accuracy",
-  lists each miss's strata and counts by stratum. The report records the case files and the
-  commit. A case file that does not parse now exits 2 instead of raising.
+  lists each miss's strata and counts by stratum. A case whose replies all failed is unanswered,
+  not matched. An "Owner rulings (D040)" section scores each `ruling_1` to `ruling_8` case on its
+  verdict, ruled categories and ruled sentiments, per ruling, and states the falsifier against the
+  baseline's rate. Before any call the script reads the commit, whether tracked files differ from
+  it, and each case file's sha256, and records them; a paid run from a tree with tracked changes
+  is refused. A case file that does not parse now exits 2 instead of raising.
 - **D040** fixes the promotion bar before the run, with a falsifier: if v1.12.0 already meets
   85% of the scored ruling cases, promotion is reconsidered.
 

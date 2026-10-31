@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from src.evaluation.comparator import RULING_PREFIX
+
+# D040's falsifier: a baseline that already passes this share of the ruling cases does not need
+# the rulings in its prompt (#230)
+RULING_FALSIFIER_RATE = 0.85
+
 
 def _pct(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1%}"
@@ -125,7 +131,12 @@ def render_markdown(summary: dict, config: dict) -> str:
         f"- Prompt hashes: baseline {config['baseline_hashes']}, candidate {config['candidate_hashes']}",
         f"- Articles: {summary['articles']}; stopped early by the spend cap: {config['stopped_early']}",
         f"- Case files: {', '.join(config.get('case_files') or []) or 'none'}",
-        f"- Commit: {config.get('commit') or 'unknown'}",
+        f"- Commit: {config.get('commit') or 'unknown'}"
+        + (" (uncommitted changes in the tree)" if config.get("dirty") else ""),
+        *[
+            f"  - `{path}` sha256 {digest}"
+            for path, digest in (config.get("case_file_sha256") or {}).items()
+        ],
         "",
         "## By version",
         "",
@@ -202,12 +213,16 @@ def render_markdown(summary: dict, config: dict) -> str:
         "## Expected categories (cases that rule them)",
         "",
         "Per case: matched if every answered reply gives the expected brand exactly the ruled "
-        "categories. A reply that leaves the brand out or calls it not sportswear gives it none.",
+        "categories; unanswered if every reply failed. A reply that leaves the brand out or calls "
+        "it not sportswear gives it none.",
         "",
     ]
     for side in ("baseline", "candidate"):
         block = summary["expected_categories"][side]
-        lines.append(f"- {side}: {block['matched']} of {block['cases']} cases matched")
+        lines.append(
+            f"- {side}: {block['matched']} of {block['cases']} cases matched, "
+            f"{block['unanswered']} unanswered"
+        )
         for miss in block["misses"]:
             type_note = f" ({miss['content_type']})" if miss.get("content_type") else ""
             lines.append(
@@ -220,14 +235,16 @@ def render_markdown(summary: dict, config: dict) -> str:
         "## Expected sentiments (cases that rule them)",
         "",
         "Per case: matched if every answered reply that kept a ruled category gives it the ruled "
-        "sentiment; not assessed if no reply kept one (the category miss is counted above).",
+        "sentiment; not assessed if no answered reply kept one (that case is a miss above); "
+        "unanswered if every reply failed.",
         "",
     ]
     for side in ("baseline", "candidate"):
         block = summary["expected_sentiments"][side]
         lines.append(
             f"- {side}: {block['matched']} matched, {block['mismatched']} mismatched, "
-            f"{block['not_assessed']} not assessed, of {block['cases']} cases"
+            f"{block['not_assessed']} not assessed, {block['unanswered']} unanswered, of "
+            f"{block['cases']} cases"
         )
         for miss in block["misses"]:
             got = "; ".join(
@@ -239,6 +256,47 @@ def render_markdown(summary: dict, config: dict) -> str:
             )
         for item in block["not_assessed_cases"]:
             lines.append(f"  - not assessed: {item['title']} (`{item['article_id']}`), {item['brand']}")
+    lines += [
+        "",
+        "## Owner rulings (D040)",
+        "",
+        "Per `ruling_1` to `ruling_8` case (gray and prompt-example cases excluded): passed if every "
+        "answered reply judges the expected brand on the expected side with exactly the ruled "
+        "categories and sentiments; unanswered if every reply failed, outside the rate. D040's "
+        f"falsifier: a baseline rate of {_pct(RULING_FALSIFIER_RATE)} or more means the rulings "
+        "are not needed in the prompt, and promotion is reconsidered.",
+        "",
+    ]
+    for side in ("baseline", "candidate"):
+        block = summary["rulings"][side]
+        lines.append(
+            f"- {side}: {block['passed']} passed, {block['failed']} failed, {block['unanswered']} "
+            f"unanswered, of {block['cases']} cases ({_pct(block['rate'])} of answered)"
+        )
+        for item in block["failed_cases"]:
+            lines.append(
+                f"  - failed: {item['title']} (`{item['article_id']}`) [{', '.join(item['rulings'])}], "
+                f"{item['brand']}"
+            )
+        for item in block["unanswered_cases"]:
+            lines.append(f"  - unanswered: {item['title']} (`{item['article_id']}`), {item['brand']}")
+    rate = summary["rulings"]["baseline"]["rate"]
+    lines.append(
+        f"- Falsifier: baseline {_pct(rate)} "
+        + ("(no answered case)" if rate is None else
+           ("meets the threshold" if rate >= RULING_FALSIFIER_RATE else "is below the threshold"))
+    )
+    lines += ["", "| Ruling | Baseline passed / failed / unanswered | Candidate passed / failed / unanswered |", "|---|---|---|"]
+    rulings = sorted(
+        set(summary["rulings"]["baseline"]["by_ruling"]) | set(summary["rulings"]["candidate"]["by_ruling"]),
+        key=lambda name: int(name.removeprefix(RULING_PREFIX)),
+    )
+    for ruling in rulings:
+        cells = []
+        for side in ("baseline", "candidate"):
+            n = summary["rulings"][side]["by_ruling"].get(ruling, {"passed": 0, "failed": 0, "unanswered": 0})
+            cells.append(f"{n['passed']} / {n['failed']} / {n['unanswered']}")
+        lines.append(f"| {ruling} | {cells[0]} | {cells[1]} |")
     lines.append("")
     lines += _category_list(
         "Categories the content type dropped (D037 gate)",

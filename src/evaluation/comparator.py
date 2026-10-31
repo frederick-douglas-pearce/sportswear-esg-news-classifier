@@ -43,6 +43,9 @@ MOST_BRANDS = "most_brands"
 NO_CATEGORY_STRATA = frozenset(
     {"product_true", "product_false", "product_gray", "financial", "no_category"}
 )
+# The owner-ruling strata D040's roll-up scores (#230); ruling 9 is gray and has no expected outcome
+RULING_PREFIX = "ruling_"
+SCORED_RULINGS = frozenset(f"{RULING_PREFIX}{n}" for n in range(1, 9))
 
 # Shortest quoted prompt text treated as an example an article could be the source of
 _MIN_EXAMPLE_CHARS = 15
@@ -504,19 +507,20 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
 
     def expected_categories(side: str) -> dict:
         """Per case that rules the brand's categories: matched if every answered reply gives the
-        brand exactly those categories. A reply that leaves the brand out or calls it not
-        sportswear gives it none."""
-        matched, misses = 0, []
+        brand exactly those categories, unanswered if every reply failed. A reply that leaves the
+        brand out or calls it not sportswear gives it none."""
+        matched, misses, unanswered = 0, [], []
         for r in paired:
             exp = r.article.expected
             if exp is None or exp.categories is None:
                 continue
             key = normalize_brand(exp.brand)
             want = set(exp.categories)
-            wrong = [
-                x for x in getattr(r, side)
-                if x.outcome != FAILED and set(x.categories.get(key, ())) != want
-            ]
+            answered = [x for x in getattr(r, side) if x.outcome != FAILED]
+            if not answered:
+                unanswered.append({**_brief(r), "brand": exp.brand})
+                continue
+            wrong = [x for x in answered if set(x.categories.get(key, ())) != want]
             if not wrong:
                 matched += 1
                 continue
@@ -531,23 +535,33 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
                     "extra": sorted(got - want),
                     "explanation": x.explanations.get(key, ""),
                 })
-        cases = matched + len({m["article_id"] for m in misses})
-        return {"cases": cases, "matched": matched, "misses": misses}
+        cases = matched + len({m["article_id"] for m in misses}) + len(unanswered)
+        return {
+            "cases": cases,
+            "matched": matched,
+            "unanswered": len(unanswered),
+            "misses": misses,
+            "unanswered_cases": unanswered,
+        }
 
     def expected_sentiments(side: str) -> dict:
         """Per case that rules sentiments: matched if every answered reply that kept a ruled
-        category gives it the ruled sentiment, mismatched if any gives another, and not assessed
-        if no reply kept one (that miss is counted under expected categories)."""
-        matched, mismatched, not_assessed = [], [], []
+        category gives it the ruled sentiment, mismatched if any gives another, not assessed if an
+        answered reply exists and none kept one (that case is a miss under expected categories),
+        and unanswered if every reply failed."""
+        matched, mismatched, not_assessed, unanswered = [], [], [], []
         for r in paired:
             exp = r.article.expected
             if exp is None or not exp.sentiments:
                 continue
             key = normalize_brand(exp.brand)
+            entry = {**_brief(r), "brand": exp.brand, "strata": sorted(r.article.strata)}
+            answered = [x for x in getattr(r, side) if x.outcome != FAILED]
+            if not answered:
+                unanswered.append(entry)
+                continue
             assessed, wrong = 0, []
-            for x in getattr(r, side):
-                if x.outcome == FAILED:
-                    continue
+            for x in answered:
                 kept = x.sentiments.get(key, {})
                 for category, want in exp.sentiments:
                     if category not in kept:
@@ -555,7 +569,6 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
                     assessed += 1
                     if kept[category] != want:
                         wrong.append({"category": category, "expected": want, "got": kept[category]})
-            entry = {**_brief(r), "brand": exp.brand, "strata": sorted(r.article.strata)}
             if wrong:
                 mismatched.append({
                     **entry,
@@ -570,12 +583,60 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
             else:
                 not_assessed.append(entry)
         return {
-            "cases": len(matched) + len(mismatched) + len(not_assessed),
+            "cases": len(matched) + len(mismatched) + len(not_assessed) + len(unanswered),
             "matched": len(matched),
             "mismatched": len(mismatched),
             "not_assessed": len(not_assessed),
+            "unanswered": len(unanswered),
             "misses": mismatched,
             "not_assessed_cases": not_assessed,
+            "unanswered_cases": unanswered,
+        }
+
+    def rulings(side: str) -> dict:
+        """D040's per-ruling roll-up over the `ruling_1` to `ruling_8` cases with an expected
+        outcome (gray and prompt-example cases excluded). A case passes if it has an answered
+        reply and every answered reply judges the expected brand on the expected side, gives it
+        exactly the ruled categories (where ruled) and each ruled sentiment (where ruled). A case
+        whose replies all failed is unanswered, counted apart and outside the rate."""
+        by_ruling: dict[str, dict[str, int]] = {}
+        passed, failed, unanswered = [], [], []
+        for r in paired:
+            exp = r.article.expected
+            ruled = sorted(set(r.article.strata) & SCORED_RULINGS)
+            if exp is None or r.article.prompt_example or not ruled:
+                continue
+            key = normalize_brand(exp.brand)
+            answered = [x for x in getattr(r, side) if x.outcome != FAILED]
+
+            def passes(x: ReplyRecord) -> bool:
+                if x.verdicts.get(key) != exp.is_sportswear_brand:
+                    return False
+                if exp.categories is not None and set(x.categories.get(key, ())) != set(exp.categories):
+                    return False
+                kept = x.sentiments.get(key, {})
+                return all(kept.get(c) == want for c, want in exp.sentiments or ())
+
+            entry = {**_brief(r), "brand": exp.brand, "rulings": ruled}
+            if not answered:
+                outcome, bucket = "unanswered", unanswered
+            elif all(passes(x) for x in answered):
+                outcome, bucket = "passed", passed
+            else:
+                outcome, bucket = "failed", failed
+            bucket.append(entry)
+            for ruling in ruled:
+                counts = by_ruling.setdefault(ruling, {"passed": 0, "failed": 0, "unanswered": 0})
+                counts[outcome] += 1
+        return {
+            "by_ruling": dict(sorted(by_ruling.items(), key=lambda kv: int(kv[0].removeprefix(RULING_PREFIX)))),
+            "cases": len(passed) + len(failed) + len(unanswered),
+            "passed": len(passed),
+            "failed": len(failed),
+            "unanswered": len(unanswered),
+            "rate": _rate(len(passed), len(passed) + len(failed)),
+            "failed_cases": failed,
+            "unanswered_cases": unanswered,
         }
 
     stability = []
@@ -678,6 +739,7 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
             "baseline": expected_sentiments("baseline"),
             "candidate": expected_sentiments("candidate"),
         },
+        "rulings": {"baseline": rulings("baseline"), "candidate": rulings("candidate")},
         "gated_categories": {"baseline": gated("baseline"), "candidate": gated("candidate")},
         "prompt_example_cases": [
             {**_brief(r), "example": r.article.prompt_example}

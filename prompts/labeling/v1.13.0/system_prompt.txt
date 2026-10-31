@@ -27,8 +27,8 @@ Before analyzing any brand, you MUST first verify that the article is actually a
   - "Decathlon Capital Partners", "Decathlon Management" = investment/VC firms (NOT sportswear)
   - Only Decathlon (the French sporting goods retailer) is the brand we track. Which content type an article about it gets is decided by "Content Type" below.
 - **Li-Ning/361 Degrees/Xtep/Peak**: Chinese sportswear brands - verify it's about the apparel company
-- **Allbirds**: The company sold its shoe business and renamed itself to pursue AI computing (as Smartbird, also reported as NewBird AI). An article about that AI business, its stock or its new name is NOT about the sportswear brand. An article about the sale of the shoe business, or about the Allbirds shoe brand under its new owner (American Exchange Group), IS about the sportswear brand. The same holds for any company that leaves the sportswear category: stories about its new business are about another entity.
-- **Spyder**: Could be the Can-Am Spyder (a three-wheeled motorcycle) or another company's model named Spyder. Only Spyder (the ski and outdoor apparel brand) is the brand we track, even when the article reviews a product.
+- **Allbirds**: The company sold its shoe business and renamed itself to pursue AI computing (as Smartbird, also reported as NewBird AI). An article about that AI business, its stock or its new name is NOT about the sportswear brand, unless the sale of the shoe business is part of its subject. An article whose subject includes the sale of the shoe business, or the Allbirds shoe brand under its new owner (American Exchange Group), IS about the sportswear brand, even when it also reports the AI pivot. Only a story about the AI business that mentions the sale in passing is about another entity. The same holds for any company that leaves the sportswear category: stories about its new business are about another entity.
+- **Spyder**: Could be the Can-Am Spyder (a three-wheeled motorcycle) or another company's model named Spyder; an article about one of those is about another entity, even when it reviews that product. Only Spyder the ski and outdoor apparel brand is the brand we track.
 
 **Target sportswear brands we are tracking:**
 {brands}
@@ -146,7 +146,7 @@ A product that contains recycled polyester is NOT Environmental ESG news unless:
 Ask yourself these questions IN ORDER:
 
 1. **Is this article primarily about stock prices, earnings, or financial metrics?**
-   - Does it report an activist shareholder, a stake that concentrates ownership in one holder, or a fight over board seats or control? → **Governance**, even when it is framed as stock news. Sentiment follows how the article frames it.
+   - Does it report an activist shareholder, a stake that concentrates ownership in one holder, or a fight over board seats or control? → **Governance**, even when it is framed as stock news.
    - Otherwise YES → **DO NOT assign Governance** (it's financial news)
    - NO → Continue to question 2
 
@@ -217,6 +217,7 @@ Ask yourself these questions IN ORDER:
 
 1. **Does the article report job cuts, layoffs, or closures that cost jobs at the brand?**
    - YES → **Assign Social**, usually negative (-1): the workforce loses jobs. This includes cuts made to automate or to adopt AI; the automation is the reason for the cuts, not a Digital Transformation event. When the cuts fall on ESG-related roles (diversity and inclusion, sustainability), say so in `reasoning`.
+   - Job cuts are cuts the brand announces or carries out: a number of positions, a named layoff or workforce-reduction program, or closures that cut jobs. They count wherever the article reports them, an earnings summary included. Cost-cutting language with no cuts reported (cost savings, restructuring charges, an efficiency program, a lower headcount) is not job cuts.
    - NO → Continue to question 2
 
 2. **Is this about a store opening or retail expansion?**
@@ -230,7 +231,8 @@ Ask yourself these questions IN ORDER:
 
 4. **Is this about a sports sponsorship deal or a brand event?**
    - Is it JUST providing uniforms/equipment/funding? → **NOT Social**
-   - Is it an event the brand hosts (a race, a meet, a clinic), even one for young athletes? → **NOT Social**: a one-off event is a brand event, not a youth program. A program is something ongoing.
+   - Does the brand give a stated amount to a third-party charity (a total, or an amount per participant up to a cap)? → **Social** (community investment), even when it is tied to a brand event
+   - Is it an event the brand hosts (a race, a meet, a clinic), even one for young athletes and even one it holds every year? → **NOT Social**: a hosted event is a brand event, not a youth program. A program gives ongoing support between events (coaching, funding, mentoring).
    - Does it include substantive youth development, community programs, or D&I initiatives? → Consider Social
    - NO → Continue to question 5
 
@@ -239,7 +241,7 @@ Ask yourself these questions IN ORDER:
    - NO → Continue to question 6
 
 6. **Does the article describe genuine community investment, D&I programs, or worker welfare?**
-   - YES → Assign Social. A donation to a third-party charity with a stated amount (a total, or an amount per participant up to a cap) is community investment, even when it is tied to a brand event.
+   - YES → Assign Social
    - NO → **DO NOT assign Social**
 
 ### SPECIFIC EXAMPLES - DO NOT ASSIGN SOCIAL:
@@ -256,7 +258,7 @@ Ask yourself these questions IN ORDER:
 | Music festival | "Vans Warped Tour goes global in 2026" | Brand sponsorship |
 | Marketing campaign | "Saucony launches Run Home for Holidays campaign" | Advertising |
 | Brand event | "JD Sports x Adidas rooftop event in Dallas" | Marketing event |
-| Brand-hosted youth event | "Brand hosts its annual high school track meet" | A one-off event the brand runs, not a program |
+| Brand-hosted youth event | "Brand hosts its annual high school track meet" | An event the brand runs, even every year, not a program |
 
 ### SPECIFIC EXAMPLES - DO ASSIGN SOCIAL:
 
@@ -323,7 +325,7 @@ For each category label you assign, you MUST provide 1-3 direct quotes from the 
 5. If a brand is only briefly mentioned without substantive ESG-related content, do not assign categories for that brand.
 6. Your confidence score should reflect how certain you are about ALL classifications for that brand (0.0-1.0).
 7. Judging every brand is not a reason to find a category for each one. A brand with no ESG content gets `applies: false` for every category. Marketing and sponsorship activations, a product's app or technology features, automation adopted to cut jobs, and a company's offices, labs or stores are not Digital Transformation, and a product's materials are not Environmental. If your reasoning says a category does not apply, set `applies: false` for it.
-8. A single passing sentence does not carry a category, whatever the category. One line on a topic in an article about something else (a line on compliance tracking in an article about the brand's AI strategy, for example) is not that category's content; the article must report the matter itself.
+8. A single passing sentence does not carry a category, whatever the category. One line on a topic in an article about something else (a line on compliance tracking in an article about the brand's AI strategy, for example) is not that category's content; the article must report the matter itself. A reported workforce reduction is not a passing sentence: job cuts the brand announces or carries out are Social wherever the article reports them.
 
 ## CRITICAL: Content Type
 
@@ -331,7 +333,7 @@ For each brand, first write `reasoning`: one or two sentences on what the articl
 
 **Owned brands:** news about a brand a company owns is news about that company. When the owned brand is not itself in "Brands to Analyze" (UGG or Teva for Deckers, Jordan Brand for Nike), judge the company by what the article gives the owned brand, even when the company is named only as the owner ("Teva, a Deckers brand"). When the owned brand is in the list (Converse, Hoka), judge each brand by what the article gives it.
 
-**ESG content decides first:** if the article reports an ESG initiative, partnership, donation, policy, commitment or controversy of the brand, its content type is `business`, however much of the article is product, campaign or financial content. The category decision trees above still decide whether that content counts; a product's materials or a marketing activation alone do not make an article `business`. The event must be news the article reports: one it recounts as history or background (a past controversy retold as context) does not count. Nor does a news summary appended to a template stock page (a section of recent headlines or key stories under filing, options or guidance data): it is not the page's own reporting, and the page is `mention_only` whatever the summary reports.
+**ESG content decides first:** if the article reports an ESG initiative, partnership, donation, policy, commitment or controversy of the brand, or job cuts it announces or carries out, its content type is `business`, however much of the article is product, campaign or financial content. The category decision trees above still decide whether that content counts; a product's materials or a marketing activation alone do not make an article `business`. The event must be news the article reports: one it recounts as history or background (a past controversy retold as context) does not count. Nor does a news summary appended to a template stock page (a section of key stories or recent or trending headlines under filing, options, guidance or price-move data): it is not the page's own reporting, and the page is `mention_only` whatever the summary reports.
 
 **`other_entity`: the name refers to something ELSE entirely:**
 - Puma the animal (not Puma sportswear)
@@ -342,7 +344,7 @@ For each brand, first write `reasoning`: one or two sentences on what the articl
 - A company that left the sportswear category, in stories about its new business (Allbirds as an AI computing company; see Brand Verification)
 - Another company's product or model line that shares the name (the Can-Am Spyder motorcycle)
 
-Check your reasoning against the type: if your reasoning says the name is another company's product or model line, the type is `other_entity`, even when the article reviews that product.
+Check your reasoning against the type: if your reasoning says the name is a product or model line of a company that is neither the tracked brand nor its owner, the type is `other_entity`, even when the article reviews that product.
 
 **`mention_only`: the company is named, but the article has no substantive content about it:**
 
@@ -364,7 +366,7 @@ Check your reasoning against the type: if your reasoning says the name is anothe
    - Sources like MarketBeat, MarketScreener, HoldingsChannel, tickerreport.com, themarketsdaily.com
 
    **Template pages with an appended news summary** → `mention_only`
-   The MarketBeat family's 13F holdings, options-volume and earnings-guidance templates often end with a section of recent news about the company (key stories, recent headlines). The summary repeats other outlets' reporting; it is not the page's own. The page is `mention_only` even when the summary reports ESG news or business results.
+   The MarketBeat family's templates (13F holdings, options volume, earnings guidance, price moves such as a gap up or down) often end with a section of recent news about the company (key stories, recent or trending headlines). The summary repeats other outlets' reporting; it is not the page's own. The page is `mention_only` even when the summary reports ESG news or business results.
 
    **Pure stock price/volume articles** → `mention_only`
    - "NKE stock up 4% today" — just price movement
@@ -439,7 +441,7 @@ Check your reasoning against the type: if your reasoning says the name is anothe
 - "Deckers Racks Up Record Revenue as Significant Global Demand for Ugg and Hoka Continues" — earnings with CEO quotes and segment analysis
 - An earnings preview, a stock drop explained by tariffs or demand, or a refund or charge's effect on results is `financial`.
 
-**Key test for financial articles:** Does the article contain **human-written analysis or commentary** about the brand's business (analyst reasoning, CEO/CFO quotes, strategy discussion, competitive analysis, what drove results)? Then `financial`. Is it **auto-generated/template content** that just plugs financial data into a standard format (raw prices, 13F share counts, moving averages, rating lists without reasoning, short interest, metric tables, "X invested Y years ago", a DCF or fair-value model)? Then `mention_only`. Headlines or story summaries appended under template data are not human-written analysis: the page is still `mention_only`. If the article reports a governance event (a board fight, a proxy battle, an activist stake or one that concentrates ownership, fraud, an ESG report, executive pay policy) or job cuts, rather than the stock's or results' outlook, it is `business`, even with stock figures in it.
+**Key test for financial articles:** Does the article contain **human-written analysis or commentary** about the brand's business (analyst reasoning, CEO/CFO quotes, strategy discussion, competitive analysis, what drove results)? Then `financial`. Is it **auto-generated/template content** that just plugs financial data into a standard format (raw prices, 13F share counts, moving averages, rating lists without reasoning, short interest, metric tables, "X invested Y years ago", a DCF or fair-value model)? Then `mention_only`. Headlines or story summaries appended under template data are not human-written analysis: the page is still `mention_only`. If the article reports a governance event (a board fight, a proxy battle, an activist stake or one that concentrates ownership, fraud, an ESG report, executive pay policy) or job cuts the brand announces or carries out, rather than the stock's or results' outlook, it is `business`, even with stock figures in it.
 
 **`business`: substantive news about the company itself** — strategy, operations, leadership, legal matters, store openings, sponsorships, athlete signings, partnerships, and ESG initiatives, policies, programs, commitments or controversies. This is the only content type whose ESG categories are kept, and the decision trees above still decide whether any category applies. A `business` brand with no ESG content (a store opening, a sponsorship) gets `applies: false` for every category.
 

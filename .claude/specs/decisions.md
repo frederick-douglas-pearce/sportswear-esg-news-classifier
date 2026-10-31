@@ -2595,7 +2595,9 @@ brand becoming judged. #122's v1.12.0 needs the same check.
    compliance at least 95%; each stability case consistent across its repeats or explained; each
    Product-article case on its expected side or the miss explained; a human reads every
    labeled→non-labeled and non-labeled→labeled transition and every per-brand sportswear flip; the
-   unjudged rate is reported for both versions.
+   unjudged rate is reported for both versions. *(Amended by D040 §4: case files may be repeated
+   and may rule sentiments, and a candidate may add criteria of its own, fixed in its decision
+   before its run.)*
 3. Freeze: the system and user prompt hashes promoted are the hashes evaluated, and a text change
    after the run needs a new run. A candidate's text may be edited in place only while no
    `labeling_runs` or `brand_labels` row records its version. *(Amended by D037 §6: a version's
@@ -2864,9 +2866,10 @@ D038's addition is after that run.
 
 ## D040: The Owner's Rulings From #192's Review Are Labeling Policy, Stated in Candidate v1.13.0 and Judged Against a Bar Fixed Before Its Eval (#230)
 
-**Date:** 2026-10-29 · **Status:** accepted (architect review, 2026-10-29: approve with changes;
-the owner approved the plan on 2026-10-29 and set point 3's threshold) · **Issues:** #230, #192,
-#154, #227
+**Date:** 2026-10-29, revised 2026-10-31 · **Status:** accepted (architect reviews 2026-10-29 and
+2026-10-31: approve with changes; the owner approved the plan on 2026-10-29, set point 3's
+threshold, and approved the revision after #234 on 2026-10-31) · **Issues:** #230, #192, #154,
+#227, #234
 
 **Context.** The owner's review of #192's backfill (2026-10-27 to 28) made policy rulings that
 production prompt v1.12.0 does not state, or states differently (#230). Each names the articles
@@ -2877,20 +2880,26 @@ transitions and Product cases, not the categories and sentiments these rulings a
 **Decision.**
 1. **Rulings 1 to 8 are labeling policy**, stated in candidate prompt v1.13.0 (a copy of v1.12.0
    whose user prompt and reply schema are unchanged):
-   - (1) layoffs and job cuts are Social, usually -1, including cuts made to automate or adopt AI,
-     which are not Digital Transformation;
+   - (1) job cuts the brand announces or carries out (a number of positions, a named layoff
+     program, closures that cut jobs) are Social, usually -1, wherever the article reports them,
+     an earnings summary included, and they make the content type `business`. Cuts made to
+     automate or adopt AI are included and are not Digital Transformation. Cost-cutting language
+     with no cuts reported is not job cuts;
    - (2) a data breach or cybersecurity incident is Digital Transformation -1, and Governance as
      well when the subject is the board's oversight of it;
    - (3) an activist shareholder, a stake that concentrates ownership or a board fight is
-     Governance even when it is framed as stock news, with sentiment from the article's framing,
-     and a CEO pick made during a board fight is Governance;
-   - (4) a sponsorship, a one-off event the brand hosts (young participants included) or a
-     celebrity piece that only mentions a program is not Social, and a quantified donation to a
-     third-party charity is;
-   - (5) a single passing sentence carries no category;
+     Governance even when it is framed as stock news, and a CEO pick made during a board fight is
+     Governance. Sentiment follows the Sentiment Guidelines (the brand's conduct, not the
+     article's stance, #117);
+   - (4) a sponsorship, an event the brand hosts (young participants and a yearly event included)
+     or a celebrity piece that only mentions a program is not Social, and a quantified donation to
+     a third-party charity is, even at a brand event;
+   - (5) a single passing sentence carries no category, except a reported workforce reduction;
    - (6) a template stock page is `mention_only` even with an appended news summary;
    - (7) a company that left the sportswear category is another entity in stories about its new
-     business (Allbirds' AI pivot), while the sale of its shoe brand is sportswear news;
+     business (Allbirds' AI pivot), while an article whose subject includes the sale of its shoe
+     brand, or the brand under its new owner, is sportswear news even when it also reports the
+     pivot (#234's line: a passing mention of the sale does not count);
    - (8) a name that is another company's product line is `other_entity`, even in a review.
 
    Ruling 9 (an evergreen marketing explainer is not news) is borderline in the owner's own words
@@ -2900,10 +2909,15 @@ transitions and Product cases, not the categories and sentiments these rulings a
    decide first. Allbirds and Spyder are named, as Puma and Vans are: a model cannot infer the
    pivot from a general rule.
 2. **The cases** are `prompts/labeling/eval_cases/owner_rulings_192.json`: one per source row,
-   with the owner's ruling as the expected outcome. The Allbirds ids are those #192's 2026-10-28
-   record lists: 22 pivot rows and 4 sale rows (ruling 7), and 4 rows naming Allbirds only as a
-   reference point (`allbirds_reference`). No quoted example in the candidate prompt may match a
-   case title, since a matching case leaves the accuracy count.
+   with the owner's ruling as the expected outcome. The Allbirds cases are the 30 rows #192's
+   2026-10-28 record lists (26 ruled `false_positive`, 4 `skipped`). Splitting the 26 into pivot
+   stories (`ruling_7`) and 4 rows naming Allbirds only as a reference point
+   (`allbirds_reference`) is #230's reading of their titles, accepted at its plan gate. #234
+   (2026-10-30) re-ruled 6 of the pivot rows as sale rows, so ruling 7 has 16 pivot rows and 10
+   sale rows. `fbefe459` (Puma's job cuts inside an earnings-call summary, re-ruled Social -1 by
+   #234) stays in `product_and_stability.json`, with the stratum `ruling_1` and its sentiment. No
+   quoted example in the candidate prompt may match a case title, since a matching case leaves
+   the accuracy count.
 3. **The bar, fixed before the run.** v1.13.0 is promoted only if its contrastive eval against
    v1.12.0 (same model, Haiku 5.5 at effort medium; the 63 existing cases and these cases in one
    run) meets:
@@ -2911,24 +2925,41 @@ transitions and Product cases, not the categories and sentiments these rulings a
    - each scored ruling case on its expected side, with its ruled categories and its ruled
      sentiments, or the miss read and explained;
    - no new miss on the existing cases compared with v1.12.0 in the same run;
-   - ruling 3's sentiments and ruling 9 read by hand;
+   - the Lululemon copies' sentiments (ruling 3) and ruling 9 read by hand;
    - the dry run lists no ruling case as a prompt-example case.
 
    **Falsifier:** if v1.12.0 already meets the expected outcome on at least 85% of the scored
    ruling cases, the rulings are not needed in the prompt, and promotion is reconsidered rather
-   than assumed (threshold set by the owner).
+   than assumed (threshold set by the owner). The cases are the `ruling_1` to `ruling_8` cases
+   with an expected outcome; `allbirds_reference` and the gray case are not among them. A case
+   meets its outcome when every answered reply judges the expected brand on the expected side,
+   with exactly the ruled categories and the ruled sentiments. A case whose replies all failed is
+   unanswered, counted apart and outside the rate. The report prints the number.
+
+   #234 superseded two owner decisions taken at #230's code review: a length threshold for job
+   cuts reported in an earnings summary (`fbefe459` was re-ruled Social -1 instead), and the gray
+   zone for `666c3315` and `27c31c75` (both were re-ruled sale rows).
 4. **Amends D036: the case-file contract.**
    - `--case-file` may be repeated. An article in two files keeps one expectation: the two must
      be equal, or one file must have none. Any other difference, and an id listed twice in one
      file, is refused before the database is read.
    - An optional `expected.sentiments` (`{category: -1|0|1}`, each category also in
-     `expected.categories`) is reported per side as matched, mismatched or not assessed (no reply
-     kept the category; that miss is counted under categories).
+     `expected.categories`) is reported per side as matched, mismatched, not assessed (an answered
+     reply exists and none kept the category, so the case is a miss under categories) or
+     unanswered (every reply failed, as under categories).
    - The accuracy section is computed over every case file. It lists each miss's strata and
      counts by stratum, so D036's per-Product-case criterion still reads the `product_*` strata.
-   - The report records the case files and the commit the run was made from. The run is made
-     from the merged commit, not from a branch, because D036 does not trust harness numbers
-     before the harness is reviewed.
+   - A candidate may add criteria of its own, fixed in its decision before its run (§3 does so for
+     v1.13.0).
+   - Before any call, the script reads the commit and whether tracked files differ from it, and
+     each case file's sha256; the report records them with the case files. A paid run from a tree
+     with tracked changes is refused.
+   - The run is made from the PR head, before the merge (the owner, 2026-10-31, so it runs before
+     the promotional credits expire on 2026-11-02). The hashes evaluated are the hashes promoted
+     (D036 §3), so the promotion PR checks that v1.13.0's hashes on main equal the report's. A
+     change to v1.13.0's hashed files after the run means a new run. So does a change to the case
+     data or the scoring code that moves a reported number, since the harness does not re-score
+     saved replies.
 5. **Promotion is a second PR** on #230, made only on a run that meets point 3 and with the
    owner's approval. It pins v1.13.0's hashes. No backfill relabel.
 
