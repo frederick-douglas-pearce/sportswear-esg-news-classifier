@@ -272,13 +272,13 @@ different risk: it summarizes news, much of it negative, about named companies.
 ## Still open
 
 - **Trend window length** (decision 5).
-- **Series title and category slug.** Candidates are below; the slug can be settled independently
-  (for example `sportswear-esg`).
+- **Series title and category slug.** The owner prefers a plain descriptive title, no wordplay
+  (2026-10-30). Candidates:
 
-| Title                                              | Note                                                                 |
-| -------------------------------------------------- | -------------------------------------------------------------------- |
-| What the Labels Say                                | Clothing labels and ESG labels; honest that it is a classifier's view |
-| Footprints                                         | Shoes and carbon footprint; short, works as a card wordmark          |
-| Split Times                                        | Running splits, a two-week interval                                  |
-| Running Tally                                      | A count kept as it goes; fits the scorecard                          |
-| What's Happening in Sportswear Sustainability?     | Owner's draft; clear, long for a card, and promises breadth the data may not have |
+| Title                                    | Note                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------- |
+| Sportswear Sustainability Review         | Matches the site's "Sportswear Sustainability Scorecard"; slug `sportswear-sustainability` |
+| Sportswear Sustainability in the News    | Says the source is news coverage, which is the honest scope                           |
+| Sportswear ESG Review                    | Matches the pipeline's categories; "ESG" is less familiar to a general reader         |
+| Sustainable Sportswear Review            | Owner's draft; reads as if the sportswear is sustainable, which much of the news is not |
+| Sustainable Sportswear in the News       | Owner's draft; same presupposition                                                    |
