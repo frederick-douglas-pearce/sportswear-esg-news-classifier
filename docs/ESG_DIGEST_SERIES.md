@@ -70,6 +70,33 @@ then reads as a finding with a baseline, not as an excuse. The pack has to split
 reason to get the third row, which the provenance code (`src/data_collection/provenance.py`)
 already distinguishes.
 
+### ESG share of coverage (owner interest, 2026-10-30)
+
+The funnel's ratio, ESG-labeled over judged-relevant, is worth reporting in its own right: what
+fraction of the news about these brands concerns ESG. Readers who care about sustainability, and the
+brands, would want it. It measures **coverage, not effort**, and the post must say so:
+
+- **Negative coverage counts.** A labor scandal raises a brand's ESG share. Report the share split
+  by sentiment, never as one number that reads as a score.
+- **The denominator is the brand's whole news footprint.** Nike's product and financial coverage
+  dwarfs any ESG story, so its share stays low whatever it does; a small brand with one press
+  release can show a high one. Per-brand shares appear only in the trend window and above the
+  minimum n; each issue reports the industry-wide share.
+- **The denominator must be judged articles only.** Unlabelable, false positive and unjudged skips
+  say nothing about the brand. Since v1.12.0, `brand_judgments` holds a content type per brand
+  (`business`, `product`, `financial`, `retail_only`, ...), which is the right denominator and
+  breaks down cleanly. It exists only for articles labeled under v1.12.0, so the share's history
+  starts there, or wherever #192's backfill reaches.
+- **Collection is unbiased toward ESG here.** The cron collects with brand-only queries
+  (`scripts/cron_collect.sh`; `--with-keywords` is off), so the denominator is general brand
+  coverage, not coverage pre-selected for ESG terms. If that ever changes, the share changes
+  meaning.
+- **Coverage is decided by journalists and PR teams.** Quiet supply-chain work gets no articles.
+  The methods footer says this once.
+
+Wording example: "Of the 40 articles about Nike's business this fortnight, 3 were about ESG
+(2 positive, 1 negative)."
+
 ## How the sibling repos publish
 
 Three repos publish into the same Pages `_posts/` namespace, each with its own series category:
@@ -273,11 +300,13 @@ different risk: it summarizes news, much of it negative, about named companies.
 
 - **Trend window length** (decision 5).
 - **Series title and category slug.** The owner prefers a plain descriptive title, no wordplay
-  (2026-10-30). Candidates:
+  (2026-10-30), and leans toward "Sportswear Sustainability Review" or "Sportswear Sustainability
+  Briefing" (the latter if early drafts turn out short). Candidates:
 
 | Title                                    | Note                                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------------------------------- |
 | Sportswear Sustainability Review         | Matches the site's "Sportswear Sustainability Scorecard"; slug `sportswear-sustainability` |
+| Sportswear Sustainability Briefing       | Signals short and regular; fits if issues stay brief                                  |
 | Sportswear Sustainability in the News    | Says the source is news coverage, which is the honest scope                           |
 | Sportswear ESG Review                    | Matches the pipeline's categories; "ESG" is less familiar to a general reader         |
 | Sustainable Sportswear Review            | Owner's draft; reads as if the sportswear is sustainable, which much of the news is not |
