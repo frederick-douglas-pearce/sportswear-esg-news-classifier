@@ -1,5 +1,6 @@
 """Tests for scripts/fix_label.py - article label correction tool."""
 
+import sys
 import uuid
 from datetime import datetime, timezone
 from io import StringIO
@@ -115,6 +116,7 @@ def _make_mock_article(**overrides):
     article.labeled_at = overrides.get("labeled_at", None)
     article.skipped_at = overrides.get("skipped_at", None)
     article.full_content = overrides.get("full_content", "Article content here.")
+    article.labeling_error = overrides.get("labeling_error", None)
     return article
 
 
@@ -367,3 +369,68 @@ class TestListStatuses:
 
         assert "Awaiting processing" in output
         assert "Not actually about the sportswear brand" in output
+
+
+class TestUpdateReason:
+    """--reason and --clear-reason replace the stored reason with the status (#234)."""
+
+    def _session(self, mock_db, article):
+        session = MagicMock()
+        session.query.return_value.filter.return_value.first.return_value = article
+        mock_db.get_session.return_value.__enter__ = MagicMock(return_value=session)
+        mock_db.get_session.return_value.__exit__ = MagicMock(return_value=False)
+        return session
+
+    @patch("scripts.fix_label.db")
+    def test_reason_kept_when_not_given(self, mock_db):
+        article = _make_mock_article(labeling_status="false_positive", labeling_error="Manually marked as false positive")
+        self._session(mock_db, article)
+        update_articles([article.id], "skipped")
+        assert article.labeling_error == "Manually marked as false positive"
+
+    @patch("scripts.fix_label.db")
+    def test_reason_replaced(self, mock_db):
+        article = _make_mock_article(labeling_status="false_positive", labeling_error="Manually marked as false positive")
+        self._session(mock_db, article)
+        updated, _ = update_articles([article.id], "skipped", reason="No ESG categories apply to sportswear brands")
+        assert updated == 1
+        assert article.labeling_status == "skipped"
+        assert article.labeling_error == "No ESG categories apply to sportswear brands"
+
+    @patch("scripts.fix_label.db")
+    def test_reason_cleared(self, mock_db):
+        article = _make_mock_article(labeling_status="skipped", labeling_error="No ESG content found")
+        self._session(mock_db, article)
+        update_articles([article.id], "labeled", clear_reason=True)
+        assert article.labeling_status == "labeled"
+        assert article.labeling_error is None
+
+    @patch("scripts.fix_label.db")
+    def test_reason_change_alone_updates_an_article_at_the_status(self, mock_db):
+        article = _make_mock_article(labeling_status="skipped", labeling_error="Manually marked as false positive", skipped_at="kept")
+        session = self._session(mock_db, article)
+        updated, _ = update_articles([article.id], "skipped", reason="No ESG categories apply to sportswear brands")
+        assert updated == 1
+        assert article.labeling_error == "No ESG categories apply to sportswear brands"
+        assert article.skipped_at == "kept"
+        session.commit.assert_called_once()
+
+    @patch("scripts.fix_label.db")
+    def test_same_status_and_reason_is_not_an_update(self, mock_db, capsys):
+        article = _make_mock_article(labeling_status="skipped", labeling_error="x")
+        session = self._session(mock_db, article)
+        updated, _ = update_articles([article.id], "skipped", reason="x")
+        assert updated == 0
+        assert "Already skipped" in capsys.readouterr().out
+        session.commit.assert_not_called()
+
+    def test_reason_and_clear_reason_refused(self):
+        with pytest.raises(ValueError):
+            update_articles([uuid.uuid4()], "skipped", reason="x", clear_reason=True)
+
+    def test_cli_refuses_both_flags(self, monkeypatch):
+        from scripts import fix_label
+
+        monkeypatch.setattr(sys, "argv", ["fix_label.py", "update", str(uuid.uuid4()), "--status", "skipped", "--reason", "x", "--clear-reason"])
+        with pytest.raises(SystemExit):
+            fix_label.parse_args()

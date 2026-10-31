@@ -75,8 +75,8 @@ FAILED_STATUS = "failed"
 # only while the article still has that status, so a later relabel is not called human.
 # Source: #182's comments of 2026-10-09 (corrections, skipped -> false_positive) and 2026-10-10
 # (rows confirmed as correctly labeled), and #192's comment of 2026-10-28 (the backfill review; its
-# 3 unlabelable rulings are left out, since no export reads that status). #143 backfills these
-# into its audit log and deletes this.
+# 3 unlabelable rulings are left out, since no export reads that status), corrected by #234
+# (2026-10-30). #143 backfills these into its audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -97,7 +97,6 @@ HUMAN_RULINGS: dict[str, str] = {
     "ae913840-b9ad-4403-a886-73a331f26abf": "false_positive",
     "2029c74e-2b8c-4f63-a200-8520d9ef8d94": "false_positive",
     # 2026-10-10: confirmed as labeled correctly
-    "fbefe459-5ddf-4e05-b092-1bbc31b823cb": "skipped",
     "21825f8a-d923-4451-97e3-c305a0490a1e": "skipped",
     "eed1f353-8d0b-40c8-b9ce-cfacb6d865d0": "skipped",
     "0a21c3cd-b005-4401-9c44-21000e795e43": "skipped",
@@ -106,29 +105,23 @@ HUMAN_RULINGS: dict[str, str] = {
     "55b54027-afc5-4566-ab7f-f6d393bc8343": "labeled",
     # 2026-10-27/28, #192 backfill review: corrected or confirmed as false_positive
     "0fe46113-cc55-457b-84d9-4b9aa043279c": "false_positive",
-    "26b954bc-b255-49e8-a11f-a95c02eb22b2": "false_positive",
-    "2bfbbec7-7f4b-41ae-86a8-f71dc883e668": "false_positive",
     "2f503c9b-356d-45e7-a77b-d1b2f33f8af8": "false_positive",
     "42c53c5c-1903-45ca-9349-73c9d252c213": "false_positive",
     "4b6a517e-8ea5-416a-9cee-c01553bdc621": "false_positive",
     "4eff3601-7090-4373-aa0e-45660875e428": "false_positive",
     "56129a38-cb46-484f-8ecd-544d4fe6182d": "false_positive",
     "60e1f528-2205-4922-8ca1-702f40751f9c": "false_positive",
-    "666c3315-b36e-47eb-a338-ef62813b17e1": "false_positive",
-    "6a0cbd28-e9c8-403b-8b0f-a5fe966a00f5": "false_positive",
     "6e18e893-6f0e-4d3e-a052-f271b220fdc7": "false_positive",
     "76204e0b-c8f1-46a2-b00d-921badaa3d76": "false_positive",
     "8185da14-35cd-45a4-8ec5-554d8be16524": "false_positive",
     "85aa4594-49eb-4323-b2fe-dcef4466c42b": "false_positive",
     "8e5eafab-599c-4955-a074-3cb56aef968a": "false_positive",
-    "8f5ec01f-1e3c-486e-9f93-d98f8bdd36e6": "false_positive",
     "95da51df-784e-4da4-99fa-5870bf260f13": "false_positive",
     "ab9b199b-5bd7-4dc1-afd4-72826255d424": "false_positive",
     "b896fbc9-cb88-4346-8be4-80d6e35faf14": "false_positive",
     "baf68bd8-87d4-440e-89ee-596f00c2a475": "false_positive",
     "c0090f16-211c-46cf-b6e3-d71a2a5e0fad": "false_positive",
     "c4f1b564-34ac-4c85-96d5-8763fb142146": "false_positive",
-    "d2873bbb-5c94-4343-ad8d-4feb83f36c59": "false_positive",
     "dec87309-3c65-4723-ae6b-2a461570aee6": "false_positive",
     "e3cdcf6b-555c-4728-a09c-d7222bef76fe": "false_positive",
     "e611a949-b58e-4f65-a771-ec6c29a10e10": "false_positive",
@@ -193,6 +186,17 @@ HUMAN_RULINGS: dict[str, str] = {
     "cc938f72-aa6e-4ef1-aa88-48d226fc8e4e": "labeled",
     "de4528d7-280c-4924-853d-95d341be2022": "labeled",
     "ec2dfeec-d41f-47f9-9e24-cf0069c9c18f": "labeled",
+    # 2026-10-30, #234: rulings made consistent with each other
+    # Puma's job cuts are Social -1, as Nike's are in a70e6272 (was a judged skip, ruled 2026-10-10)
+    "fbefe459-5ddf-4e05-b092-1bbc31b823cb": "labeled",
+    # Allbirds articles whose subject includes the sale of the shoe business or the brand under
+    # American Exchange: a judged skip (were false_positive); a passing mention stays false_positive
+    "26b954bc-b255-49e8-a11f-a95c02eb22b2": "skipped",
+    "2bfbbec7-7f4b-41ae-86a8-f71dc883e668": "skipped",
+    "666c3315-b36e-47eb-a338-ef62813b17e1": "skipped",
+    "6a0cbd28-e9c8-403b-8b0f-a5fe966a00f5": "skipped",
+    "8f5ec01f-1e3c-486e-9f93-d98f8bdd36e6": "skipped",
+    "d2873bbb-5c94-4343-ad8d-4feb83f36c59": "skipped",
 }
 
 

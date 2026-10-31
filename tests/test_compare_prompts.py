@@ -16,6 +16,7 @@ from src.evaluation import comparator
 from src.evaluation.comparator import (
     FAILED,
     MOST_BRANDS,
+    NO_CATEGORY_STRATA,
     SAMPLE,
     SKIPPED_JUDGED,
     SKIPPED_UNJUDGED,
@@ -906,7 +907,13 @@ class TestCaseFile:
         "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72": ("Nike", True),
         "e434b12d-eb59-4406-bd26-f3bad800aaf1": ("Nike", False),
         "19832789-ca96-4c74-ba7a-7df0453c4874": ("Nike", True),
+        # Owner-ruled financial 2026-10-22; re-ruled Social -1 by #234 (EXPECTED_CATEGORIES)
         "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("Puma", True),
+    }
+    # The cases that rule the brand's categories
+    EXPECTED_CATEGORIES = {
+        "cdb26552-8643-4007-a403-4f0451447e2f": ("social",),
+        "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("social",),
     }
 
     def test_expected_verdicts_are_pinned(self):
@@ -919,6 +926,18 @@ class TestCaseFile:
             k: (s.expected.brand, s.expected.is_sportswear_brand) for k, s in specs.items() if s.expected
         }
         assert got == self.EXPECTED
+
+    def test_expected_categories_are_pinned(self):
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases/product_and_stability.json"
+        specs = compare_prompts.parse_case_file(json.loads(path.read_text()))
+        got = {k: tuple(s.expected.categories) for k, s in specs.items() if s.expected and s.expected.categories}
+        assert got == self.EXPECTED_CATEGORIES
+        # A case that rules a category cannot also sit in a stratum that expects none
+        for k in got:
+            assert not NO_CATEGORY_STRATA & set(specs[k].strata), k
 
     @pytest.mark.parametrize("version", ["v1.11.0", "v1.12.0"])
     def test_every_prompt_example_case_names_a_quote_in_the_candidate_prompt(self, version):

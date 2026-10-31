@@ -4,6 +4,29 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-30: The owner's rulings are made consistent with each other (#234)
+
+**Two sets of owner rulings contradicted each other, found by code review of #230's PR #233.** A
+contrastive eval scores a candidate prompt against these rulings, so a contradiction is a
+predictable miss, and a classifier trained on the labels learns noise. The owner's decisions:
+- **`fbefe459`** (Puma Q2 earnings call) is `labeled`, Puma Social −1 only, for its
+  workforce-reduction program (500 + 900 positions), as `a70e6272`'s Nike layoffs are. It was a
+  judged skip, owner-ruled `financial` on 2026-10-22. A human brand label (`labeled_by = 'human'`,
+  `human_reviewed = true`) quotes the passage, matched to its chunk.
+- **Allbirds:** an article whose subject includes the sale of the shoe business, or the brand under
+  American Exchange, is a judged skip, even if it also reports the AI pivot; a passing mention of the
+  sale stays `false_positive`. All 30 Allbirds rows in #192's review record were re-read; 6 move
+  from `false_positive` to `skipped` (`666c3315`, `26b954bc`, `2bfbbec7`, `8f5ec01f`, `d2873bbb`,
+  `6a0cbd28`). The 4 already `skipped` stay. The per-row record is on #234.
+
+`HUMAN_RULINGS` matches (110 rulings: 43 `false_positive`, 49 `skipped`, 18 `labeled`).
+`fbefe459`'s eval case moves from the `financial` stratum to `partial_categories` and expects
+`categories: ["social"]`; `tests/test_compare_prompts.py` pins the cases that rule categories.
+`scripts/fix_label.py update` takes `--reason` or `--clear-reason`, so a corrected status does not
+keep the reason of the outcome it replaced: the six moved rows carry the judged-skip reason, and
+`fbefe459`'s "No ESG content found" is cleared. Applied in the database 2026-10-30, after a backup.
+#230 (PR #233) resumes on top of this.
+
 ### 2026-10-28: The owner's rulings from #192's backfill review are recorded as human (#192)
 
 **`HUMAN_RULINGS` (`src/data_collection/provenance.py`) adds 86 rulings from the owner's review of

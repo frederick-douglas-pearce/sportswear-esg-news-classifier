@@ -10,6 +10,10 @@ Usage:
     # Update one or more articles to a new status
     python scripts/fix_label.py update <id> [<id>...] --status skipped
 
+    # Also set the stored reason (labeling_error), or clear it
+    python scripts/fix_label.py update <id> --status skipped --reason "No ESG categories apply to sportswear brands"
+    python scripts/fix_label.py update <id> --status labeled --clear-reason
+
     # List valid labeling statuses
     python scripts/fix_label.py statuses
 
@@ -115,11 +119,24 @@ def show_article(article_id: UUID, content_length: int = 2000) -> bool:
         return True
 
 
-def update_articles(article_ids: list[UUID], new_status: str) -> tuple[int, int]:
+def update_articles(
+    article_ids: list[UUID],
+    new_status: str,
+    reason: str | None = None,
+    clear_reason: bool = False,
+) -> tuple[int, int]:
     """Update labeling status for one or more articles.
+
+    ``reason`` replaces the stored reason (``labeling_error``) and ``clear_reason`` empties it, so a
+    corrected status does not keep the reason of the outcome it replaced (#234). Neither given, the
+    reason is left as it is. An article already at ``new_status`` is still updated when its reason
+    changes.
 
     Returns (updated_count, not_found_count).
     """
+    if reason is not None and clear_reason:
+        raise ValueError("Pass reason or clear_reason, not both")
+
     if new_status not in VALID_LABELING_STATUSES:
         print(f"Invalid status: {new_status}")
         print(f"Valid statuses: {', '.join(VALID_LABELING_STATUSES)}")
@@ -138,19 +155,24 @@ def update_articles(article_ids: list[UUID], new_status: str) -> tuple[int, int]
                 continue
 
             old_status = article.labeling_status
-            if old_status == new_status:
+            old_reason = article.labeling_error
+            new_reason = None if clear_reason else reason if reason is not None else old_reason
+            if old_status == new_status and old_reason == new_reason:
                 print(f"  Already {new_status}: {article.title[:60]}")
                 continue
 
-            # Update status
-            article.labeling_status = new_status
+            if old_status != new_status:
+                article.labeling_status = new_status
 
-            # Set appropriate timestamp
-            timestamp_field = STATUS_TIMESTAMPS.get(new_status)
-            if timestamp_field:
-                setattr(article, timestamp_field, now)
+                # Set appropriate timestamp
+                timestamp_field = STATUS_TIMESTAMPS.get(new_status)
+                if timestamp_field:
+                    setattr(article, timestamp_field, now)
 
-            print(f"  {old_status} -> {new_status}: {article.title[:60]}")
+                print(f"  {old_status} -> {new_status}: {article.title[:60]}")
+            if old_reason != new_reason:
+                article.labeling_error = new_reason
+                print(f"    reason: {old_reason!r} -> {new_reason!r}")
             updated += 1
 
         if updated > 0:
@@ -191,6 +213,9 @@ Examples:
     # Update articles to skipped
     %(prog)s update ID1 ID2 --status skipped
 
+    # Correct a status and its stored reason
+    %(prog)s update ID --status labeled --clear-reason
+
     # List valid statuses
     %(prog)s statuses
         """,
@@ -223,6 +248,16 @@ Examples:
         choices=VALID_LABELING_STATUSES,
         help="New labeling status",
     )
+    reason_group = update_parser.add_mutually_exclusive_group()
+    reason_group.add_argument(
+        "--reason",
+        help="Replace the stored reason (labeling_error), e.g. a judged skip's reason",
+    )
+    reason_group.add_argument(
+        "--clear-reason",
+        action="store_true",
+        help="Empty the stored reason (labeling_error)",
+    )
 
     # statuses subcommand
     subparsers.add_parser("statuses", help="List valid labeling statuses")
@@ -240,7 +275,9 @@ def main() -> None:
         sys.exit(0 if found else 1)
 
     elif args.command == "update":
-        updated, not_found = update_articles(args.article_ids, args.status)
+        updated, not_found = update_articles(
+            args.article_ids, args.status, reason=args.reason, clear_reason=args.clear_reason
+        )
         print(f"\nUpdated: {updated}, Not found: {not_found}")
         sys.exit(0 if not_found == 0 else 1)
 
