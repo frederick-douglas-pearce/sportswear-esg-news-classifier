@@ -4,6 +4,44 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-10-30: The owner's rulings are made consistent with each other (#234)
+
+**Two sets of owner rulings contradicted each other, found by code review of #230's PR #233.** A
+contrastive eval scores a candidate prompt against these rulings, so a contradiction is a
+predictable miss, and a classifier trained on the labels learns noise. The owner's decisions:
+- **`fbefe459`** (Puma Q2 earnings call) is `labeled`, Puma Social −1 only, for its
+  workforce-reduction program (500 + 900 positions), as `a70e6272`'s Nike layoffs are. It was an
+  unjudged skip ("No ESG content found"), owner-ruled `financial` on 2026-10-22. A human brand label (`labeled_by = 'human'`,
+  `human_reviewed = true`) quotes the passage, matched to its chunk.
+- **Allbirds:** an article whose subject includes the sale of the shoe business, or the brand under
+  American Exchange, is sportswear with no ESG category (`skipped`), even if it also reports the AI pivot; a passing mention of the
+  sale stays `false_positive`. All 30 Allbirds rows in #192's review record were re-read; 6 move
+  from `false_positive` to `skipped` (`666c3315`, `26b954bc`, `2bfbbec7`, `8f5ec01f`, `d2873bbb`,
+  `6a0cbd28`). The 4 already `skipped` stay. The per-row record is on #234.
+
+`HUMAN_RULINGS` matches (110 rulings: 43 `false_positive`, 49 `skipped`, 18 `labeled`).
+`fbefe459`'s eval case moves from the `financial` stratum to `partial_categories` and expects
+`categories: ["social"]`. `tests/test_compare_prompts.py` pins the cases that rule categories, and
+checks every case against the owner's ruling on the same article: a brand expected sportswear rules
+out a `false_positive` ruling, and expected categories need a `labeled` one.
+
+**A hand move can carry a human marker.** `scripts/fix_label.py update` keeps the stored reason by
+default, as before, so a hand move stays detectable by the reason it left behind. `--manual` stores
+the status's human marker instead: `FP_REASON_MANUAL` for `false_positive`, the new
+`MANUAL_SKIP_REASON` ("Manually ruled: sportswear, no ESG category") for `skipped`, and no reason
+for `labeled`, whose marker is its human-reviewed brand label. `derive_label_source` reads
+`MANUAL_SKIP_REASON` as `human`, so a ruled skip stays human without `HUMAN_RULINGS`, and
+`backfill_relabel.py --report` counts it as human. A free-text reason is not offered: one in the
+pipeline's form would make a hand move read as an LLM decision. `--clear-reason` empties the reason.
+Leaving `skipped` clears `skipped_at`, and `show` prints the reason. The six moved rows carry
+`MANUAL_SKIP_REASON`; `fbefe459`'s "No ESG content found" (an unjudged skip's reason) and its
+`skipped_at` are cleared. Applied in the database 2026-10-30, after a backup.
+
+Not changed: 3 of the 6 Allbirds rows still have LLM brand labels from before, which no reader of
+`labeled` rows sees. Cases ruled `true` on 2026-10-22 but stored `false_positive`, and `19832789`'s
+Nike layoffs, are a follow-up.
+#230 (PR #233) resumes on top of this.
+
 ### 2026-10-28: The owner's rulings from #192's backfill review are recorded as human (#192)
 
 **`HUMAN_RULINGS` (`src/data_collection/provenance.py`) adds 86 rulings from the owner's review of

@@ -126,7 +126,7 @@ uv run python scripts/compare_prompts.py --candidate v1.11.0 \
 | `judged_skip` | judged skips (`llm`/`pre_classifier`) skipped since the production version's first run |
 | `failed` | `failed` rows, whatever the error (#86). Most never reached the LLM: a credit balance too low, a usage limit, an invalid key. A failed write records no timestamp, so a row a tagged run tried and left `failed` with another reason is not retried (`failed_in_backfill`) |
 
-Every arm needs no `brand_judgments` row, at least one brand, and content the pipeline would send. Left out and reported, never relabeled: `HUMAN_RULINGS` ids whatever their status and other `human` rows; articles with a `brand_labels` row a human reviewed or wrote; skips the pipeline writes before any LLM call; and **possible hand moves**. `fix_label.py update` keeps the old reason, so the `false_positive` arm takes only a reason in the form a reply writes, `"<brand>: <reason>"` (joined by `"; "`) for a brand the article mentions; every other reason (a labeler error kept by a move from `failed`, a skip reason, a title-duplicate reason, a reason a human wrote, none, an FP classifier skip's reason) is left out, until #143's audit log records such moves. The dry run lists the reasons it left out.
+Every arm needs no `brand_judgments` row, at least one brand, and content the pipeline would send. Left out and reported, never relabeled: `HUMAN_RULINGS` ids whatever their status and other `human` rows; articles with a `brand_labels` row a human reviewed or wrote; skips the pipeline writes before any LLM call; and **possible hand moves**. `fix_label.py update` keeps the old reason, or with `--manual` stores a human marker (`FP_REASON_MANUAL`, `MANUAL_SKIP_REASON`), never a reply's form (#234), so the `false_positive` arm takes only a reason in the form a reply writes, `"<brand>: <reason>"` (joined by `"; "`) for a brand the article mentions; every other reason (a labeler error kept by a move from `failed`, a skip reason, a title-duplicate reason, a reason a human wrote, none, an FP classifier skip's reason) is left out, until #143's audit log records such moves. The dry run lists the reasons it left out.
 
 Each article goes through `LabelingPipeline.label_articles(prefilter=False, dedupe_titles=False, keep_status_without_reply=True)`: no novelty score, no FP call, no `classifier_predictions` row, no title dedup, so `dispose_reply` decides the status of every reply; a reply the labeler could not use (a refusal, a parse failure, a `max_tokens` stop) is written `failed` by the pipeline, and the script sets no status. A relabeled row keeps its era's `label_source` (`llm` or `pre_classifier`).
 
@@ -294,7 +294,8 @@ Auto-generated or template content with no human analysis:
 | Sale listing with a description | "Brooks Adrenaline GTS 24 now $20 off" (describes cushioning, support, upper) | Yes | `skipped` |
 | Release announcement | "Reebok Angel Reese 1 releases November 14" | Yes | `skipped` |
 | Analyst with reasoning | "Needham downgrades Nike citing brand weakness" | Yes | `skipped` |
-| Earnings + context | "EPS $1.50 missed estimates, CEO announces restructuring" | Yes | `skipped` |
+| Earnings + context | "EPS $1.50 missed estimates, CEO outlines a new strategy" | Yes | `skipped` |
+| Earnings with job cuts | "Puma Q2 earnings call: workforce reduction of 500 + 900 positions" | Yes | `labeled` (Social −1, #234) |
 | Investment thesis | "Sinking 48%, Is Lululemon a Buying Opportunity?" | Yes | `skipped` |
 | Business analysis | "Deckers record revenue driven by Hoka global demand" | Yes | `skipped` |
 
