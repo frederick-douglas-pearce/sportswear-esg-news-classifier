@@ -7,14 +7,16 @@ re-synced on every relabel or correction.
 Sources:
 - ``llm``: the labeling LLM decided the label. For ``skipped`` rows this rests on the stored reason
   being one the pipeline writes after a judgment. For ``false_positive`` and ``labeled`` rows it is
-  inferred from the presence of an FP prediction: a status moved by hand (``fix_label.py`` changes
-  the status, never the reason) also reads as ``llm`` until #143's audit log records such moves.
+  inferred from the presence of an FP prediction: a status moved by hand (``fix_label.py`` keeps
+  the reason unless ``--manual`` stores a human marker) also reads as ``llm`` until #143's audit
+  log records such moves.
 - ``pre_classifier``: as ``llm``, but no FP prediction is recorded for the article: it was labeled
   before the FP classifier existed, or with the pre-filter off and no novelty score to record.
 - ``fp_classifier``: a ``false_positive`` whose latest FP prediction is a skip (``skipped_llm``)
   and whose stored reason is that skip's own reason, so nothing has relabeled it since. Excluded
   from training by default.
-- ``human``: a human ruled on it.
+- ``human``: a human ruled on it: an id in ``HUMAN_RULINGS`` at its ruled status, or a human marker
+  as the reason (``FP_REASON_MANUAL``, ``MANUAL_SKIP_REASON``).
 - ``unjudged``: a ``skipped`` row whose reply, or lack of one, does not establish whether the
   article has a sportswear brand (``UNJUDGED_SKIP_REASONS``). Excluded by default.
 - ``unattributed``: a ``skipped`` row whose reason no pipeline path writes (no reason, or a reason
@@ -43,6 +45,7 @@ from .models import (
     FP_ACTIONS,
     FP_REASON_AUTO_DETECTED_PREFIX,
     FP_REASON_MANUAL,
+    MANUAL_SKIP_REASON,
     JUDGED_SKIP_REASONS,
     SKIP_INSUFFICIENT_CONTENT,
     SKIP_NO_BRANDS,
@@ -187,10 +190,12 @@ HUMAN_RULINGS: dict[str, str] = {
     "de4528d7-280c-4924-853d-95d341be2022": "labeled",
     "ec2dfeec-d41f-47f9-9e24-cf0069c9c18f": "labeled",
     # 2026-10-30, #234: rulings made consistent with each other
-    # Puma's job cuts are Social -1, as Nike's are in a70e6272 (was a judged skip, ruled 2026-10-10)
+    # Puma's job cuts are Social -1, as Nike's are in a70e6272 (was an unjudged skip, "No ESG
+    # content found", ruled financial 2026-10-22)
     "fbefe459-5ddf-4e05-b092-1bbc31b823cb": "labeled",
     # Allbirds articles whose subject includes the sale of the shoe business or the brand under
-    # American Exchange: a judged skip (were false_positive); a passing mention stays false_positive
+    # American Exchange: sportswear, no ESG category (were false_positive; stored with
+    # MANUAL_SKIP_REASON); a passing mention of the sale stays false_positive
     "26b954bc-b255-49e8-a11f-a95c02eb22b2": "skipped",
     "2bfbbec7-7f4b-41ae-86a8-f71dc883e668": "skipped",
     "666c3315-b36e-47eb-a338-ef62813b17e1": "skipped",
@@ -262,6 +267,8 @@ def derive_label_source(
     if labeling_status == "skipped":
         # The FP classifier never writes 'skipped', so the latest FP action says nothing about
         # who chose this status; only the stored reason does.
+        if labeling_error == MANUAL_SKIP_REASON:
+            return HUMAN
         if labeling_error in UNJUDGED_SKIP_REASONS:
             return UNJUDGED
         if labeling_error in JUDGED_SKIP_REASONS:
@@ -376,7 +383,8 @@ def possible_hand_move(labeling_error: str | None, brands: Sequence[str]) -> boo
     A reply's negative is ``"<brand>: <reason>"`` per brand, joined by ``"; "`` (``dispose_reply``;
     every pipeline version since false-positive detection), so the first part names a brand that
     was sent. Fail-closed: every other reason counts as a possible hand move, since
-    ``fix_label.py update`` changes the status and keeps the reason. That covers a move from
+    ``fix_label.py update`` keeps the reason, or with ``--manual`` stores a human marker, never a
+    reply's form. That covers a move from
     ``failed`` (the labeler's error), from ``skipped`` (a skip reason) or from ``deduplicated``,
     a reason a human wrote, none, and an FP classifier skip's reason on a row an LLM did not
     decide. It stands in for #143's audit log, which will record the move itself.

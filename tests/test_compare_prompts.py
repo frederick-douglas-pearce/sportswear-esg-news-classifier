@@ -939,6 +939,28 @@ class TestCaseFile:
         for k in got:
             assert not NO_CATEGORY_STRATA & set(specs[k].strata), k
 
+    def test_case_expectations_agree_with_human_rulings(self):
+        """A case and an owner ruling on the same article cannot contradict each other (#234).
+
+        Rulings are per article and expectations per brand, so only two checks are sound: a brand
+        expected sportswear rules out an article-level false_positive, and a brand expected to have
+        categories needs the article labeled.
+        """
+        import json
+        from pathlib import Path
+
+        from src.data_collection.provenance import HUMAN_RULINGS
+
+        path = Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases/product_and_stability.json"
+        specs = compare_prompts.parse_case_file(json.loads(path.read_text()))
+        ruled = {k: s.expected for k, s in specs.items() if s.expected and k in HUMAN_RULINGS}
+        assert ruled
+        for article_id, expected in ruled.items():
+            if expected.is_sportswear_brand:
+                assert HUMAN_RULINGS[article_id] != "false_positive", article_id
+            if expected.categories:
+                assert HUMAN_RULINGS[article_id] == "labeled", article_id
+
     @pytest.mark.parametrize("version", ["v1.11.0", "v1.12.0"])
     def test_every_prompt_example_case_names_a_quote_in_the_candidate_prompt(self, version):
         """The cases kept out of accuracy are kept out by a quote the candidate prompt really has."""
