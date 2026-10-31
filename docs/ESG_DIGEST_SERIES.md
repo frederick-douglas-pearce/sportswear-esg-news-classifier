@@ -94,6 +94,12 @@ brands, would want it. It measures **coverage, not effort**, and the post must s
 - **Coverage is decided by journalists and PR teams.** Quiet supply-chain work gets no articles.
   The methods footer says this once.
 
+**Future idea (owner, 2026-10-30): scrape the brands' own newsrooms.** Collecting each brand's
+press releases and sustainability pages alongside the news would separate what PR teams put out
+from what journalists pick up: which announcements got covered, which coverage had no
+announcement behind it (often the negative stories), and how the two shares differ by brand. Out of
+scope for the first build; it is a collection change, not a digest change.
+
 Wording example: "Of the 40 articles about Nike's business this fortnight, 3 were about ESG
 (2 positive, 1 negative)."
 
