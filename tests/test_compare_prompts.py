@@ -1525,10 +1525,13 @@ class TestOwnerRulingScoring:
         }
         md = render_markdown(summarize(runs, **SIDES), config)
         assert "## Owner rulings (D040)" in md
+        assert "D040's falsifier: a baseline rate of 85.0% or more" in md
         assert f"- Falsifier: baseline {passed * 5}.0% {verdict}" in md
         assert f"| ruling_1 | {passed} / {20 - passed} / 0 | 20 / 0 / 0 |" in md
 
-    @pytest.mark.parametrize("baseline,candidate", [("v1.13.0", "v1.14.0"), ("v1.13.0", "v1.12.0")])
+    @pytest.mark.parametrize(
+        "baseline,candidate", [("v1.12.0", "v1.14.0"), ("v1.11.0", "v1.13.0"), ("v1.13.0", "v1.12.0")]
+    )
     def test_report_gives_the_falsifier_verdict_only_for_d040s_pair(self, baseline, candidate):
         """A later comparison over the same cases gets the roll-up but not D040's verdict."""
         runs = [

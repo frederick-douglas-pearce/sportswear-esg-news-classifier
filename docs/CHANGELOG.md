@@ -33,10 +33,15 @@ changes; the user prompt and reply schema are v1.12.0's.
   mismatched or not assessed. The accuracy section, now titled "Sportswear-verdict accuracy",
   lists each miss's strata and counts by stratum. A case whose replies all failed is unanswered,
   not matched. An "Owner rulings (D040)" section scores each `ruling_1` to `ruling_8` case on its
-  verdict, ruled categories and ruled sentiments, per ruling, and, for v1.13.0 against v1.12.0
-  only, states D040's falsifier against the baseline's rate. Before any call the script reads the commit, whether tracked files differ from
-  it, and each case file's sha256, and records them; a paid run from a tree with tracked changes
-  is refused. A case file that cannot be read, is not valid JSON, or has a case without an `article_id` now exits 2 instead of raising; a file of the wrong shape still raises.
+  verdict, ruled categories and ruled sentiments, per ruling, and gives D040's falsifier verdict
+  against the baseline's rate for v1.13.0 against v1.12.0 (other pairs: not applicable). Before
+  any call the script reads the commit, whether tracked files differ from it, and each case file's
+  sha256, and records them; a paid run from a tree with tracked changes is refused. A case file
+  that cannot be read or is not valid JSON, or a case that fails one of `parse_case_file`'s checks
+  (a missing `article_id`, `expected.brand` or `expected.is_sportswear_brand`, an id twice in one
+  file, an unknown category, a sentiment that is not -1, 0 or 1 or is for a category the case does
+  not rule, a non-numeric `repeats`), now exits 2 instead of raising; a file of the wrong shape
+  still raises.
 - **D040** fixes the promotion bar before the run, with a falsifier: if v1.12.0 already meets
   85% of the scored ruling cases, promotion is reconsidered.
 
