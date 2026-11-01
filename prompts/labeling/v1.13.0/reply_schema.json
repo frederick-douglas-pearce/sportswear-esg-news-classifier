@@ -1,0 +1,201 @@
+{
+  "type": "object",
+  "properties": {
+    "brand_analyses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "brand": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "content_type": {
+            "type": "string",
+            "enum": [
+              "other_entity",
+              "mention_only",
+              "retail_only",
+              "product",
+              "financial",
+              "business"
+            ]
+          },
+          "categories": {
+            "type": "object",
+            "properties": {
+              "environmental": {
+                "type": "object",
+                "properties": {
+                  "applies": {
+                    "type": "boolean"
+                  },
+                  "sentiment": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "enum": [
+                          -1,
+                          0,
+                          1
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "applies",
+                  "sentiment",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "social": {
+                "type": "object",
+                "properties": {
+                  "applies": {
+                    "type": "boolean"
+                  },
+                  "sentiment": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "enum": [
+                          -1,
+                          0,
+                          1
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "applies",
+                  "sentiment",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "governance": {
+                "type": "object",
+                "properties": {
+                  "applies": {
+                    "type": "boolean"
+                  },
+                  "sentiment": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "enum": [
+                          -1,
+                          0,
+                          1
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "applies",
+                  "sentiment",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              },
+              "digital_transformation": {
+                "type": "object",
+                "properties": {
+                  "applies": {
+                    "type": "boolean"
+                  },
+                  "sentiment": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "enum": [
+                          -1,
+                          0,
+                          1
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "applies",
+                  "sentiment",
+                  "evidence"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "environmental",
+              "social",
+              "governance",
+              "digital_transformation"
+            ],
+            "additionalProperties": false
+          },
+          "confidence": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "brand",
+          "reasoning",
+          "content_type",
+          "categories",
+          "confidence"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "article_summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "brand_analyses",
+    "article_summary"
+  ],
+  "additionalProperties": false
+}

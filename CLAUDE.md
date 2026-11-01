@@ -88,7 +88,7 @@ uv run python scripts/fix_label.py update <id> --status skipped --manual  # A hu
 uv run python scripts/fix_label.py statuses                       # List valid statuses
 
 # Contrastive Prompt Evaluation (before promoting a labeling prompt, D036)
-uv run python scripts/compare_prompts.py --candidate v1.11.0 --case-file prompts/labeling/eval_cases/product_and_stability.json --sample-size 100 --most-brands 10 --human-rulings --dry-run  # Selection + worst-case cost, no API call; drop --dry-run (and set --max-cost) to run
+uv run python scripts/compare_prompts.py --baseline v1.12.0 --candidate v1.13.0 --case-file prompts/labeling/eval_cases/product_and_stability.json --case-file prompts/labeling/eval_cases/owner_rulings_192.json --sample-size 100 --most-brands 10 --human-rulings --dry-run  # Selection + worst-case cost, no API call; --case-file repeats (#230); drop --dry-run (and set --max-cost) to run
 
 # Backfill Relabel (#192, D039; apply migrations/009 first)
 uv run python scripts/backfill_relabel.py --dry-run               # Cohort by arm, exclusions, cost bounds; no API call, no write
@@ -219,11 +219,11 @@ SQL query examples in `queries/` folder: `collection_queries.sql`, `labeling_que
 ```
 prompts/labeling/
 ├── registry.json          # Version registry with metadata
-├── v1.0.0/ through v1.12.0/
-    ├── config.json, system_prompt.txt, user_prompt.txt (v1.12.0 also reply_schema.json, D037)
+├── v1.0.0/ through v1.13.0/
+    ├── config.json, system_prompt.txt, user_prompt.txt (v1.12.0 and v1.13.0 also reply_schema.json, D037)
 ```
 
-**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Run `scripts/compare_prompts.py` and judge the report against D036 → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.12.0 (a per-brand content type under a reply schema, D037), evaluated on `claude-haiku-5-5` at effort medium (#219); v1.11.0 failed its eval (#215) and was never promoted
+**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Run `scripts/compare_prompts.py` and judge the report against D036 → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.12.0 (a per-brand content type under a reply schema, D037), evaluated on `claude-haiku-5-5` at effort medium (#219); v1.11.0 failed its eval (#215) and was never promoted; v1.13.0 (the owner's rulings from #192's review, #230) is a candidate, judged against D040's bar
 
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
@@ -510,6 +510,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-10-31**: Candidate prompt v1.13.0 states the owner's policy rulings from #192's backfill review (#230, D040), revised after #234: job cuts the brand announces or carries out are Social -1 wherever reported (automation-driven too; cost-cutting language is not cuts), a data breach is Digital -1 (Governance on board oversight), activist or concentrating stakes and board fights are Governance, sponsorships, brand-hosted events and celebrity pieces are not Social while a quantified charity donation is, one passing sentence carries no category (a reported workforce reduction excepted), a template stock page with an appended news summary is `mention_only`, Allbirds' AI pivot is another entity unless the sale of the shoe business is part of the subject, and the Can-Am Spyder is another entity. Cases in `prompts/labeling/eval_cases/owner_rulings_192.json` (and `fbefe459` in `ruling_1`). `compare_prompts.py` takes a repeatable `--case-file` (conflicting expectations refused), scores `expected.sentiments`, counts all-failed cases as unanswered, prints D040's per-ruling roll-up (with its falsifier verdict for v1.13.0 against v1.12.0 only), splits accuracy by stratum, records the commit, tracked changes and each case file's sha256 before any call, and refuses a paid run from a tree with tracked changes. Production stays v1.12.0 until the eval meets D040's bar; promotion is #230 PR2
 - **2026-10-30**: The owner's rulings are made consistent (#234): `fbefe459` (Puma earnings call) is `labeled`, Social −1 for its job cuts, as `a70e6272`'s are; 6 Allbirds rows whose subject includes the sale of the shoe business move from `false_positive` to `skipped` (a passing mention stays `false_positive`). `HUMAN_RULINGS`, the eval case and the DB match, and a test checks cases against rulings. `fix_label.py update --manual` stores a human marker as the reason (`MANUAL_SKIP_REASON` for `skipped`, read as `human`); a free-text reason is not offered. Unblocks #230
 - **2026-10-28**: `HUMAN_RULINGS` adds 86 owner rulings from #192's backfill review (110 in all; record on #192, 2026-10-28; the 3 `unlabelable` rulings are left out). The FP export reads them as `human`, the backfill leaves them out, and `compare_prompts.py --human-rulings` evaluates 110 articles. Policy rulings from the review are #230
 - **2026-10-27**: The backfill relabels `failed` rows (#86). `scripts/backfill_relabel.py` adds a fourth arm, `failed` (119 rows on 2026-10-27, most from a call that got no reply: credit, usage limit, invalid key), read through `fp_export_query(also_failed=True)`; the FP export is unchanged. A failed write has no timestamp, so the pass ends on `tried_reasons`: a `failed` row whose reason differs from the one the first tagged run recorded was failed by the backfill and is left out (`failed_in_backfill`); one whose status was kept is retried. The cron's retry policy (#86 options 1 and 2) stays open

@@ -693,16 +693,20 @@
     {
       "article_id": "fbefe459-5ddf-4e05-b092-1bbc31b823cb",
       "strata": [
-        "partial_categories"
+        "partial_categories",
+        "ruling_1"
       ],
       "repeats": 1,
-      "note": "#215 run 2 gave Social -1 and Governance 0: Puma Q2 earnings call; owner-ruled financial 2026-10-22, re-ruled by #234 (2026-10-30) to Social -1 only for the workforce-reduction program (500 + 900 positions), as a70e6272's layoffs are",
+      "note": "#215 run 2 gave Social -1 and Governance 0: Puma Q2 earnings call; owner-ruled financial 2026-10-22, re-ruled by #234 (2026-10-30) to Social -1 only for the workforce-reduction program (500 + 900 positions), as a70e6272's layoffs are; ruling_1 (#230): the job-cut boundary, cuts reported inside an earnings summary",
       "expected": {
         "brand": "Puma",
         "is_sportswear_brand": true,
         "categories": [
           "social"
-        ]
+        ],
+        "sentiments": {
+          "social": -1
+        }
       }
     }
   ]
