@@ -2935,11 +2935,13 @@ transitions and Product cases, not the categories and sentiments these rulings a
    with an expected outcome; `allbirds_reference` and the gray case are not among them. A case
    meets its outcome when every answered reply judges the expected brand on the expected side,
    with exactly the ruled categories and the ruled sentiments. A case whose replies all failed is
-   unanswered, counted apart and outside the rate. The report prints the number.
+   unanswered, counted apart and outside the rate. The report prints the number, and the
+   falsifier's verdict only for v1.13.0 against v1.12.0.
 
    #234 superseded two owner decisions taken at #230's code review: a length threshold for job
    cuts reported in an earnings summary (`fbefe459` was re-ruled Social -1 instead), and the gray
-   zone for `666c3315` and `27c31c75` (both were re-ruled sale rows).
+   zone for `666c3315` and `27c31c75` (#234 re-ruled `666c3315` a sale row; `27c31c75`, already a
+   judged skip, is a sale row under #234's line).
 4. **Amends D036: the case-file contract.**
    - `--case-file` may be repeated. An article in two files keeps one expectation: the two must
      be equal, or one file must have none. Any other difference, and an id listed twice in one
@@ -2971,12 +2973,11 @@ transitions and Product cases, not the categories and sentiments these rulings a
      compliance, and every stability case consistent on both sides.
    - Falsifier: v1.12.0 passes 16 of the 48 scored ruling cases, below 85%, so the rulings are
      needed. v1.13.0 passes 42 of 48.
-   - The six ruling-case misses, read and explained (owner, 2026-11-01):
+   - The six ruling-case misses (owner, 2026-11-01); five are read and explained:
      - four pivot stories judged sportswear (`8e5eafab`, `ab9b199b`, `c4f1b564`, `e64d0acb`). The
        line between a pivot story that reports the sale and a sale story is a judgment about the
        article body, and a stated line that separates them would contradict #234's rulings, so the
        prompt keeps #234's wording;
-     - `d2873bbb`, a sale row on the right side with Governance kept;
      - `159cd128`, Social kept on the Overtime Elite sponsorship because the article offers its
        athletes professional development, as under v1.12.0.
    - Two Product sale listings (`94a563b7`, `2d4ff51c`) were misses under v1.13.0 only. Five
@@ -2985,7 +2986,8 @@ transitions and Product cases, not the categories and sentiments these rulings a
      The owner ruled the two misses sampling noise on the sale-listing boundary; the check cannot
      rule out a small effect.
    - Still owed before PR2: the owner's read of run 2's transitions and per-brand flips (D036),
-     ruling 3's sentiments and ruling 9.
+     ruling 3's sentiments and ruling 9, and an explanation of the sixth miss, `d2873bbb`: a sale
+     row on the right side with Governance kept.
 
 **Rejected.**
 - **A second eval run per case file.** It splits the report and draws two samples.

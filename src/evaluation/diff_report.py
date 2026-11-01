@@ -7,6 +7,8 @@ from src.evaluation.comparator import RULING_PREFIX
 # D040's falsifier: a baseline that already passes this share of the ruling cases does not need
 # the rulings in its prompt (#230)
 RULING_FALSIFIER_RATE = 0.85
+# The comparison D040's falsifier was fixed for; any other pair gets the roll-up without a verdict
+RULING_FALSIFIER_PAIR = ("v1.12.0", "v1.13.0")
 
 
 def _pct(value: float | None) -> str:
@@ -262,11 +264,16 @@ def render_markdown(summary: dict, config: dict) -> str:
         "",
         "Per `ruling_1` to `ruling_8` case (gray and prompt-example cases excluded): passed if every "
         "answered reply judges the expected brand on the expected side with exactly the ruled "
-        "categories and sentiments; unanswered if every reply failed, outside the rate. D040's "
-        f"falsifier: a baseline rate of {_pct(RULING_FALSIFIER_RATE)} or more means the rulings "
-        "are not needed in the prompt, and promotion is reconsidered.",
+        "categories and sentiments; unanswered if every reply failed, outside the rate.",
         "",
     ]
+    falsifier_applies = (config["baseline"], config["candidate"]) == RULING_FALSIFIER_PAIR
+    if falsifier_applies:
+        lines[-1:-1] = [
+            "",
+            f"D040's falsifier: a baseline rate of {_pct(RULING_FALSIFIER_RATE)} or more means the "
+            "rulings are not needed in the prompt, and promotion is reconsidered.",
+        ]
     for side in ("baseline", "candidate"):
         block = summary["rulings"][side]
         lines.append(
@@ -281,11 +288,17 @@ def render_markdown(summary: dict, config: dict) -> str:
         for item in block["unanswered_cases"]:
             lines.append(f"  - unanswered: {item['title']} (`{item['article_id']}`), {item['brand']}")
     rate = summary["rulings"]["baseline"]["rate"]
-    lines.append(
-        f"- Falsifier: baseline {_pct(rate)} "
-        + ("(no answered case)" if rate is None else
-           ("meets the threshold" if rate >= RULING_FALSIFIER_RATE else "is below the threshold"))
-    )
+    if falsifier_applies:
+        lines.append(
+            f"- Falsifier: baseline {_pct(rate)} "
+            + ("(no answered case)" if rate is None else
+               ("meets the threshold" if rate >= RULING_FALSIFIER_RATE else "is below the threshold"))
+        )
+    else:
+        lines.append(
+            f"- Falsifier: not applicable (D040's is for {RULING_FALSIFIER_PAIR[1]} against "
+            f"{RULING_FALSIFIER_PAIR[0]})"
+        )
     lines += ["", "| Ruling | Baseline passed / failed / unanswered | Candidate passed / failed / unanswered |", "|---|---|---|"]
     rulings = sorted(
         set(summary["rulings"]["baseline"]["by_ruling"]) | set(summary["rulings"]["candidate"]["by_ruling"]),

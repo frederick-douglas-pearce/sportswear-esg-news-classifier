@@ -1527,3 +1527,23 @@ class TestOwnerRulingScoring:
         assert "## Owner rulings (D040)" in md
         assert f"- Falsifier: baseline {passed * 5}.0% {verdict}" in md
         assert f"| ruling_1 | {passed} / {20 - passed} / 0 | 20 / 0 / 0 |" in md
+
+    @pytest.mark.parametrize("baseline,candidate", [("v1.13.0", "v1.14.0"), ("v1.13.0", "v1.12.0")])
+    def test_report_gives_the_falsifier_verdict_only_for_d040s_pair(self, baseline, candidate):
+        """A later comparison over the same cases gets the roll-up but not D040's verdict."""
+        runs = [
+            _run(_article(str(i), strata=("ruling_1",), expected=Expectation("Nike", True)),
+                 [_reply([_no_esg("Nike")])], [_reply([_no_esg("Nike")])])
+            for i in range(20)
+        ]
+        config = {
+            "baseline": baseline, "candidate": candidate,
+            "baseline_model": HAIKU_55, "candidate_model": HAIKU_55,
+            "baseline_max_tokens": 8000, "candidate_max_tokens": 8000,
+            "effort": {"baseline": "medium", "candidate": "medium"},
+            "baseline_hashes": "a/b", "candidate_hashes": "c/d", "stopped_early": False,
+        }
+        md = render_markdown(summarize(runs, **SIDES), config)
+        assert "| ruling_1 | 20 / 0 / 0 | 20 / 0 / 0 |" in md
+        assert "meets the threshold" not in md and "D040's falsifier:" not in md
+        assert "- Falsifier: not applicable (D040's is for v1.13.0 against v1.12.0)" in md

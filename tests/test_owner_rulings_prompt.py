@@ -103,7 +103,7 @@ class TestCandidate:
 
     def test_ruling_6_is_stated_where_it_overrides_the_earlier_rules(self, v1_13_0):
         """The ESG-first paragraph and the financial key test decide before the template block, so
-        the appended-summary carve-out is in all three (architect review, C1)."""
+        the appended-summary carve-out is in all three (D040 §1)."""
         text = v1_13_0.system_prompt
         esg_first = text[text.index("**ESG content decides first:**"):]
         esg_first = esg_first[: esg_first.index("\n")]
@@ -115,7 +115,7 @@ class TestCandidate:
 
     def test_job_cuts_are_stated_where_they_override_the_earlier_rules(self, v1_13_0):
         """Reported cuts decide the content type and survive the passing-sentence rule; cost-cutting
-        language without cuts does not count (#234's re-ruling of fbefe459, architect review A1)."""
+        language without cuts does not count (#234's re-ruling of fbefe459, D040 §1)."""
         text = v1_13_0.system_prompt
         esg_first = text[text.index("**ESG content decides first:**"):]
         esg_first = esg_first[: esg_first.index("\n")]
@@ -179,7 +179,7 @@ class TestCaseFile:
         assert len(merged) == len(specs) + len(product)
 
     def test_no_ruling_case_is_a_prompt_example_of_the_candidate(self, cases, v1_13_0):
-        """A quoted example matching a case title would pull the case out of accuracy (C4)."""
+        """A quoted example matching a case title would pull the case out of accuracy (D040 §2)."""
         quotes = prompt_examples(v1_13_0.system_prompt + v1_13_0.user_prompt)
         assert quotes
         hits = {c["article_id"]: matching_prompt_example(c["title"], quotes) for c in cases}

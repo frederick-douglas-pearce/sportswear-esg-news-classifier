@@ -199,7 +199,8 @@ def merge_case_specs(specs: dict[str, Spec], incoming: dict[str, Spec], source: 
 
 
 def read_case_files(paths: list[Path]) -> dict[str, Spec]:
-    """Every case file's specs, merged in the order given; a file that does not parse is refused."""
+    """Every case file's specs, merged in the order given. A file that cannot be read, is not
+    valid JSON or fails a case check is refused; a file of the wrong shape still raises."""
     specs: dict[str, Spec] = {}
     for path in paths:
         try:
@@ -586,7 +587,8 @@ def main(argv: list[str] | None = None) -> int:
         if tree["dirty"] and not args.dry_run:
             raise EvalSetupError(
                 f"Tracked files differ from commit {tree['commit']}: commit them before a run, so "
-                "the report names the prompt and cases it evaluated"
+                "the recorded commit holds the tracked files evaluated (untracked files are not "
+                "checked; the prompt and case-file hashes identify what ran)"
             )
         with db.get_session() as session:
             select_specs(session, args, specs)
