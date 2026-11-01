@@ -1,6 +1,7 @@
 """Tests for the article labeler and response parsing."""
 
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -558,6 +559,96 @@ class TestArticleLabelerLabelArticle:
             assert len(result.response.brand_analyses) == 1
             assert result.input_tokens == 100
             assert result.output_tokens == 50
+
+    def test_anthropic_credit_error_400_is_classified_without_retry(self):
+        from anthropic import BadRequestError
+        from httpx import Request, Response
+
+        body = {
+            "type": "error",
+            "error": {
+                "type": "billing_error",
+                "message": (
+                    "Your credit balance is too low to access the Anthropic API. "
+                    "Please go to Plans & Billing to upgrade or purchase credits."
+                ),
+            },
+            "request_id": "req_test",
+        }
+        response = Response(
+            400,
+            json=body,
+            request=Request("POST", "https://api.anthropic.com/v1/messages"),
+        )
+        error = BadRequestError("Credit balance too low", response=response, body=body)
+        client = MagicMock()
+        client.messages.create.side_effect = error
+
+        with patch("src.labeling.labeler.Anthropic", return_value=client):
+            labeler = ArticleLabeler(api_key="test-key", max_retries=3)
+            result = labeler.label_article(
+                title="Test",
+                content="Sustainability article content " * 20,
+                brands=["Nike"],
+            )
+
+        assert result.success is False
+        assert result.error_type == "quota_exceeded"
+        assert result.error == "Anthropic credit balance exhausted"
+        assert client.messages.create.call_count == 1
+
+    def test_openai_rate_limit_remains_transient(self):
+        from httpx import Request, Response
+        from openai import RateLimitError
+
+        from src.labeling.labeler import classify_api_error
+
+        body = {
+            "error": {
+                "message": "Rate limit reached for text-embedding-3-small.",
+                "type": "requests",
+                "code": "rate_limit_exceeded",
+            }
+        }
+        error = RateLimitError(
+            "Rate limit",
+            response=Response(
+                429,
+                json=body,
+                request=Request("POST", "https://api.openai.com/v1/embeddings"),
+            ),
+            body=body,
+        )
+
+        assert classify_api_error(error)[0] == "rate_limit"
+
+    def test_openai_credit_balance_exhausted_is_non_transient(self):
+        from httpx import Request, Response
+        from openai import RateLimitError
+
+        from src.labeling.labeler import classify_api_error
+
+        body = {
+            "error": {
+                "message": "Your credit balance is exhausted.",
+                "type": "insufficient_quota",
+                "code": "credit_balance_exhausted",
+            }
+        }
+        error = RateLimitError(
+            "Quota exhausted",
+            response=Response(
+                429,
+                json=body,
+                request=Request("POST", "https://api.openai.com/v1/embeddings"),
+            ),
+            body=body,
+        )
+
+        assert classify_api_error(error) == (
+            "quota_exceeded",
+            "OpenAI credit balance exhausted",
+        )
 
 
 class TestArticleLabelerTruncateContent:

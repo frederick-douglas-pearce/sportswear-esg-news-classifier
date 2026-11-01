@@ -1242,6 +1242,115 @@ class TestKeepStatusWithoutReply:
         assert stats.errors_by_type == {"api_error": 3}
         assert all(c.args[2] != "failed" for c in database.update_article_labeling_status.call_args_list)
 
+    def test_quota_error_stops_batch_and_leaves_all_articles_pending(self):
+        labeler = self._labeler(
+            LabelingResult(
+                success=False,
+                error="Anthropic credit balance exhausted",
+                error_type="quota_exceeded",
+            )
+        )
+        labeler.model, labeler.effort = "claude-haiku-5-5", "medium"
+        articles = [self._article() for _ in range(7)]
+
+        stats, database = self._run(labeler, articles)
+
+        assert labeler.label_article.call_count == 1
+        assert stats.articles_processed == 0
+        assert stats.articles_failed == 7
+        assert stats.articles_left_pending == 7
+        assert stats.articles_left_non_transient == 7
+        assert stats.errors_by_type == {"quota_exceeded": 7}
+        assert stats.failure_reason == "Anthropic credit balance exhausted"
+        assert all(
+            call.args[2] != "failed"
+            for call in database.update_article_labeling_status.call_args_list
+        )
+        assert database.complete_labeling_run.call_args.kwargs["articles_left_pending"] == 7
+
+    def test_quota_failure_count_excludes_articles_that_would_not_call_the_llm(self):
+        labeler = self._labeler(
+            LabelingResult(
+                success=False,
+                error="Anthropic credit balance exhausted",
+                error_type="quota_exceeded",
+            )
+        )
+        labeler.model, labeler.effort = "claude-haiku-5-5", "medium"
+        articles = [self._article() for _ in range(7)]
+        articles[1]["full_content"] = "too short"
+        articles[2]["brands_mentioned"] = []
+
+        stats, database = self._run(labeler, articles)
+
+        assert labeler.label_article.call_count == 1
+        assert stats.articles_failed == 5
+        assert stats.articles_left_pending == 7
+        assert stats.articles_left_non_transient == 5
+        assert stats.errors_by_type == {"quota_exceeded": 5}
+        assert database.complete_labeling_run.call_args.kwargs["articles_left_pending"] == 7
+
+    def test_openai_embedding_quota_exception_stops_batch(self):
+        from httpx import Request, Response
+        from openai import RateLimitError
+
+        body = {
+            "error": {
+                "message": "You exceeded your current quota.",
+                "type": "insufficient_quota",
+                "code": "insufficient_quota",
+            }
+        }
+        quota_error = RateLimitError(
+            "Quota exhausted",
+            response=Response(
+                429,
+                json=body,
+                request=Request("POST", "https://api.openai.com/v1/embeddings"),
+            ),
+            body=body,
+        )
+        articles = [self._article() for _ in range(7)]
+        database = MagicMock()
+        by_id = {article["id"]: SimpleNamespace(**article, category=[]) for article in articles}
+        database.get_article_by_id.side_effect = lambda session, article_id: by_id.get(article_id)
+        embedder = MagicMock()
+        embedder.embed_batch.side_effect = quota_error
+        labeler = MagicMock()
+        labeler.model, labeler.effort = "claude-haiku-5-5", "medium"
+        labeler.model_spec = SimpleNamespace(accepts_effort=True)
+        labeler.prompt_version = "v1.12.0"
+        labeler.prompt_system_hash = "system"
+        labeler.prompt_user_hash = "user"
+        chunker = MagicMock()
+        chunker.chunk_article.return_value = [SimpleNamespace(text="article chunk")]
+        pipeline = LabelingPipeline(
+            database=database,
+            chunker=chunker,
+            embedder=embedder,
+            labeler=labeler,
+        )
+
+        with patch("src.labeling.pipeline.db"), patch.object(
+            pipeline, "_ensure_labeler", return_value=labeler
+        ):
+            stats = pipeline.label_articles(
+                article_ids=[article["id"] for article in articles],
+                prefilter=False,
+                dedupe_titles=False,
+            )
+
+        assert embedder.embed_batch.call_count == 1
+        labeler.label_article.assert_not_called()
+        assert stats.articles_processed == 0
+        assert stats.articles_failed == 7
+        assert stats.articles_left_pending == 7
+        assert stats.failure_reason == "OpenAI credit balance exhausted"
+        assert all(
+            call.args[2] != "failed"
+            for call in database.update_article_labeling_status.call_args_list
+        )
+
     def test_a_transient_failure_is_not_counted_as_not_transient(self):
         labeler = self._labeler(LabelingResult(success=False, error="Rate limited", error_type="rate_limit"))
         labeler.model, labeler.effort = "claude-haiku-5-5", "medium"

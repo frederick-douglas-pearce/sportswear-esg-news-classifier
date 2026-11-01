@@ -16,9 +16,18 @@ from anthropic import (
     InternalServerError,
     RateLimitError,
 )
+from openai import (
+    APIConnectionError as OpenAIAPIConnectionError,
+    APIStatusError as OpenAIAPIStatusError,
+    APITimeoutError as OpenAIAPITimeoutError,
+    AuthenticationError as OpenAIAuthenticationError,
+    InternalServerError as OpenAIInternalServerError,
+    RateLimitError as OpenAIRateLimitError,
+)
 
 from src.data_collection.models import FAILED_MAX_TOKENS_PREFIX, FAILED_REFUSAL_PREFIX
 
+from .api_errors import quota_error_reason
 from .config import (
     LABELING_SYSTEM_PROMPT,
     LABELING_USER_PROMPT_TEMPLATE,
@@ -107,17 +116,20 @@ def classify_api_error(error: Exception) -> tuple[str, str]:
         - unknown: Unrecognized errors
     """
     error_str = str(error)
+    quota_reason = quota_error_reason(error)
+    if quota_reason:
+        return "quota_exceeded", quota_reason
 
-    if isinstance(error, AuthenticationError):
+    if isinstance(error, (AuthenticationError, OpenAIAuthenticationError)):
         return "authentication", f"API authentication failed: {error_str}"
 
-    if isinstance(error, RateLimitError):
+    if isinstance(error, (RateLimitError, OpenAIRateLimitError)):
         return "rate_limit", f"API rate limit exceeded: {error_str}"
 
-    if isinstance(error, APITimeoutError):
+    if isinstance(error, (APITimeoutError, OpenAIAPITimeoutError)):
         return "timeout", f"API request timed out: {error_str}"
 
-    if isinstance(error, APIConnectionError):
+    if isinstance(error, (APIConnectionError, OpenAIAPIConnectionError)):
         # Check for specific connection issues
         error_lower = error_str.lower()
         if "connection refused" in error_lower:
@@ -132,24 +144,26 @@ def classify_api_error(error: Exception) -> tuple[str, str]:
             return "connection", f"SSL/TLS error: {error_str}"
         return "connection", f"API connection error: {error_str}"
 
-    if isinstance(error, InternalServerError):
-        return "server_error", f"Anthropic server error (500): {error_str}"
+    if isinstance(error, (InternalServerError, OpenAIInternalServerError)):
+        return "server_error", f"API server error (500): {error_str}"
 
-    if isinstance(error, APIStatusError):
+    if isinstance(error, (APIStatusError, OpenAIAPIStatusError)):
         status_code = getattr(error, "status_code", None)
         if status_code:
             if status_code == 502:
-                return "server_error", f"Anthropic bad gateway (502): {error_str}"
+                return "server_error", f"API bad gateway (502): {error_str}"
             if status_code == 503:
-                return "server_error", f"Anthropic service unavailable (503): {error_str}"
+                return "server_error", f"API service unavailable (503): {error_str}"
             if status_code == 504:
-                return "server_error", f"Anthropic gateway timeout (504): {error_str}"
+                return "server_error", f"API gateway timeout (504): {error_str}"
             if status_code >= 500:
-                return "server_error", f"Anthropic server error ({status_code}): {error_str}"
+                return "server_error", f"API server error ({status_code}): {error_str}"
+            if status_code == 408:
+                return "timeout", f"API request timed out (408): {error_str}"
             if status_code == 400:
                 return "api_error", f"Bad request (400): {error_str}"
             if status_code == 404:
-                return "api_error", f"Not found (404) - check model name: {error_str}"
+                return "api_error", f"Not found (404): {error_str}"
         return "api_error", f"API status error: {error_str}"
 
     # Check for network-related errors that might not be wrapped

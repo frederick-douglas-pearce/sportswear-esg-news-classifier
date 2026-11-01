@@ -39,7 +39,12 @@ from src.labeling.config import (
     llm_cost_usd,
 )
 from src.labeling.database import labeling_db
-from src.labeling.exit_codes import EXIT_FAILURE, EXIT_PARTIAL_FAILURE, EXIT_SUCCESS
+from src.labeling.exit_codes import (
+    EXIT_ABORTED,
+    EXIT_FAILURE,
+    EXIT_PARTIAL_FAILURE,
+    EXIT_SUCCESS,
+)
 from src.labeling.pipeline import LabelingPipeline
 from src.labeling.prompt_manager import prompt_manager
 
@@ -176,16 +181,16 @@ def exit_code_for(stats) -> int:
       not see them again. Note this includes failures, so subtracting
       `articles_failed` here would be wrong: an all-unparseable batch (issue
       #82) is fully spent, not fully retryable.
-    - `articles_left_pending` counts articles whose processing *raised*. Those
-      never reached a status update and are still `pending`, so a retry can
-      still pick them up.
+    - `articles_left_pending` counts the final pending cohort, including the
+      unprocessed remainder after a non-transient error stops the batch.
 
     Args:
         stats: LabelingStats from the pipeline
 
     Returns:
-        EXIT_SUCCESS when nothing errored, EXIT_FAILURE when a retry still has
-        articles to work through, EXIT_PARTIAL_FAILURE when the batch is spent.
+        EXIT_SUCCESS when nothing errored, EXIT_FAILURE when pending articles
+        may succeed on retry, EXIT_ABORTED when pending articles need an
+        external change first, or EXIT_PARTIAL_FAILURE when the batch is spent.
     """
     if not stats.errors:
         return EXIT_SUCCESS
@@ -193,6 +198,12 @@ def exit_code_for(stats) -> int:
     consumed = stats.articles_processed + stats.articles_deduplicated
 
     if stats.articles_left_pending > 0:
+        if stats.articles_left_non_transient > 0:
+            logger.warning(
+                f"{stats.articles_left_pending} article(s) remain pending after a "
+                "non-transient error; automatic retry is disabled until the cause is fixed."
+            )
+            return EXIT_ABORTED
         # A retry has real work to do, and it can no longer erase this run's
         # numbers — the workflow sums outcomes across every run row.
         logger.warning(
@@ -324,6 +335,9 @@ def main() -> int:
         print(f"Articles skipped:       {stats.articles_skipped}")
         print(f"False positives:        {stats.articles_false_positive}")
         print(f"Articles failed:        {stats.articles_failed}")
+        print(f"Articles left pending:  {stats.articles_left_pending}")
+        if stats.failure_reason:
+            print(f"Failure cause:          {stats.failure_reason}")
         print(f"Brand labels created:   {stats.brands_labeled}")
         if stats.false_positive_brands > 0:
             print(f"Non-sportswear brands:  {stats.false_positive_brands}")

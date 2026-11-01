@@ -8,6 +8,7 @@ on 2026-09-05.
 
 from scripts.label_articles import exit_code_for
 from src.labeling.exit_codes import (
+    EXIT_ABORTED,
     EXIT_FAILURE,
     EXIT_PARTIAL_FAILURE,
     EXIT_SUCCESS,
@@ -32,6 +33,15 @@ class TestExitCodeFor:
             errors=["connection refused"] * 3,
         )
         assert exit_code_for(stats) == EXIT_FAILURE
+
+    def test_non_transient_pending_articles_are_aborted_without_retry(self):
+        stats = LabelingStats(
+            articles_failed=7,
+            articles_left_pending=7,
+            articles_left_non_transient=7,
+            errors=["OpenAI credit balance exhausted"],
+        )
+        assert exit_code_for(stats) == EXIT_ABORTED
 
     def test_every_article_failed_terminally_is_not_retryable(self):
         """All responses unparseable (issue #82): spent, not retryable.
@@ -99,11 +109,14 @@ class TestExitCodeContract:
     def test_codes_are_distinct(self):
         assert len({EXIT_SUCCESS, EXIT_FAILURE, EXIT_PARTIAL_FAILURE}) == 3
 
-    def test_only_partial_is_non_retryable(self):
-        assert NON_RETRYABLE_EXIT_CODES == frozenset({EXIT_PARTIAL_FAILURE})
+    def test_partial_and_aborted_codes_are_non_retryable(self):
+        assert NON_RETRYABLE_EXIT_CODES == frozenset(
+            {EXIT_PARTIAL_FAILURE, EXIT_ABORTED}
+        )
 
     def test_success_is_zero(self):
         """Shell and cron treat 0 as success; nothing else may claim it."""
         assert EXIT_SUCCESS == 0
         assert EXIT_FAILURE != 0
         assert EXIT_PARTIAL_FAILURE != 0
+        assert EXIT_ABORTED != 0

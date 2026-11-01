@@ -372,6 +372,45 @@ class TestConvenienceFunctions:
             notification = call_args[0][0]
             assert notification.severity == "warning"
 
+    def test_send_labeling_summary_reports_quota_stop_and_pending_articles(self):
+        with patch("src.agent.notifications.NotificationManager") as manager_class:
+            manager = MagicMock()
+            manager.send.return_value = {"console": True}
+            manager_class.return_value = manager
+
+            send_labeling_summary(
+                articles_processed=0,
+                articles_labeled=0,
+                false_positives=0,
+                articles_failed=7,
+                articles_left_pending=7,
+                failure_reason="OpenAI credit balance exhausted",
+                additional_details={"error_rate": 1.0},
+            )
+
+        notification = manager.send.call_args.args[0]
+        assert notification.severity == "warning"
+        assert "100.0%" == notification.details["error_rate"]
+        assert notification.details["articles_left_pending"] == 7
+        assert "OpenAI credit balance exhausted" in notification.message
+        assert "7 remain pending" in notification.message
+
+    def test_send_labeling_summary_reports_n_a_when_no_articles_were_processed(self):
+        with patch("src.agent.notifications.NotificationManager") as manager_class:
+            manager = MagicMock()
+            manager.send.return_value = {"console": True}
+            manager_class.return_value = manager
+
+            send_labeling_summary(
+                articles_processed=0,
+                articles_labeled=0,
+                false_positives=0,
+                articles_failed=0,
+            )
+
+        notification = manager.send.call_args.args[0]
+        assert notification.details["error_rate"] == "n/a"
+
 
 class TestCheckFailureNotification:
     """The alert that never fired across 223 failed runs (issue #71).

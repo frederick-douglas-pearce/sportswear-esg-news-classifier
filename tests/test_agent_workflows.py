@@ -585,7 +585,110 @@ class TestCheckLabelingQuality:
         assert result["articles_processed"] == 12
         assert result["articles_labeled"] == 5
         assert result["articles_failed"] == 1
-        assert result["error_rate"] == pytest.approx(1 / 12)
+        assert result["error_rate"] == pytest.approx(1 / 13)
+
+    def test_quota_stop_reports_affected_pending_batch_at_100_percent(self, capsys):
+        from src.agent.workflows.daily_labeling import (
+            _log_summary,
+            check_labeling_quality,
+            generate_report,
+        )
+        from src.labeling.exit_codes import EXIT_ABORTED
+
+        outcomes = dict(
+            self.OUTCOMES_20260905,
+            articles_processed=0,
+            articles_labeled=0,
+            articles_skipped=0,
+            articles_failed=7,
+            articles_left_pending=7,
+        )
+        reason = "OpenAI credit balance exhausted"
+        context = {
+            "labeling_started_at": "2026-11-02T01:00:00+00:00",
+            "labeling_partial_failure": True,
+            "labeling_exit_code": EXIT_ABORTED,
+            "labeling_failure_reason": reason,
+            "labeling_output": {"failure_reason": reason},
+            "llm_analysis_skipped": True,
+            "llm_analysis_reason": "no_samples",
+        }
+        with patch(
+            "src.agent.workflows.daily_labeling._read_run_outcomes", return_value=outcomes
+        ):
+            quality = check_labeling_quality(MagicMock(), context)
+
+        assert quality["articles_failed"] == 7
+        assert quality["articles_left_pending"] == 7
+        assert quality["error_rate"] == 1.0
+        assert quality["failure_reason"] == reason
+
+        context.update(quality)
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        report = generate_report(workflow, context)["report"]
+        assert report["labeling"]["articles_failed"] == 7
+        assert report["labeling"]["articles_left_pending"] == 7
+        assert report["labeling"]["failure_reason"] == reason
+        assert report["quality"]["error_rate"] == 1.0
+        assert report["llm_analysis"]["reason"] == "no_samples"
+
+        _log_summary(report)
+        summary = capsys.readouterr().out
+        assert "Failed: 7" in summary
+        assert "Still Pending: 7" in summary
+        assert reason in summary
+        assert "7 article(s) remain pending" in summary
+        assert "Error Rate: 100.0%" in summary
+        assert "Skipped: no_samples" in summary
+
+    def test_no_labeling_samples_reports_error_rate_as_n_a(self, capsys):
+        from src.agent.workflows.daily_labeling import (
+            _log_summary,
+            check_labeling_quality,
+            generate_report,
+        )
+
+        context = {
+            "dry_run": True,
+            "labeling_output": {"articles_processed": 0, "articles_failed": 0},
+        }
+        quality = check_labeling_quality(MagicMock(), context)
+        assert quality["error_rate"] is None
+        assert quality["high_error_rate"] is False
+
+        context.update(quality)
+        workflow = MagicMock()
+        workflow.name = "daily_labeling"
+        report = generate_report(workflow, context)["report"]
+        _log_summary(report)
+        assert "Error Rate: n/a" in capsys.readouterr().out
+
+    @pytest.mark.parametrize(
+        ("exit_code", "processed", "pending", "expected"),
+        [
+            (1, 0, 7, "Nothing completed; 7 article(s) remain pending and may be retried."),
+            (2, 7, 0, "the batch is spent; retrying will not recover it"),
+        ],
+    )
+    def test_partial_failure_summary_uses_exit_code(
+        self, capsys, exit_code, processed, pending, expected
+    ):
+        from src.agent.workflows.daily_labeling import _log_summary
+
+        report = {
+            "labeling": {
+                "exit_code": exit_code,
+                "articles_processed": processed,
+                "articles_left_pending": pending,
+            },
+            "quality": {"partial_failure": True},
+            "llm_analysis": {"skipped": True, "reason": "no_samples"},
+        }
+
+        _log_summary(report)
+
+        assert expected in capsys.readouterr().out
 
     def test_flags_partial_failure(self):
         """A run that did work and also errored is flagged even at a low error rate."""
@@ -600,6 +703,7 @@ class TestCheckLabelingQuality:
             result = check_labeling_quality(MagicMock(), context)
 
         assert result["partial_failure"] is True
+        assert result["labeling_partial_failure"] is result["partial_failure"]
         # 1/12 is under the 10% threshold, so this is the only signal available.
         assert result["high_error_rate"] is False
 
@@ -636,7 +740,7 @@ class TestCheckLabelingQuality:
 
         assert result["metrics_source"] == "stdout"
         assert result["articles_processed"] == 10
-        assert result["error_rate"] == pytest.approx(0.2)
+        assert result["error_rate"] == pytest.approx(2 / 12)
 
     def test_database_error_falls_back_instead_of_raising(self):
         """A metrics query failure must not take the workflow down."""
@@ -2396,8 +2500,15 @@ class TestTaggedRunsAreNotDailyLabeling:
         sql = " ".join(str(session.execute.call_args.args[0]).split())
         where = sql.index("FROM labeling_runs WHERE ")
         assert "AND (config->>'run_tag') IS NULL" in sql[where:]
-        # in WHERE, not in a FILTER: an unfinished tagged run must not count toward `unfinished`
-        assert "run_tag" not in sql[:where]
+        # The outer WHERE excludes tagged runs from the unfinished count; the
+        # latest-pending subquery also applies the same filter independently.
+        incomplete_count = sql[
+            sql.index("COUNT(*) FILTER ( WHERE completed_at IS NULL"):
+            sql.index("AS incomplete")
+        ]
+        assert "run_tag" not in incomplete_count
+        assert "SUM(articles_left_pending)" not in sql
+        assert "ORDER BY latest.completed_at DESC" in sql
 
     @pytest.mark.skipif(
         __import__("os").environ.get("RUN_DB_TESTS") != "1",
@@ -2421,6 +2532,7 @@ class TestTaggedRunsAreNotDailyLabeling:
         tagged = {"run_tag": "192-backfill"}
         # a second window holding only tagged runs, one finished and one running
         tagged_only = start + timedelta(hours=1)
+        pending_start = start + timedelta(hours=2)
         runs = [
             LabelingRun(started_at=start, completed_at=start, articles_processed=2, articles_labeled=2,
                         status="success", estimated_cost_usd=0.01, config={"model": "m"}),
@@ -2430,6 +2542,20 @@ class TestTaggedRunsAreNotDailyLabeling:
             LabelingRun(started_at=tagged_only, completed_at=tagged_only, articles_processed=3,
                         status="success", estimated_cost_usd=0.2, config=tagged),
             LabelingRun(started_at=tagged_only, status="running", config=tagged),
+            LabelingRun(
+                started_at=pending_start,
+                completed_at=pending_start + timedelta(seconds=1),
+                articles_left_pending=7,
+                status="failed",
+                config={"model": "m"},
+            ),
+            LabelingRun(
+                started_at=pending_start + timedelta(seconds=2),
+                completed_at=pending_start + timedelta(seconds=3),
+                articles_left_pending=0,
+                status="success",
+                config={"model": "m"},
+            ),
         ]
         with database.get_session() as session:
             session.add_all(runs)
@@ -2438,6 +2564,9 @@ class TestTaggedRunsAreNotDailyLabeling:
         try:
             with patch.object(daily_labeling, "db", database):
                 outcomes = daily_labeling._read_run_outcomes(start, start + timedelta(minutes=1))
+                pending_snapshot = daily_labeling._read_run_outcomes(
+                    pending_start, pending_start + timedelta(minutes=1)
+                )
                 # neither tagged run is a daily run, so the window has none: not counts_unavailable
                 assert daily_labeling._read_run_outcomes(tagged_only, tagged_only + timedelta(minutes=1)) is None
         finally:
@@ -2449,3 +2578,4 @@ class TestTaggedRunsAreNotDailyLabeling:
         assert outcomes["incomplete_runs"] == 0 and outcomes["any_run_incomplete"] is False
         assert outcomes["counts_unavailable"] is False
         assert outcomes["estimated_cost_usd"] == pytest.approx(0.01)
+        assert pending_snapshot["articles_left_pending"] == 0

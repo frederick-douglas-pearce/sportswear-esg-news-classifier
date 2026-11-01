@@ -7,7 +7,12 @@ from typing import Any
 from sqlalchemy import text
 
 from src.data_collection.database import db
-from src.labeling.exit_codes import EXIT_PARTIAL_FAILURE
+from src.labeling.exit_codes import (
+    EXIT_ABORTED,
+    EXIT_FAILURE,
+    EXIT_PARTIAL_FAILURE,
+    EXIT_SUCCESS,
+)
 
 from ..config import agent_settings
 from ..runner import run_label_articles
@@ -95,7 +100,7 @@ def run_labeling(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     labeling_result = {
         "labeling_success": result.success,
         "labeling_exit_code": result.exit_code,
-        "labeling_partial_failure": result.exit_code == EXIT_PARTIAL_FAILURE,
+        "labeling_partial_failure": result.exit_code != EXIT_SUCCESS,
         "labeling_duration_seconds": result.duration_seconds,
         "labeling_started_at": started_at.isoformat(),
         # Bounds the run-row window so a concurrent labeling run started by the
@@ -108,11 +113,16 @@ def run_labeling(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
     # retry that finds nothing left to do (issue #81).
     if result.stdout:
         labeling_result["labeling_output"] = _parse_labeling_output(result.stdout)
+        failure_reason = labeling_result["labeling_output"].get("failure_reason")
+        if failure_reason:
+            labeling_result["labeling_failure_reason"] = failure_reason
 
     if not result.success:
-        # Keep the tail: tracebacks and error summaries are at the end.
-        labeling_result["labeling_error"] = result.stderr[-2000:]
-        logger.error(f"Labeling exited {result.exit_code}:\n{result.stderr[-2000:]}")
+        failure_detail = labeling_result.get("labeling_failure_reason")
+        if not failure_detail:
+            failure_detail = result.stderr[-2000:]
+        labeling_result["labeling_error"] = failure_detail
+        logger.error(f"Labeling exited {result.exit_code}: {failure_detail}")
 
     return labeling_result
 
@@ -156,6 +166,16 @@ def _read_run_outcomes(started_at: datetime, ended_at: datetime) -> dict[str, An
                         FILTER (WHERE completed_at IS NOT NULL), 0) AS false_positive,
                     COALESCE(SUM(articles_failed)
                         FILTER (WHERE completed_at IS NOT NULL), 0) AS failed,
+                    COALESCE((
+                        SELECT COALESCE(latest.articles_left_pending, 0)
+                        FROM labeling_runs AS latest
+                        WHERE latest.started_at >= :started_at
+                            AND latest.started_at <= :ended_at
+                            AND latest.completed_at IS NOT NULL
+                            AND (latest.config->>'run_tag') IS NULL
+                        ORDER BY latest.completed_at DESC, latest.started_at DESC
+                        LIMIT 1
+                    ), 0) AS left_pending,
                     COALESCE(SUM(articles_deduplicated)
                         FILTER (WHERE completed_at IS NOT NULL), 0) AS deduplicated,
                     COALESCE(SUM(estimated_cost_usd)
@@ -185,6 +205,7 @@ def _read_run_outcomes(started_at: datetime, ended_at: datetime) -> dict[str, An
             "articles_skipped": 0,
             "articles_false_positive": 0,
             "articles_failed": 0,
+            "articles_left_pending": 0,
             "articles_deduplicated": 0,
             "estimated_cost_usd": 0.0,
             "run_count": 0,
@@ -205,6 +226,7 @@ def _read_run_outcomes(started_at: datetime, ended_at: datetime) -> dict[str, An
         "articles_skipped": int(row.skipped),
         "articles_false_positive": int(row.false_positive),
         "articles_failed": int(row.failed),
+        "articles_left_pending": int(row.left_pending),
         "articles_deduplicated": int(row.deduplicated),
         "estimated_cost_usd": float(row.cost),
         "run_count": int(row.runs),
@@ -233,6 +255,10 @@ def _parse_labeling_output(output: str) -> dict[str, Any]:
             stats["false_positives"] = _extract_number(line)
         elif "Articles failed:" in line:
             stats["articles_failed"] = _extract_number(line)
+        elif "Articles left pending:" in line:
+            stats["articles_left_pending"] = _extract_number(line)
+        elif "Failure cause:" in line:
+            stats["failure_reason"] = line.split(":", 1)[1].strip()
         elif "LLM API calls:" in line:
             stats["llm_calls"] = _extract_number(line)
         elif "Estimated cost:" in line:
@@ -325,12 +351,14 @@ def check_labeling_quality(workflow: Workflow, context: dict[str, Any]) -> dict[
     if outcomes is not None:
         articles_processed = outcomes["articles_processed"]
         articles_failed = outcomes["articles_failed"]
+        articles_left_pending = outcomes.get("articles_left_pending", 0)
         articles_labeled = outcomes["articles_labeled"]
         false_positives = outcomes["articles_false_positive"]
         metrics_source = "database"
     else:
         articles_processed = labeling_output.get("articles_processed", 0)
         articles_failed = labeling_output.get("articles_failed", 0)
+        articles_left_pending = labeling_output.get("articles_left_pending", 0)
         articles_labeled = labeling_output.get("articles_labeled", 0)
         false_positives = labeling_output.get("false_positives", 0)
         metrics_source = "stdout"
@@ -338,6 +366,7 @@ def check_labeling_quality(workflow: Workflow, context: dict[str, Any]) -> dict[
     quality_metrics = {
         "articles_processed": articles_processed,
         "articles_failed": articles_failed,
+        "articles_left_pending": articles_left_pending,
         "articles_labeled": articles_labeled,
         "false_positives": false_positives,
         "metrics_source": metrics_source,
@@ -347,6 +376,11 @@ def check_labeling_quality(workflow: Workflow, context: dict[str, Any]) -> dict[
         quality_metrics["articles_skipped"] = outcomes["articles_skipped"]
         quality_metrics["articles_deduplicated"] = outcomes["articles_deduplicated"]
         quality_metrics["estimated_cost_usd"] = outcomes["estimated_cost_usd"]
+    failure_reason = labeling_output.get(
+        "failure_reason", context.get("labeling_failure_reason")
+    )
+    if failure_reason:
+        quality_metrics["failure_reason"] = failure_reason
 
     # A real run always writes a run row. Falling back to stdout outside a dry
     # run means the row is missing or unreadable — which is how a pre-migration
@@ -362,38 +396,40 @@ def check_labeling_quality(workflow: Workflow, context: dict[str, Any]) -> dict[
             "execution. Reported counts may be from a retry that did no work."
         )
 
-    # A partial failure is a real incident even when the error rate looks fine:
-    # the run did work AND hit errors, and the batch cannot be re-run.
+    # A failure remains actionable whether retrying is safe or needs an external fix.
     partial = (
         context.get("labeling_partial_failure", False)
+        or context.get("labeling_exit_code") not in (None, EXIT_SUCCESS)
         or (outcomes is not None and outcomes["any_run_incomplete"])
         or metrics_degraded
     )
     quality_metrics["partial_failure"] = partial
+    # Keep the run-level and quality-level signals consistent after DB outcomes
+    # from earlier retries have been included.
+    quality_metrics["labeling_partial_failure"] = partial
     if partial:
         logger.warning(
             f"Labeling run incomplete: {articles_labeled} labeled, "
-            f"{articles_failed} failed out of {articles_processed} processed"
+            f"{articles_failed} affected, {articles_left_pending} left pending"
         )
 
-    # Calculate rates
-    if articles_processed > 0:
-        error_rate = articles_failed / articles_processed
-        fp_rate = false_positives / articles_processed
-        label_rate = articles_labeled / articles_processed
+    # Pending is a status snapshot, not a count of attempted articles. Exclude
+    # it from the rate so uncalled articles do not dilute a quota failure.
+    denominator = articles_processed + articles_failed
+    error_rate = articles_failed / denominator if denominator else None
+    fp_rate = false_positives / articles_processed if articles_processed else 0.0
+    label_rate = articles_labeled / articles_processed if articles_processed else 0.0
 
-        quality_metrics["error_rate"] = error_rate
-        quality_metrics["fp_rate"] = fp_rate
-        quality_metrics["label_rate"] = label_rate
+    quality_metrics["error_rate"] = error_rate
+    quality_metrics["fp_rate"] = fp_rate
+    quality_metrics["label_rate"] = label_rate
+    quality_metrics["high_error_rate"] = error_rate is not None and error_rate > 0.10
+    quality_metrics["high_fp_rate"] = fp_rate > 0.50  # More than 50% FP is unusual
 
-        # Flag anomalies
-        quality_metrics["high_error_rate"] = error_rate > 0.10
-        quality_metrics["high_fp_rate"] = fp_rate > 0.50  # More than 50% FP is unusual
-
-        if quality_metrics["high_error_rate"]:
-            logger.warning(f"High error rate detected: {error_rate:.1%}")
-        if quality_metrics["high_fp_rate"]:
-            logger.warning(f"High false positive rate detected: {fp_rate:.1%}")
+    if error_rate is not None and quality_metrics["high_error_rate"]:
+        logger.warning(f"High error rate detected: {error_rate:.1%}")
+    if quality_metrics["high_fp_rate"]:
+        logger.warning(f"High false positive rate detected: {fp_rate:.1%}")
 
     return quality_metrics
 
@@ -411,28 +447,41 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     - Improvement suggestions
     """
     if context.get("labeling_skipped"):
-        return {"llm_analysis_skipped": True, "reason": "labeling_skipped"}
+        return {
+            "llm_analysis_skipped": True,
+            "reason": "labeling_skipped",
+            "llm_analysis_reason": "labeling_skipped",
+        }
 
     # Check if LLM analysis is enabled
     if not agent_settings.llm_analysis_enabled:
-        return {"llm_analysis_skipped": True, "reason": "disabled"}
+        return {
+            "llm_analysis_skipped": True,
+            "reason": "disabled",
+            "llm_analysis_reason": "disabled",
+        }
 
     # Check if API key is available
     if not agent_settings.anthropic_api_key:
         logger.warning("LLM analysis skipped: ANTHROPIC_API_KEY not set")
-        return {"llm_analysis_skipped": True, "reason": "no_api_key"}
+        return {
+            "llm_analysis_skipped": True,
+            "reason": "no_api_key",
+            "llm_analysis_reason": "no_api_key",
+        }
 
     # Check error threshold
     error_rate = context.get("error_rate", 0)
     threshold = agent_settings.llm_error_threshold
 
-    if threshold > 0 and error_rate < threshold:
+    if threshold > 0 and error_rate is not None and error_rate < threshold:
         logger.info(
             f"Skipping LLM analysis: error_rate {error_rate:.1%} < threshold {threshold:.1%}"
         )
         return {
             "llm_analysis_skipped": True,
             "reason": "below_threshold",
+            "llm_analysis_reason": "below_threshold",
             "error_rate": error_rate,
             "threshold": threshold,
         }
@@ -453,7 +502,7 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
         ),
         "false_positives": context.get("false_positives", 0),
         "articles_failed": context.get("articles_failed", 0),
-        "error_rate": context.get("error_rate", 0),
+        "error_rate": context.get("error_rate"),
         "fp_rate": context.get("fp_rate", 0),
         "metrics_source": context.get("metrics_source", "stdout"),
     }
@@ -474,6 +523,7 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
         return {
             "llm_analysis_skipped": True,
             "reason": "no_samples",
+            "llm_analysis_reason": "no_samples",
         }
 
     # Run LLM analysis
@@ -551,7 +601,11 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
             ),
             "false_positives": context.get("false_positives", 0),
             "articles_failed": context.get("articles_failed", 0),
+            "articles_left_pending": context.get(
+                "articles_left_pending", labeling_output.get("articles_left_pending", 0)
+            ),
             "articles_deduplicated": context.get("articles_deduplicated", 0),
+            "exit_code": context.get("labeling_exit_code"),
             "estimated_cost_usd": context.get(
                 "estimated_cost_usd", labeling_output.get("estimated_cost_usd", 0)
             ),
@@ -562,12 +616,17 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
             "fp_skipped_not_low": labeling_output.get("fp_skipped_not_low", 0),
             "fp_cost_saved_usd": labeling_output.get("fp_cost_saved_usd", 0),
         }
+        failure_reason = context.get(
+            "labeling_failure_reason", labeling_output.get("failure_reason")
+        )
+        if failure_reason:
+            report["labeling"]["failure_reason"] = failure_reason
         if context.get("labeling_error"):
             report["labeling"]["error"] = context["labeling_error"]
 
     # Quality metrics
     report["quality"] = {
-        "error_rate": context.get("error_rate", 0),
+        "error_rate": context.get("error_rate"),
         "fp_rate": context.get("fp_rate", 0),
         "high_error_rate": context.get("high_error_rate", False),
         "high_fp_rate": context.get("high_fp_rate", False),
@@ -580,6 +639,10 @@ def generate_report(workflow: Workflow, context: dict[str, Any]) -> dict[str, An
         "completed": context.get("llm_analysis_completed", False),
         "skipped": context.get("llm_analysis_skipped", False),
     }
+    if context.get("llm_analysis_skipped"):
+        report["llm_analysis"]["reason"] = context.get(
+            "llm_analysis_reason", context.get("reason", "unknown")
+        )
 
     # Surface failure detail so a truncated/errored analysis is visible in the
     # report rather than rendering identically to "not run" (see issue #42).
@@ -651,6 +714,7 @@ def send_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
         # Build additional details
         additional_details = {
             "articles_skipped": labeling.get("articles_skipped", 0),
+            "articles_left_pending": labeling.get("articles_left_pending", 0),
             "articles_pending_at_start": context.get("articles_pending", 0),
             "collection_runs_24h": report.get("collection", {}).get("runs_24h", 0),
             "articles_fetched_24h": report.get("collection", {}).get("articles_fetched", 0),
@@ -683,6 +747,8 @@ def send_notification(workflow: Workflow, context: dict[str, Any]) -> dict[str, 
             articles_labeled=labeling.get("articles_labeled", 0),
             false_positives=labeling.get("false_positives", 0),
             articles_failed=labeling.get("articles_failed", 0),
+            articles_left_pending=labeling.get("articles_left_pending", 0),
+            failure_reason=labeling.get("failure_reason"),
             estimated_cost=labeling.get("estimated_cost_usd"),
             additional_details=additional_details,
         )
@@ -737,6 +803,10 @@ def _log_summary(report: dict[str, Any]) -> None:
         print(f"  Skipped: {labeling.get('articles_skipped', 0)}")
         print(f"  False Positives: {labeling.get('false_positives', 0)}")
         print(f"  Failed: {labeling.get('articles_failed', 0)}")
+        if labeling.get("articles_left_pending"):
+            print(f"  Still Pending: {labeling.get('articles_left_pending', 0)}")
+        if labeling.get("failure_reason"):
+            print(f"  Failure Cause: {labeling['failure_reason']}")
         if labeling.get("articles_deduplicated"):
             print(f"  Deduplicated: {labeling.get('articles_deduplicated', 0)}")
         print(f"  Cost: ${labeling.get('estimated_cost_usd', 0):.4f}")
@@ -750,14 +820,30 @@ def _log_summary(report: dict[str, Any]) -> None:
 
     quality = report.get("quality", {})
     print(f"\nQuality:")
-    print(f"  Error Rate: {quality.get('error_rate', 0):.1%}")
+    error_rate = quality.get("error_rate")
+    print(f"  Error Rate: {error_rate:.1%}" if error_rate is not None else "  Error Rate: n/a")
     print(f"  FP Rate: {quality.get('fp_rate', 0):.1%}")
     if quality.get("high_error_rate"):
         print("  ⚠️  HIGH ERROR RATE DETECTED")
     if quality.get("high_fp_rate"):
         print("  ⚠️  HIGH FALSE POSITIVE RATE DETECTED")
     if quality.get("partial_failure"):
-        print("  ⚠️  PARTIAL FAILURE - some articles errored; batch cannot be re-run")
+        exit_code = labeling.get("exit_code")
+        pending = labeling.get("articles_left_pending", 0)
+        if exit_code == EXIT_FAILURE:
+            if labeling.get("articles_processed", 0) == 0:
+                print(f"  Nothing completed; {pending} article(s) remain pending and may be retried.")
+            else:
+                print(f"  Retryable labeling errors left {pending} article(s) pending.")
+        elif exit_code == EXIT_ABORTED:
+            print(
+                "  Labeling stopped after a non-transient error; "
+                f"{pending} article(s) remain pending."
+            )
+        elif exit_code == EXIT_PARTIAL_FAILURE:
+            print("  PARTIAL FAILURE - the batch is spent; retrying will not recover it.")
+        else:
+            print("  PARTIAL FAILURE - labeling outcomes are incomplete.")
 
     # LLM Analysis summary
     llm = report.get("llm_analysis", {})

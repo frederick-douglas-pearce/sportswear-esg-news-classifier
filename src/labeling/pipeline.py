@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # 0.9 means titles must be 90% similar to be considered duplicates
 TITLE_SIMILARITY_THRESHOLD = 0.90
 
-# Error types that are transient (API/network issues) — articles should stay pending for retry
+# Error types that are transient (API/network issues) — articles stay pending for retry.
 TRANSIENT_ERROR_TYPES = {"server_error", "timeout", "connection", "rate_limit"}
 
 # Lead phrase of an FP skip reason, keyed on the prediction's own confidence_level
@@ -100,16 +100,16 @@ class LabelingStats:
     articles_labeled: int = 0
     articles_skipped: int = 0
     articles_false_positive: int = 0
+    # Distinct articles affected by errors in this run. Quota stops include
+    # pending articles that would reach the LLM but were not called.
     articles_failed: int = 0
     articles_deduplicated: int = 0  # Articles skipped as title duplicates
-    # Articles whose processing raised before any status update, or (keep_status_without_reply)
-    # whose call failed with no reply. They keep their status, so a retry can pick them up —
-    # unlike articles_failed, which have been marked failed and are spent. Keeping them apart is
-    # what lets the exit code say whether retrying this batch can accomplish anything.
+    # Articles still pending after a call failed or the batch stopped. This is
+    # a final status count and can overlap articles_failed.
     articles_left_pending: int = 0
-    # The subset of articles_left_pending left by an error that is not transient: retrying it
-    # without a change (a key, credit, the code) fails the same way
+    # Pending articles whose error is not transient and needs an external fix.
     articles_left_non_transient: int = 0
+    failure_reason: str | None = None
     brands_labeled: int = 0
     false_positive_brands: int = 0
     chunks_created: int = 0
@@ -132,6 +132,49 @@ class LabelingStats:
     fp_classifier_skipped_not_low: int = 0
     fp_classifier_continued: int = 0
     fp_classifier_errors: int = 0
+
+
+def _record_quota_batch_failure(
+    stats: LabelingStats,
+    pending_articles: list[dict[str, Any]],
+    affected_articles: list[dict[str, Any]],
+    reason: str,
+) -> None:
+    """Record quota-affected articles and the full pending remainder."""
+    if not affected_articles:
+        return
+
+    affected_count = len(affected_articles)
+    stats.articles_failed += affected_count
+    stats.articles_left_pending += len(pending_articles)
+    stats.articles_left_non_transient += affected_count
+    stats.errors_by_type["quota_exceeded"] = (
+        stats.errors_by_type.get("quota_exceeded", 0) + affected_count
+    )
+    stats.failure_reason = reason
+    stats.errors.append(
+        f"Article {affected_articles[0]['id']} [quota_exceeded]: {reason} "
+        f"({affected_count} article(s) would call the LLM; "
+        f"{len(pending_articles)} remain pending)"
+    )
+
+
+def _quota_affected_articles(
+    pending_articles: list[dict[str, Any]],
+    fp_prefilter_results: dict[UUID, tuple[bool, ClassifierPredictionRecord | None]],
+) -> list[dict[str, Any]]:
+    """Return pending articles that would reach the labeler's LLM call."""
+    affected: list[dict[str, Any]] = []
+    for article in pending_articles:
+        content = article_content(article["full_content"], article["description"])
+        if not has_sufficient_content(content) or not article["brands_mentioned"]:
+            continue
+
+        fp_result = fp_prefilter_results.get(article["id"])
+        if fp_result is not None and not fp_result[0]:
+            continue
+        affected.append(article)
+    return affected
 
 
 class LabelingPipeline:
@@ -755,7 +798,7 @@ class LabelingPipeline:
                     article_data, novelty_scores=novelty_scores, dry_run=dry_run
                 )
 
-            for article in article_data:
+            for article_index, article in enumerate(article_data):
                 billed_before = _billed(labeler)
                 try:
                     # Get precomputed FP result for this article
@@ -771,7 +814,25 @@ class LabelingPipeline:
                         keep_status_without_reply=keep_status_without_reply,
                     )
 
-                    stats.articles_processed += 1
+                    if result.get("error_type") == "quota_exceeded":
+                        stats.chunks_created += result.get("chunks_count", 0)
+                        stats.embeddings_generated += result.get("embeddings_count", 0)
+                        stats.llm_calls += result.get("llm_calls", 0)
+                        stats.input_tokens += result.get("input_tokens", 0)
+                        stats.output_tokens += result.get("output_tokens", 0)
+                        pending_articles = article_data[article_index:]
+                        _record_quota_batch_failure(
+                            stats,
+                            pending_articles,
+                            _quota_affected_articles(
+                                pending_articles, fp_prefilter_results
+                            ),
+                            result["error"],
+                        )
+                        break
+
+                    if not result.get("status_kept"):
+                        stats.articles_processed += 1
 
                     if result["labeled"]:
                         stats.articles_labeled += 1
@@ -786,7 +847,9 @@ class LabelingPipeline:
                     else:
                         if result.get("status_kept"):
                             stats.articles_left_pending += 1
-                            stats.articles_left_non_transient += 1
+                            error_type = result.get("error_type", "unknown")
+                            if error_type not in TRANSIENT_ERROR_TYPES:
+                                stats.articles_left_non_transient += 1
                         else:
                             stats.articles_failed += 1
                         if result.get("error"):
@@ -823,6 +886,18 @@ class LabelingPipeline:
 
                 except Exception as e:
                     error_type, error_msg = classify_api_error(e)
+                    if error_type == "quota_exceeded":
+                        _add_billed(stats, labeler, billed_before)
+                        pending_articles = article_data[article_index:]
+                        _record_quota_batch_failure(
+                            stats,
+                            pending_articles,
+                            _quota_affected_articles(
+                                pending_articles, fp_prefilter_results
+                            ),
+                            error_msg,
+                        )
+                        break
                     if error_type in TRANSIENT_ERROR_TYPES:
                         logger.warning(
                             f"[{error_type}] Transient error for article {article['id']}, "
@@ -1104,7 +1179,10 @@ class LabelingPipeline:
                     f"[{error_type}] Transient error for article {article_id}, "
                     f"keeping its status for retry: {label_result.error}"
                 )
-            elif keep_status_without_reply and label_result.stop_reason is None:
+                result["status_kept"] = True
+            elif error_type == "quota_exceeded" or (
+                keep_status_without_reply and label_result.stop_reason is None
+            ):
                 # No reply came back, so nothing about the article decided the failure
                 logger.error(
                     f"[{error_type}] Call failed with no reply for article {article_id}, "

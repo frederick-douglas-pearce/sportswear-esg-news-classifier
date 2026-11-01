@@ -610,6 +610,8 @@ def send_labeling_summary(
     articles_labeled: int,
     false_positives: int,
     articles_failed: int,
+    articles_left_pending: int = 0,
+    failure_reason: str | None = None,
     estimated_cost: float | None = None,
     additional_details: dict[str, Any] | None = None,
 ) -> dict[str, bool]:
@@ -620,6 +622,8 @@ def send_labeling_summary(
         articles_labeled: Articles with ESG labels
         false_positives: False positive count
         articles_failed: Failed articles count
+        articles_left_pending: Articles that remain pending after the run
+        failure_reason: Concise cause for a batch that stopped early
         estimated_cost: Estimated LLM cost in USD
         additional_details: Additional details to include
 
@@ -627,8 +631,9 @@ def send_labeling_summary(
         Dict of channel results
     """
     # Determine severity based on error rate
-    error_rate = articles_failed / articles_processed if articles_processed > 0 else 0
-    if error_rate > 0.1:
+    denominator = articles_processed + articles_failed
+    error_rate = articles_failed / denominator if denominator else None
+    if error_rate is not None and error_rate > 0.1:
         severity = "warning"
     else:
         severity = "info"
@@ -638,19 +643,37 @@ def send_labeling_summary(
         "articles_labeled": articles_labeled,
         "false_positives": false_positives,
         "articles_failed": articles_failed,
-        "error_rate": f"{error_rate:.1%}",
+        "articles_left_pending": articles_left_pending,
+        "error_rate": f"{error_rate:.1%}" if error_rate is not None else "n/a",
     }
+    if failure_reason:
+        details["failure_reason"] = failure_reason
 
     if estimated_cost is not None:
         details["estimated_cost"] = f"${estimated_cost:.4f}"
 
     if additional_details:
         details.update(additional_details)
+    # Keep the email-facing value formatted even when callers pass a numeric
+    # quality metric in additional_details.
+    details["error_rate"] = (
+        f"{error_rate:.1%}" if error_rate is not None else "n/a"
+    )
+
+    message = (
+        f"Processed {articles_processed} articles: {articles_labeled} labeled, "
+        f"{false_positives} FP, {articles_failed} failed"
+    )
+    if failure_reason:
+        message = (
+            f"Labeling stopped: {articles_failed} affected, "
+            f"{articles_left_pending} remain pending. Cause: {failure_reason}"
+        )
 
     notification = Notification(
         notification_type=NotificationType.LABELING_SUMMARY,
         subject="Daily Labeling Summary",
-        message=f"Processed {articles_processed} articles: {articles_labeled} labeled, {false_positives} FP, {articles_failed} failed",
+        message=message,
         details=details,
         severity=severity,
     )

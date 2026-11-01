@@ -326,10 +326,12 @@ class LabelingRun(Base):
     articles_labeled = Column(Integer, default=0)
     articles_skipped = Column(Integer, default=0)
     articles_false_positive = Column(Integer, default=0)
+    # Distinct articles affected by errors, including eligible articles a quota
+    # stop left uncalled; this is not an API request count.
     articles_failed = Column(Integer, default=0)
     articles_deduplicated = Column(Integer, default=0)
-    # Raised before any status update, so still pending and retryable —
-    # unlike articles_failed, which are spent
+    # Final count of articles still pending after the run. It may overlap
+    # articles_failed when a failed call leaves the article pending.
     articles_left_pending = Column(Integer, default=0)
     # LLM replies that left out a sent brand (#192); NULL on runs before it was recorded
     incomplete_replies = Column(Integer)

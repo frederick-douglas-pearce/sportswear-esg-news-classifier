@@ -172,9 +172,33 @@ class TestOpenAIEmbedderBatching:
 class TestOpenAIEmbedderRetry:
     """Tests for retry logic on rate limits."""
 
+    def test_connection_error_still_retries_with_sdk_retries_disabled(self):
+        from httpx import Request
+        from openai import APIConnectionError
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.data = [MagicMock(embedding=[0.1])]
+        mock_response.usage.total_tokens = 5
+        mock_client.embeddings.create.side_effect = [
+            APIConnectionError(
+                request=Request("POST", "https://api.openai.com/v1/embeddings")
+            ),
+            mock_response,
+        ]
+
+        with patch("src.labeling.embedder.OpenAI", return_value=mock_client):
+            with patch("src.labeling.embedder.time.sleep"):
+                embedder = OpenAIEmbedder(api_key="test-key", max_retries=3)
+                result = embedder.embed_batch(["test"])
+
+        assert len(result.embeddings) == 1
+        assert mock_client.embeddings.create.call_count == 2
+
     def test_retry_on_rate_limit(self):
         """Should retry on rate limit error."""
         from openai import RateLimitError
+        from httpx import Request, Response
 
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -182,8 +206,23 @@ class TestOpenAIEmbedderRetry:
         mock_response.usage.total_tokens = 5
 
         # First call raises RateLimitError, second succeeds
+        rate_limit_body = {
+            "error": {
+                "message": "Rate limit reached for text-embedding-3-small.",
+                "type": "requests",
+                "code": "rate_limit_exceeded",
+            }
+        }
         mock_client.embeddings.create.side_effect = [
-            RateLimitError("Rate limit", response=MagicMock(), body=None),
+            RateLimitError(
+                "Rate limit",
+                response=Response(
+                    429,
+                    json=rate_limit_body,
+                    request=Request("POST", "https://api.openai.com/v1/embeddings"),
+                ),
+                body=rate_limit_body,
+            ),
             mock_response,
         ]
 
@@ -194,6 +233,37 @@ class TestOpenAIEmbedderRetry:
 
                 assert len(result.embeddings) == 1
                 assert mock_client.embeddings.create.call_count == 2
+
+    def test_quota_error_is_not_retried(self):
+        from httpx import Request, Response
+        from openai import RateLimitError
+
+        quota_body = {
+            "error": {
+                "message": "You exceeded your current quota.",
+                "type": "insufficient_quota",
+                "code": "insufficient_quota",
+            }
+        }
+        quota_error = RateLimitError(
+            "Quota exhausted",
+            response=Response(
+                429,
+                json=quota_body,
+                request=Request("POST", "https://api.openai.com/v1/embeddings"),
+            ),
+            body=quota_body,
+        )
+        mock_client = MagicMock()
+        mock_client.embeddings.create.side_effect = quota_error
+
+        with patch("src.labeling.embedder.OpenAI", return_value=mock_client) as openai:
+            embedder = OpenAIEmbedder(api_key="test-key", max_retries=3)
+            with pytest.raises(RateLimitError):
+                embedder.embed_batch(["test"])
+
+        openai.assert_called_once_with(api_key="test-key", max_retries=0)
+        assert mock_client.embeddings.create.call_count == 1
 
     def test_raises_after_max_retries(self):
         """Should raise after max retries exceeded."""

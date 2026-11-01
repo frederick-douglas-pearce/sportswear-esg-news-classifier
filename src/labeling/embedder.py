@@ -4,8 +4,16 @@ import logging
 import time
 from dataclasses import dataclass
 
-from openai import OpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    InternalServerError,
+    OpenAI,
+    RateLimitError,
+)
 
+from .api_errors import quota_error_reason
 from .config import labeling_settings
 
 logger = logging.getLogger(__name__)
@@ -43,7 +51,7 @@ class OpenAIEmbedder:
             api_key: OpenAI API key (default: from settings)
             model: Embedding model to use (default: from settings)
             batch_size: Number of texts per API call (default: from settings)
-            max_retries: Maximum retry attempts for rate limits
+            max_retries: Maximum attempts for transient API errors
             retry_delay: Initial delay between retries in seconds
         """
         self.api_key = api_key or labeling_settings.openai_api_key
@@ -55,7 +63,8 @@ class OpenAIEmbedder:
         if not self.api_key:
             raise ValueError("OpenAI API key is required. Set OPENAI_API_KEY environment variable.")
 
-        self.client = OpenAI(api_key=self.api_key)
+        # Application retry logic distinguishes account exhaustion from a real 429.
+        self.client = OpenAI(api_key=self.api_key, max_retries=0)
 
         # Track usage
         self.total_tokens_used = 0
@@ -133,6 +142,10 @@ class OpenAIEmbedder:
                 return embeddings, tokens
 
             except RateLimitError as e:
+                quota_reason = quota_error_reason(e)
+                if quota_reason:
+                    logger.error("%s; stopping without retry", quota_reason)
+                    raise
                 if attempt < self.max_retries - 1:
                     logger.warning(
                         f"Rate limit hit, retrying in {delay}s (attempt {attempt + 1}/{self.max_retries})"
@@ -141,6 +154,49 @@ class OpenAIEmbedder:
                     delay *= 2  # Exponential backoff
                 else:
                     logger.error(f"Rate limit exceeded after {self.max_retries} attempts")
+                    raise
+
+            except (APIConnectionError, APITimeoutError, InternalServerError) as e:
+                if attempt < self.max_retries - 1:
+                    logger.warning(
+                        "Transient embedding error, retrying in %ss "
+                        "(attempt %s/%s): %s",
+                        delay,
+                        attempt + 1,
+                        self.max_retries,
+                        e,
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(
+                        "Embedding request failed after %s attempts: %s",
+                        self.max_retries,
+                        e,
+                    )
+                    raise
+
+            except APIStatusError as e:
+                if e.status_code not in {408, 409} and e.status_code < 500:
+                    logger.error("Embedding API error: %s", e)
+                    raise
+                if attempt < self.max_retries - 1:
+                    logger.warning(
+                        "Transient embedding status %s, retrying in %ss "
+                        "(attempt %s/%s)",
+                        e.status_code,
+                        delay,
+                        attempt + 1,
+                        self.max_retries,
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    logger.error(
+                        "Embedding request failed after %s attempts: %s",
+                        self.max_retries,
+                        e,
+                    )
                     raise
 
             except Exception as e:

@@ -20,7 +20,7 @@ from src.agent.runner import (
     run_script,
     run_uv_script,
 )
-from src.labeling.exit_codes import EXIT_FAILURE, EXIT_PARTIAL_FAILURE
+from src.labeling.exit_codes import EXIT_ABORTED, EXIT_FAILURE, EXIT_PARTIAL_FAILURE
 
 
 @pytest.fixture
@@ -325,31 +325,33 @@ class TestRunLabelArticles:
 
             codes = mock_run.call_args[1]["non_retryable_exit_codes"]
             assert EXIT_PARTIAL_FAILURE in codes
+            assert EXIT_ABORTED in codes
             assert EXIT_FAILURE not in codes
 
 
 class TestNonRetryableExitCodes:
     """Tests for the non-retry contract (issue #81)."""
 
-    def test_non_retryable_code_returns_immediately(self, mock_agent_settings):
+    @pytest.mark.parametrize("exit_code", [EXIT_PARTIAL_FAILURE, EXIT_ABORTED])
+    def test_non_retryable_code_returns_immediately(self, mock_agent_settings, exit_code):
         """A declared non-retryable code must not trigger a second attempt."""
         call_count = 0
 
         def mock_subprocess(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            return MagicMock(returncode=EXIT_PARTIAL_FAILURE, stdout="", stderr="partial")
+            return MagicMock(returncode=exit_code, stdout="", stderr="partial")
 
         with patch("subprocess.run", side_effect=mock_subprocess):
             with patch("time.sleep"):
                 result = run_script(
                     ["partial_command"],
-                    non_retryable_exit_codes={EXIT_PARTIAL_FAILURE},
+                    non_retryable_exit_codes={exit_code},
                 )
 
         assert call_count == 1
         assert result.success is False
-        assert result.exit_code == EXIT_PARTIAL_FAILURE
+        assert result.exit_code == exit_code
 
     def test_other_codes_still_retry(self, mock_agent_settings):
         """Transient failures keep their retries."""
