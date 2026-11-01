@@ -128,6 +128,9 @@ class TestCandidate:
         line = next(x for x in v1_13_0.system_prompt.splitlines() if x.startswith("- **Allbirds**"))
         assert "unless the sale of the shoe business is part of its subject" in line
         assert "Only a story about the AI business that mentions the sale in passing" in line
+        # The AI business gives the sportswear brand no category (eval run 1: three sale rows got
+        # Digital Transformation for it)
+        assert "give the sportswear brand no category (not Digital Transformation)" in line
 
     def test_v1_12_0_text_is_not_v1_13_0s(self):
         """v1.13.0's rulings were added to a copy, not to production v1.12.0. That v1.12.0 is

@@ -371,7 +371,7 @@ The owner's review of #192's backfill (2026-10-27 to 28) ruled on cases the prom
 4. A sponsorship, an event the brand hosts (for young athletes, and every year, too), or a celebrity piece that only mentions a program is not Social; a quantified donation to a third-party charity is, even at a brand event.
 5. A single passing sentence does not carry a category, except a reported workforce reduction.
 6. A template stock page is `mention_only` (`false_positive`) even with an appended news summary (see Stock Article Classification).
-7. A company that left the sportswear category is another entity in stories about its new business (Allbirds' AI pivot). An article whose subject includes the sale of its shoe brand, or the brand under its new owner, is sportswear news even when it also reports the pivot; a passing mention of the sale does not count (#234).
+7. A company that left the sportswear category is another entity in stories about its new business (Allbirds' AI pivot). An article whose subject includes the sale of its shoe brand, or the brand under its new owner, is sportswear news even when it also reports the pivot, and the AI business gives it no category; a passing mention of the sale does not count (#234).
 8. A name that is another company's product line is `other_entity`, even in a review (the Can-Am Spyder).
 
 The cases are in `prompts/labeling/eval_cases/owner_rulings_192.json`, one per source row, with the owner's ruling as the expected outcome. A ninth ruling (an evergreen marketing explainer is not news) is borderline and is a gray-zone case only.

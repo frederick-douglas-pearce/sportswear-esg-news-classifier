@@ -2899,7 +2899,8 @@ transitions and Product cases, not the categories and sentiments these rulings a
    - (7) a company that left the sportswear category is another entity in stories about its new
      business (Allbirds' AI pivot), while an article whose subject includes the sale of its shoe
      brand, or the brand under its new owner, is sportswear news even when it also reports the
-     pivot (#234's line: a passing mention of the sale does not count);
+     pivot (#234's line: a passing mention of the sale does not count). The AI business gives
+     the sportswear brand no category;
    - (8) a name that is another company's product line is `other_entity`, even in a review.
 
    Ruling 9 (an evergreen marketing explainer is not news) is borderline in the owner's own words
