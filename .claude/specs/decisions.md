@@ -2963,6 +2963,29 @@ transitions and Product cases, not the categories and sentiments these rulings a
      saved replies.
 5. **Promotion is a second PR** on #230, made only on a run that meets point 3 and with the
    owner's approval. It pins v1.13.0's hashes. No backfill relabel.
+6. **The run (2026-11-01).** The evidence is run 2, from commit `10405fc` (candidate hashes
+   `dc8d18caea25` / `f9e786d07439` / schema `96064689a1f3`, Haiku 5.5 at effort medium, both case
+   files, sample 100, most-brands 10, human rulings). Run 1, from `fe0f3a0`, led to one change:
+   ruling 7 now says the AI business gives the sportswear brand no category.
+   - D036 §2's mechanical criteria hold: no parse failures, refusals or truncated replies, full
+     compliance, and every stability case consistent on both sides.
+   - Falsifier: v1.12.0 passes 16 of the 48 scored ruling cases, below 85%, so the rulings are
+     needed. v1.13.0 passes 42 of 48.
+   - The six ruling-case misses, read and explained (owner, 2026-11-01):
+     - four pivot stories judged sportswear (`8e5eafab`, `ab9b199b`, `c4f1b564`, `e64d0acb`). The
+       line between a pivot story that reports the sale and a sale story is a judgment about the
+       article body, and a stated line that separates them would contradict #234's rulings, so the
+       prompt keeps #234's wording;
+     - `d2873bbb`, a sale row on the right side with Governance kept;
+     - `159cd128`, Social kept on the Overtime Elite sponsorship because the article offers its
+       athletes professional development, as under v1.12.0.
+   - Two Product sale listings (`94a563b7`, `2d4ff51c`) were misses under v1.13.0 only. Five
+     repeats of the 24 Product cases on each side (same commit) put 117 of 120 v1.12.0 replies and
+     115 of 120 v1.13.0 replies on the expected side, with the unstable cases unstable under both.
+     The owner ruled the two misses sampling noise on the sale-listing boundary; the check cannot
+     rule out a small effect.
+   - Still owed before PR2: the owner's read of run 2's transitions and per-brand flips (D036),
+     ruling 3's sentiments and ruling 9.
 
 **Rejected.**
 - **A second eval run per case file.** It splits the report and draws two samples.
