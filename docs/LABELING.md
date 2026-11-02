@@ -361,9 +361,9 @@ From v1.12.0 a reply does not state `is_sportswear_brand`. Each brand analysis w
 
 Three rules decide between types (revised in place after #219's P1 runs, before any row recorded v1.12.0). ESG content decides first: an article that reports the brand's ESG initiative, partnership, donation, policy, commitment or controversy is `business`, however much of it is product, campaign or financial content, unless the article only recounts the event as history or background. An owned brand that is not itself tracked (UGG or Teva for Deckers, Jordan Brand for Nike) is judged as its owner; a tracked one (Converse, Hoka) is judged on its own. A brand the article is not about is `mention_only` even when the line about it is financial: one or two lines in a market wrap, a place in a list of companies an event affects, the goods or store in an incident it is not a party to, or an automated valuation template (DCF, fair value).
 
-### The owner's rulings from #192's review (candidate v1.13.0, D040)
+### The owner's rulings from #192's review (prompt v1.13.0, D040)
 
-The owner's review of #192's backfill (2026-10-27 to 28) ruled on cases the prompt did not decide, or decided otherwise. Candidate v1.13.0 states them (#230); D040 records them as policy and fixes the bar its eval is judged against. Until v1.13.0 is promoted, production labels under v1.12.0.
+The owner's review of #192's backfill (2026-10-27 to 28) ruled on cases the prompt did not decide, or decided otherwise. Prompt v1.13.0 states them (#230); D040 records them as policy and fixes the bar its eval was judged against. v1.13.0 is production since 2026-11-02 (#230 PR2, eval run 2); rows labeled before then were labeled under v1.12.0 or earlier until #245 relabels them.
 
 1. Job cuts the brand announces or carries out are Social, usually -1, wherever the article reports them (an earnings summary included), including cuts made to automate or adopt AI, which are not Digital Transformation. Cost-cutting language with no cuts reported is not job cuts.
 2. A data breach or cybersecurity incident is Digital Transformation -1, and Governance as well when the subject is the board's oversight of it.

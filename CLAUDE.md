@@ -223,7 +223,7 @@ prompts/labeling/
     ├── config.json, system_prompt.txt, user_prompt.txt (v1.12.0 and v1.13.0 also reply_schema.json, D037)
 ```
 
-**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Run `scripts/compare_prompts.py` and judge the report against D036 → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.12.0 (a per-brand content type under a reply schema, D037), evaluated on `claude-haiku-5-5` at effort medium (#219); v1.11.0 failed its eval (#215) and was never promoted; v1.13.0 (the owner's rulings from #192's review, #230) is a candidate, judged against D040's bar
+**To update prompts:** Create new version directory → Update files → Add the version to registry.json → Run `scripts/compare_prompts.py` and judge the report against D036 → Promote it by setting registry.json's `production` (the runtime prompt; `LABELING_PROMPT_VERSION` overrides it). Production is v1.13.0 (v1.12.0's per-brand content type under a reply schema, D037, plus the owner's rulings from #192's review, #230, D040), evaluated against v1.12.0 on `claude-haiku-5-5` at effort medium; v1.12.0 is superseded; v1.11.0 failed its eval (#215) and was never promoted
 
 ### Scripts (`scripts/`)
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
@@ -359,7 +359,7 @@ NEWSDATA_API_KEY, DATABASE_URL, MAX_API_CALLS_PER_DAY=200, SCRAPE_DELAY_SECONDS=
 GDELT_TIMESPAN=3m, GDELT_MAX_RECORDS=250
 
 # Labeling
-ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-haiku-5-5  # production prompt v1.12.0 was evaluated on Haiku 5.5 at effort medium (#219)
+ANTHROPIC_API_KEY, OPENAI_API_KEY, LABELING_MODEL=claude-haiku-5-5  # production prompt v1.13.0 was evaluated on Haiku 5.5 at effort medium (#230)
 LABELING_EFFORT=medium  # output_config.effort, sent only to a model that takes it (Haiku 5.5, #212)
 EMBEDDING_MODEL=text-embedding-3-small, LABELING_BATCH_SIZE=10
 
@@ -510,6 +510,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-11-02**: Prompt v1.13.0 is production (#230 PR2, D040). It met D040's bar in eval run 2 against v1.12.0 on Haiku 5.5 at effort medium: 42 of 48 owner-ruling cases (v1.12.0: 16) and 25 of 27 ruled-category cases (v1.12.0: 14), with no parse failures, refusals or truncated replies (report `v1.12.0_vs_v1.13.0_20261101T100534Z`, commit `10405fc`; hashes `dc8d18caea25` / `f9e786d07439`, schema `96064689a1f3`, pinned in `tests/test_owner_rulings_prompt.py`). v1.12.0 is superseded. Rows stored under earlier prompts are relabeled by #245, which overrides D040 §5
 - **2026-10-31**: Candidate prompt v1.13.0 states the owner's policy rulings from #192's backfill review (#230, D040), revised after #234: job cuts the brand announces or carries out are Social -1 wherever reported (automation-driven too; cost-cutting language is not cuts), a data breach is Digital -1 (Governance on board oversight), activist or concentrating stakes and board fights are Governance, sponsorships, brand-hosted events and celebrity pieces are not Social while a quantified charity donation is, one passing sentence carries no category (a reported workforce reduction excepted), a template stock page with an appended news summary is `mention_only`, Allbirds' AI pivot is another entity unless the sale of the shoe business is part of the subject, and the Can-Am Spyder is another entity. Cases in `prompts/labeling/eval_cases/owner_rulings_192.json` (and `fbefe459` in `ruling_1`). `compare_prompts.py` takes a repeatable `--case-file` (conflicting expectations refused), scores `expected.sentiments`, counts all-failed cases as unanswered, prints D040's per-ruling roll-up (with its falsifier verdict for v1.13.0 against v1.12.0 only), splits accuracy by stratum, records the commit, tracked changes and each case file's sha256 before any call, and refuses a paid run from a tree with tracked changes. Production stays v1.12.0 until the eval meets D040's bar; promotion is #230 PR2
 - **2026-10-30**: The owner's rulings are made consistent (#234): `fbefe459` (Puma earnings call) is `labeled`, Social −1 for its job cuts, as `a70e6272`'s are; 6 Allbirds rows whose subject includes the sale of the shoe business move from `false_positive` to `skipped` (a passing mention stays `false_positive`). `HUMAN_RULINGS`, the eval case and the DB match, and a test checks cases against rulings. `fix_label.py update --manual` stores a human marker as the reason (`MANUAL_SKIP_REASON` for `skipped`, read as `human`); a free-text reason is not offered. Unblocks #230
 - **2026-10-28**: `HUMAN_RULINGS` adds 86 owner rulings from #192's backfill review (110 in all; record on #192, 2026-10-28; the 3 `unlabelable` rulings are left out). The FP export reads them as `human`, the backfill leaves them out, and `compare_prompts.py --human-rulings` evaluates 110 articles. Policy rulings from the review are #230
