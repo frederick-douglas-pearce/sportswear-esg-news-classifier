@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from src.data_collection.database import Database, db
@@ -112,6 +112,20 @@ class LabelingDatabase:
             .filter(ArticleChunk.article_id == article_id)
             .order_by(ArticleChunk.chunk_index)
             .all()
+        )
+
+    def delete_llm_brand_labels(self, session: Session, article_id: UUID) -> int:
+        """Delete an article's brand labels that no human wrote or reviewed; their evidence goes
+        with them (``label_evidence.brand_label_id`` cascades). For a relabel whose reply is not
+        ``labeled`` (#245): the article leaves every reader of labels, and labels from an earlier
+        reply would otherwise stay. A human's labels are kept.
+        """
+        return (
+            session.query(BrandLabel)
+            .filter(BrandLabel.article_id == article_id)
+            .filter(BrandLabel.human_reviewed.isnot(True))
+            .filter(or_(BrandLabel.labeled_by.is_(None), BrandLabel.labeled_by != "human"))
+            .delete(synchronize_session=False)
         )
 
     def save_brand_labels(

@@ -4,6 +4,26 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-02: Relabel rows stored under an earlier prompt (#245, D041)
+
+**`scripts/backfill_relabel.py --mode 245-relabel` relabels the LLM-decided rows stored under a
+prompt before the production version, overriding D040 §5's "no backfill relabel".**
+- **Cohort** (`relabel_arm`), in run order:
+  - `labeled` rows judged under an earlier version, or before D038 wrote judgments;
+  - `skipped` and `false_positive` rows judged under an earlier version.
+  
+  Human rulings, human-reviewed labels, deterministic skips, negatives the LLM did not decide, and
+  possible hand moves are left out. A possible hand move is a `labeled` row with a reason or no
+  label, a skip at a reason no pipeline writes, or a negative not in a reply's form. On
+  2026-11-02 the cohort was 4,037 rows.
+- **The pass ends on the judgment.** A row with a `brand_judgments` row under the production
+  version is done. No time bound is kept.
+- **Tag `245-relabel`.** `--max-cost`, the spend so far and `--report` count only this tag's runs.
+  The default mode is still `192-backfill`, and is unchanged.
+- **Labels on a negative reply.** A reply that is not `labeled` deletes the article's brand labels
+  that no human wrote or reviewed, and their evidence by cascade (`delete_llm_brand_labels`). A
+  human's labels are kept.
+
 ### 2026-10-31: Candidate prompt v1.13.0 states the owner's rulings from #192's review (#230, D040)
 
 **Candidate v1.13.0 states eight policy rulings the owner made in #192's backfill review; production

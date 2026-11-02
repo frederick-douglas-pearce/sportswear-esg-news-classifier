@@ -1315,3 +1315,34 @@ class TestKeepStatusWithoutReply:
         assert (stats.articles_failed, stats.articles_left_pending, stats.articles_left_non_transient) == (1, 0, 0)
         assert (stats.input_tokens, stats.output_tokens) == (1000, 200)
         assert database.complete_labeling_run.call_args.args[6:9] == (1, 1000, 200)
+
+
+class TestRelabelClearsEarlierLabels(TestStoredLabelingReasons):
+    """A reply that is not labeled deletes the article's LLM labels from an earlier reply (#245)."""
+
+    def _run(self, analyses):
+        database = MagicMock()
+        pipeline = LabelingPipeline(database=database, labeler=self._labeler_returning(analyses))
+        article = self._article()
+        pipeline._process_article(article, skip_chunking=True, skip_embedding=True, labeling_run_id=uuid4())
+        return database, article["id"]
+
+    def test_a_negative_reply_deletes_llm_labels_before_the_status(self):
+        negative = BrandAnalysis(brand="Nike", is_sportswear_brand=False, not_sportswear_reason="x",
+                                 categories={}, confidence=0.9, reasoning="r")
+        database, article_id = self._run([negative])
+        database.delete_llm_brand_labels.assert_called_once()
+        assert database.delete_llm_brand_labels.call_args.args[1] == article_id
+        names = [c[0] for c in database.method_calls]
+        assert names.index("delete_llm_brand_labels") < names.index("update_article_labeling_status")
+        assert self._stored(database)[0][0] == "false_positive"
+
+    def test_a_skip_reply_deletes_llm_labels(self):
+        database, _ = self._run([self._sportswear("Nike", esg=False)])
+        assert self._stored(database)[0][0] == "skipped"
+        database.delete_llm_brand_labels.assert_called_once()
+
+    def test_a_labeled_reply_replaces_labels_and_deletes_none(self):
+        database, _ = self._run([self._sportswear("Nike", esg=True)])
+        database.delete_llm_brand_labels.assert_not_called()
+        database.save_brand_labels.assert_called_once()

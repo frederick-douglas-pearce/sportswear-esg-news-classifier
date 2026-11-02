@@ -1170,6 +1170,9 @@ class LabelingPipeline:
                     self._save_judgments(
                         session, article_id, labeling_run_id, disposition, label_result
                     )
+                    # A relabeled article that was labeled keeps no labels from the earlier
+                    # reply (#245); a pending article has none
+                    self.database.delete_llm_brand_labels(session, article_id)
                     self.database.update_article_labeling_status(
                         session, article_id, disposition.status, disposition.reason
                     )

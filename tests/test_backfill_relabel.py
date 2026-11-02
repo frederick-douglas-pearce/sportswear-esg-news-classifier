@@ -383,6 +383,7 @@ class TestRecheckBatch:
             kept, dropped = provenance.recheck_backfill_batch(MagicMock(), cohort, cohort.ids)
         assert read.call_args.kwargs == {
             "judged_skip_cutoff": CUTOFF, "bound": BOUND, "tried": {}, "ids": cohort.ids,
+            "mode": provenance.MODE_BACKFILL, "production_version": None,
         }
         assert kept == [same]
         assert dropped == {moved: EXCLUDED_POSSIBLE_HAND_MOVE, reviewed: EXCLUDED_HUMAN_LABELS, gone: "changed"}
@@ -822,7 +823,10 @@ class TestScriptRun:
         later = tagged_run(cost=0.0, started_at=AFTER, bound=AFTER)
         env.tagged_runs.return_value = [first, later]
         script.main(["--dry-run"])
-        assert env.select.call_args.kwargs == {"judged_skip_cutoff": CUTOFF, "bound": BOUND, "tried": {}}
+        assert env.select.call_args.kwargs == {
+            "judged_skip_cutoff": CUTOFF, "bound": BOUND, "tried": {},
+            "mode": provenance.MODE_BACKFILL, "production_version": "v1.12.0",
+        }
 
     def test_the_cohort_is_selected_with_what_the_tagged_runs_tried(self, env):
         run = tagged_run(cost=0.1)
@@ -1078,3 +1082,170 @@ class TestAgainstPostgres:
         assert report["content_types"] == {"product": 1}
         assert report["unjudged_left_out"] == [left_id]
         assert report["unjudged_retried"] == [retried_id]
+
+
+# --- #245: the relabel cohort ------------------------------------------------------------------
+
+PRODUCTION = "v1.13.0"
+EARLIER = {"v1.12.0"}
+
+
+def relabel(**overrides) -> BackfillDecision:
+    """relabel_arm on an arm-L row (labeled before D038) that every check passes, with overrides."""
+    kwargs = dict(
+        article_id=str(uuid4()),
+        labeling_status="labeled",
+        labeling_error=None,
+        source=LLM,
+        brands=["Puma"],
+        sufficient_content=True,
+        judgment_versions=set(),
+        has_labels=True,
+        human_labels=False,
+        production_version=PRODUCTION,
+    )
+    kwargs.update(overrides)
+    return provenance.relabel_arm(**kwargs)
+
+
+SKIP_V12 = dict(labeling_status="skipped", labeling_error=models.SKIP_NO_ESG_CATEGORIES,
+                judgment_versions=EARLIER, has_labels=False)
+FP_V12 = dict(labeling_status="false_positive", labeling_error=LLM_FP_REASON,
+              judgment_versions=EARLIER, has_labels=False)
+
+
+class TestRelabelArm:
+    @pytest.mark.parametrize("versions", [set(), EARLIER])
+    def test_labeled_under_an_earlier_prompt(self, versions):
+        assert relabel(judgment_versions=versions) == BackfillDecision(provenance.ARM_RELABEL_LABELED)
+
+    @pytest.mark.parametrize("overrides", [{}, SKIP_V12, FP_V12])
+    def test_judged_under_the_production_version_ends_the_pass(self, overrides):
+        assert relabel(**{**overrides, "judgment_versions": {PRODUCTION}}) == BackfillDecision(
+            None, provenance.EXCLUDED_AT_PRODUCTION
+        )
+
+    @pytest.mark.parametrize("source", [LLM, PRE_CLASSIFIER])
+    def test_a_judged_skip_and_negative(self, source):
+        assert relabel(**SKIP_V12, source=source) == BackfillDecision(provenance.ARM_RELABEL_SKIPPED)
+        assert relabel(**FP_V12, source=source) == BackfillDecision(provenance.ARM_RELABEL_FALSE_POSITIVE)
+
+    def test_a_reply_written_unjudged_skip(self):
+        """'Some brands not judged' is a reply's; a judgment row was written with it."""
+        assert relabel(**{**SKIP_V12, "labeling_error": models.SKIP_INCOMPLETE_JUDGMENT}, source=UNJUDGED) == (
+            BackfillDecision(provenance.ARM_RELABEL_SKIPPED)
+        )
+
+    @pytest.mark.parametrize("overrides", [SKIP_V12, FP_V12])
+    def test_a_negative_with_no_judgment_is_192s_not_this(self, overrides):
+        assert relabel(**{**overrides, "judgment_versions": set()}) == NOT_A_CANDIDATE
+
+    @pytest.mark.parametrize("status", ["pending", "failed", "deduplicated", "unlabelable"])
+    def test_other_statuses_are_not_candidates(self, status):
+        assert relabel(labeling_status=status) == NOT_A_CANDIDATE
+
+    @pytest.mark.parametrize("overrides", [{}, SKIP_V12, FP_V12])
+    def test_a_human_ruling_or_human_source_is_left_out(self, overrides):
+        assert relabel(**overrides, source=HUMAN) == BackfillDecision(None, EXCLUDED_HUMAN)
+        assert relabel(**overrides, article_id=RULED_FP) == BackfillDecision(None, EXCLUDED_HUMAN)
+
+    @pytest.mark.parametrize("overrides", [{}, SKIP_V12, FP_V12])
+    def test_human_reviewed_labels_are_left_out(self, overrides):
+        assert relabel(**overrides, human_labels=True) == BackfillDecision(None, EXCLUDED_HUMAN_LABELS)
+
+    @pytest.mark.parametrize("overrides", [{"labeling_error": "moved by hand"}, {"has_labels": False}])
+    def test_a_labeled_row_no_pipeline_write_explains_is_a_possible_hand_move(self, overrides):
+        """A pipeline labeled write clears the reason and stores a label; fix_label.py does neither."""
+        assert relabel(**overrides) == BackfillDecision(None, EXCLUDED_POSSIBLE_HAND_MOVE)
+
+    def test_a_skip_at_a_reason_no_pipeline_writes_is_a_possible_hand_move(self):
+        assert relabel(**{**SKIP_V12, "labeling_error": "checked by hand"}, source=UNATTRIBUTED) == (
+            BackfillDecision(None, EXCLUDED_POSSIBLE_HAND_MOVE)
+        )
+
+    @pytest.mark.parametrize("reason", [models.SKIP_INSUFFICIENT_CONTENT, models.SKIP_NO_BRANDS])
+    def test_a_skip_a_pipeline_check_writes_is_left_out(self, reason):
+        assert relabel(**{**SKIP_V12, "labeling_error": reason}, source=UNJUDGED) == (
+            BackfillDecision(None, EXCLUDED_DETERMINISTIC)
+        )
+
+    @pytest.mark.parametrize("source", [FP_CLASSIFIER, RULE])
+    def test_a_negative_the_llm_did_not_decide_is_left_out(self, source):
+        assert relabel(**FP_V12, source=source) == BackfillDecision(None, provenance.EXCLUDED_NOT_LLM_DECIDED)
+
+    def test_a_negative_whose_reason_is_not_a_replys_form_is_a_possible_hand_move(self):
+        assert relabel(**{**FP_V12, "labeling_error": "Fixed by hand"}) == BackfillDecision(
+            None, EXCLUDED_POSSIBLE_HAND_MOVE
+        )
+
+    def test_no_brands_and_insufficient_content(self):
+        assert relabel(brands=[]) == BackfillDecision(None, EXCLUDED_NO_BRANDS)
+        assert relabel(sufficient_content=False) == BackfillDecision(None, EXCLUDED_INSUFFICIENT_CONTENT)
+
+
+def relabel_cohort_of(rows, versions=None, labeled=(), human_labeled=()):
+    return build_backfill_cohort(
+        sorted(rows, key=lambda r: r.article_id),
+        judged_ids=set(versions or {}),
+        human_label_ids=set(human_labeled),
+        label_ids=set(labeled),
+        judged_skip_cutoff=None,
+        bound=BOUND,
+        mode=provenance.MODE_RELABEL,
+        judgment_versions=versions or {},
+        production_version=PRODUCTION,
+    )
+
+
+class TestRelabelCohort:
+    def test_arms_run_labeled_first_and_record_the_prior_status(self):
+        fp = row("false_positive", LLM_FP_REASON, article_id="0" * 8, skipped_at=None)
+        skip = row(reason=models.SKIP_NO_ESG_CATEGORIES, article_id="1" * 8)
+        lab = row("labeled", None, article_id="2" * 8)
+        done = row("labeled", None, article_id="3" * 8)
+        unjudged_fp = row("false_positive", LLM_FP_REASON, article_id="4" * 8, skipped_at=None)
+        versions = {fp.article_id: EARLIER, skip.article_id: EARLIER, done.article_id: {PRODUCTION}}
+        cohort = relabel_cohort_of(
+            [fp, skip, lab, done, unjudged_fp], versions, labeled=[lab.article_id, done.article_id]
+        )
+        assert cohort.arms == provenance.RELABEL_ARMS
+        assert cohort.ids == [lab.article_id, skip.article_id, fp.article_id]
+        assert cohort.prior[lab.article_id] == ["labeled", None, provenance.ARM_RELABEL_LABELED]
+        assert cohort.excluded == {provenance.EXCLUDED_AT_PRODUCTION: 1}
+        assert cohort.stale_labels == 1
+
+    def test_a_relabel_cohort_names_its_production_version(self):
+        with pytest.raises(ValueError, match="production version"):
+            build_backfill_cohort([], judged_ids=set(), human_label_ids=set(), label_ids=set(),
+                                  judged_skip_cutoff=None, bound=BOUND, mode=provenance.MODE_RELABEL)
+
+    def test_the_192_mode_is_unchanged_by_a_labeled_row(self):
+        """backfill_arm never reads labeled rows, so #192's cohort and tag stay separate."""
+        cohort = cohort_of([row("labeled", None)])
+        assert cohort.arms == provenance.BACKFILL_ARMS and cohort.ids == []
+
+    def test_the_recheck_keeps_the_mode(self):
+        lab = row("labeled", None)
+        cohort = relabel_cohort_of([lab], labeled=[lab.article_id])
+        with patch.object(provenance, "_cohort_from_db", return_value=cohort) as read:
+            assert provenance.recheck_backfill_batch(MagicMock(), cohort, cohort.ids) == ([lab.article_id], {})
+        assert read.call_args.kwargs["mode"] == provenance.MODE_RELABEL
+        assert read.call_args.kwargs["production_version"] == PRODUCTION
+
+
+class TestRelabelTag:
+    def test_each_mode_counts_spend_and_tags_runs_under_its_own_name(self):
+        lab = row("labeled", None)
+        cohort = relabel_cohort_of([lab], labeled=[lab.article_id])
+        pipeline = MagicMock()
+        pipeline.label_articles.return_value = SimpleNamespace(articles_left_non_transient=0)
+        with patch.object(script.db, "get_session"), \
+             patch.object(provenance, "recheck_backfill_batch", return_value=([lab.article_id], {})), \
+             patch.object(script, "tagged_runs", return_value=[]) as runs:
+            assert script.run_batches(pipeline, cohort.ids, cohort, {lab.article_id: 0.01}, 10, 1.0) == script.EXIT_DONE
+        assert runs.call_args.args[1] == provenance.MODE_RELABEL
+        assert pipeline.label_articles.call_args.kwargs["run_tag"] == provenance.MODE_RELABEL
+
+    def test_the_mode_flag(self):
+        assert script.parse_args([]).mode == provenance.MODE_BACKFILL
+        assert script.parse_args(["--mode", "245-relabel"]).mode == provenance.MODE_RELABEL

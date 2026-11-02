@@ -353,6 +353,24 @@ BACKFILL_ARMS = (ARM_UNJUDGED, ARM_FALSE_POSITIVE, ARM_JUDGED_SKIP, ARM_FAILED)
 # Statuses an arm reads
 BACKFILL_STATUSES = ("skipped", FP_NEGATIVE_STATUS, FAILED_STATUS)
 
+# --- The #245 relabel cohort ---------------------------------------------------------------
+# LLM-decided rows stored under a prompt before the production version: relabeled so the stored
+# labels follow one policy (#245, overriding D040 §5). The pass ends on the judgments a reply
+# writes (D038), which carry the production version, so no time bound is kept. The arms run in
+# this order: labeled rows first (scorecard and training positives), then skips, then negatives.
+
+ARM_RELABEL_LABELED = "relabel_labeled"  # L: labeled under an earlier prompt
+ARM_RELABEL_SKIPPED = "relabel_skipped"  # S: a skip judged under an earlier prompt
+ARM_RELABEL_FALSE_POSITIVE = "relabel_false_positive"  # N: a negative judged under an earlier prompt
+RELABEL_ARMS = (ARM_RELABEL_LABELED, ARM_RELABEL_SKIPPED, ARM_RELABEL_FALSE_POSITIVE)
+RELABEL_STATUSES = ("labeled", "skipped", FP_NEGATIVE_STATUS)
+
+# The two selections, by the run tag each invocation records
+MODE_BACKFILL = "192-backfill"
+MODE_RELABEL = "245-relabel"
+MODE_ARMS = {MODE_BACKFILL: BACKFILL_ARMS, MODE_RELABEL: RELABEL_ARMS}
+MODE_STATUSES = {MODE_BACKFILL: BACKFILL_STATUSES, MODE_RELABEL: RELABEL_STATUSES}
+
 # Unjudged reasons a reply writes, or wrote (SKIP_NO_SPORTSWEAR_BRAND: the pipeline before #200).
 # The other two are written before any LLM call, and a relabel would write them again.
 LLM_REACHABLE_UNJUDGED_REASONS = UNJUDGED_SKIP_REASONS - {SKIP_INSUFFICIENT_CONTENT, SKIP_NO_BRANDS}
@@ -368,6 +386,8 @@ EXCLUDED_HAS_JUDGMENTS = "has_judgments"  # a brand_judgments row exists: relabe
 EXCLUDED_SKIPPED_AFTER_BOUND = "skipped_after_bound"  # skipped at or after the bound (U and J only)
 EXCLUDED_NOT_SCRAPED = "not_scraped"  # at a cohort status, but outside the FP export's scrape filter
 EXCLUDED_FAILED_IN_BACKFILL = "failed_in_backfill"  # a tagged run wrote this failure (X only)
+EXCLUDED_AT_PRODUCTION = "judged_at_production"  # already judged under the production version (#245)
+EXCLUDED_NOT_LLM_DECIDED = "not_llm_decided"  # a judged negative whose label source is not the LLM (#245)
 
 
 def _brand_key(name: str) -> str:
@@ -487,6 +507,68 @@ def backfill_arm(
     return BackfillDecision(arm)
 
 
+def relabel_arm(
+    *,
+    article_id: str,
+    labeling_status: str,
+    labeling_error: str | None,
+    source: str,
+    brands: Sequence[str],
+    sufficient_content: bool,
+    judgment_versions: set[str],
+    has_labels: bool,
+    human_labels: bool,
+    production_version: str,
+) -> BackfillDecision:
+    """The #245 relabel arm of one row, or why it is left out.
+
+    A row is a candidate when its status is one the LLM decided and it has no judgment under the
+    production version: a ``labeled`` row (judged under an earlier version, or before D038 wrote
+    judgments), or a ``skipped`` or ``false_positive`` row judged under an earlier version. A
+    negative with no judgment at all is #192's backfill's to decide (``backfill_arm``), not this.
+
+    Hand moves, fail-closed as in ``backfill_arm``. A pipeline ``labeled`` write clears the reason
+    and stores at least one label, so a ``labeled`` row with a reason or no label may have been
+    moved by hand (``fix_label.py update --status labeled`` keeps or clears the reason and writes
+    no label). A hand move that cleared the reason onto a row with older LLM labels looks like a
+    pipeline write; #143's audit log will record it.
+    """
+    if labeling_status not in RELABEL_STATUSES:
+        return NOT_A_CANDIDATE
+    if source == HUMAN or article_id in HUMAN_RULINGS:
+        return BackfillDecision(None, EXCLUDED_HUMAN)
+    if labeling_status != "labeled" and not judgment_versions:
+        return NOT_A_CANDIDATE
+    if production_version in judgment_versions:
+        return BackfillDecision(None, EXCLUDED_AT_PRODUCTION)
+
+    if labeling_status == "labeled":
+        arm = ARM_RELABEL_LABELED
+    elif labeling_status == "skipped":
+        if source == UNJUDGED and labeling_error not in LLM_REACHABLE_UNJUDGED_REASONS:
+            return BackfillDecision(None, EXCLUDED_DETERMINISTIC)
+        if source not in (LLM, PRE_CLASSIFIER, UNJUDGED):
+            # UNATTRIBUTED: a reason no pipeline writes
+            return BackfillDecision(None, EXCLUDED_POSSIBLE_HAND_MOVE)
+        arm = ARM_RELABEL_SKIPPED
+    else:
+        if source not in (LLM, PRE_CLASSIFIER):
+            return BackfillDecision(None, EXCLUDED_NOT_LLM_DECIDED)
+        arm = ARM_RELABEL_FALSE_POSITIVE
+
+    if human_labels:
+        return BackfillDecision(None, EXCLUDED_HUMAN_LABELS)
+    if not brands:
+        return BackfillDecision(None, EXCLUDED_NO_BRANDS)
+    if arm == ARM_RELABEL_LABELED and (labeling_error or not has_labels):
+        return BackfillDecision(None, EXCLUDED_POSSIBLE_HAND_MOVE)
+    if arm == ARM_RELABEL_FALSE_POSITIVE and possible_hand_move(labeling_error, brands):
+        return BackfillDecision(None, EXCLUDED_POSSIBLE_HAND_MOVE)
+    if not sufficient_content:
+        return BackfillDecision(None, EXCLUDED_INSUFFICIENT_CONTENT)
+    return BackfillDecision(arm)
+
+
 @dataclass
 class BackfillRow:
     """One row of the FP export query, as the backfill reads it."""
@@ -512,7 +594,10 @@ class BackfillCohort:
 
     judged_skip_cutoff: datetime | None
     bound: datetime
-    selected: dict[str, list[str]] = field(default_factory=lambda: {a: [] for a in BACKFILL_ARMS})
+    mode: str = MODE_BACKFILL
+    # the production version a MODE_RELABEL cohort ends at (None in MODE_BACKFILL)
+    production_version: str | None = None
+    selected: dict[str, list[str]] = field(default_factory=dict)
     # article id -> [status, reason, arm] before the relabel
     prior: dict[str, list[str | None]] = field(default_factory=dict)
     content_chars: dict[str, int] = field(default_factory=dict)
@@ -532,10 +617,19 @@ class BackfillCohort:
     # article id -> the reason the first tagged run to relabel it recorded (arm X's pass end)
     tried: dict[str, str | None] = field(default_factory=dict)
 
+    def __post_init__(self):
+        for arm in self.arms:
+            self.selected.setdefault(arm, [])
+
+    @property
+    def arms(self) -> tuple[str, ...]:
+        """The mode's arms, in the order they run."""
+        return MODE_ARMS[self.mode]
+
     @property
     def ids(self) -> list[str]:
-        """Every selected id, arm by arm in BACKFILL_ARMS order, by id within an arm."""
-        return [i for arm in BACKFILL_ARMS for i in self.selected[arm]]
+        """Every selected id, arm by arm in the mode's order, by id within an arm."""
+        return [i for arm in self.arms for i in self.selected[arm]]
 
 
 def build_backfill_cohort(
@@ -547,15 +641,30 @@ def build_backfill_cohort(
     judged_skip_cutoff: datetime | None,
     bound: datetime,
     tried: dict[str, str | None] | None = None,
+    mode: str = MODE_BACKFILL,
+    judgment_versions: dict[str, set[str]] | None = None,
+    production_version: str | None = None,
 ) -> BackfillCohort:
-    """The cohort over rows in id order; ``backfill_arm`` decides each row. ``tried`` is
-    ``tried_reasons`` over the tagged runs so far."""
+    """The cohort over rows in id order; ``backfill_arm`` decides each row, or ``relabel_arm`` in
+    MODE_RELABEL. ``tried`` is ``tried_reasons`` over the tagged runs so far.
+    ``judgment_versions`` maps an article id to the prompt versions of its ``brand_judgments``
+    rows (MODE_RELABEL only)."""
+    if mode == MODE_RELABEL and not production_version:
+        raise ValueError("A relabel cohort needs the production version it ends at")
     rows = list(rows)
     tried = dict(tried or {})
-    cohort = BackfillCohort(judged_skip_cutoff=judged_skip_cutoff, bound=bound, tried=tried)
+    judgment_versions = judgment_versions or {}
+    cohort = BackfillCohort(
+        judged_skip_cutoff=judged_skip_cutoff,
+        bound=bound,
+        mode=mode,
+        production_version=production_version,
+        tried=tried,
+    )
+    statuses = MODE_STATUSES[mode]
     verified = human_verified_ids((r.article_id, r.labeling_status) for r in rows)
     for r in rows:
-        if r.labeling_status not in BACKFILL_STATUSES:
+        if r.labeling_status not in statuses:
             continue
         source = None if r.labeling_status == FAILED_STATUS else derive_label_source(
             r.labeling_status,
@@ -565,20 +674,34 @@ def build_backfill_cohort(
             human_verified=r.article_id in verified,
             article_id=r.article_id,
         )
-        decision = backfill_arm(
-            article_id=r.article_id,
-            labeling_status=r.labeling_status,
-            labeling_error=r.labeling_error,
-            source=source,
-            skipped_at=r.skipped_at,
-            brands=r.brands,
-            sufficient_content=r.sufficient_content,
-            has_judgments=r.article_id in judged_ids,
-            human_labels=r.article_id in human_label_ids,
-            judged_skip_cutoff=judged_skip_cutoff,
-            bound=bound,
-            tried_reason=tried.get(r.article_id),
-        )
+        if mode == MODE_RELABEL:
+            decision = relabel_arm(
+                article_id=r.article_id,
+                labeling_status=r.labeling_status,
+                labeling_error=r.labeling_error,
+                source=source,
+                brands=r.brands,
+                sufficient_content=r.sufficient_content,
+                judgment_versions=judgment_versions.get(r.article_id, set()),
+                has_labels=r.article_id in label_ids,
+                human_labels=r.article_id in human_label_ids,
+                production_version=production_version,
+            )
+        else:
+            decision = backfill_arm(
+                article_id=r.article_id,
+                labeling_status=r.labeling_status,
+                labeling_error=r.labeling_error,
+                source=source,
+                skipped_at=r.skipped_at,
+                brands=r.brands,
+                sufficient_content=r.sufficient_content,
+                has_judgments=r.article_id in judged_ids,
+                human_labels=r.article_id in human_label_ids,
+                judged_skip_cutoff=judged_skip_cutoff,
+                bound=bound,
+                tried_reason=tried.get(r.article_id),
+            )
         if decision.excluded:
             cohort.excluded[decision.excluded] += 1
             cohort.left_out[r.article_id] = decision.excluded
@@ -590,7 +713,10 @@ def build_backfill_cohort(
         cohort.selected[arm].append(r.article_id)
         cohort.prior[r.article_id] = [r.labeling_status, r.labeling_error, arm]
         cohort.content_chars[r.article_id] = r.content_chars
-        if arm == ARM_FALSE_POSITIVE:
+        if mode == MODE_RELABEL:
+            versions = judgment_versions.get(r.article_id)
+            reason_key = f"{source}, judged under {', '.join(sorted(versions)) if versions else 'no version'}"
+        elif arm == ARM_FALSE_POSITIVE:
             reason_key = source
         elif arm == ARM_FAILED:
             reason_key = (r.labeling_error or "")[:HAND_MOVE_REASON_CHARS]
@@ -622,6 +748,8 @@ def _cohort_from_db(
     bound: datetime,
     tried: dict[str, str | None] | None = None,
     ids: list[str] | None = None,
+    mode: str = MODE_BACKFILL,
+    production_version: str | None = None,
 ) -> BackfillCohort:
     """``build_backfill_cohort`` over the FP export's rows and the ``failed`` rows, or only
     those with the given ids."""
@@ -668,6 +796,15 @@ def _cohort_from_db(
         return {str(i) for (i,) in query.distinct()}
 
     human = or_(BrandLabel.human_reviewed.is_(True), BrandLabel.labeled_by == "human")
+    judgment_versions: dict[str, set[str]] = {}
+    if mode == MODE_RELABEL:
+        # Distinct (article, version) pairs: a relabel replaces every judgment row, so an article
+        # has one version, but the set does not assume it
+        query = session.query(BrandJudgment.article_id, BrandJudgment.prompt_version).distinct()
+        if ids is not None:
+            query = query.filter(BrandJudgment.article_id.in_(ids))
+        for article_id, version in query:
+            judgment_versions.setdefault(str(article_id), set()).add(version)
     return build_backfill_cohort(
         rows,
         judged_ids=article_ids(BrandJudgment.article_id),
@@ -676,6 +813,9 @@ def _cohort_from_db(
         judged_skip_cutoff=judged_skip_cutoff,
         bound=bound,
         tried=tried,
+        mode=mode,
+        judgment_versions=judgment_versions,
+        production_version=production_version,
     )
 
 
@@ -685,15 +825,25 @@ def select_backfill_cohort(
     judged_skip_cutoff: datetime | None,
     bound: datetime,
     tried: dict[str, str | None] | None = None,
+    mode: str = MODE_BACKFILL,
+    production_version: str | None = None,
 ) -> BackfillCohort:
     """The #192 backfill cohort from the database (D039): the FP export's rows and the
     ``failed`` rows (#86), decided by ``backfill_arm``, plus a count of rows at a cohort status
-    outside the export's scrape filter.
+    outside the export's scrape filter. In MODE_RELABEL, the #245 relabel cohort, decided by
+    ``relabel_arm``.
     """
-    cohort = _cohort_from_db(session, judged_skip_cutoff=judged_skip_cutoff, bound=bound, tried=tried)
+    cohort = _cohort_from_db(
+        session,
+        judged_skip_cutoff=judged_skip_cutoff,
+        bound=bound,
+        tried=tried,
+        mode=mode,
+        production_version=production_version,
+    )
     not_scraped = (
         session.query(func.count(Article.id))
-        .filter(Article.labeling_status.in_(BACKFILL_STATUSES))
+        .filter(Article.labeling_status.in_(MODE_STATUSES[mode]))
         .filter(or_(Article.scrape_status.is_(None), Article.scrape_status != "success"))
         .scalar()
     )
@@ -718,6 +868,8 @@ def recheck_backfill_batch(
         bound=cohort.bound,
         tried=cohort.tried,
         ids=ids,
+        mode=cohort.mode,
+        production_version=cohort.production_version,
     )
     kept, dropped = [], {}
     for i in ids:
