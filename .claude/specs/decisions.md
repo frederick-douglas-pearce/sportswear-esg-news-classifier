@@ -2988,6 +2988,24 @@ transitions and Product cases, not the categories and sentiments these rulings a
    - Still owed before PR2: the owner's read of run 2's transitions and per-brand flips (D036),
      ruling 3's sentiments and ruling 9, and an explanation of the sixth miss, `d2873bbb`: a sale
      row on the right side with Governance kept.
+7. **The owner's reads and the promotion (2026-11-02, #230 PR2).** All four reads were accepted,
+   and v1.13.0 is production:
+   - **Transitions (D036).** Each of the 25 status transitions follows a ruling:
+     - 7 newly labeled, from ruling 1's job cuts and ruling 3's stakes;
+     - 18 no longer labeled: 14 Allbirds pivot stories (ruling 7), the Lululemon 13F template
+       (ruling 6), and the Brooks results and celebrity pieces (ruling 4).
+
+     Two per-brand flips go the other way: `7f3d37d8` (a Nike stock-move wrap) and `45e8c505` (a
+     Columbia 8-K exhibit list) move from `mention_only` to `financial`, with no category. They
+     were accepted, with a follow-up before #154 PR2's retrain (#248). The sale-listing flips are
+     the noise already ruled in §6.
+   - **Ruling 3's sentiments.** Accepted. All four Lululemon copies get Governance. Sentiment
+     matches the owner's labels on two of four, and those labels split 0 and -1 themselves.
+   - **Ruling 9.** Accepted as gray. Both versions label `a4fd8d33` Environmental +1 for the
+     sustainability facts it reports, and the prompt states no rule for evergreen explainers.
+   - **The sixth miss, `d2873bbb`.** Accepted as explained. Governance 0 is kept for the
+     shareholder vote that approved the sale of the shoe business, which is arguably Governance.
+     The row is a human ruling, so no relabel touches it.
 
 **Rejected.**
 - **A second eval run per case file.** It splits the report and draws two samples.
