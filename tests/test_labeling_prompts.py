@@ -54,10 +54,11 @@ def manager():
 
 
 class TestRegistry:
-    def test_production_is_v1_12_0(self):
-        """v1.12.0 passed its contrastive eval (#219); v1.11.0 failed its own (#215)."""
+    def test_production_is_v1_13_0(self):
+        """v1.13.0 passed its contrastive eval against v1.12.0 (#230, D040); v1.11.0 failed its
+        own (#215)."""
         registry = json.loads((PROMPTS_DIR / "registry.json").read_text())
-        assert registry["production"] == "v1.12.0"
+        assert registry["production"] == "v1.13.0"
 
     def test_v1_11_0_is_registered_and_superseded(self, manager):
         assert "v1.11.0" in manager.list_versions()

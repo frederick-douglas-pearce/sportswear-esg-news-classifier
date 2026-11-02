@@ -23,6 +23,19 @@ prompt before the production version, overriding D040 §5's "no backfill relabel
 - **Labels on a negative reply.** A reply that is not `labeled` deletes the article's brand labels
   that no human wrote or reviewed, and their evidence by cascade (`delete_llm_brand_labels`). A
   human's labels are kept.
+### 2026-11-02: Prompt v1.13.0 is production (#230 PR2, D040)
+
+**v1.13.0, which states the owner's rulings from #192's review, replaces v1.12.0 as the production
+labeling prompt.** It met D040's bar in eval run 2 against v1.12.0 on Haiku 5.5 at effort medium
+(report `v1.12.0_vs_v1.13.0_20261101T100534Z`, commit `10405fc`; hashes `dc8d18caea25` /
+`f9e786d07439`, schema `96064689a1f3`).
+- **Results.** No parse failures, refusals or truncated replies, and 100% every-brand compliance.
+  v1.13.0 passed 42 of 48 owner-ruling cases (v1.12.0: 16, below D040's 85% falsifier) and 25 of 27
+  ruled-category cases (v1.12.0: 14). Its sportswear-verdict accuracy was 92.5% (v1.12.0: 77.4%).
+- **Pinned.** `tests/test_owner_rulings_prompt.py` pins the evaluated hashes; changing v1.13.0's
+  files means a new eval. v1.12.0 is `superseded`, and its hashes stay pinned.
+- **Stored labels.** Rows labeled before the promotion stay under v1.12.0 or earlier policy. #245
+  relabels them under v1.13.0, overriding D040 §5.
 
 ### 2026-10-31: Candidate prompt v1.13.0 states the owner's rulings from #192's review (#230, D040)
 
