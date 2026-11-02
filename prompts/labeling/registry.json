@@ -1,7 +1,7 @@
 {
   "prompt_type": "esg_labeling",
   "description": "ESG classification prompts for sportswear brand news articles",
-  "production": "v1.12.0",
+  "production": "v1.13.0",
   "versions": {
     "v1.0.0": {
       "created_at": "2025-01-09T00:00:00Z",
@@ -182,13 +182,13 @@
       },
       "tags": {
         "author": "system",
-        "status": "production"
+        "status": "superseded"
       }
     },
     "v1.13.0": {
       "created_at": "2026-10-29T00:00:00Z",
       "commit_message": "State the owner's policy rulings from #192's backfill review (#230, D040)",
-      "description": "v1.12.0 with the owner's rulings from #192's backfill review stated in the system prompt (#230, D040); user prompt and reply schema unchanged. Job cuts the brand announces or carries out are Social, usually -1, wherever the article reports them, including cuts made to automate or adopt AI, which are not Digital Transformation; cost-cutting language with no cuts reported is not job cuts (ruling 1). A data breach or cybersecurity incident is Digital -1, and Governance when the subject is board oversight (2). An activist shareholder, a stake that concentrates ownership or a board fight is Governance even when framed as stock news, and a CEO pick made during a board fight is Governance (3). A brand-hosted event (a recurring one too), a sponsorship or a celebrity piece that only mentions a program is not Social; a quantified donation to a third-party charity is, even at a brand event (4). A single passing sentence carries no category, except a reported workforce reduction (5). A template stock page with an appended news summary is mention_only (6). Allbirds' AI pivot is another entity; an article whose subject includes the sale of its shoe brand is sportswear news, even when it also reports the pivot, and the AI business gives it no category (7). Spyder may be the Can-Am motorcycle, and another company's product line is other_entity even in a review (8). Candidate, not production: its contrastive eval against v1.12.0 is judged against D040's bar. Revised on its branch after code review and #234 (2026-10-31), then once after eval run 1 (from fe0f3a0): ruling 7 now says the AI business gives the sportswear brand no category (D040 §6).",
+      "description": "v1.12.0 with the owner's rulings from #192's backfill review stated in the system prompt (#230, D040); user prompt and reply schema unchanged. Job cuts the brand announces or carries out are Social, usually -1, wherever the article reports them, including cuts made to automate or adopt AI, which are not Digital Transformation; cost-cutting language with no cuts reported is not job cuts (ruling 1). A data breach or cybersecurity incident is Digital -1, and Governance when the subject is board oversight (2). An activist shareholder, a stake that concentrates ownership or a board fight is Governance even when framed as stock news, and a CEO pick made during a board fight is Governance (3). A brand-hosted event (a recurring one too), a sponsorship or a celebrity piece that only mentions a program is not Social; a quantified donation to a third-party charity is, even at a brand event (4). A single passing sentence carries no category, except a reported workforce reduction (5). A template stock page with an appended news summary is mention_only (6). Allbirds' AI pivot is another entity; an article whose subject includes the sale of its shoe brand is sportswear news, even when it also reports the pivot, and the AI business gives it no category (7). Spyder may be the Can-Am motorcycle, and another company's product line is other_entity even in a review (8). Revised on its branch after code review and #234 (2026-10-31), then once after eval run 1 (from fe0f3a0): ruling 7 now says the AI business gives the sportswear brand no category (D040 §6). Promoted 2026-11-02 on eval run 2 against v1.12.0 (report v1.12.0_vs_v1.13.0_20261101T100534Z, commit 10405fc, hashes dc8d18caea25/f9e786d07439, schema 96064689a1f3), judged against D040's bar: 0 parse failures, refusals or truncated replies, 100% every-brand compliance, 42 of 48 owner-ruling cases (v1.12.0: 16), 25 of 27 ruled-category cases (v1.12.0: 14). Evaluated with LABELING_MODEL=claude-haiku-5-5 and LABELING_EFFORT=medium; run it with those settings.",
       "model_recommendations": {
         "model": "claude-haiku-5-5",
         "max_tokens": 8000,
@@ -196,7 +196,7 @@
       },
       "tags": {
         "author": "system",
-        "status": "candidate"
+        "status": "production"
       }
     }
   }

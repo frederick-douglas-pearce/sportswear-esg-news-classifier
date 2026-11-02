@@ -190,9 +190,10 @@ class TestReplySchema:
 
 
 class TestV1_12_0:
-    def test_registered_as_production(self, manager):
-        assert manager.get_version_info("v1.12.0")["tags"]["status"] == "production"
-        assert manager.get_production_version() == "v1.12.0"
+    def test_registered_and_superseded_by_v1_13_0(self, manager):
+        """v1.13.0 states the owner's rulings on top of it (#230, D040)."""
+        assert manager.get_version_info("v1.12.0")["tags"]["status"] == "superseded"
+        assert manager.get_production_version() == "v1.13.0"
 
     def test_config_names_the_schema(self):
         config = json.loads((PROMPTS_DIR / "v1.12.0" / "config.json").read_text())

@@ -1,4 +1,4 @@
-"""Tests for candidate prompt v1.13.0 and its case file (#230, D040): the owner's policy rulings
+"""Tests for prompt v1.13.0 (production since #230 PR2) and its case file (#230, D040): the owner's policy rulings
 from #192's backfill review, stated in the prompt and scored by owner_rulings_192.json."""
 
 import json
@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PROMPTS_DIR = ROOT / "prompts" / "labeling"
 CASE_FILE = PROMPTS_DIR / "eval_cases" / "owner_rulings_192.json"
 PRODUCT_CASE_FILE = PROMPTS_DIR / "eval_cases" / "product_and_stability.json"
+
+# The hashes eval run 2 evaluated (report v1.12.0_vs_v1.13.0_20261101T100534Z, D040 §6)
+V1_13_0_SYSTEM_HASH = "dc8d18caea25"
+V1_13_0_USER_HASH = "f9e786d07439"
+V1_13_0_SCHEMA_HASH = "96064689a1f3"
 
 # One phrase per ruling the v1.13.0 system prompt states (#230); a reworded ruling fails here
 RULING_PHRASES = {
@@ -76,13 +81,22 @@ def v1_13_0():
     return PromptManager(prompts_dir=PROMPTS_DIR).load_version("v1.13.0")
 
 
-class TestCandidate:
-    def test_registered_as_a_candidate_with_v1_12_0s_call_settings(self):
+class TestPromoted:
+    def test_registered_as_production_with_v1_12_0s_call_settings(self):
+        """Promoted on eval run 2 against v1.12.0 (#230 PR2, D040 §6)."""
         registry = json.loads((PROMPTS_DIR / "registry.json").read_text())
         entry = registry["versions"]["v1.13.0"]
-        assert registry["production"] == "v1.12.0"
-        assert entry["tags"]["status"] == "candidate"
+        assert registry["production"] == "v1.13.0"
+        assert entry["tags"]["status"] == "production"
+        assert registry["versions"]["v1.12.0"]["tags"]["status"] == "superseded"
         assert entry["model_recommendations"] == registry["versions"]["v1.12.0"]["model_recommendations"]
+
+    def test_text_and_schema_are_the_hashes_evaluated(self, v1_13_0):
+        """The hashes evaluated are the hashes promoted (D036 §3, D040 §4): run 2's report,
+        v1.12.0_vs_v1.13.0_20261101T100534Z from commit 10405fc. A change means a new run."""
+        assert (v1_13_0.system_prompt_hash, v1_13_0.user_prompt_hash, v1_13_0.reply_schema_hash) == (
+            V1_13_0_SYSTEM_HASH, V1_13_0_USER_HASH, V1_13_0_SCHEMA_HASH,
+        ), "v1.13.0 changed after its eval: rerun it (D040 §4)"
 
     def test_config_names_its_version_and_v1_12_0s_files(self):
         config = json.loads((PROMPTS_DIR / "v1.13.0" / "config.json").read_text())
