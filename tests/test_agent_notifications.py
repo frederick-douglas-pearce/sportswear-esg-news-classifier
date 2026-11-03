@@ -360,12 +360,13 @@ class TestConvenienceFunctions:
             mock_manager.send.return_value = {"console": True}
             mock_manager_class.return_value = mock_manager
 
-            # 20% error rate should trigger warning
+            # 20% error rate should trigger warning; the rate is the caller's (#77)
             send_labeling_summary(
                 articles_processed=100,
                 articles_labeled=60,
                 false_positives=20,
                 articles_failed=20,
+                error_rate=0.2,
             )
 
             call_args = mock_manager.send.call_args

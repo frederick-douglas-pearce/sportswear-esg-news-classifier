@@ -628,6 +628,7 @@ class TestCheckLabelingQuality:
             "labeling_output": {
                 "articles_processed": 10,
                 "articles_labeled": 4,
+                "articles_skipped": 4,
                 "articles_failed": 2,
             },
         }
@@ -685,8 +686,10 @@ class TestCheckLabelingQuality:
         """
         from src.agent.workflows.daily_labeling import check_labeling_quality
 
+        # Rates are over attempted articles (#77): 1 labeled + 8 FP + 1 failed
         outcomes = dict(
-            self.OUTCOMES_20260905, articles_processed=10, articles_false_positive=8
+            self.OUTCOMES_20260905, articles_processed=10, articles_labeled=1,
+            articles_skipped=0, articles_false_positive=8, articles_failed=1,
         )
         context = {
             "labeling_started_at": "2026-09-05T13:30:00+00:00",
@@ -2518,7 +2521,7 @@ class TestLabelingFailureFailsTheRun:
         assert result["failed_attempts"] == 28
         assert result["error_rate"] == 1.0
         assert result["high_error_rate"] is True
-        assert result["fp_rate"] is None  # nothing processed: unknown, not 0%
+        assert result["fp_rate"] == 0.0  # over the 7 attempted, like the error rate
 
     def test_degraded_counts_have_unknown_rates(self):
         from src.agent.workflows.daily_labeling import check_labeling_quality
@@ -2542,7 +2545,7 @@ class TestLabelingFailureFailsTheRun:
         with patch("src.agent.workflows.daily_labeling._read_run_outcomes", return_value=nothing):
             result = check_labeling_quality(MagicMock(), context)
         assert isinstance(result, StepFailure)
-        assert "none of 7 pending" in result.error
+        assert "none of 7 labelable pending" in result.error
         assert result.context["zero_work_despite_pending"] is True
 
     def test_the_20261101_run_archives_failed_and_does_not_count_as_a_success(
@@ -2581,7 +2584,7 @@ class TestLabelingFailureFailsTheRun:
         assert result.status == WorkflowStatus.FAILED
         assert "exited 1" in result.error
         # The report and notification still ran, and say what happened
-        assert sent["failure"].startswith("Labeling exited 1: no article completed")
+        assert sent["failure"].startswith("label_articles.py exited 1: articles errored")
         assert "7 still pending" in sent["failure"]
         assert sent["articles_failed"] == 7 and sent["error_rate"] == 1.0
         assert sent["additional_details"]["failed_attempts"] == 28
@@ -2610,3 +2613,53 @@ class TestLabelingSummaryFailure:
         notification = manager.return_value.send.call_args.args[0]
         assert notification.subject == "Daily Labeling Summary"
         assert notification.details["error_rate"] == "unknown"
+
+
+class TestLabelingFailureReviewFindings:
+    """Regressions for #251's code review."""
+
+    def test_analysis_prompt_renders_unknown_rates(self):
+        """None rates (a failed run) formatted with :.1% raised TypeError in the analyzer."""
+        from src.agent.llm import LabelingAnalyzer
+
+        analyzer = LabelingAnalyzer(api_key="test")
+        with patch.object(analyzer, "_call_api", return_value="ok") as call:
+            analyzer.analyze_labeling_results(
+                stats={"articles_failed": 7, "error_rate": 1.0, "fp_rate": None},
+                labeled_sample=[], fp_sample=[], skipped_sample=[],
+            )
+        prompt = call.call_args.args[0]
+        assert "- Error rate: 100.0%" in prompt and "- False positive rate: unknown" in prompt
+
+    def test_unscraped_pending_articles_are_not_zero_work(self):
+        """Pending rows the labeler cannot select (not scraped) do not fail a clean run."""
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        nothing = {**TestLabelingFailureFailsTheRun.OUTCOMES_20261101, "articles_failed": 0,
+                   "failed_attempts": 0, "articles_left_pending": 0, "run_count": 1,
+                   "incomplete_runs": 0, "any_run_incomplete": False}
+        context = {"labeling_started_at": "2026-11-01T14:30:03+00:00", "labeling_success": True,
+                   "articles_pending": 5, "articles_pending_labelable": 0}
+        with patch("src.agent.workflows.daily_labeling._read_run_outcomes", return_value=nothing):
+            result = check_labeling_quality(MagicMock(), context)
+        assert isinstance(result, dict) and not result.get("zero_work_despite_pending")
+
+    def test_a_failed_exit_with_no_run_row_says_the_script_did_not_start(self):
+        """uv, python and argparse exit 2 too; with no run row nothing was labeled."""
+        from src.agent.workflows.daily_labeling import NOT_STARTED, check_labeling_quality
+
+        context = {"labeling_started_at": "2026-11-01T14:30:03+00:00", "labeling_exit_code": 2,
+                   "labeling_failure": "label_articles.py exited 2: articles errored ..."}
+        with patch("src.agent.workflows.daily_labeling._read_run_outcomes", return_value=None):
+            result = check_labeling_quality(MagicMock(), context)
+        assert result["labeling_failure"] == f"label_articles.py exited 2: {NOT_STARTED}"
+
+    def test_the_labeling_skip_reason_survives_the_llm_step(self):
+        """run_llm_analysis no longer overwrites the flat context's `reason`."""
+        from src.agent.workflows.daily_labeling import generate_report, run_llm_analysis
+
+        context = {"labeling_skipped": True, "reason": "no_pending_articles"}
+        context.update(run_llm_analysis(MagicMock(), context))
+        report = generate_report(MagicMock(name="w"), context)["report"]
+        assert report["labeling"]["reason"] == "no_pending_articles"
+        assert report["llm_analysis"]["reason"] == "labeling_skipped"

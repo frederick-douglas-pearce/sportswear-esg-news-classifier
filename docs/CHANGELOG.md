@@ -14,12 +14,12 @@ exit 0.
   includes exit 2 (partial failure), by the owner's decision on #77. The quality check, report
   and email still run on the same context.
 - **`check_labeling_quality` returns `StepFailure`** on a clean exit that processed, failed and
-  deduplicated nothing while articles were pending.
+  deduplicated nothing while labelable articles (pending, scraped, with content) were pending.
 - **Failures are counted per article.** `_read_run_outcomes` counts each article once across
   retries: the failures each run did not leave pending, plus the last run's pending ones.
   `failed_attempts` keeps the old sum. Replayed on 2026-11-01: 7 failed, not 28.
-- **Rates.** The error rate is over every attempted article (labeled + skipped + false positive +
-  failed). An exception, such as 11-01's embedding error, is not in `articles_processed`, so that
+- **Rates.** The error and false-positive rates are over every attempted article (labeled +
+  skipped + false positive + failed). An exception, such as 11-01's embedding error, is not in `articles_processed`, so that
   run read 0%. A rate with no denominator, or from degraded counts, is `unknown`, not 0%.
 - **Report and email.**
   - A failed run's email subject is "Daily Labeling FAILED", with severity `error` and the cause.
