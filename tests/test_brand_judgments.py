@@ -342,3 +342,28 @@ class TestBrandJudgmentsTable:
         with labeling_db.db.get_session() as session:
             session.query(models.Article).filter(models.Article.id == article_id).delete()
         assert self._rows(labeling_db, article_id) == []
+
+
+@requires_postgres
+class TestDeleteLlmBrandLabels(TestBrandJudgmentsTable):
+    """A relabel to a negative leaves no LLM label or its evidence, and keeps a human's (#245)."""
+
+    def test_llm_labels_and_their_evidence_go_and_human_labels_stay(self, database):
+        labeling_db, created = database
+        article_id, _ = self._article_and_run(labeling_db, created)
+        with labeling_db.db.get_session() as session:
+            llm = models.BrandLabel(article_id=article_id, brand="Nike", labeled_by="claude-sonnet")
+            reviewed = models.BrandLabel(article_id=article_id, brand="Puma", labeled_by="claude-sonnet",
+                                         human_reviewed=True)
+            human = models.BrandLabel(article_id=article_id, brand="Adidas", labeled_by="human")
+            session.add_all([llm, reviewed, human])
+            session.flush()
+            session.add(models.LabelEvidence(brand_label_id=llm.id, category="social", excerpt="q"))
+            session.flush()
+            llm_id = llm.id
+        with labeling_db.db.get_session() as session:
+            assert labeling_db.delete_llm_brand_labels(session, article_id) == 1
+        with labeling_db.db.get_session() as session:
+            brands = sorted(b for (b,) in session.query(models.BrandLabel.brand).filter_by(article_id=article_id))
+            assert brands == ["Adidas", "Puma"]
+            assert session.query(models.LabelEvidence).filter_by(brand_label_id=llm_id).count() == 0

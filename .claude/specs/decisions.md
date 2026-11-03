@@ -3023,3 +3023,70 @@ transitions and Product cases, not the categories and sentiments these rulings a
 - Allbirds stays in the tracked brands, so coverage of its AI business keeps arriving and costing
   LLM calls. A collection-side or FP-side filter is a possible follow-up, not part of #230.
 - #227 (stored text that never names the brand) is a scraping fix and stays out of scope.
+
+## D041: Rows Stored Under an Earlier Prompt Are Relabeled With v1.13.0; It Overrides D040 §5 (#245)
+
+**Date:** 2026-11-02 · **Status:** accepted (the owner decided the override on 2026-11-02; architect
+review 2026-11-02: approve with changes, all applied) · **Issues:** #245, #230, #154, #192
+
+**Context.** D040 §5 promoted v1.13.0 with no backfill, which leaves stored labels mixing v1.12.0
+(and earlier) and v1.13.0 policy. D040's own Consequences flag that mix for #154 PR2's training
+data. The owner's promotional Anthropic credits expire 2026-11-02, and a relabel of the
+LLM-decided rows costs about $8 at #192's observed $0.002 per call.
+
+**Decision.**
+1. **The override.** Once v1.13.0 is production, `scripts/backfill_relabel.py --mode
+   245-relabel` relabels the LLM-decided rows that have no judgment under the production
+   version. D040 §5 no longer holds for these rows.
+2. **The cohort** (`relabel_arm` in `src/data_collection/provenance.py`, in three arms run in this
+   order):
+   - `labeled` rows (L), judged under an earlier version or before D038 wrote judgments;
+   - `skipped` rows judged under an earlier version (S), whose source is the LLM or a reply's
+     unjudged reason;
+   - `false_positive` rows judged under an earlier version (N), LLM-decided.
+
+   A negative with no judgment is #192's cohort (D039), not this one. On the 2026-11-02 data the
+   cohort is 875 L, 1,823 S and 1,339 N rows (4,037).
+3. **Left out:**
+   - human rulings and human-sourced labels;
+   - human-reviewed labels;
+   - deterministic skips;
+   - negatives the LLM did not decide;
+   - no brands, or insufficient content;
+   - possible hand moves, fail-closed:
+     - a `labeled` row with a stored reason, or with no `brand_labels` row (a pipeline `labeled`
+       write clears the reason and stores a label; `fix_label.py update` does neither);
+     - a skip at a reason no pipeline writes;
+     - a negative whose reason is not a reply's form (as D039).
+
+   A hand move that cleared the reason onto a row that still had older LLM labels is
+   indistinguishable from a pipeline write until #143's audit log.
+4. **The pass ends on the judgment, with no time bound.** A reply replaces every judgment row
+   (D038), and the new rows carry the production version, so a relabeled row leaves the cohort.
+   The cohort is derived again on each invocation and re-decided before each batch, as in D039.
+   - A reply that judges no brand writes a skip with no judgment, which is not a candidate.
+   - A reply the labeler cannot use is written `failed`. A `labeled` row that ends `failed` leaves
+     the feed and scorecard, and `192-backfill`'s failed arm can retry it.
+5. **Its own tag.** Runs record `run_tag: 245-relabel`. `--max-cost`, the spend so far and
+   `--report` count only that tag, so the two modes' spend and reports stay separate.
+   `daily_labeling` leaves out every tagged run.
+6. **Amends D039's consequence that labels stay.** A reply that is not `labeled` now deletes the
+   article's brand labels that no human wrote or reviewed (`delete_llm_brand_labels`), in the
+   status write's session. Their evidence goes with them (`label_evidence.brand_label_id` cascades;
+   checked on the live database 2026-11-02). Before this change, a `labeled` row relabeled to a
+   negative kept its old labels, which `--stats`, `fix_label.py show`, the evidence queries and the
+   eval's label reads would have shown. A pending article has none, so the cron is unchanged.
+
+**Rejected.**
+- **A new arm inside `backfill_arm`.** That function excludes every judged row and never reads
+  `labeled`. An arm there would also enter every `192-backfill` invocation, mixing the two tags'
+  spend.
+- **Relabeling skips and negatives with no judgment.** They are #192's cohort, and its exclusions
+  (classifier-only, deterministic skips, hand moves) were decided there.
+
+**Consequences.**
+- The stored labels, the scorecard and #154 PR2's training rows follow v1.13.0. Rulings 6 and 7
+  move some positives to negatives, and ruling 1 moves some judged skips to `labeled`.
+- **The scorecard shifts.** It moves within the 14-day window at the next `website_export`, not
+  over two weeks as D040 expected.
+- **An interrupted run is safe.** It leaves a mix that the next invocation continues.

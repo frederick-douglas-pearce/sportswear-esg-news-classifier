@@ -22,6 +22,11 @@ outcome leaves it. A call that fails with no reply for a reason that is not tran
 key, credit used up) keeps the article's status rather than writing ``failed``, and either that
 or an exception that is not transient stops the invocation after its batch.
 
+``--mode 245-relabel`` selects another cohort (#245, D041; ``relabel_arm``): LLM-decided rows with no
+judgment under the production version, ``labeled`` rows first, then judged skips and negatives.
+Its runs are tagged ``245-relabel``; the spend cap and the report count only that tag. A reply
+that is not ``labeled`` deletes the article's non-human labels from an earlier reply.
+
 Run one invocation at a time: nothing locks the cohort, so a second one would pay again for the
 same articles (the cap still holds, since it counts the other's unfinished runs).
 
@@ -69,7 +74,7 @@ from src.labeling.prompt_manager import PromptManager  # noqa: E402
 
 logger = logging.getLogger("backfill_relabel")
 
-RUN_TAG = "192-backfill"
+RUN_TAG = provenance.MODE_BACKFILL  # the default mode; each mode's runs are tagged with its name
 DEFAULT_BATCH_SIZE = 25
 
 # Exit codes. 1 is left to an uncaught error
@@ -209,10 +214,13 @@ def batches(ids: list[str], size: int) -> list[list[str]]:
 
 
 def print_cohort(cohort: provenance.BackfillCohort, ids: list[str], per_call: dict[str, float]) -> None:
-    print(f"\n{'=' * 60}\nBACKFILL COHORT ({RUN_TAG})\n{'=' * 60}")
-    print(f"Arm J cutoff (first production-version run): {cohort.judged_skip_cutoff}")
-    print(f"U/J skipped_at bound: {cohort.bound}")
-    for arm in provenance.BACKFILL_ARMS:
+    print(f"\n{'=' * 60}\nBACKFILL COHORT ({cohort.mode})\n{'=' * 60}")
+    if cohort.mode == provenance.MODE_RELABEL:
+        print(f"Ends at: a brand_judgments row under {cohort.production_version}")
+    else:
+        print(f"Arm J cutoff (first production-version run): {cohort.judged_skip_cutoff}")
+        print(f"U/J skipped_at bound: {cohort.bound}")
+    for arm in cohort.arms:
         print(f"\n{arm}: {len(cohort.selected[arm])}")
         for (a, key), n in sorted(cohort.by_reason.items(), key=lambda kv: str(kv[0])):
             if a == arm:
@@ -229,7 +237,7 @@ def print_cohort(cohort: provenance.BackfillCohort, ids: list[str], per_call: di
             print(f"  {n}: {reason!r}")
     print(
         "Selected articles with non-human brand_labels rows (replaced if relabeled labeled, "
-        f"otherwise kept): {cohort.stale_labels}"
+        f"otherwise deleted): {cohort.stale_labels}"
     )
     if per_call:
         values = list(per_call.values())
@@ -254,7 +262,7 @@ def run_batches(
     for batch in batches(ids, batch_size):
         with db.get_session() as session:
             batch, dropped = provenance.recheck_backfill_batch(session, cohort, batch)
-            spend = spend_of(tagged_runs(session))
+            spend = spend_of(tagged_runs(session, cohort.mode))
         if dropped:
             logger.warning(f"Dropped {len(dropped)} articles that changed since selection: {dropped}")
         if not batch:
@@ -284,7 +292,7 @@ def run_batches(
             article_ids=[UUID(i) for i in batch],
             prefilter=False,
             dedupe_titles=False,
-            run_tag=RUN_TAG,
+            run_tag=cohort.mode,
             run_config=run_config,
             keep_status_without_reply=True,
         )
@@ -363,8 +371,8 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
     return report
 
 
-def print_report(report: dict) -> None:
-    print(f"\n{'=' * 60}\nBACKFILL REPORT ({RUN_TAG}, {report['runs']} runs)\n{'=' * 60}")
+def print_report(report: dict, tag: str = RUN_TAG) -> None:
+    print(f"\n{'=' * 60}\nBACKFILL REPORT ({tag}, {report['runs']} runs)\n{'=' * 60}")
     print("arm: prior status -> status (source): articles")
     for (arm, old, new, source), n in sorted(report["transitions"].items(), key=lambda kv: str(kv[0])):
         print(f"  {arm}: {old} -> {new} ({source}): {n}")
@@ -389,7 +397,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--report", action="store_true", help="Print what the tagged runs did, and exit")
     p.add_argument("--limit", type=int, help="Label at most this many articles")
     p.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Articles per labeling run")
-    p.add_argument("--max-cost", type=float, help="Spend cap in USD over every tagged run; required to run")
+    p.add_argument("--max-cost", type=float, help="Spend cap in USD over every run with the mode's tag; required to run")
+    p.add_argument(
+        "--mode",
+        choices=sorted(provenance.MODE_ARMS),
+        default=provenance.MODE_BACKFILL,
+        help=f"Which cohort, and the tag its runs record: {provenance.MODE_BACKFILL} (#192, D039) "
+        f"or {provenance.MODE_RELABEL} (rows stored under an earlier prompt, #245)",
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args(argv)
 
@@ -399,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(args.verbose)
     if args.report:
         with db.get_session() as session:
-            print_report(backfill_report(session))
+            print_report(backfill_report(session, args.mode), args.mode)
         return EXIT_DONE
     if not args.dry_run and args.max_cost is None:
         logger.error("--max-cost is required for a run (use --dry-run to see the bounds)")
@@ -423,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
         prompt_chars = prompt_input_chars(manager, settings.version)
         with db.get_session() as session:
             cutoff = first_run_started_at(session, settings.version)
-            runs = tagged_runs(session)
+            runs = tagged_runs(session, args.mode)
             # The bound the first tagged run recorded, so the cohort does not move between
             # invocations; this invocation's start when there is none
             bound = stored_bound(runs) or started
@@ -432,6 +447,8 @@ def main(argv: list[str] | None = None) -> int:
                 judged_skip_cutoff=cutoff,
                 bound=bound,
                 tried=provenance.tried_reasons(run.config for run in runs),
+                mode=args.mode,
+                production_version=settings.version,
             )
             observed = observed_cost_per_call(session, settings)
             spend = spend_of(runs)
@@ -484,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error(str(e))
         return EXIT_REFUSED
     with db.get_session() as session:
-        print_report(backfill_report(session))
+        print_report(backfill_report(session, args.mode), args.mode)
     return code
 
 
