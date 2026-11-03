@@ -13,6 +13,7 @@ from typing import Any
 from anthropic import Anthropic, RateLimitError
 
 from .config import agent_settings
+from .notifications import format_rate
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,8 @@ LABELING_ANALYSIS_USER_PROMPT = """Analyze the following labeling results from t
 - Articles skipped (no ESG content): {articles_skipped}
 - False positives detected: {false_positives}
 - Articles failed: {articles_failed}
-- Error rate: {error_rate:.1%}
-- False positive rate: {fp_rate:.1%}
+- Error rate: {error_rate}
+- False positive rate: {fp_rate}
 
 ## Recent Labeled Articles (sample)
 {labeled_articles_sample}
@@ -175,8 +176,9 @@ class LabelingAnalyzer:
             articles_skipped=stats.get("articles_skipped", 0),
             false_positives=stats.get("false_positives", 0),
             articles_failed=stats.get("articles_failed", 0),
-            error_rate=stats.get("error_rate", 0),
-            fp_rate=stats.get("fp_rate", 0),
+            # A rate is None when unknown (#77); "{:.1%}" on None raised TypeError
+            error_rate=format_rate(stats.get("error_rate")),
+            fp_rate=format_rate(stats.get("fp_rate")),
             labeled_articles_sample=labeled_text or "No labeled articles in sample",
             false_positives_sample=fp_text or "No false positives in sample",
             skipped_articles_sample=skipped_text or "No skipped articles in sample",

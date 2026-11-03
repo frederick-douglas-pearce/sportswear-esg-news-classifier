@@ -4,6 +4,29 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-02: A failed labeling run fails `daily_labeling` (#77, #241's report half)
+
+**A labeling run that failed, or did no work with articles pending, now fails the workflow, so
+#75's failure-streak escalation counts it.** The 2026-11-01 run labeled 0 of 7 pending articles
+(OpenAI credit exhausted), exited 1 on all four attempts, and archived `status: completed` with
+exit 0.
+- **`run_labeling` returns `StepFailure`** on any non-zero exit of `label_articles.py`. That
+  includes exit 2 (partial failure), by the owner's decision on #77. The quality check, report
+  and email still run on the same context.
+- **`check_labeling_quality` returns `StepFailure`** on a clean exit that processed, failed and
+  deduplicated nothing while labelable articles (pending, scraped, with content) were pending.
+- **Failures are counted per article.** `_read_run_outcomes` counts each article once across
+  retries: the failures each run did not leave pending, plus the last run's pending ones.
+  `failed_attempts` keeps the old sum. Replayed on 2026-11-01: 7 failed, not 28.
+- **Rates.** The error and false-positive rates are over every attempted article (labeled +
+  skipped + false positive + failed). An exception, such as 11-01's embedding error, is not in `articles_processed`, so that
+  run read 0%. A rate with no denominator, or from degraded counts, is `unknown`, not 0%.
+- **Report and email.**
+  - A failed run's email subject is "Daily Labeling FAILED", with severity `error` and the cause.
+  - The summary says what the exit code means, and how many articles are still pending.
+  - The LLM-analysis skip reason is printed.
+  - "batch cannot be re-run" is gone.
+
 ### 2026-11-02: Relabel rows stored under an earlier prompt (#245, D041)
 
 **`scripts/backfill_relabel.py --mode 245-relabel` relabels the LLM-decided rows stored under a
