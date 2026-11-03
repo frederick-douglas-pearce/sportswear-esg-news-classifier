@@ -2449,3 +2449,164 @@ class TestTaggedRunsAreNotDailyLabeling:
         assert outcomes["incomplete_runs"] == 0 and outcomes["any_run_incomplete"] is False
         assert outcomes["counts_unavailable"] is False
         assert outcomes["estimated_cost_usd"] == pytest.approx(0.01)
+
+
+class TestLabelingFailureFailsTheRun:
+    """#77: a labeling run that failed, or did nothing with articles pending, fails the
+    workflow, so #75's escalation counts it. The 2026-11-01 run labeled 0 of 7 pending
+    articles (OpenAI credit exhausted), exited 1 on all four attempts, and archived
+    `status: completed`.
+    """
+
+    # The 2026-11-01 runs as _read_run_outcomes reads them, replayed on the live database
+    OUTCOMES_20261101 = {
+        "articles_processed": 0,
+        "articles_labeled": 0,
+        "articles_skipped": 0,
+        "articles_false_positive": 0,
+        "articles_failed": 7,
+        "failed_attempts": 28,
+        "articles_left_pending": 7,
+        "articles_deduplicated": 0,
+        "estimated_cost_usd": 0.0,
+        "run_count": 4,
+        "incomplete_runs": 4,
+        "any_run_incomplete": True,
+        "counts_unavailable": False,
+    }
+
+    @staticmethod
+    def _script(exit_code):
+        from src.agent.runner import ScriptResult
+
+        return ScriptResult(
+            command=["label_articles.py"], exit_code=exit_code, stdout="",
+            stderr="RateLimitError: insufficient_quota", duration_seconds=1.0,
+            started_at=datetime.now(timezone.utc),
+        )
+
+    @pytest.mark.parametrize("exit_code", [1, 2])
+    def test_a_failed_exit_fails_the_step(self, exit_code):
+        """Exit 2 (partial failure) fails too: the owner's decision on #77."""
+        from src.agent.workflows.daily_labeling import run_labeling
+
+        with patch("src.agent.workflows.daily_labeling.run_label_articles",
+                   return_value=self._script(exit_code)):
+            result = run_labeling(MagicMock(), {"articles_pending": 7})
+        assert isinstance(result, StepFailure)
+        assert f"exited {exit_code}" in result.error
+        assert result.context["labeling_success"] is False
+        assert result.context["labeling_exit_code"] == exit_code
+        assert "insufficient_quota" in result.context["labeling_error"]
+
+    def test_a_clean_exit_is_a_dict(self):
+        from src.agent.workflows.daily_labeling import run_labeling
+
+        with patch("src.agent.workflows.daily_labeling.run_label_articles",
+                   return_value=self._script(0)):
+            result = run_labeling(MagicMock(), {"articles_pending": 7})
+        assert isinstance(result, dict) and result["labeling_success"] is True
+
+    def test_failures_are_counted_once_and_the_rate_is_not_zero(self):
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        context = {"labeling_started_at": "2026-11-01T14:30:03+00:00", "articles_pending": 7}
+        with patch("src.agent.workflows.daily_labeling._read_run_outcomes",
+                   return_value=self.OUTCOMES_20261101):
+            result = check_labeling_quality(MagicMock(), context)
+        assert result["articles_failed"] == 7
+        assert result["failed_attempts"] == 28
+        assert result["error_rate"] == 1.0
+        assert result["high_error_rate"] is True
+        assert result["fp_rate"] is None  # nothing processed: unknown, not 0%
+
+    def test_degraded_counts_have_unknown_rates(self):
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        with patch("src.agent.workflows.daily_labeling._read_run_outcomes", return_value=None):
+            result = check_labeling_quality(
+                MagicMock(), {"labeling_started_at": "2026-11-01T14:30:03+00:00",
+                              "labeling_output": {"articles_processed": 3, "articles_failed": 1}},
+            )  # no run row: stdout fallback, degraded
+        assert result["metrics_degraded"] is True
+        assert result["error_rate"] is None and result["fp_rate"] is None
+
+    def test_zero_work_despite_pending_fails_the_step(self):
+        from src.agent.workflows.daily_labeling import check_labeling_quality
+
+        nothing = {**self.OUTCOMES_20261101, "articles_failed": 0, "failed_attempts": 0,
+                   "articles_left_pending": 0, "run_count": 1, "incomplete_runs": 0,
+                   "any_run_incomplete": False}
+        context = {"labeling_started_at": "2026-11-01T14:30:03+00:00", "articles_pending": 7,
+                   "labeling_success": True}
+        with patch("src.agent.workflows.daily_labeling._read_run_outcomes", return_value=nothing):
+            result = check_labeling_quality(MagicMock(), context)
+        assert isinstance(result, StepFailure)
+        assert "none of 7 pending" in result.error
+        assert result.context["zero_work_despite_pending"] is True
+
+    def test_the_20261101_run_archives_failed_and_does_not_count_as_a_success(
+        self, state_manager, cleanup_registry, tmp_path
+    ):
+        """Replays the incident through the real steps after the collection check."""
+        from src.agent import archive
+        from src.agent.config import AgentSettings, agent_settings
+        from src.agent.workflows.daily_labeling import DailyLabelingWorkflow
+
+        class _Replay(Workflow):
+            name = "daily_labeling"
+            description = "replay"
+            steps = [
+                StepDefinition(name="check_collection_status", description="c",
+                               handler=lambda w, c: {"articles_pending": 7}),
+                *DailyLabelingWorkflow.steps[1:],
+            ]
+
+        history = tmp_path / "history"
+        history.mkdir()
+        sent = {}
+
+        def summary(**kwargs):
+            sent.update(kwargs)
+            return {"console": True}
+
+        with patch.object(AgentSettings, "history_dir", history), \
+             patch.object(agent_settings, "project_root", tmp_path), \
+             patch.object(agent_settings, "llm_analysis_enabled", False), \
+             patch("src.agent.workflows.daily_labeling.run_label_articles", return_value=self._script(1)), \
+             patch("src.agent.workflows.daily_labeling._read_run_outcomes", return_value=self.OUTCOMES_20261101), \
+             patch("src.agent.notifications.send_labeling_summary", side_effect=summary):
+            result = _Replay(state_manager=state_manager).run()
+
+        assert result.status == WorkflowStatus.FAILED
+        assert "exited 1" in result.error
+        # The report and notification still ran, and say what happened
+        assert sent["failure"].startswith("Labeling exited 1: no article completed")
+        assert "7 still pending" in sent["failure"]
+        assert sent["articles_failed"] == 7 and sent["error_rate"] == 1.0
+        assert sent["additional_details"]["failed_attempts"] == 28
+        runs = list(archive.iter_runs(history))
+        assert len(runs) == 1 and archive.run_succeeded(runs[0]) is False
+
+
+class TestLabelingSummaryFailure:
+    def test_a_failed_run_says_so_in_the_subject(self):
+        from src.agent.notifications import send_labeling_summary
+
+        with patch("src.agent.notifications.NotificationManager") as manager:
+            send_labeling_summary(0, 0, 0, 7, failure="Labeling exited 1: no article completed",
+                                  error_rate=1.0)
+        notification = manager.return_value.send.call_args.args[0]
+        assert notification.subject == "Daily Labeling FAILED"
+        assert notification.severity == "error"
+        assert notification.details["error_rate"] == "100.0%"
+        assert notification.message.startswith("Labeling exited 1")
+
+    def test_an_unknown_rate_is_not_zero(self):
+        from src.agent.notifications import send_labeling_summary
+
+        with patch("src.agent.notifications.NotificationManager") as manager:
+            send_labeling_summary(0, 0, 0, 0, error_rate=None)
+        notification = manager.return_value.send.call_args.args[0]
+        assert notification.subject == "Daily Labeling Summary"
+        assert notification.details["error_rate"] == "unknown"

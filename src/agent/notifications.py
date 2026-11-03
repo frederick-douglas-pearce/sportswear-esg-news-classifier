@@ -612,23 +612,31 @@ def send_labeling_summary(
     articles_failed: int,
     estimated_cost: float | None = None,
     additional_details: dict[str, Any] | None = None,
+    failure: str | None = None,
+    error_rate: float | None = ...,  # type: ignore[assignment]
 ) -> dict[str, bool]:
     """Send daily labeling summary notification.
 
     Args:
-        articles_processed: Total articles processed
+        articles_processed: Articles that completed (labeled, skipped or false positive)
         articles_labeled: Articles with ESG labels
         false_positives: False positive count
-        articles_failed: Failed articles count
+        articles_failed: Articles that errored, each counted once across retries
         estimated_cost: Estimated LLM cost in USD
         additional_details: Additional details to include
+        failure: Why the run failed, when it did (#77). The subject then says the run
+            failed, so a failed run does not read as a routine summary.
+        error_rate: The caller's error rate, None when unknown (rendered "unknown", not 0%).
+            Omitted: failed over processed, as before.
 
     Returns:
         Dict of channel results
     """
-    # Determine severity based on error rate
-    error_rate = articles_failed / articles_processed if articles_processed > 0 else 0
-    if error_rate > 0.1:
+    if error_rate is ...:
+        error_rate = articles_failed / articles_processed if articles_processed > 0 else 0
+    if failure:
+        severity = "error"
+    elif error_rate is not None and error_rate > 0.1:
         severity = "warning"
     else:
         severity = "info"
@@ -638,8 +646,10 @@ def send_labeling_summary(
         "articles_labeled": articles_labeled,
         "false_positives": false_positives,
         "articles_failed": articles_failed,
-        "error_rate": f"{error_rate:.1%}",
+        "error_rate": f"{error_rate:.1%}" if error_rate is not None else "unknown",
     }
+    if failure:
+        details["failure"] = failure
 
     if estimated_cost is not None:
         details["estimated_cost"] = f"${estimated_cost:.4f}"
@@ -649,8 +659,9 @@ def send_labeling_summary(
 
     notification = Notification(
         notification_type=NotificationType.LABELING_SUMMARY,
-        subject="Daily Labeling Summary",
-        message=f"Processed {articles_processed} articles: {articles_labeled} labeled, {false_positives} FP, {articles_failed} failed",
+        subject="Daily Labeling FAILED" if failure else "Daily Labeling Summary",
+        message=(f"{failure}. " if failure else "")
+        + f"Processed {articles_processed} articles: {articles_labeled} labeled, {false_positives} FP, {articles_failed} failed",
         details=details,
         severity=severity,
     )
