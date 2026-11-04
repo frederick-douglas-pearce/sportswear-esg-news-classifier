@@ -4,6 +4,19 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-03: The owner's review of the #245 relabel is recorded as human rulings (#249)
+
+**`HUMAN_RULINGS` adds 30 owner rulings (140 in all).** They come from a random 30 (seed 2451) of the
+225 `business` rows that the #245 relabel moved from `labeled` to `skipped`.
+- **29 confirmed `skipped`:** sportswear, no ESG category. They are stored with `MANUAL_SKIP_REASON`
+  (`fix_label.py update --manual`). `3f929135` (Decathlon in India) is borderline on its
+  supply-chain angle.
+- **`57acb8be` is `labeled`:** a human Adidas label, Digital Transformation +1, for Adidas's shift
+  of marketing spend to digital channels, DTC e-commerce and apps. Two evidence excerpts are
+  matched exactly to their chunks. v1.13.0 had judged it `business` with no category.
+- **No pattern of missed controversy or litigation categories was found.** One Digital miss in 30.
+- **Applied after a database backup (2026-11-03 23:29).** All 140 rulings match their stored status.
+
 ### 2026-11-02: A failed labeling run fails `daily_labeling` (#77, #241's report half)
 
 **A labeling run that failed, or did no work with articles pending, now fails the workflow, so

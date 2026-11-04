@@ -79,7 +79,8 @@ FAILED_STATUS = "failed"
 # Source: #182's comments of 2026-10-09 (corrections, skipped -> false_positive) and 2026-10-10
 # (rows confirmed as correctly labeled), and #192's comment of 2026-10-28 (the backfill review; its
 # 3 unlabelable rulings are left out, since no export reads that status), corrected by #234
-# (2026-10-30). #143 backfills these into its audit log and deletes this.
+# (2026-10-30), and #249's review of the #245 relabel (2026-11-03). #143 backfills these into its
+# audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -202,6 +203,40 @@ HUMAN_RULINGS: dict[str, str] = {
     "6a0cbd28-e9c8-403b-8b0f-a5fe966a00f5": "skipped",
     "8f5ec01f-1e3c-486e-9f93-d98f8bdd36e6": "skipped",
     "d2873bbb-5c94-4343-ad8d-4feb83f36c59": "skipped",
+    # 2026-11-03, #249: the owner's review of a random 30 of the #245 relabel's business rows that
+    # went labeled -> skipped (seed 2451). Adidas's digital-marketing shift is Digital +1, a human
+    # label; the other 29 are sportswear with no ESG category, stored with MANUAL_SKIP_REASON
+    # (3f929135, Decathlon in India, borderline on its supply-chain angle)
+    "57acb8be-eff4-456c-83f4-9883b3baf79a": "labeled",
+    "05b0ed9e-00e7-40b4-8c14-748c7ceb84c5": "skipped",
+    "06bf2048-41bd-42af-9c67-69967d9cfa59": "skipped",
+    "10a991a5-8dff-4366-91ad-28c072b1c6bd": "skipped",
+    "114d005e-8ee7-4f5a-8aa4-5630bce18904": "skipped",
+    "178babec-795e-4299-a4ce-906a885b4d0d": "skipped",
+    "1a2f4608-737a-4e32-9845-e904f55ac5d6": "skipped",
+    "1cff9829-9d63-4196-83cd-de02e6461bf9": "skipped",
+    "2f543b14-9d17-4f69-8fb6-c9ddea8ae259": "skipped",
+    "375a058a-1ade-4f2b-9fb3-c20cde102058": "skipped",
+    "3f929135-2ef9-45f5-bd87-0a34417b188f": "skipped",
+    "41d5c4f6-ef5d-4ba3-9276-54a45d03b815": "skipped",
+    "5c460161-9b2d-4df3-ac80-5c8636c7241b": "skipped",
+    "770ccab6-6faf-4f62-a9aa-c6e02e22a378": "skipped",
+    "79f08609-ef69-4844-be98-5cd0ba4679f8": "skipped",
+    "8a04bf31-e8df-4b43-8823-b07b59154b50": "skipped",
+    "8b0719e4-faec-49f2-ae25-8d6d3de74706": "skipped",
+    "9acbf098-8757-4759-851f-3850bfa08784": "skipped",
+    "a68a94a8-9cf4-498f-806f-3be53bc5bc58": "skipped",
+    "a6f829bc-93c4-4cca-aead-14fb6cbe9db4": "skipped",
+    "ad284937-9624-471b-b06b-4f0d8b20c3ce": "skipped",
+    "b5f67cf2-bd06-48c9-8b0a-19f18a4c1428": "skipped",
+    "b6f65f81-d68b-402c-a23e-a262c89b2dea": "skipped",
+    "b88b183f-d09b-4b9f-8da1-da1e5e7975e7": "skipped",
+    "bc569afa-a791-45b2-9dbb-9d0cfdd24707": "skipped",
+    "d2bc8107-6b34-4a7c-8000-de7d9b91fe42": "skipped",
+    "e4ea1abd-7581-42e7-827d-dc8e4d7c2a98": "skipped",
+    "e9275b13-3e4e-469c-bddd-2bf3cd51cfd1": "skipped",
+    "f95d95a9-e882-42e2-b141-62aba5e2a5dd": "skipped",
+    "ff3d9904-3260-49bb-b231-0a260c27b6c0": "skipped",
 }
 
 
