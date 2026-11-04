@@ -4,6 +4,28 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-04: The daily LLM analysis judges labels against the current policy (#252, D042)
+
+**The analyst gets the rules the labeler gets.** Its system prompt wraps the labeling system prompt,
+rendered as `ArticleLabeler` renders it (`LABELING_PROMPT_VERSION`, else the registry's production
+version, with the brand list from `BRANDS`), in `<labeling_instructions>` as reference material. The
+hard-coded 14-brand list and status definitions are gone; a short paragraph says what each status
+means as the pipeline writes it. There is no fallback prompt: a version that does not load fails
+the analysis.
+- **Samples carry the judgment.** Each sample shows its status and stored reason, a skip marked
+  judged or unjudged (`JUDGED_SKIP_REASONS` / `UNJUDGED_SKIP_REASONS`), each brand's
+  `brand_judgments` content type, reasoning and dropped categories, and for a labeled article the
+  categories and sentiments in `brand_labels` (the labeled sample never carried its categories).
+  A failed sample query raises `SampleQueryError`, and `run_llm_analysis` reports the analysis
+  failed rather than analyzing samples with no judgments.
+- **Haiku 5.5.** `AGENT_LLM_MODEL` defaults to `claude-haiku-5-5`. The request comes from the
+  model's `labeling_model_spec`: temperature only where the model accepts sampling, `effort`
+  (`ANALYSIS_EFFORT`, `medium`) only where it accepts effort, and `max_tokens` the larger of 8000
+  and the model's default. A model with no spec is refused before any call. Replies are read by
+  text block; an empty, thinking-only or refused reply is a failure.
+- `src/agent/llm.py` imports nothing from `src.labeling` or `src.data_collection` at module level
+  (an AST test pins it, #211).
+
 ### 2026-11-04: #248's template stock pages are recorded as human rulings
 
 **`HUMAN_RULINGS` adds 7 `false_positive` rulings (147 in all).** These are the template or

@@ -278,7 +278,7 @@ src/workflow_learning/
 | 1. `check_collection_status` | Query database for collection runs and pending articles from last 24h |
 | 2. `run_labeling` | Run labeling pipeline on all pending articles |
 | 3. `check_labeling_quality` | Calculate error rates, detect anomalies |
-| 4. `run_llm_analysis` | Claude analyzes results for potential errors |
+| 4. `run_llm_analysis` | Claude analyzes results for potential errors, judged against the labeling prompt the labeler is given, with each brand's content type and reasoning in the samples (#252) |
 | 5. `generate_report` | Generate JSON summary report |
 | 6. `save_report` | Save report to `reports/daily_labeling/` |
 | 7. `send_notification` | Email summary via Resend |
@@ -688,7 +688,7 @@ All agent settings are configured via environment variables:
 |----------|-------------|---------|
 | `AGENT_LLM_ANALYSIS` | Enable Claude analysis of labeling | `true` |
 | `AGENT_LLM_ERROR_THRESHOLD` | Error rate threshold to trigger analysis | `0.0` (always run) |
-| `AGENT_LLM_MODEL` | Model for LLM analysis | `claude-haiku-4-5-20251001` |
+| `AGENT_LLM_MODEL` | Model for LLM analysis; must have a spec in `LABELING_MODELS` (`src/labeling/config.py`), or the analysis fails | `claude-haiku-5-5` |
 | `ANTHROPIC_API_KEY` | API key for Claude | Required |
 
 ### Notification Settings
