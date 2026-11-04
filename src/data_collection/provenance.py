@@ -79,8 +79,8 @@ FAILED_STATUS = "failed"
 # Source: #182's comments of 2026-10-09 (corrections, skipped -> false_positive) and 2026-10-10
 # (rows confirmed as correctly labeled), and #192's comment of 2026-10-28 (the backfill review; its
 # 3 unlabelable rulings are left out, since no export reads that status), corrected by #234
-# (2026-10-30), and #249's review of the #245 relabel (2026-11-03). #143 backfills these into its
-# audit log and deletes this.
+# (2026-10-30), #249's review of the #245 relabel (2026-11-03), and #248's template rows
+# (2026-11-04). #143 backfills these into its audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -237,6 +237,16 @@ HUMAN_RULINGS: dict[str, str] = {
     "e9275b13-3e4e-469c-bddd-2bf3cd51cfd1": "skipped",
     "f95d95a9-e882-42e2-b141-62aba5e2a5dd": "skipped",
     "ff3d9904-3260-49bb-b231-0a260c27b6c0": "skipped",
+    # 2026-11-04, #248: template or contentless stock pages that v1.13.0 judged `financial` while
+    # its own reasoning called them templates; mention_only under ruling 6 (were skipped by the
+    # #245 relabel; stored with FP_REASON_MANUAL). v1.14.0 takes them as cases after the retrain
+    "02067ad1-d4dd-4c94-9af6-0d23d2d2122f": "false_positive",
+    "201cc55a-2e10-404e-896b-8c9041f02203": "false_positive",
+    "45e8c505-57ba-436c-ae91-b7ec261b695d": "false_positive",
+    "711b5caa-e4c1-4128-b7f1-bfaa7442eee0": "false_positive",
+    "7bf35563-a928-48ad-8c10-b5e8dd556eba": "false_positive",
+    "81ab6c27-f216-431b-bda7-621bb3bac187": "false_positive",
+    "9cd2ca15-a112-4fe1-8cfa-3ee8b51b0333": "false_positive",
 }
 
 
