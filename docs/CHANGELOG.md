@@ -4,6 +4,14 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-04: #248's template stock pages are recorded as human rulings
+
+**`HUMAN_RULINGS` adds 7 `false_positive` rulings (147 in all).** These are the template or
+contentless stock pages that v1.13.0 judged `financial` while its own reasoning called them templates.
+Under ruling 6 they are `mention_only`. The #245 relabel had moved them to `skipped`, so they would
+have trained #154 PR2 as positives. They are stored with `FP_REASON_MANUAL`, after a database backup.
+Prompt v1.14.0 takes them as eval cases after the retrain (#248).
+
 ### 2026-11-03: The owner's review of the #245 relabel is recorded as human rulings (#249)
 
 **`HUMAN_RULINGS` adds 30 owner rulings (140 in all).** They come from a random 30 (seed 2451) of the
