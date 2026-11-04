@@ -251,7 +251,7 @@ class TestLabelingInstructions:
 
 class TestReplayOf20261103:
     """Synthetic rows shaped like 2026-11-03's product-release skips (AC 5's stubbed replay;
-    plumbing only: the real rows went through the owner-approved live call)."""
+    plumbing only). The live check is the owner-approved Haiku 5.5 call recorded on PR #255."""
 
     def test_the_prompt_carries_each_brand_s_content_type(self):
         nike, adidas = uuid.uuid4(), uuid.uuid4()
@@ -304,6 +304,23 @@ class TestBuildSamples:
             f"{FP_REASON_AUTO_DETECTED_PREFIX} keyword": "keyword rule",
             "Nike: mention_only: named in a market wrap": "labeler",
         }
+
+    def test_an_unknown_fp_action_fails_rather_than_guessing_the_decider(self):
+        rows = {"false_positive": [_row(FP_REASON_MANUAL, fp_action="renamed_action")]}
+        with pytest.raises(provenance.UnknownFPActionError, match="renamed_action"):
+            build_samples(rows, [], [])
+
+    def test_an_unknown_fp_action_fails_the_sample_read(self):
+        with patch("sqlalchemy.create_engine", return_value=MagicMock()), patch.multiple(
+            "src.agent.llm",
+            _article_rows=MagicMock(side_effect=lambda conn, status, since, limit:
+                                    [_row(None, fp_action="renamed_action")]
+                                    if status == "labeled" else []),
+            _judgment_rows=MagicMock(return_value=[]),
+            _label_rows=MagicMock(return_value=[]),
+        ):
+            with pytest.raises(SampleQueryError, match="renamed_action"):
+                get_recent_labeling_samples(database_url="postgresql://x/y")
 
     def test_human_decided_rows_are_left_out(self):
         ruled_id, ruled_status = next(iter(provenance.HUMAN_RULINGS.items()))

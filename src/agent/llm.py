@@ -613,17 +613,16 @@ def build_samples(
         bucket = []
         for row in rows:
             article_id = str(row["id"])
-            try:
-                source = provenance.derive_label_source(
-                    status,
-                    row["labeling_error"],
-                    row.get("fp_action"),
-                    row.get("fp_skip_reason"),
-                    human_verified=article_id in human,
-                    article_id=article_id,
-                )
-            except provenance.UnknownFPActionError:
-                source = None
+            # An FP action provenance does not know raises UnknownFPActionError, as in the FP
+            # export: who decided the row is then unknown, so the samples are not built (#252)
+            source = provenance.derive_label_source(
+                status,
+                row["labeling_error"],
+                row.get("fp_action"),
+                row.get("fp_skip_reason"),
+                human_verified=article_id in human,
+                article_id=article_id,
+            )
             if source == provenance.HUMAN:
                 continue
             bucket.append({
@@ -632,7 +631,7 @@ def build_samples(
                 "source_name": row["source_name"],
                 "brands": list(row["brands_mentioned"] or []),
                 "reason": row["labeling_error"],
-                "decider": names.get(source, "unknown"),
+                "decider": names[source],
                 "content": row["content"],
             })
         samples[status] = bucket
@@ -656,7 +655,8 @@ def _article_rows(conn, status: str, since: datetime, limit: int) -> list:
     )
 
     latest = provenance.latest_prediction_subquery("fp")
-    # A false_positive's skipped_at is not written, so this bucket is empty until #256
+    # A false_positive does not write skipped_at: this bucket holds only a row skipped in the
+    # window and later relabeled false_positive, ordered by its skip time (#256)
     decided_at = Article.labeled_at if status == "labeled" else Article.skipped_at
     human_labeled = select(BrandLabel.article_id).where(provenance.human_label_criterion())
     query = (
@@ -739,7 +739,8 @@ def get_recent_labeling_samples(
 
     Returns:
         Tuple of (labeled_sample, fp_sample, skipped_sample). Empty when no database is
-        configured. The false_positive sample is empty until #256.
+        configured. The false_positive sample holds only rows skipped in the window and later
+        relabeled false_positive (#256).
 
     Raises:
         SampleQueryError: A query failed. Samples without their judgments would read as if no

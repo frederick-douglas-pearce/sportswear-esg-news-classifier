@@ -840,7 +840,7 @@ Claude analyzes labeling results and detects potential issues:
 
 ### What It Analyzes
 
-- **Recent labeling samples**: Last 24 hours of labeled, skipped, and false positive articles, leaving out rows a human decided (`HUMAN_RULINGS`, a human marker as the reason, or a human brand label). The false positive sample is empty until #256
+- **Recent labeling samples**: Last 24 hours of labeled, skipped, and false positive articles, leaving out rows a human decided (`HUMAN_RULINGS`, a human marker as the reason, or a human brand label). The false positive sample selects by `skipped_at`, which a false positive does not write: only a row skipped in the window and later relabeled `false_positive` is sampled, ordered by its skip time (#256)
 - **Labeling statistics**: Error rates, false positive rates, processing counts
 - **Each sample**: title, source, the first 300 characters of content, its status with who decided it (from `provenance.derive_label_source`: labeler, FP classifier, unjudged, unattributed, keyword rule) and the stored reason, each brand's `brand_judgments` content type and reasoning (or "not judged") with the categories its content type dropped, and a labeled article's stored categories and sentiments
 - **The yardstick**: the labeling system prompt the labeler is given, rendered for `LABELING_PROMPT_VERSION` or the registry's production version (D042)

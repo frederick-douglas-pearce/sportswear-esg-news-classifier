@@ -23,8 +23,9 @@ evidence while the labeler read the full article.
   the categories its content type dropped, and for a labeled article the categories and
   sentiments in `brand_labels` (the labeled sample never carried its categories). Labels and
   judgments are matched by `normalize_brand`. A failed sample query raises `SampleQueryError`, and
-  `run_llm_analysis` reports the analysis failed. The false_positive sample is still empty: it
-  filters on `skipped_at`, which a false positive never writes (#256).
+  `run_llm_analysis` reports the analysis failed. The false_positive sample selects by
+  `skipped_at`, which a false positive does not write: only a row skipped in the window and later
+  relabeled `false_positive` is sampled, ordered by its skip time (#256).
 - **Haiku 5.5.** `AGENT_LLM_MODEL` defaults to `claude-haiku-5-5` and is the daily analysis's only:
   experiment reflection keeps its own Haiku 4.5 default until #257 ports it. The request comes from
   the model's `labeling_model_spec`: temperature only where the model accepts sampling, `effort`

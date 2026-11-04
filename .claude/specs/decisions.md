@@ -3147,5 +3147,6 @@ leadership changes as Governance. #252 asked for the policy from `docs/LABELING.
 - A prompt promotion changes the analyst's yardstick with no edit to the agent.
 - The analysis prompt grows by the rendered labeling prompt, a small input cost on Haiku 5.5.
 - The analysis still samples rows a tagged relabel run wrote in the last day (D039's note stands).
-- The false_positive sample stays empty: it filters on `skipped_at`, which a false positive never
-  writes (#256, which takes the decision time from judgment and prediction rows).
+- The false_positive sample selects by `skipped_at`, which a false positive does not write: only a
+  row skipped in the window and later relabeled `false_positive` is sampled, ordered by its skip
+  time (#256, which takes the decision time from judgment and prediction rows).
