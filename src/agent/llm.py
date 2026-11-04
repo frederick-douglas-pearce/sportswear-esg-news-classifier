@@ -3,17 +3,20 @@
 Uses Claude via the Anthropic API to analyze labeling results,
 detect patterns in errors, and suggest improvements.
 
-Nothing from src.labeling or src.data_collection is imported at module level: an agent process
-should not build the labeling settings to import this module (#211, #252). Those imports sit
-inside the functions that use them, inside their error handling.
+This module imports nothing from src.labeling or src.data_collection at module level (#252), so
+it adds no import path to the labeling package; the agent package still imports src.labeling
+through its runner until #211. Those imports sit inside the functions that use them, and their
+callers catch what they raise.
 """
 
 import json
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from anthropic import Anthropic, RateLimitError
 
@@ -77,17 +80,23 @@ LABELING_ANALYSIS_SYSTEM_TEMPLATE = """You are an expert data quality analyst re
 
 Your task is to analyze recent labeling outcomes and identify:
 1. Potential labeling errors or inconsistencies
-2. Patterns in false positives (articles incorrectly matched to brands)
+2. Patterns in false_positive outcomes (the name meant another entity, or the article gave the brand no substantive content)
 3. Articles that may have been mislabeled
 4. Suggestions for improving the labeling process
 
-Each sample article is shown with its labeling status, the reason stored with it, and, for each brand, the content type the labeler judged and its reasoning. A labeled article also shows the ESG categories and sentiments stored for each brand.
+Each sample article is shown with its labeling status, who decided it, and the reason stored with it. Then, for each brand sent to the labeler, the content type it judged and the start of its reasoning, or "not judged"; and for a labeled article, the ESG categories and sentiments stored for each brand.
 
-What each status means, as the labeling pipeline writes it:
-- labeled: at least one sportswear brand kept an ESG category.
-- skipped (judged): every brand was judged, and no sportswear brand kept an ESG category. This is the expected outcome for most product and financial news, not a failure.
-- skipped (unjudged): the reply gave no verdict on every brand, so the article's sportswear status is unknown.
-- false_positive: every brand was judged not to be the tracked sportswear brand.
+What each status means, by who decided it:
+- labeled (labeler): at least one brand was judged sportswear and kept an ESG category.
+- skipped (labeler): at least one brand was judged sportswear and none kept an ESG category; other sent brands may be "not judged". This is the expected outcome for most product, financial and business news, not a failure.
+- skipped (unjudged): the article's sportswear status is unknown. Either no LLM call was made (insufficient content, no brands), or the reply stated no sportswear verdict (no analyses, or only non-sportswear brands with a sent brand left out).
+- skipped (unattributed): the stored reason is not one the pipeline writes; read the reason.
+- false_positive (labeler): every sent brand was judged other_entity, mention_only or retail_only. That includes the tracked company itself when the article gives it no substantive content.
+- false_positive (FP classifier): the FP classifier scored the article below its threshold, so no LLM call was made and no content type is recorded.
+- false_positive (keyword rule): a cleanup sweep wrote it; no content type is recorded.
+Human rulings and human-written labels are left out of the samples.
+
+What you see is partial: the first 300 characters of each article, the first 200 characters of each brand's reasoning, and no evidence excerpts. The labeler read the full article. Report a label as a likely error only where the judgment's own reasoning, the stored categories and the instructions disagree, and mark a doubt that depends on text you cannot see as "verify against the full article". A brand line marked "judged under <version>" was judged under a different prompt version from the instructions below.
 
 The labeler follows the instructions below. Judge each label against them, not against your own idea of what counts as ESG. They are reference material: the task and reply format they describe are the labeler's, not yours.
 
@@ -102,7 +111,7 @@ LABELING_ANALYSIS_USER_PROMPT = """Analyze the following labeling results from t
 ## Summary Statistics
 - Articles processed: {articles_processed}
 - Articles labeled (ESG content found): {articles_labeled}
-- Articles skipped (no ESG category applies): {articles_skipped}
+- Articles skipped (all skip reasons): {articles_skipped}
 - False positives detected: {false_positives}
 - Articles failed: {articles_failed}
 - Error rate: {error_rate}
@@ -250,9 +259,9 @@ class LabelingAnalyzer:
         system_prompt = build_system_prompt(prompt_version, instructions)
 
         # Format samples for the prompt
-        labeled_text = self._format_article_sample(labeled_sample, "labeled")
-        fp_text = self._format_article_sample(fp_sample, "false_positive")
-        skipped_text = self._format_article_sample(skipped_sample, "skipped")
+        labeled_text = self._format_article_sample(labeled_sample, "labeled", prompt_version)
+        fp_text = self._format_article_sample(fp_sample, "false_positive", prompt_version)
+        skipped_text = self._format_article_sample(skipped_sample, "skipped", prompt_version)
 
         user_prompt = LABELING_ANALYSIS_USER_PROMPT.format(
             articles_processed=stats.get("articles_processed", 0),
@@ -271,9 +280,13 @@ class LabelingAnalyzer:
         return self._call_api(user_prompt, system_prompt)
 
     def _format_article_sample(
-        self, articles: list[dict[str, Any]], status: str
+        self, articles: list[dict[str, Any]], status: str, prompt_version: str | None = None
     ) -> str:
-        """Format article sample for the prompt: status, reason and each brand's judgment."""
+        """Format article sample for the prompt: status, decider, reason and each brand's line.
+
+        ``prompt_version`` is the version of the instructions the analyst is given; a judgment
+        made under another version says so.
+        """
         if not articles:
             return ""
 
@@ -284,14 +297,12 @@ class LabelingAnalyzer:
             lines.append(f"- Title: {(article.get('title') or 'No title')[:100]}")
             lines.append(f"- Source: {article.get('source_name') or 'Unknown'}")
 
-            status_line = status
-            judged = article.get("judged")
-            if status == "skipped" and judged is not None:
-                status_line = f"skipped ({'judged' if judged else 'unjudged'})"
+            decider = article.get("decider")
+            status_line = f"{status} ({decider})" if decider else status
             reason = article.get("reason")
             lines.append(f"- Status: {status_line}" + (f" — reason: {reason}" if reason else ""))
 
-            lines.extend(self._format_brands(article))
+            lines.extend(self._format_brands(article, prompt_version))
 
             # Include snippet of content
             content = article.get("content", article.get("scraped_content", ""))
@@ -302,36 +313,42 @@ class LabelingAnalyzer:
         return "\n".join(lines)
 
     @staticmethod
-    def _format_brands(article: dict[str, Any]) -> list[str]:
-        """One line per judged brand, with what the content type dropped and what was stored."""
-        brands = article.get("brands", [])
-        judgments = article.get("judgments") or []
-        stored = article.get("categories_by_brand") or {}
-        if not judgments:
-            return [f"- Brands: {', '.join(brands)} (no content type recorded)"]
+    def _format_brands(article: dict[str, Any], prompt_version: str | None = None) -> list[str]:
+        """One line per brand: its judgment or "not judged", what the content type dropped, and
+        the categories stored for it."""
+        brand_lines = article.get("brand_lines")
+        if brand_lines is None:
+            return [f"- Brands: {', '.join(article.get('brands', []))}"]
+        if not brand_lines:
+            return ["- Brands: none recorded"]
 
-        lines = ["- Brands judged:"]
-        for judgment in judgments:
-            reasoning = (judgment.get("reasoning") or "").replace("\n", " ")
-            if len(reasoning) > REASONING_SNIPPET_CHARS:
-                reasoning = reasoning[:REASONING_SNIPPET_CHARS] + "..."
-            lines.append(f"  - {judgment['brand']}: {judgment['content_type']} — {reasoning}")
-            if judgment.get("gated_categories"):
-                lines.append(
-                    "    dropped by the content type: " + ", ".join(judgment["gated_categories"])
+        lines = ["- Brands:"]
+        for line in brand_lines:
+            judgment = line["judgment"]
+            if judgment:
+                reasoning = (judgment.get("reasoning") or "").replace("\n", " ")
+                if len(reasoning) > REASONING_SNIPPET_CHARS:
+                    reasoning = reasoning[:REASONING_SNIPPET_CHARS] + "..."
+                version = judgment.get("prompt_version")
+                judged_under = (
+                    f" (judged under {version})"
+                    if prompt_version and version and version != prompt_version
+                    else ""
                 )
-            if judgment["brand"] in stored:
+                lines.append(
+                    f"  - {line['brand']}: {judgment['content_type']}{judged_under} — {reasoning}"
+                )
+                if judgment.get("gated_categories"):
+                    lines.append(
+                        "    dropped by the content type: "
+                        + ", ".join(_category_name(c) for c in judgment["gated_categories"])
+                    )
+            else:
+                lines.append(f"  - {line['brand']}: not judged (no content type recorded)")
+            if line["stored"]:
                 lines.append(
                     "    stored categories: "
-                    + ", ".join(_category_text(name, sentiment)
-                                for name, sentiment in stored[judgment["brand"]])
-                )
-        judged_brands = {judgment["brand"] for judgment in judgments}
-        for brand, categories in stored.items():
-            if brand not in judged_brands:
-                lines.append(
-                    f"  - {brand}: no content type recorded; stored categories: "
-                    + ", ".join(_category_text(name, sentiment) for name, sentiment in categories)
+                    + ", ".join(_category_text(name, sentiment) for name, sentiment in line["stored"])
                 )
         return lines
 
@@ -478,8 +495,15 @@ class LabelingAnalyzer:
             return {"raw_response": response_text, "parse_error": str(e)}
 
 
+def _category_name(key: str) -> str:
+    """A category key as the prompt names it (gated_categories stores keys)."""
+    return dict(CATEGORY_COLUMNS).get(key, key)
+
+
 def _category_text(name: str, sentiment: int | None) -> str:
-    return f"{name} ({sentiment:+d})" if sentiment is not None else f"{name} (no sentiment)"
+    if sentiment is None:
+        return f"{name} (no sentiment)"
+    return f"{name} ({sentiment:+d})" if sentiment else f"{name} (0)"
 
 
 def stored_categories(label: Mapping[str, Any]) -> list[tuple[str, int | None]]:
@@ -495,83 +519,209 @@ def attach_brand_records(
     samples: list[dict[str, Any]],
     judgments: Iterable[Mapping[str, Any]],
     labels: Iterable[Mapping[str, Any]],
+    key: Callable[[str], str] | None = None,
 ) -> None:
-    """Attach each article's brand_judgments rows and stored brand_labels categories, in place.
+    """Set each sample's ``brand_lines``: one per brand, sent brands first, in place.
 
-    Rows are keyed by article_id (compared as strings). A sample with no rows gets an empty list
-    and dict, which the formatter prints as "no content type recorded".
+    A line carries the brand, its brand_judgments row (or None: not judged) and its stored
+    brand_labels categories. Rows are matched to a sample by article id (compared as strings) and
+    to a brand by ``key``, ``normalize_brand`` by default: brand_judgments stores the brand as
+    sent, brand_labels as the reply spelled it, and the pipeline matches the two the same way.
     """
+    if key is None:
+        # Imported here, not at module level (#211, #252)
+        from src.labeling.models import normalize_brand as key
+
     by_id = {str(sample["id"]): sample for sample in samples}
-    for sample in samples:
-        sample["judgments"] = []
-        sample["categories_by_brand"] = {}
+    judged: dict[str, dict[str, dict[str, Any]]] = {}
     for row in judgments:
-        sample = by_id.get(str(row["article_id"]))
-        if sample is not None:
-            sample["judgments"].append({
+        article_id = str(row["article_id"])
+        if article_id in by_id:
+            judged.setdefault(article_id, {})[key(row["brand"])] = {
                 "brand": row["brand"],
                 "content_type": row["content_type"],
                 "reasoning": row["reasoning"],
                 "gated_categories": list(row.get("gated_categories") or []),
                 "prompt_version": row.get("prompt_version"),
-            })
+            }
+    stored: dict[str, dict[str, tuple[str, list]]] = {}
     for row in labels:
-        sample = by_id.get(str(row["article_id"]))
+        article_id = str(row["article_id"])
         categories = stored_categories(row)
-        if sample is not None and categories:
-            sample["categories_by_brand"][row["brand"]] = categories
+        if article_id in by_id and categories:
+            stored.setdefault(article_id, {})[key(row["brand"])] = (row["brand"], categories)
+
+    for article_id, sample in by_id.items():
+        article_judged = judged.get(article_id, {})
+        article_stored = stored.get(article_id, {})
+        names = (
+            list(sample.get("brands") or [])
+            + [judgment["brand"] for judgment in article_judged.values()]
+            + [brand for brand, _ in article_stored.values()]
+        )
+        lines, seen = [], set()
+        for name in names:
+            brand_key = key(name)
+            if brand_key in seen:
+                continue
+            seen.add(brand_key)
+            judgment = article_judged.get(brand_key)
+            lines.append({
+                "brand": judgment["brand"] if judgment else name,
+                "judgment": judgment,
+                "stored": article_stored.get(brand_key, (name, []))[1],
+            })
+        sample["brand_lines"] = lines
 
 
-def mark_skip_judgment(sample: dict[str, Any], judged: frozenset, unjudged: frozenset) -> None:
-    """Set sample["judged"] from its stored reason: True, False, or None when neither set has it."""
-    reason = sample.get("reason")
-    sample["judged"] = True if reason in judged else False if reason in unjudged else None
+# The sample buckets, in the order get_recent_labeling_samples returns them
+SAMPLE_STATUSES = ("labeled", "false_positive", "skipped")
 
 
-_SAMPLE_QUERIES = {
-    "labeled": """
-        SELECT a.id, a.title, a.source_name, a.brands_mentioned, a.labeling_error,
-               LEFT(a.full_content, 500) as content
-        FROM articles a
-        WHERE a.labeling_status = 'labeled'
-          AND a.labeled_at >= NOW() - INTERVAL '1 day' * :days
-        ORDER BY a.labeled_at DESC
-        LIMIT :limit
-    """,
-    "false_positive": """
-        SELECT a.id, a.title, a.source_name, a.brands_mentioned, a.labeling_error,
-               LEFT(a.full_content, 500) as content
-        FROM articles a
-        WHERE a.labeling_status = 'false_positive'
-          AND a.skipped_at >= NOW() - INTERVAL '1 day' * :days
-        ORDER BY a.skipped_at DESC
-        LIMIT :limit
-    """,
-    "skipped": """
-        SELECT a.id, a.title, a.source_name, a.brands_mentioned, a.labeling_error,
-               LEFT(a.full_content, 500) as content
-        FROM articles a
-        WHERE a.labeling_status = 'skipped'
-          AND a.skipped_at >= NOW() - INTERVAL '1 day' * :days
-        ORDER BY a.skipped_at DESC
-        LIMIT :limit
-    """,
-}
+def _decider_names() -> dict[str, str]:
+    """provenance's label sources as the status line names them (the LLM's two eras are one)."""
+    from src.data_collection import provenance
 
-_JUDGMENTS_QUERY = """
-    SELECT article_id, brand, content_type, reasoning, gated_categories, prompt_version
-    FROM brand_judgments
-    WHERE article_id = ANY(CAST(:ids AS uuid[]))
-    ORDER BY article_id, brand
-"""
+    return {
+        provenance.LLM: "labeler",
+        provenance.PRE_CLASSIFIER: "labeler",
+        provenance.FP_CLASSIFIER: "FP classifier",
+        provenance.UNJUDGED: "unjudged",
+        provenance.UNATTRIBUTED: "unattributed",
+        provenance.RULE: "keyword rule",
+    }
 
-_LABELS_QUERY = """
-    SELECT article_id, brand, environmental, social, governance, digital_transformation,
-           environmental_sentiment, social_sentiment, governance_sentiment, digital_sentiment
-    FROM brand_labels
-    WHERE article_id = ANY(CAST(:ids AS uuid[]))
-    ORDER BY article_id, brand
-"""
+
+def build_samples(
+    article_rows: Mapping[str, Iterable[Mapping[str, Any]]],
+    judgments: Iterable[Mapping[str, Any]],
+    labels: Iterable[Mapping[str, Any]],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Samples from article rows keyed by status, with each one's decider and brand lines.
+
+    Who decided each row comes from ``provenance.derive_label_source``, as the FP export reads it.
+    A row a human decided is left out: human rulings are ground truth, not output to audit (#252).
+    The queries already leave such rows out; this is the same rule applied to what they return.
+    """
+    from src.data_collection import provenance
+
+    names = _decider_names()
+    samples: dict[str, list[dict]] = {}
+    for status in SAMPLE_STATUSES:
+        rows = list(article_rows.get(status, []))
+        human = provenance.human_verified_ids((str(row["id"]), status) for row in rows)
+        bucket = []
+        for row in rows:
+            article_id = str(row["id"])
+            try:
+                source = provenance.derive_label_source(
+                    status,
+                    row["labeling_error"],
+                    row.get("fp_action"),
+                    row.get("fp_skip_reason"),
+                    human_verified=article_id in human,
+                    article_id=article_id,
+                )
+            except provenance.UnknownFPActionError:
+                source = None
+            if source == provenance.HUMAN:
+                continue
+            bucket.append({
+                "id": article_id,
+                "title": row["title"],
+                "source_name": row["source_name"],
+                "brands": list(row["brands_mentioned"] or []),
+                "reason": row["labeling_error"],
+                "decider": names.get(source, "unknown"),
+                "content": row["content"],
+            })
+        samples[status] = bucket
+
+    attach_brand_records([s for bucket in samples.values() for s in bucket], judgments, labels)
+    return samples["labeled"], samples["false_positive"], samples["skipped"]
+
+
+def _article_rows(conn, status: str, since: datetime, limit: int) -> list:
+    """The most recent rows at a status decided since ``since``, with their latest FP prediction,
+    leaving out what a human decided: a human ruling at this status, a human marker as the reason,
+    or a human brand label."""
+    from sqlalchemy import func, or_, select
+
+    from src.data_collection import provenance
+    from src.data_collection.models import (
+        FP_REASON_MANUAL,
+        MANUAL_SKIP_REASON,
+        Article,
+        BrandLabel,
+    )
+
+    latest = provenance.latest_prediction_subquery("fp")
+    # A false_positive's skipped_at is not written, so this bucket is empty until #256
+    decided_at = Article.labeled_at if status == "labeled" else Article.skipped_at
+    human_labeled = select(BrandLabel.article_id).where(provenance.human_label_criterion())
+    query = (
+        select(
+            Article.id,
+            Article.title,
+            Article.source_name,
+            Article.brands_mentioned,
+            Article.labeling_error,
+            func.left(Article.full_content, 500).label("content"),
+            latest.c.action_taken.label("fp_action"),
+            latest.c.skip_reason.label("fp_skip_reason"),
+        )
+        .select_from(Article)
+        .outerjoin(latest, latest.c.article_id == Article.id)
+        .where(
+            Article.labeling_status == status,
+            decided_at >= since,
+            Article.id.not_in(human_labeled),
+            or_(
+                Article.labeling_error.is_(None),
+                Article.labeling_error.not_in([FP_REASON_MANUAL, MANUAL_SKIP_REASON]),
+            ),
+        )
+        .order_by(decided_at.desc())
+        .limit(limit)
+    )
+    ruled = [UUID(i) for i, ruled_status in provenance.HUMAN_RULINGS.items() if ruled_status == status]
+    if ruled:
+        query = query.where(Article.id.not_in(ruled))
+    return conn.execute(query).mappings().all()
+
+
+def _judgment_rows(conn, article_ids: list) -> list:
+    from sqlalchemy import select
+
+    from src.data_collection.models import BrandJudgment
+
+    query = select(
+        BrandJudgment.article_id,
+        BrandJudgment.brand,
+        BrandJudgment.content_type,
+        BrandJudgment.reasoning,
+        BrandJudgment.gated_categories,
+        BrandJudgment.prompt_version,
+    ).where(BrandJudgment.article_id.in_(article_ids)).order_by(
+        BrandJudgment.article_id, BrandJudgment.brand
+    )
+    return conn.execute(query).mappings().all()
+
+
+def _label_rows(conn, article_ids: list) -> list:
+    from sqlalchemy import select
+
+    from src.data_collection.models import BrandLabel
+
+    query = select(
+        BrandLabel.article_id,
+        BrandLabel.brand,
+        *(getattr(BrandLabel, column) for column, _ in CATEGORY_COLUMNS),
+        *(getattr(BrandLabel, column) for column in SENTIMENT_COLUMNS.values()),
+    ).where(BrandLabel.article_id.in_(article_ids)).order_by(
+        BrandLabel.article_id, BrandLabel.brand
+    )
+    return conn.execute(query).mappings().all()
 
 
 def get_recent_labeling_samples(
@@ -579,7 +729,8 @@ def get_recent_labeling_samples(
     sample_size: int = 10,
     database_url: str | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
-    """Get samples of recent labeling results from database, with each brand's judgment.
+    """Get samples of recent labeling results from database, with who decided each and each
+    brand's judgment. Rows a human decided are left out.
 
     Args:
         days: Number of days to look back
@@ -588,58 +739,35 @@ def get_recent_labeling_samples(
 
     Returns:
         Tuple of (labeled_sample, fp_sample, skipped_sample). Empty when no database is
-        configured.
+        configured. The false_positive sample is empty until #256.
 
     Raises:
         SampleQueryError: A query failed. Samples without their judgments would read as if no
-            brand had been judged, the input behind the false alarm of #252, so the caller
-            reports the failure instead.
+            brand had been judged, the input #252's false alarm was given, so the caller reports
+            the failure instead.
     """
-    from sqlalchemy import create_engine, text
+    from sqlalchemy import create_engine
 
     database_url = database_url or os.getenv("DATABASE_URL")
     if not database_url:
         logger.warning("DATABASE_URL not set, returning empty samples")
         return [], [], []
 
+    engine = None
     try:
-        from src.data_collection.models import JUDGED_SKIP_REASONS, UNJUDGED_SKIP_REASONS
-
         engine = create_engine(database_url)
-        samples: dict[str, list[dict]] = {}
+        since = datetime.now(timezone.utc) - timedelta(days=days)
         with engine.connect() as conn:
-            for status, query in _SAMPLE_QUERIES.items():
-                result = conn.execute(text(query), {"days": days, "limit": sample_size})
-                samples[status] = [
-                    {
-                        "id": str(row.id),
-                        "title": row.title,
-                        "source_name": row.source_name,
-                        "brands": row.brands_mentioned or [],
-                        "reason": row.labeling_error,
-                        "content": row.content,
-                    }
-                    for row in result
-                ]
-
-            every = [sample for rows in samples.values() for sample in rows]
-            ids = [sample["id"] for sample in every]
-            labeled_ids = [sample["id"] for sample in samples["labeled"]]
-            judgments = (
-                conn.execute(text(_JUDGMENTS_QUERY), {"ids": ids}).mappings().all() if ids else []
-            )
-            labels = (
-                conn.execute(text(_LABELS_QUERY), {"ids": labeled_ids}).mappings().all()
-                if labeled_ids
-                else []
-            )
-        engine.dispose()
-
-        attach_brand_records(every, judgments, labels)
-        for sample in samples["skipped"]:
-            mark_skip_judgment(sample, JUDGED_SKIP_REASONS, UNJUDGED_SKIP_REASONS)
+            rows = {status: _article_rows(conn, status, since, sample_size)
+                    for status in SAMPLE_STATUSES}
+            every = [row["id"] for status_rows in rows.values() for row in status_rows]
+            labeled = [row["id"] for row in rows["labeled"]]
+            judgments = _judgment_rows(conn, every) if every else []
+            labels = _label_rows(conn, labeled) if labeled else []
+        return build_samples(rows, judgments, labels)
     except Exception as e:
         logger.error(f"Failed to get labeling samples: {e}")
         raise SampleQueryError(f"Failed to get labeling samples: {e}") from e
-
-    return samples["labeled"], samples["false_positive"], samples["skipped"]
+    finally:
+        if engine is not None:
+            engine.dispose()

@@ -3093,8 +3093,10 @@ LLM-decided rows costs about $8 at #192's observed $0.002 per call.
 
 ## D042: The Daily LLM Analysis Judges Labels Against the Rendered Production Labeling Prompt, on Haiku 5.5 (#252)
 
-**Date:** 2026-11-04 · **Status:** accepted (architect review 2026-11-04: approve with changes, all
-applied; the owner approved the plan and AC 2's rewording on 2026-11-04) · **Issues:** #252, #211
+**Date:** 2026-11-04 · **Status:** accepted (architect plan review 2026-11-04: approve with changes,
+its blocking and important changes applied; the owner approved the plan and AC 2's rewording on
+2026-11-04; amended the same day after #255's code review, the architect's scope ruling and the
+owner's decisions: §2 and §6 and the Consequences) · **Issues:** #252, #211, #256, #257
 
 **Context.** `src/agent/llm.py`'s analysis prompt predated D037, D038 and D040: stale status
 definitions, a 14-brand list, no content types or rulings, and samples with neither each brand's
@@ -3108,26 +3110,42 @@ leadership changes as Governance. #252 asked for the policy from `docs/LABELING.
    the labeler resolves (`LABELING_PROMPT_VERSION`, else the registry's production version), with
    the brand list from `BRANDS`, wrapped in `<labeling_instructions>` as reference material.
    `docs/LABELING.md`'s D037 and D040 sections do not carry the prompt's Governance, Social and
-   Environmental "is NOT" rules or its Sentiment Guidelines, so they would not have prevented the
-   2026-11-03 report, and parsing doc headings at run time would tie the cron to them. There is no
+   Environmental "is NOT" rules or its Sentiment Guidelines, the rules the 2026-11-03 report
+   contradicted, and parsing doc headings at run time would tie the cron to them. There is no
    fallback to the labeler's hardcoded prompt: a version that does not load fails the analysis.
-2. **Status meaning comes from the data.** Each sample carries its stored reason, and a skip is
-   marked judged or unjudged from `JUDGED_SKIP_REASONS` / `UNJUDGED_SKIP_REASONS`; the analyst's own
-   prompt says in one paragraph what each status means.
-3. **Samples carry the judgment.** Each brand's `brand_judgments` content type, reasoning and
-   dropped categories, and for a labeled article its `brand_labels` categories and sentiments. A
-   failed sample query fails the analysis (`SampleQueryError`), since samples with no judgments
-   read as if no brand had been judged.
+2. **Who decided a sample comes from provenance; what a human decided is not sampled.** Each
+   sample's decider is `provenance.derive_label_source`, as the FP export reads it (labeler, FP
+   classifier, unjudged, unattributed, keyword rule), shown with the stored reason. Rows a human
+   decided are left out of the samples: a `HUMAN_RULINGS` id at its ruled status, a human marker
+   as the reason, or an article with a human brand label (`provenance.human_label_criterion`).
+   Human rulings are ground truth, not output to audit. The analyst's prompt lists what each
+   status means by decider, matching `dispose_reply`, and says it sees a 300-character snippet and
+   no evidence while the labeler read the full article. (Amended: the plan derived status meaning
+   from the stored reason alone, a partial copy of `derive_label_source`, and sampled human
+   rulings as the labeler's output.)
+3. **Samples carry the judgment.** One line per brand, sent brands first: its `brand_judgments`
+   content type, reasoning and dropped categories (marked when judged under another prompt
+   version), or "not judged"; and for a labeled article its `brand_labels` categories and
+   sentiments. Labels and judgments are matched by `normalize_brand`, as the pipeline matches
+   them. A failed sample query fails the analysis (`SampleQueryError`), since samples with no
+   judgments read as if no brand had been judged.
 4. **Haiku 5.5, request from the model's spec.** `AGENT_LLM_MODEL` defaults to `claude-haiku-5-5`.
    Temperature is sent only where `accepts_sampling`, effort (`ANALYSIS_EFFORT = "medium"`, a
    constant independent of `LABELING_EFFORT`) only where `accepts_effort`, and `max_tokens` is the
    larger of 8000 and the model's default. A model with no spec is refused before any call. Replies
    are read by text block; an empty, thinking-only or refused reply is a failure.
 5. **Import hygiene.** `src/agent/llm.py` imports nothing from `src.labeling` or
-   `src.data_collection` at module level (an AST test pins it). The runner's own path to the
-   labeling package is #211's.
+   `src.data_collection` at module level, pinned by
+   `tests/test_agent_llm_current_policy.py::test_llm_module_imports_nothing_from_labeling_or_data_collection_at_module_level`.
+   The runner's own path to the labeling package is #211's.
+6. **`AGENT_LLM_MODEL` is the daily analysis's only.** `model_training`'s experiment reflection
+   used the same setting; it now keeps `ExperimentReflector`'s own default (Haiku 4.5), whose
+   request is built for that model, until #257 ports it to Haiku 5.5. (Amended: the plan treated
+   the setting as the analyzer's own without listing its other users.)
 
 **Consequences.**
 - A prompt promotion changes the analyst's yardstick with no edit to the agent.
 - The analysis prompt grows by the rendered labeling prompt, a small input cost on Haiku 5.5.
 - The analysis still samples rows a tagged relabel run wrote in the last day (D039's note stands).
+- The false_positive sample stays empty: it filters on `skipped_at`, which a false positive never
+  writes (#256, which takes the decision time from judgment and prediction rows).

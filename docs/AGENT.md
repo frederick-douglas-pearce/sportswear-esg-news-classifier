@@ -688,7 +688,7 @@ All agent settings are configured via environment variables:
 |----------|-------------|---------|
 | `AGENT_LLM_ANALYSIS` | Enable Claude analysis of labeling | `true` |
 | `AGENT_LLM_ERROR_THRESHOLD` | Error rate threshold to trigger analysis | `0.0` (always run) |
-| `AGENT_LLM_MODEL` | Model for LLM analysis; must have a spec in `LABELING_MODELS` (`src/labeling/config.py`), or the analysis fails | `claude-haiku-5-5` |
+| `AGENT_LLM_MODEL` | Model for the daily LLM analysis only (experiment reflection keeps its own model until #257); must have a spec in `LABELING_MODELS` (`src/labeling/config.py`), or the analysis fails | `claude-haiku-5-5` |
 | `ANTHROPIC_API_KEY` | API key for Claude | Required |
 
 ### Notification Settings
@@ -840,9 +840,10 @@ Claude analyzes labeling results and detects potential issues:
 
 ### What It Analyzes
 
-- **Recent labeling samples**: Last 24 hours of labeled, skipped, and false positive articles
+- **Recent labeling samples**: Last 24 hours of labeled, skipped, and false positive articles, leaving out rows a human decided (`HUMAN_RULINGS`, a human marker as the reason, or a human brand label). The false positive sample is empty until #256
 - **Labeling statistics**: Error rates, false positive rates, processing counts
-- **Article content**: Title, content, brand mentions, assigned labels
+- **Each sample**: title, source, the first 300 characters of content, its status with who decided it (from `provenance.derive_label_source`: labeler, FP classifier, unjudged, unattributed, keyword rule) and the stored reason, each brand's `brand_judgments` content type and reasoning (or "not judged") with the categories its content type dropped, and a labeled article's stored categories and sentiments
+- **The yardstick**: the labeling system prompt the labeler is given, rendered for `LABELING_PROMPT_VERSION` or the registry's production version (D042)
 
 ### What It Detects
 
@@ -852,6 +853,8 @@ Claude analyzes labeling results and detects potential issues:
 4. **Improvement Suggestions**: Actionable recommendations for prompts, pre-filtering, or labeling criteria
 
 ### Example LLM Analysis Output
+
+This example predates #252. Its findings (financial coverage as Governance, a sponsorship signing as ESG) are the false alarms D042 removed by giving the analyst the labeling prompt.
 
 ```json
 {
@@ -1048,7 +1051,12 @@ grep -i "llm\|claude\|anthropic" logs/agent/daily_labeling.log
 **Common causes**:
 - Missing or invalid `ANTHROPIC_API_KEY`
 - Rate limiting (reduce analysis frequency)
-- No samples to analyze (check database for recent articles)
+- `AGENT_LLM_MODEL` has no spec in `LABELING_MODELS` (`src/labeling/config.py`); the call is refused before it is made
+- The labeling prompt version (`LABELING_PROMPT_VERSION`, else the registry's production version) does not load; there is no fallback
+- A sample query failed (`SampleQueryError` in the error)
+- The reply was refused, empty, thinking-only, or truncated at `max_tokens`
+
+"No samples to analyze" is a skip, not a failure: check the database for recent articles.
 
 ### Viewing Logs
 

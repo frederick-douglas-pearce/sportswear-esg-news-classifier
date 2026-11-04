@@ -117,9 +117,12 @@ class TestFormatArticleSample:
                 "source_name": "Reuters",
                 "brands": ["Nike"],
                 "content": "Nike announces carbon goals...",
-                "judgments": [{"brand": "Nike", "content_type": "business",
-                               "reasoning": "Nike sets carbon targets", "gated_categories": []}],
-                "categories_by_brand": {"Nike": [("Environmental", 1), ("Governance", 0)]},
+                "brand_lines": [{
+                    "brand": "Nike",
+                    "judgment": {"brand": "Nike", "content_type": "business",
+                                 "reasoning": "Nike sets carbon targets", "gated_categories": []},
+                    "stored": [("Environmental", 1), ("Governance", 0)],
+                }],
             }
         ]
 
@@ -130,7 +133,7 @@ class TestFormatArticleSample:
         assert "Nike Sustainability Report" in result
         assert "Reuters" in result
         assert "Nike: business — Nike sets carbon targets" in result
-        assert "stored categories: Environmental (+1), Governance (+0)" in result
+        assert "stored categories: Environmental (+1), Governance (0)" in result
         assert "carbon goals" in result
 
     def test_formats_false_positive_article(self, analyzer):
@@ -381,7 +384,7 @@ class TestAnalyzeLabelingResults:
         )
 
         _, kwargs = analyzer.client.messages.create.call_args
-        assert kwargs["max_tokens"] >= ANALYSIS_MAX_TOKENS
+        assert kwargs["max_tokens"] == ANALYSIS_MAX_TOKENS
         assert ANALYSIS_MAX_TOKENS > 2000
 
     def test_truncated_response_is_failure(self, analyzer):
@@ -457,8 +460,9 @@ class TestPromptTemplates:
 
     def test_system_template_contains_key_info(self):
         """The analyst's own text states the statuses and leaves the policy to the instructions."""
-        for text in ("ESG", "sportswear", "false_positive", "labeled", "skipped (judged)",
-                     "skipped (unjudged)", "{labeling_instructions}", "{prompt_version}"):
+        for text in ("ESG", "sportswear", "false_positive (labeler)", "false_positive (FP classifier)",
+                     "skipped (labeler)", "skipped (unjudged)", "skipped (unattributed)",
+                     "labeled (labeler)", "{labeling_instructions}", "{prompt_version}"):
             assert text in LABELING_ANALYSIS_SYSTEM_TEMPLATE
         # The hard-coded 14-brand list is gone: brands come from the rendered instructions
         assert "Xtep" not in LABELING_ANALYSIS_SYSTEM_TEMPLATE
