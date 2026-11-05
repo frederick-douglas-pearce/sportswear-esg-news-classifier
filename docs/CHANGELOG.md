@@ -4,6 +4,38 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-04: The daily LLM analysis judges labels against the current policy (#252, D042)
+
+**The analyst gets the rules the labeler gets.** Its system prompt wraps the labeling system prompt,
+rendered as `ArticleLabeler` renders it (`LABELING_PROMPT_VERSION`, else the registry's production
+version, with the brand list from `BRANDS`), in `<labeling_instructions>` as reference material.
+There is no fallback prompt: a version that does not load fails the analysis. The hard-coded
+14-brand list is gone, and the stale status definitions are replaced by a list of what each
+status means by who decided it, with a note that the analyst sees a 300-character snippet and no
+evidence while the labeler read the full article.
+- **Who decided each sample.** `provenance.derive_label_source` names the decider (labeler, FP
+  classifier, unjudged, unattributed, keyword rule), shown with the stored reason. Rows a human
+  decided are left out: a `HUMAN_RULINGS` id at its ruled status, a human marker as the reason, or
+  an article with a human brand label (`provenance.human_label_criterion`, now shared with the
+  backfill cohorts).
+- **Samples carry the judgment.** One line per brand, sent brands first: its `brand_judgments`
+  content type and reasoning (marked when judged under another prompt version), or "not judged",
+  the categories its content type dropped, and for a labeled article the categories and
+  sentiments in `brand_labels` (the labeled sample never carried its categories). Labels and
+  judgments are matched by `normalize_brand`. A failed sample query raises `SampleQueryError`, and
+  `run_llm_analysis` reports the analysis failed. The false_positive sample selects by
+  `skipped_at`, which a false positive does not write: only a row skipped in the window and later
+  relabeled `false_positive` is sampled, ordered by its skip time (#256).
+- **Haiku 5.5.** `AGENT_LLM_MODEL` defaults to `claude-haiku-5-5` and is the daily analysis's only:
+  experiment reflection keeps its own Haiku 4.5 default until #257 ports it. The request comes from
+  the model's `labeling_model_spec`: temperature only where the model accepts sampling, `effort`
+  (`ANALYSIS_EFFORT`, `medium`) only where it accepts effort, and `max_tokens` the larger of 8000
+  and the model's default. A model with no spec is refused before any call. Replies are read by
+  text block; an empty, thinking-only, refused or truncated reply is a failure.
+- `src/agent/llm.py` imports nothing from `src.labeling` or `src.data_collection` at module level,
+  pinned by `tests/test_agent_llm_current_policy.py::test_llm_module_imports_nothing_from_labeling_or_data_collection_at_module_level`
+  (the agent package still imports `src.labeling` through its runner until #211).
+
 ### 2026-11-04: #248's template stock pages are recorded as human rulings
 
 **`HUMAN_RULINGS` adds 7 `false_positive` rulings (147 in all).** These are the template or

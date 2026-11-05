@@ -510,7 +510,7 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
         }
 
     # Import LLM analysis module
-    from ..llm import LabelingAnalyzer, get_recent_labeling_samples
+    from ..llm import LabelingAnalyzer, SampleQueryError, get_recent_labeling_samples
 
     # Counts come from check_labeling_quality (database-sourced) for the same
     # reason the report does: stdout is the last attempt's, so on a retried run
@@ -533,9 +533,18 @@ def run_llm_analysis(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
 
     # Get recent labeling samples from database
     logger.info("Fetching recent labeling samples for LLM analysis...")
-    labeled_sample, fp_sample, skipped_sample = get_recent_labeling_samples(
-        days=1, sample_size=10
-    )
+    try:
+        labeled_sample, fp_sample, skipped_sample = get_recent_labeling_samples(
+            days=1, sample_size=10
+        )
+    except SampleQueryError as e:
+        # Samples without their judgments would be analyzed as if no brand had been judged
+        # (#252), so the analysis is reported as failed rather than run on them
+        logger.error(f"LLM analysis not run: {e}")
+        return {
+            "llm_analysis_completed": False,
+            "llm_analysis_error": str(e),
+        }
 
     logger.info(
         f"Samples: {len(labeled_sample)} labeled, {len(fp_sample)} FP, {len(skipped_sample)} skipped"

@@ -326,6 +326,12 @@ def derive_label_source(
     raise ValueError(f"No FP training label for labeling_status {labeling_status!r}")
 
 
+def human_label_criterion():
+    """A brand label a human reviewed or wrote: the criterion the cohorts and the daily LLM
+    analysis's samples (#252) share."""
+    return or_(BrandLabel.human_reviewed.is_(True), BrandLabel.labeled_by == "human")
+
+
 def latest_prediction_subquery(classifier_type: str):
     """Subquery of each article's most recent prediction from one classifier.
 
@@ -840,7 +846,7 @@ def _cohort_from_db(
             query = query.filter(column.in_(ids))
         return {str(i) for (i,) in query.distinct()}
 
-    human = or_(BrandLabel.human_reviewed.is_(True), BrandLabel.labeled_by == "human")
+    human = human_label_criterion()
     judgment_versions: dict[str, set[str]] = {}
     if mode == MODE_RELABEL:
         # Distinct (article, version) pairs: a relabel replaces every judgment row, so an article

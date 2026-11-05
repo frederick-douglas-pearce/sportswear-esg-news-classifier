@@ -8,10 +8,15 @@ import pytest
 from src.agent.llm import (
     ANALYSIS_MAX_TOKENS,
     AnalysisResult,
-    LABELING_ANALYSIS_SYSTEM_PROMPT,
+    LABELING_ANALYSIS_SYSTEM_TEMPLATE,
     LABELING_ANALYSIS_USER_PROMPT,
     LabelingAnalyzer,
 )
+
+
+def _text_block(text):
+    """A reply content block of type text, as the analyzer reads them (#252)."""
+    return MagicMock(type="text", text=text)
 
 
 class TestAnalysisResult:
@@ -112,7 +117,12 @@ class TestFormatArticleSample:
                 "source_name": "Reuters",
                 "brands": ["Nike"],
                 "content": "Nike announces carbon goals...",
-                "categories": ["environmental", "governance"],
+                "brand_lines": [{
+                    "brand": "Nike",
+                    "judgment": {"brand": "Nike", "content_type": "business",
+                                 "reasoning": "Nike sets carbon targets", "gated_categories": []},
+                    "stored": [("Environmental", 1), ("Governance", 0)],
+                }],
             }
         ]
 
@@ -122,9 +132,8 @@ class TestFormatArticleSample:
         assert "uuid-123" in result
         assert "Nike Sustainability Report" in result
         assert "Reuters" in result
-        assert "Nike" in result
-        assert "environmental" in result
-        assert "governance" in result
+        assert "Nike: business — Nike sets carbon targets" in result
+        assert "stored categories: Environmental (+1), Governance (0)" in result
         assert "carbon goals" in result
 
     def test_formats_false_positive_article(self, analyzer):
@@ -332,7 +341,7 @@ class TestAnalyzeLabelingResults:
         # Mock API response
         mock_response = MagicMock()
         mock_response.content = [
-            MagicMock(text='{"summary": "Analysis complete", "score": 85}')
+            _text_block('{"summary": "Analysis complete", "score": 85}')
         ]
         mock_response.usage.input_tokens = 1000
         mock_response.usage.output_tokens = 200
@@ -364,7 +373,7 @@ class TestAnalyzeLabelingResults:
     def test_uses_generous_max_tokens(self, analyzer):
         """Should request enough output tokens to avoid truncation (issue #42)."""
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text='{"summary": "OK"}')]
+        mock_response.content = [_text_block('{"summary": "OK"}')]
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
         mock_response.stop_reason = "end_turn"
@@ -382,7 +391,7 @@ class TestAnalyzeLabelingResults:
         """A max_tokens stop should surface as a failure, not a clean empty result."""
         mock_response = MagicMock()
         # Incomplete JSON, exactly as it arrives when cut off mid-structure.
-        mock_response.content = [MagicMock(text='{"overall_assessment": "good", "poten')]
+        mock_response.content = [_text_block('{"overall_assessment": "good", "poten')]
         mock_response.usage.input_tokens = 2309
         mock_response.usage.output_tokens = ANALYSIS_MAX_TOKENS
         mock_response.stop_reason = "max_tokens"
@@ -414,7 +423,7 @@ class TestAnalyzeLabelingResults:
     def test_formats_samples_in_prompt(self, analyzer):
         """Should include formatted samples in prompt."""
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text='{"summary": "OK"}')]
+        mock_response.content = [_text_block('{"summary": "OK"}')]
         mock_response.usage.input_tokens = 100
         mock_response.usage.output_tokens = 50
         analyzer.client.messages.create.return_value = mock_response
@@ -449,13 +458,14 @@ class TestAnalyzeLabelingResults:
 class TestPromptTemplates:
     """Tests for prompt template constants."""
 
-    def test_system_prompt_contains_key_info(self):
-        """System prompt should contain key ESG context."""
-        assert "ESG" in LABELING_ANALYSIS_SYSTEM_PROMPT
-        assert "sportswear" in LABELING_ANALYSIS_SYSTEM_PROMPT
-        assert "Nike" in LABELING_ANALYSIS_SYSTEM_PROMPT
-        assert "false_positive" in LABELING_ANALYSIS_SYSTEM_PROMPT
-        assert "labeled" in LABELING_ANALYSIS_SYSTEM_PROMPT
+    def test_system_template_contains_key_info(self):
+        """The analyst's own text states the statuses and leaves the policy to the instructions."""
+        for text in ("ESG", "sportswear", "false_positive (labeler)", "false_positive (FP classifier)",
+                     "skipped (labeler)", "skipped (unjudged)", "skipped (unattributed)",
+                     "labeled (labeler)", "{labeling_instructions}", "{prompt_version}"):
+            assert text in LABELING_ANALYSIS_SYSTEM_TEMPLATE
+        # The hard-coded 14-brand list is gone: brands come from the rendered instructions
+        assert "Xtep" not in LABELING_ANALYSIS_SYSTEM_TEMPLATE
 
     def test_user_prompt_has_placeholders(self):
         """User prompt should have all required placeholders."""
@@ -497,7 +507,7 @@ class TestRateLimitRetry:
 
             # First call raises rate limit, second succeeds
             mock_response = MagicMock()
-            mock_response.content = [MagicMock(text='{"summary": "OK"}')]
+            mock_response.content = [_text_block('{"summary": "OK"}')]
             mock_response.usage.input_tokens = 100
             mock_response.usage.output_tokens = 50
 

@@ -777,10 +777,10 @@ def finalize_experiments(workflow: Workflow, context: dict[str, Any]) -> dict[st
             ):
                 try:
                     ReflectorClass = _get_reflector_class()
-                    reflector = ReflectorClass(
-                        api_key=agent_settings.anthropic_api_key,
-                        model=agent_settings.llm_analysis_model,
-                    )
+                    # The reflector keeps its own DEFAULT_MODEL: AGENT_LLM_MODEL is the daily
+                    # analysis's (Haiku 5.5, #252), and the reflector's request is still built
+                    # for Haiku 4.5 until #257 ports it
+                    reflector = ReflectorClass(api_key=agent_settings.anthropic_api_key)
                     reflection = reflector.reflect(tracker.experiment)
                     tracker.record_reflection(reflection)
                     logger.info(f"Recorded reflection for {exp_id}")
