@@ -156,11 +156,8 @@ def _fp_skip_threshold_override() -> float | None:
 def check_fp_skip_threshold(value: float | None) -> None:
     """Refuse an FP_SKIP_LLM_THRESHOLD outside 0 to 1, nan and inf included.
 
-    Called when a LabelingPipeline is built, not when the settings load: a check at
-    load would fail every process that imports src.labeling.config (the daily LLM
-    analysis's function-level import in src/agent/llm.py among them), not labeling
-    alone (the point-of-use precedent in run_audit.py, #75). Since #211 importing
-    the agent does not import this module.
+    Called when a LabelingPipeline is built, not when the settings load (the
+    point-of-use precedent in run_audit.py, #75).
     """
     if value is not None and not 0.0 <= value <= 1.0:
         raise ValueError(f"FP_SKIP_LLM_THRESHOLD must be between 0 and 1, got {value}")

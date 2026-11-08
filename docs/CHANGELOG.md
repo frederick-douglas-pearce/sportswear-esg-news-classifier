@@ -11,10 +11,8 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 behind them at import. The agent imports `src.labeling.exit_codes` (`src/agent/runner.py`,
 `src/agent/workflows/daily_labeling.py`), which ran that file, so every agent process built
 `labeling_settings` at import, and one unparseable labeling setting (a non-number in
-`LABELING_BATCH_SIZE`, for example) stopped every agent workflow, `run_audit` included. Now such a
-value fails where the labeling config is used: `scripts/label_articles.py`, or the daily LLM
-analysis step, which imports the config inside a function and records the error in its result.
-`tests/test_labeling_import_isolation.py` pins it. `from src.labeling import X` and every
+`LABELING_BATCH_SIZE`, for example) stopped every agent workflow, `run_audit` included. Importing
+the agent no longer loads `src.labeling.config`; `tests/test_labeling_import_isolation.py` pins it. `from src.labeling import X` and every
 `src.labeling.<module>` import work as before; a submodule is no longer an attribute of the bare
 package until it is imported. The same shape in `src.mlops` is #260.
 
