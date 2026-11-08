@@ -156,9 +156,7 @@ def _fp_skip_threshold_override() -> float | None:
 def check_fp_skip_threshold(value: float | None) -> None:
     """Refuse an FP_SKIP_LLM_THRESHOLD outside 0 to 1, nan and inf included.
 
-    Called when a LabelingPipeline is built, not at import: importing
-    src.labeling builds the settings, and the agent imports it, so a range check
-    there would stop every agent workflow instead of labeling alone (the
+    Called when a LabelingPipeline is built, not when the settings load (the
     point-of-use precedent in run_audit.py, #75).
     """
     if value is not None and not 0.0 <= value <= 1.0:

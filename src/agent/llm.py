@@ -4,9 +4,10 @@ Uses Claude via the Anthropic API to analyze labeling results,
 detect patterns in errors, and suggest improvements.
 
 This module imports nothing from src.labeling or src.data_collection at module level (#252), so
-it adds no import path to the labeling package; the agent package still imports src.labeling
-through its runner until #211. Those imports sit inside the functions that use them, and their
-callers catch what they raise.
+it adds no import path to the labeling package; the agent package imports src.labeling.exit_codes
+through its runner, which since #211 does not load src.labeling.config
+(tests/test_labeling_import_isolation.py). This module's own labeling imports sit inside the
+functions that use them, and their callers catch what they raise.
 """
 
 import json
