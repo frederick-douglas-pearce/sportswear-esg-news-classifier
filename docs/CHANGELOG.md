@@ -12,9 +12,10 @@ behind them at import. The agent imports `src.labeling.exit_codes` (`src/agent/r
 `src/agent/workflows/daily_labeling.py`), which ran that file, so every agent process built
 `labeling_settings` at import, and one unparseable labeling setting (a non-number in
 `LABELING_BATCH_SIZE`, for example) stopped every agent workflow, `run_audit` included. Importing
-the agent no longer loads `src.labeling.config`; `tests/test_labeling_import_isolation.py` pins it. `from src.labeling import X` and every
-`src.labeling.<module>` import work as before; a submodule is no longer an attribute of the bare
-package until it is imported. The same shape in `src.mlops` is #260.
+the agent no longer loads `src.labeling.config`; `tests/test_labeling_import_isolation.py` pins it.
+`from src.labeling import X` and every `src.labeling.<module>` import work as before; a submodule
+is no longer an attribute of the bare package until it is imported. The same shape in `src.mlops`
+is #260.
 
 ### 2026-11-04: The daily LLM analysis judges labels against the current policy (#252, D042)
 
