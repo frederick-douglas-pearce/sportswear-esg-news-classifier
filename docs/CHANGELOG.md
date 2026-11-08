@@ -4,6 +4,18 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-08: Agent processes no longer build the labeling settings (#211)
+
+`src/labeling/__init__.py` loads its package attributes (`LabelingPipeline`, `labeling_settings`,
+...) from their submodules on first access (a module `__getattr__`) instead of importing every
+submodule. The agent imports `src.labeling.exit_codes` (`src/agent/runner.py`,
+`src/agent/workflows/daily_labeling.py`), which ran that file, so every agent process built
+`labeling_settings`, and one unparseable labeling setting (a non-number in `LABELING_BATCH_SIZE`,
+for example) stopped every agent workflow, `run_audit` included. Now such a value fails only the
+process that uses the labeling config, such as `scripts/label_articles.py`.
+`tests/test_labeling_import_isolation.py` pins it. `from src.labeling import X` and every
+`src.labeling.<module>` import work as before. The same shape in `src.mlops` is #260.
+
 ### 2026-11-04: The daily LLM analysis judges labels against the current policy (#252, D042)
 
 **The analyst gets the rules the labeler gets.** Its system prompt wraps the labeling system prompt,

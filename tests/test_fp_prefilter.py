@@ -857,15 +857,16 @@ class TestSkipThresholdSetting:
             LabelingPipeline(database=MagicMock(), chunker=MagicMock())
 
     def test_an_out_of_range_value_does_not_stop_an_import_of_src_labeling(self):
-        """The agent imports src.labeling.exit_codes (src/agent/runner.py), which builds the
-        settings; an import-time range check would stop every agent workflow."""
+        """The range check is not at import: importing the config that builds the settings
+        succeeds with an out-of-range value (#141, D035 §4). Since #211 the agent no longer
+        builds the settings, so this imports src.labeling.config itself."""
         import os
         import subprocess
         import sys
         from pathlib import Path
 
         result = subprocess.run(
-            [sys.executable, "-c", "import src.labeling.exit_codes"],
+            [sys.executable, "-c", "import src.labeling.config"],
             cwd=Path(__file__).resolve().parent.parent,
             env={**os.environ, "FP_SKIP_LLM_THRESHOLD": "53"},
             capture_output=True,
