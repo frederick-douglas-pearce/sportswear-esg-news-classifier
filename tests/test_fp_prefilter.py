@@ -818,7 +818,8 @@ class TestSkipThresholdSource:
 
 class TestSkipThresholdSetting:
     """FP_SKIP_LLM_THRESHOLD is optional; a set value must be a probability, checked where the
-    pipeline is built rather than at import (#141, D035 §4)."""
+    pipeline is built rather than at import (#141, D035 amendment "Where the override is
+    checked")."""
 
     @pytest.fixture
     def settings_with(self, monkeypatch):
@@ -857,16 +858,17 @@ class TestSkipThresholdSetting:
             LabelingPipeline(database=MagicMock(), chunker=MagicMock())
 
     def test_an_out_of_range_value_does_not_stop_an_import_of_src_labeling(self):
-        """The range check is not at import: importing the config that builds the settings
-        succeeds with an out-of-range value (#141, D035 §4). Since #211 the agent no longer
-        builds the settings, so this imports src.labeling.config itself."""
+        """The range check is not at import: importing every exported labeling submodule, the
+        config that builds the settings and the pipeline among them, succeeds with an
+        out-of-range value (#141, D035 amendment "Where the override is checked"). Since #211
+        importing the agent no longer does that, so this star-imports src.labeling itself."""
         import os
         import subprocess
         import sys
         from pathlib import Path
 
         result = subprocess.run(
-            [sys.executable, "-c", "import src.labeling.config"],
+            [sys.executable, "-c", "from src.labeling import *"],
             cwd=Path(__file__).resolve().parent.parent,
             env={**os.environ, "FP_SKIP_LLM_THRESHOLD": "53"},
             capture_output=True,

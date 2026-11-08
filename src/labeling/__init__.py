@@ -1,10 +1,13 @@
 """LLM-based labeling pipeline for ESG news classification.
 
-The package attributes below load their submodule on first access (PEP 562), not at import.
+The package attributes below are read from their submodule on access (PEP 562), not at import.
 Agent processes import `src.labeling.exit_codes`, which runs this file; an eager import here
-built `labeling_settings` in every agent process, so one unparseable labeling setting stopped
-every agent workflow, `run_audit` included (#211). `tests/test_labeling_import_isolation.py`
+built `labeling_settings` at import in every agent process, so one unparseable labeling setting
+stopped every agent workflow, `run_audit` included (#211). `tests/test_labeling_import_isolation.py`
 pins that importing the agent does not import `src.labeling.config`.
+
+Nothing is cached here: each access reads the submodule's current attribute, so a patch on the
+submodule is seen through the package while it is active and not after.
 """
 
 from importlib import import_module
@@ -42,9 +45,7 @@ def __getattr__(name: str):
     module = _EXPORTS.get(name)
     if module is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(f".{module}", __name__), name)
-    globals()[name] = value
-    return value
+    return getattr(import_module(f".{module}", __name__), name)
 
 
 def __dir__():
