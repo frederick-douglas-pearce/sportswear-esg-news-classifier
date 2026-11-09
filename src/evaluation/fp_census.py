@@ -3,8 +3,9 @@
 
 The cohort is the FP export's rows whose label source is ``fp_classifier``: the FP pre-filter
 skipped them before any LLM call, so no model has judged them. The census sends each to the
-labeler once and records what the reply decides, through ``record_reply`` and so
-``dispose_reply``, the function the pipeline decides an article's status with.
+labeler and records what the reply decides, through ``record_reply``: a parsed reply's verdict
+comes from ``dispose_reply``, the function the pipeline decides an article's status with, and a
+call with no usable reply is ``failed``.
 
 This module makes no database or API call. ``scripts/fp_census.py`` reads the cohort, calls the
 labeler and writes the records; this module turns a reply into a census record and the records
@@ -28,11 +29,19 @@ from src.evaluation.comparator import (
     record_reply,
 )
 
-# What the reply says about the article, against the classifier's negative
-POSITIVE = "positive"  # a sent brand is the sportswear company (labeled, or a judged skip)
-NEGATIVE = "negative"  # every sent brand judged not the sportswear company
-UNJUDGED = "unjudged"  # the reply did not establish sportswear status (D-10.1, 2026-10-09)
-VERDICT_FAILED = "failed"  # no usable reply: an API error, a refusal, or one that did not parse
+# What the reply says about the article, against the classifier's negative. The verdict follows
+# the article status dispose_reply gives the reply under the production policy:
+# labeled or a judged skip (a brand the reply judged sportswear, possibly one the reply named
+# but was not sent)
+POSITIVE = "positive"
+# false_positive: every sent brand judged not the sportswear company, which under prompt v1.12.0
+# and later includes the content types mention_only and retail_only as well as other_entity
+NEGATIVE = "negative"
+# the reply did not establish sportswear status (D-10.1, 2026-10-09)
+UNJUDGED = "unjudged"
+# no usable reply: an API error, a refusal, or a reply that did not parse (decided by
+# record_reply before dispose_reply)
+VERDICT_FAILED = "failed"
 VERDICTS = (POSITIVE, NEGATIVE, UNJUDGED, VERDICT_FAILED)
 
 _VERDICT_OF_OUTCOME = {
@@ -53,10 +62,16 @@ BAND_MID = "[0.2, 0.4)"
 BAND_HIGH = "[0.4, threshold)"
 BANDS = (BAND_LOW, BAND_MID, BAND_HIGH)
 
-# Why a row is in the review queue
+# Why a row is in the review queue, in queue order
 REASON_DISAGREEMENT = "disagreement"
+REASON_NO_VERDICT = "no_verdict"
 REASON_AGREEMENT_SAMPLE = "agreement_sample"
 REASON_PRE_CUTOFF = "pre_cutoff"
+
+# Sides of the owner-attested cutoff
+BEFORE = "before"
+AFTER = "after"
+UNKNOWN = "unknown"  # no prediction time recorded
 
 # The owner-attested cutoff's initial value (#155, 2026-09-25): the last commit of the FP notebooks
 DEFAULT_CUTOFF = date(2026, 2, 19)
@@ -99,7 +114,10 @@ def agreement_of(verdict: str) -> str | None:
 
 
 def probability_band(probability: float) -> str:
-    """The D-10.3 band of a skip's probability. Every row in the cohort is below its threshold."""
+    """The D-10.3 band of a skip's probability. The top band is named for the row's threshold
+    because the pipeline skips an article only below the threshold it records with the
+    prediction (``LabelingPipeline._run_fp_prefilter_batch``: an article continues when
+    ``probability >= threshold``)."""
     if probability < 0.2:
         return BAND_LOW
     if probability < 0.4:
@@ -108,7 +126,10 @@ def probability_band(probability: float) -> str:
 
 
 def as_utc(moment: datetime) -> datetime:
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+    """The same instant in UTC; a naive time is read as UTC."""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
 
 
 def before_cutoff(predicted_at: datetime | None, cutoff: date) -> bool:
@@ -119,6 +140,13 @@ def before_cutoff(predicted_at: datetime | None, cutoff: date) -> bool:
     return as_utc(predicted_at) < datetime.combine(cutoff, datetime.min.time(), tzinfo=timezone.utc)
 
 
+def cutoff_side(record: dict, cutoff: date) -> str:
+    """``before``, ``after`` or ``unknown`` (no prediction time) the cutoff."""
+    if not record.get("predicted_at"):
+        return UNKNOWN
+    return BEFORE if before_cutoff(datetime.fromisoformat(record["predicted_at"]), cutoff) else AFTER
+
+
 def census_record(
     row: CohortRow,
     result: LabelingResult,
@@ -127,9 +155,11 @@ def census_record(
     effort: str | None,
     prompt_version: str,
     cost_usd: float,
+    worst_case_usd: float,
     labeled_at: datetime,
 ) -> dict:
-    """The JSON-serializable record of one census call."""
+    """The JSON-serializable record of one census call. ``effort`` is None for a model that is
+    not sent one."""
     reply = record_reply(row.brands, result)
     verdict = verdict_of(reply.outcome)
     return {
@@ -148,6 +178,10 @@ def census_record(
         "reason": reply.reason,
         "content_types": reply.content_types,
         "explanations": reply.explanations,
+        # Sent brands no analysis covered, analyses of brands not sent, and brands returned both ways
+        "omitted": list(reply.omitted),
+        "unsent": list(reply.unsent),
+        "conflicting": list(reply.conflicting),
         "error": reply.error,
         "refusal": reply.refusal,
         "parse_failure": reply.parse_failure,
@@ -155,6 +189,7 @@ def census_record(
         "input_tokens": reply.input_tokens,
         "output_tokens": reply.output_tokens,
         "cost_usd": cost_usd,
+        "worst_case_usd": worst_case_usd,
         "model": model,
         "effort": effort,
         "prompt_version": prompt_version,
@@ -171,16 +206,24 @@ def latest_records(lines: list[dict]) -> dict[str, dict]:
 
 
 def needs_call(record: dict | None) -> bool:
-    """Whether an article still needs a census call: never recorded, or recorded as failed for a
-    reason other than a refusal. A refusal is the model's answer and is not retried."""
+    """Whether an article still needs a census call: never recorded, or recorded as a failed call
+    that got no reply (no output tokens billed) and was not a refusal. A failure the model was
+    billed for (a reply that did not parse, or one cut at max_tokens) is final, and is queued for
+    the reviewer as a row with no verdict."""
     if record is None:
         return True
-    return record["verdict"] == VERDICT_FAILED and not record.get("refusal")
+    return (
+        record["verdict"] == VERDICT_FAILED
+        and not record.get("refusal")
+        and not record.get("output_tokens")
+    )
 
 
 def rule_of_three(n: int) -> float | None:
-    """The 95% upper bound on an error rate when 0 errors are seen in n (3/n); None for n=0."""
-    return 3 / n if n else None
+    """The rule-of-three approximation (3/n) of the 95% upper bound on an error rate when 0 errors
+    are seen in n judged rows, capped at 1. A close approximation for n of about 30 or more,
+    conservative below; None for n=0."""
+    return min(1.0, 3 / n) if n else None
 
 
 def _rates(records: list[dict]) -> dict:
@@ -196,20 +239,21 @@ def _rates(records: list[dict]) -> dict:
 
 
 def _month(record: dict) -> str:
-    return record["predicted_at"][:7] if record.get("predicted_at") else "unknown"
+    """The UTC month of the FP skip (``predicted_at`` is stored in UTC)."""
+    return record["predicted_at"][:7] if record.get("predicted_at") else UNKNOWN
 
 
-def summarize(records: list[dict], *, cutoff: date) -> dict:
+def summarize(records: list[dict], *, cutoff: date, spend_usd: float) -> dict:
     """Counts by verdict, and disagreement rates overall, per band (for #141), per month of the FP
-    skip and either side of the cutoff (the "early data is clean" hypothesis), plus spend."""
+    skip and by side of the cutoff (the "early data is clean" hypothesis). ``records`` are the
+    latest record per article; ``spend_usd`` is what every call cost, retried calls included."""
     by_band: dict[str, list[dict]] = defaultdict(list)
     by_month: dict[str, list[dict]] = defaultdict(list)
-    sides: dict[str, list[dict]] = {"before": [], "after": []}
+    sides: dict[str, list[dict]] = {BEFORE: [], AFTER: [], UNKNOWN: []}
     for r in records:
         by_band[r["band"]].append(r)
         by_month[_month(r)].append(r)
-        predicted = datetime.fromisoformat(r["predicted_at"]) if r.get("predicted_at") else None
-        sides["before" if before_cutoff(predicted, cutoff) else "after"].append(r)
+        sides[cutoff_side(r, cutoff)].append(r)
     verdicts = Counter(r["verdict"] for r in records)
     return {
         "rows": len(records),
@@ -219,10 +263,14 @@ def summarize(records: list[dict], *, cutoff: date) -> dict:
         "by_band": {b: _rates(by_band[b]) for b in BANDS},
         "by_month": {m: _rates(by_month[m]) for m in sorted(by_month)},
         "cutoff": cutoff.isoformat(),
-        "before_cutoff": _rates(sides["before"]),
-        "after_cutoff": _rates(sides["after"]),
-        "cost_usd": sum(r.get("cost_usd", 0.0) for r in records),
+        "by_cutoff_side": {side: _rates(rows) for side, rows in sides.items()},
+        "cost_usd": spend_usd,
     }
+
+
+def _distance(record: dict) -> tuple[float, str]:
+    """Triage order: nearest the row's own threshold first, then by article id."""
+    return (record["threshold"] - record["probability"], record["article_id"])
 
 
 def build_review_queue(
@@ -233,46 +281,64 @@ def build_review_queue(
     pre_cutoff_census_max: int = DEFAULT_PRE_CUTOFF_CENSUS_MAX,
     pre_cutoff_sample: int = DEFAULT_PRE_CUTOFF_SAMPLE,
     seed: int = DEFAULT_SEED,
-) -> list[dict]:
-    """The rows a human reviews, in review order, each once (D-10.3).
+) -> tuple[list[dict], dict]:
+    """The rows a human reviews, in review order, each once (D-10.3), and the draw's design.
 
-    1. Every disagreement, nearest its own threshold first. The order is triage only.
-    2. A uniform random sample of agreements within each probability band, so the residual error
+    1. Every disagreement.
+    2. Every row with no verdict (unjudged, refused, or a billed failure).
+    3. A uniform random sample of agreements within each probability band, so the residual error
        estimate is not biased toward the threshold.
-    3. Pre-cutoff rows: all of them when there are at most ``pre_cutoff_census_max``, otherwise a
+    4. Pre-cutoff rows: all of them when there are at most ``pre_cutoff_census_max``, otherwise a
        uniform random sample of ``pre_cutoff_sample``, drawn from every pre-cutoff row whatever
-       its verdict. A row already queued gains the reason rather than a second entry.
+       its verdict.
 
-    Rows with no verdict (unjudged or failed) are queued only by the pre-cutoff draw; the summary
-    counts them. Sampling is reproducible for a given ``seed`` and record set.
+    Within each section rows are ordered nearest their own threshold first. The order is triage
+    only: it never changes which rows are drawn. A row already queued gains the reason rather
+    than a second entry. The draws are reproducible for a given ``seed`` and record set. The
+    design dict records each draw's pool and size, which a weighted estimate needs (#155 PR2).
     """
     rng = random.Random(seed)
     ordered = sorted(records, key=lambda r: r["article_id"])
     queue: dict[str, dict] = {}
 
-    def add(record: dict, reason: str) -> None:
-        entry = queue.get(record["article_id"])
-        if entry is None:
-            queue[record["article_id"]] = {**record, "queue_reasons": [reason]}
-        elif reason not in entry["queue_reasons"]:
-            entry["queue_reasons"].append(reason)
+    def add(section: list[dict], reason: str) -> None:
+        for record in sorted(section, key=_distance):
+            entry = queue.get(record["article_id"])
+            if entry is None:
+                queue[record["article_id"]] = {**record, "queue_reasons": [reason]}
+            elif reason not in entry["queue_reasons"]:
+                entry["queue_reasons"].append(reason)
 
     disagreements = [r for r in ordered if r["agreement"] == DISAGREE]
-    for r in sorted(disagreements, key=lambda r: (r["threshold"] - r["probability"], r["article_id"])):
-        add(r, REASON_DISAGREEMENT)
+    no_verdict = [r for r in ordered if r["agreement"] is None]
+    add(disagreements, REASON_DISAGREEMENT)
+    add(no_verdict, REASON_NO_VERDICT)
 
+    agreement_design = {}
+    drawn_agreements = []
     for band in BANDS:
         pool = [r for r in ordered if r["agreement"] == AGREE and r["band"] == band]
-        for r in rng.sample(pool, min(agreements_per_band, len(pool))):
-            add(r, REASON_AGREEMENT_SAMPLE)
+        drawn = rng.sample(pool, min(agreements_per_band, len(pool)))
+        agreement_design[band] = {"pool": len(pool), "drawn": len(drawn)}
+        drawn_agreements.extend(drawn)
+    add(drawn_agreements, REASON_AGREEMENT_SAMPLE)
 
-    pre = [
-        r
-        for r in ordered
-        if r.get("predicted_at") and before_cutoff(datetime.fromisoformat(r["predicted_at"]), cutoff)
-    ]
-    chosen = pre if len(pre) <= pre_cutoff_census_max else rng.sample(pre, pre_cutoff_sample)
-    for r in chosen:
-        add(r, REASON_PRE_CUTOFF)
+    pre = [r for r in ordered if cutoff_side(r, cutoff) == BEFORE]
+    census = len(pre) <= pre_cutoff_census_max
+    chosen = pre if census else rng.sample(pre, pre_cutoff_sample)
+    add(chosen, REASON_PRE_CUTOFF)
 
-    return [{**entry, "queue_rank": rank} for rank, entry in enumerate(queue.values(), start=1)]
+    design = {
+        "seed": seed,
+        "cutoff": cutoff.isoformat(),
+        "agreements_per_band": agreements_per_band,
+        "pre_cutoff_census_max": pre_cutoff_census_max,
+        "pre_cutoff_sample": pre_cutoff_sample,
+        "records": len(records),
+        "disagreements": len(disagreements),
+        "no_verdict": len(no_verdict),
+        "agreements_by_band": agreement_design,
+        "pre_cutoff": {"pool": len(pre), "drawn": len(chosen), "mode": "census" if census else "sample"},
+    }
+    queue_rows = [{**entry, "queue_rank": rank} for rank, entry in enumerate(queue.values(), start=1)]
+    return queue_rows, design

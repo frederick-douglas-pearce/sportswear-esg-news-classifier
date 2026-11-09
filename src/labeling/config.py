@@ -145,8 +145,8 @@ def worst_case_call_cost_usd(
     """An upper bound on one call's cost: a generous input estimate and a full output.
 
     The input estimate divides by the model's fewest characters per token, since the same text
-    counts as more tokens on Haiku 5.5 than on Haiku 4.5. The contrastive eval and the #192
-    backfill both bound their spend with it.
+    counts as more tokens on Haiku 5.5 than on Haiku 4.5. The contrastive eval, the #192
+    backfill and the FP census (#155) bound their spend with it.
     """
     chars_per_token = labeling_model_spec(model).min_chars_per_token
     input_tokens = math.ceil((prompt_chars + content_chars) / chars_per_token)

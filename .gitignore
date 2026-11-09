@@ -29,6 +29,8 @@ backups/
 *.db
 *.sqlite
 data/*.jsonl
+# FP census records, review queue and queue design (#155)
+data/fp_census_*
 # Exception: training data files needed for notebook reproducibility
 !data/fp_training_data.jsonl
 !data/ep_training_data.jsonl
