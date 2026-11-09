@@ -18,13 +18,8 @@ Usage:
     # Summary and review queue, checked against the live cohort (reads the database); no API call:
     uv run python scripts/fp_census.py --queue
 
-Resume: a re-run skips articles already recorded, except a failed call that got no reply (no
-output tokens) and was not a refusal, which is called again; the latest record of an article is
-the one read. A failure the model was billed for (a reply that did not parse, or one cut at
-max_tokens) and a refusal are final, and are queued for the reviewer. No other model answers in
-place of a refused call. Articles are tried least recently tried first: those never called, then
-retries by their last attempt. ``--queue --partial`` queues an article whose latest call got no
-reply as a row with no verdict.
+Which articles a re-run calls again, the order it tries them in, and what --queue and --partial
+queue: docs/LABELING.md, "Second opinion on the classifier-only negatives".
 
 Run one invocation at a time: each counts only the records written before it started.
 
@@ -326,10 +321,6 @@ def write_queue(args: argparse.Namespace, output: Path) -> int:
             f"{message}; --partial: queueing what is recorded, a no-reply failure as a row with no verdict"
         )
 
-    # Every cohort article's latest record is queued. A no-reply failure of an article with sufficient
-    # content reaches here only with --partial (refused above otherwise); one whose content has since
-    # fallen below the minimum is not retried and is queued with no verdict either way. An article
-    # never called has no record to queue.
     unrecorded = [i for i in missing if i not in latest]
     records = [r for article_id, r in latest.items() if article_id in cohort_ids]
     summary = census.summarize(records, cutoff=args.cutoff, spend_usd=total_spend(lines))
