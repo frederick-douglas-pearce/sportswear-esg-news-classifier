@@ -4,6 +4,20 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-08: A second opinion on the FP negatives only the classifier decided (#155 PR1)
+
+`scripts/fp_census.py` sends each `fp_classifier` row of the FP export (#154, D030) to the labeler
+once, under the production prompt, and appends what the reply decides to
+`data/fp_census_<model>.jsonl`; it reads the database and writes nothing to it. The default model
+is `claude-sonnet-5-5` at effort `medium`, a model other than the production labeler's, and
+`LABELING_MODELS` gains its spec. Each verdict comes from `dispose_reply` (`positive`, `negative`,
+`unjudged`, `failed`); a refusal is recorded as failed, with no fallback model. A run needs
+`--max-cost`, counted over every record in the file, and a re-run skips recorded articles except
+failed calls that were not refusals. `--queue` summarizes disagreement by probability band, month and
+the owner-attested cutoff, and writes the review queue: disagreements nearest their own threshold
+first, a uniform sample of agreements per band, and a pre-cutoff census or sample
+(`src/evaluation/fp_census.py`). The review itself is #155 PR2; caching the labeling prompt is #262.
+
 ### 2026-11-08: Agent processes no longer build the labeling settings at import (#211)
 
 `src/labeling/__init__.py` reads its package attributes (`LabelingPipeline`, `labeling_settings`,

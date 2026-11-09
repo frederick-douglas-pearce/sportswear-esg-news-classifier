@@ -81,6 +81,17 @@ LABELING_MODELS: dict[str, LabelingModelSpec] = {
         default_max_tokens=8000,
         min_chars_per_token=2.0,
     ),
+    # The FP census's second-opinion model (#155): returns a 400 for a non-default temperature,
+    # takes effort, and thinks by default. Its characters per token are not measured here, so the
+    # bound uses the value Haiku 5.5's does.
+    "claude-sonnet-5-5": LabelingModelSpec(
+        input_cost_per_mtok=2.00,
+        output_cost_per_mtok=10.00,
+        accepts_sampling=False,
+        accepts_effort=True,
+        default_max_tokens=8000,
+        min_chars_per_token=2.0,
+    ),
 }
 
 

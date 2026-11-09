@@ -234,6 +234,34 @@ It is weaker than a per-article human ruling: those rows keep `label_source: fp_
 an `attested_cutoff` field. There is no default date; the owner has not confirmed one, and #155's
 review tests the attestation. It cannot be combined with `--include-classifier-labels`.
 
+### Second opinion on the classifier-only negatives (#155)
+
+`scripts/fp_census.py` sends every `fp_classifier` row to the labeler once, under the production
+prompt, on `claude-sonnet-5-5` at effort `medium` by default (`--model`, `--effort`), and appends
+what each reply decides to `data/fp_census_<model>.jsonl`. It reads the database and writes nothing
+to it. No LLM had judged these articles: the FP pre-filter skipped them before the labeler.
+
+```bash
+uv run python scripts/fp_census.py --dry-run                   # cohort by band and month, worst-case cost
+uv run python scripts/fp_census.py --limit 3 --max-cost 1      # a first slice
+uv run python scripts/fp_census.py --max-cost 60               # the rest; the cap counts every record in the file
+uv run python scripts/fp_census.py --queue                     # summary + review queue; no API call
+```
+
+Each reply's verdict comes from `dispose_reply`: `positive` (labeled, or a judged skip), `negative`
+(`false_positive`), `unjudged` (the reply did not establish sportswear status), or `failed` (an API
+error, a refusal, or a reply that did not parse). A positive disagrees with the classifier and a
+negative agrees; unjudged and failed rows are counted, not compared. A re-run retries failed calls
+except refusals; no other model answers in a refused call's place.
+
+`--queue` prints disagreement rates overall, per probability band (`[0, 0.2)`, `[0.2, 0.4)`,
+`[0.4, threshold)`), per month of the FP skip, and either side of `--cutoff` (default 2026-02-19), and
+writes `data/fp_census_<model>_queue.jsonl` in review order: every disagreement, nearest its own
+recorded threshold first; then `--agreements-per-band` agreements (default 20) drawn uniformly
+within each band; then the pre-cutoff rows, all of them when there are at most 100, else a uniform
+sample of 60. Each row lists why it is queued. The draws are seeded (`--seed`). The review and the
+corrections it makes are #155 PR2.
+
 ## ML Classifier Opportunities
 
 The project is designed to train three progressively complex classifiers that can reduce Claude API costs while maintaining accuracy:
