@@ -22,7 +22,11 @@ Resume: a re-run skips articles already recorded, except a failed call that got 
 output tokens) and was not a refusal, which is called again; the latest record of an article is
 the one read. A failure the model was billed for (a reply that did not parse, or one cut at
 max_tokens) and a refusal are final, and are queued for the reviewer. No other model answers in
-place of a refused call.
+place of a refused call. Articles are tried least recently tried first: those never called, then
+retries by their last attempt, so an article that fails with no reply on every call stops the run
+(exit 4) only after the rest have been tried; ``--queue --partial`` then queues it with no verdict.
+
+Run one invocation at a time: each counts only the records written before it started.
 
 What the cap does not see: a call interrupted (Ctrl-C, a kill) after the API billed it and before
 its record was written is not counted, so the cap can be passed by at most one call's cost per
@@ -240,7 +244,8 @@ def total_spend(lines: list[dict]) -> float:
 
 def call_chars(row: census.CohortRow) -> int:
     """The characters a call adds to the prompt template: the content and the fields substituted
-    into the user prompt."""
+    into the user prompt. The 32 covers the substituted published date (10 characters, or
+    "Unknown") and the "Unknown" the labeler substitutes for a missing source."""
     return len(row.content) + len(row.title) + len(", ".join(row.brands)) + len(row.source_name or "") + 32
 
 
@@ -317,9 +322,14 @@ def write_queue(args: argparse.Namespace, output: Path) -> int:
         if not args.partial:
             logger.error(f"{message}; run the census, or pass --partial to queue what is recorded")
             return EXIT_REFUSED
-        logger.warning(f"{message}; --partial: queueing what is recorded")
+        logger.warning(
+            f"{message}; --partial: queueing what is recorded, a no-reply failure as a row with no verdict"
+        )
 
-    records = [r for article_id, r in latest.items() if article_id in cohort_ids and article_id not in missing]
+    # With --partial, an article whose latest record is a no-reply failure is queued with no verdict;
+    # an article never called has no record to queue
+    unrecorded = [i for i in missing if i not in latest]
+    records = [r for article_id, r in latest.items() if article_id in cohort_ids]
     summary = census.summarize(records, cutoff=args.cutoff, spend_usd=total_spend(lines))
     print_summary(summary)
     queue, design = census.build_review_queue(
@@ -336,6 +346,8 @@ def write_queue(args: argparse.Namespace, output: Path) -> int:
             "insufficient_content": insufficient,
             "dropped_not_in_cohort": len(left_cohort),
             "missing": len(missing),
+            "never_called": len(unrecorded),
+            "retryable_failures": len(missing) - len(unrecorded),
             "partial": bool(missing),
             "summary": summary,
             "written_at": datetime.now(timezone.utc).isoformat(),
@@ -391,6 +403,9 @@ def run(args: argparse.Namespace, output: Path) -> int:
     latest = census.latest_records(lines)
     sendable = [r for r in cohort if has_sufficient_content(r.content)]
     todo = [r for r in sendable if census.needs_call(latest.get(r.article_id))]
+    # Least recently tried first: articles never called, then retries by their last attempt, so an
+    # article that fails with no reply on every call cannot keep the rest from being reached
+    todo.sort(key=lambda r: (latest[r.article_id]["labeled_at"] if r.article_id in latest else "", r.article_id))
     if args.limit:
         todo = todo[: args.limit]
     max_tokens = spec.default_max_tokens

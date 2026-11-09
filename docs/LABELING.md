@@ -262,14 +262,18 @@ stops before a call whose worst case would pass it, after a call that cost more 
 case, and after 3 failed calls in a row. A re-run calls an article again only when its latest record
 is a failed call that got no reply; a failure the model was billed for (a reply that did not parse,
 or one cut at `max_tokens`) and a refusal are final. No other model answers in place of a refused
-call. The cap cannot see a call interrupted after the API billed it and before its record was
+call. Articles are tried least recently tried first (never called, then retries by their last
+attempt), so an article that fails with no reply on every call stops the run (exit 4) only after the
+rest have been tried. Run one invocation at a time: each counts only the records written before it
+started. The cap cannot see a call interrupted after the API billed it and before its record was
 written (at most one call's cost per interruption; the unterminated last line such an interruption leaves
 is ignored, removed before the next record is written, and that article called again; any other
 malformed line is refused), nor a call that timed out (recorded at $0; #264).
 
 **Queue.** `--queue` re-reads the cohort (read only), drops records of articles no longer in it,
 and refuses when a cohort article with sufficient content has no usable record yet, unless
-`--partial`. It prints disagreement rates overall, per probability band (`[0, 0.2)`, `[0.2, 0.4)`,
+`--partial`, which queues an article whose latest call got no reply as a row with no verdict and
+leaves out articles never called. It prints disagreement rates overall, per probability band (`[0, 0.2)`, `[0.2, 0.4)`,
 `[0.4, threshold)`), per month of the FP skip (UTC), and either side of `--cutoff` (default
 2026-02-19), and writes `data/fp_census_<model>_queue.jsonl` in review order: every disagreement;
 every row with no verdict; `--agreements-per-band` agreements (default 20) drawn uniformly within

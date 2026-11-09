@@ -373,6 +373,8 @@ class TestRunRefusals:
 
     @pytest.mark.parametrize("cap", ["nan", "inf", "0", "-1"])
     def test_a_cap_that_is_not_a_positive_number_is_refused(self, env, cap):
+        # With nothing to call, only the cap's own check can refuse
+        env.cohort = []
         assert env.run("--max-cost", cap) == script.EXIT_REFUSED
         assert env.built == []
 
@@ -479,6 +481,19 @@ class TestResume:
         assert env.labeler.calls == ["T a1"]
         assert census.latest_records(_lines(env.output))["a1"]["verdict"] == census.POSITIVE
 
+    def test_articles_never_called_go_before_retries_and_retries_go_oldest_attempt_first(self, env):
+        """Three articles that fail with no reply every time cannot starve the rest."""
+        env.cohort = [_row(f"a{i}") for i in range(5)]
+        failures = []
+        for i, minute in ((0, 3), (1, 1), (2, 2)):
+            record = _record(env.cohort[i], _failed())
+            record["labeled_at"] = (NOW + timedelta(minutes=minute)).isoformat()
+            failures.append(record)
+        _write(env.output, failures)
+        env.labeler = StubLabeler([_ok([_not_sportswear("Puma")])] * 2 + [_failed()] * 3)
+        assert env.run("--max-cost", "10") == script.EXIT_ABORTED
+        assert env.labeler.calls == ["T a3", "T a4", "T a1", "T a2", "T a0"]
+
     def test_the_latest_line_of_an_article_decides(self, env):
         _write(
             env.output,
@@ -561,9 +576,19 @@ class TestQueue:
         assert env.run("--queue") == script.EXIT_REFUSED
         assert not script.queue_path(env.output).exists()
         assert env.run("--queue", "--partial") == script.EXIT_DONE
-        queue = _lines(script.queue_path(env.output))
-        assert {e["article_id"] for e in queue} == {"a0", "a1"}
-        assert json.loads(script.design_path(env.output).read_text())["partial"] is True
+        queue = {e["article_id"]: e for e in _lines(script.queue_path(env.output))}
+        # The no-reply failure is queued with no verdict
+        assert set(queue) == {"a0", "a1", "a2"}
+        assert queue["a2"]["queue_reasons"] == [census.REASON_NO_VERDICT]
+        design = json.loads(script.design_path(env.output).read_text())
+        assert (design["partial"], design["never_called"], design["retryable_failures"]) == (True, 0, 1)
+
+    def test_partial_leaves_out_articles_never_called(self, env):
+        _write(env.output, self._records(env)[:2])
+        assert env.run("--queue") == script.EXIT_REFUSED
+        assert env.run("--queue", "--partial") == script.EXIT_DONE
+        assert {e["article_id"] for e in _lines(script.queue_path(env.output))} == {"a0", "a1"}
+        assert json.loads(script.design_path(env.output).read_text())["never_called"] == 1
 
     def test_drops_records_no_longer_in_the_cohort_and_ignores_unsendable_rows(self, env, capsys):
         _write(env.output, self._records(env))
