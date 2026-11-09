@@ -326,8 +326,10 @@ def write_queue(args: argparse.Namespace, output: Path) -> int:
             f"{message}; --partial: queueing what is recorded, a no-reply failure as a row with no verdict"
         )
 
-    # With --partial, an article whose latest record is a no-reply failure is queued with no verdict;
-    # an article never called has no record to queue
+    # Every cohort article's latest record is queued. A no-reply failure of an article with sufficient
+    # content reaches here only with --partial (refused above otherwise); one whose content has since
+    # fallen below the minimum is not retried and is queued with no verdict either way. An article
+    # never called has no record to queue.
     unrecorded = [i for i in missing if i not in latest]
     records = [r for article_id, r in latest.items() if article_id in cohort_ids]
     summary = census.summarize(records, cutoff=args.cutoff, spend_usd=total_spend(lines))
@@ -403,8 +405,7 @@ def run(args: argparse.Namespace, output: Path) -> int:
     latest = census.latest_records(lines)
     sendable = [r for r in cohort if has_sufficient_content(r.content)]
     todo = [r for r in sendable if census.needs_call(latest.get(r.article_id))]
-    # Least recently tried first: articles never called, then retries by their last attempt, so an
-    # article that fails with no reply on every call cannot keep the rest from being reached
+    # Least recently tried first: articles never called, then retries by their last attempt
     todo.sort(key=lambda r: (latest[r.article_id]["labeled_at"] if r.article_id in latest else "", r.article_id))
     if args.limit:
         todo = todo[: args.limit]

@@ -482,7 +482,7 @@ class TestResume:
         assert census.latest_records(_lines(env.output))["a1"]["verdict"] == census.POSITIVE
 
     def test_articles_never_called_go_before_retries_and_retries_go_oldest_attempt_first(self, env):
-        """Three articles that fail with no reply every time cannot starve the rest."""
+        """Articles never called first, then retries by their last attempt, oldest first."""
         env.cohort = [_row(f"a{i}") for i in range(5)]
         failures = []
         for i, minute in ((0, 3), (1, 1), (2, 2)):
@@ -589,6 +589,13 @@ class TestQueue:
         assert queue["a2"]["queue_reasons"] == [census.REASON_NO_VERDICT]
         design = json.loads(script.design_path(env.output).read_text())
         assert (design["partial"], design["never_called"], design["retryable_failures"]) == (True, 0, 1)
+
+    def test_a_no_reply_record_of_an_article_now_too_short_is_queued_without_partial(self, env):
+        _write(env.output, self._records(env)[:2] + [_record(env.cohort[2], _failed())])
+        env.cohort[2] = _row("a2", probability=0.3, content="x" * 50)
+        assert env.run("--queue") == script.EXIT_DONE
+        queue = {e["article_id"]: e for e in _lines(script.queue_path(env.output))}
+        assert queue["a2"]["queue_reasons"] == [census.REASON_NO_VERDICT]
 
     def test_partial_leaves_out_articles_never_called(self, env):
         _write(env.output, self._records(env)[:2])
