@@ -23,8 +23,8 @@ output tokens) and was not a refusal, which is called again; the latest record o
 the one read. A failure the model was billed for (a reply that did not parse, or one cut at
 max_tokens) and a refusal are final, and are queued for the reviewer. No other model answers in
 place of a refused call. Articles are tried least recently tried first: those never called, then
-retries by their last attempt, so an article that fails with no reply on every call stops the run
-(exit 4) only after the rest have been tried; ``--queue --partial`` then queues it with no verdict.
+retries by their last attempt. ``--queue --partial`` queues an article whose latest call got no
+reply as a row with no verdict.
 
 Run one invocation at a time: each counts only the records written before it started.
 

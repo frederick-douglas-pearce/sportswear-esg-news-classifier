@@ -494,6 +494,13 @@ class TestResume:
         assert env.run("--max-cost", "10") == script.EXIT_ABORTED
         assert env.labeler.calls == ["T a3", "T a4", "T a1", "T a2", "T a0"]
 
+    def test_the_order_is_applied_before_limit(self, env):
+        env.cohort = [_row(f"a{i}") for i in range(5)]
+        _write(env.output, [_record(env.cohort[i], _failed()) for i in range(3)])
+        env.labeler = StubLabeler([_ok([_not_sportswear("Puma")])] * 2)
+        assert env.run("--max-cost", "10", "--limit", "2") == script.EXIT_DONE
+        assert env.labeler.calls == ["T a3", "T a4"]
+
     def test_the_latest_line_of_an_article_decides(self, env):
         _write(
             env.output,

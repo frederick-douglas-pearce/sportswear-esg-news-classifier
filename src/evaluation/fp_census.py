@@ -285,7 +285,8 @@ def build_review_queue(
     """The rows a human reviews, in review order, each once (D-10.3), and the draw's design.
 
     1. Every disagreement.
-    2. Every row with no verdict (unjudged, refused, or a billed failure).
+    2. Every row with no verdict (unjudged, refused, a billed failure, or, under
+       ``--queue --partial``, a call that got no reply).
     3. A uniform random sample of agreements within each probability band, so the residual error
        estimate is not biased toward the threshold.
     4. Pre-cutoff rows: all of them when there are at most ``pre_cutoff_census_max``, otherwise a
