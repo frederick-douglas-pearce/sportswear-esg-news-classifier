@@ -4,6 +4,24 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-08: A second opinion on the FP negatives only the classifier decided (#155 PR1)
+
+`scripts/fp_census.py` sends each `fp_classifier` row of the FP export (#154, D030) with sufficient
+content to the labeler, under the production prompt, and appends what the reply decides to
+`data/fp_census_<model>.jsonl` (gitignored, `data/fp_census_*`); it reads the database and writes
+nothing to it. The default model is `claude-sonnet-5-5` at effort `medium`, a model other than the
+production labeler's, and `LABELING_MODELS` gains its spec. A parsed reply's verdict is `positive`,
+`negative` or `unjudged` as `dispose_reply` decides it; a call with no usable reply is `failed`, and
+a refusal is recorded as failed, with no fallback model. A run needs a positive `--max-cost`, counted
+over every record in the file, and stops at it, after a call that cost more than its worst case, and
+after 3 failed calls in a row; a re-run calls again only an article whose last call got no reply.
+`--queue` checks the records against the live cohort (`--partial` to queue an incomplete census),
+summarizes disagreement by probability band, month and the owner-attested cutoff, and writes the
+review queue (disagreements, rows with no verdict, a uniform sample of agreements per band, a
+pre-cutoff census or sample, each section nearest its own threshold first) and its design file
+(`src/evaluation/fp_census.py`); an existing queue is replaced only with `--force`. The review is
+#155 PR2; caching the labeling prompt is #262, and counting timed-out calls in spend is #264.
+
 ### 2026-11-08: Agent processes no longer build the labeling settings at import (#211)
 
 `src/labeling/__init__.py` reads its package attributes (`LabelingPipeline`, `labeling_settings`,

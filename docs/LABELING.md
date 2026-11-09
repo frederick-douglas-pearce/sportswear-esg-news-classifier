@@ -74,7 +74,7 @@ uv run python scripts/label_articles.py --batch-size 5 -v
 
 ## Cost Estimation
 
-LLM prices and each model's request surface (whether it takes `temperature` or `output_config.effort`, and its default `max_tokens`) are in `LABELING_MODELS` in `src/labeling/config.py`, matched on the exact id or the id plus a `-YYYYMMDD` snapshot date. A labeler for a model with no entry is refused before any call. Haiku 5.5 thinks by default: the labeler reads the reply's text blocks by type, sends no sampling parameters and sends `LABELING_EFFORT` (default `medium`), and records a refusal (`stop_reason: "refusal"`; Haiku 5.5 has no server-side fallback) as a failed article with error type `refusal`. Neither a refusal nor a reply that stopped at `max_tokens` and did not parse is retried; find them with `labeling_error LIKE 'Model declined the request%'` or `LIKE 'Reply stopped at max_tokens%'` (`FAILED_REFUSAL_PREFIX`, `FAILED_MAX_TOKENS_PREFIX` in `src/data_collection/models.py`). Each run's config JSON records the model and effort it ran (`labeling_runs` has no model column).
+LLM prices and each model's request surface (whether it takes `temperature` or `output_config.effort`, and its default `max_tokens`) are in `LABELING_MODELS` in `src/labeling/config.py`, matched on the exact id or the id plus a `-YYYYMMDD` snapshot date. A labeler for a model with no entry is refused before any call. Haiku 5.5 and Sonnet 5.5 (the FP census's model, #155) think by default: the labeler reads the reply's text blocks by type, sends no sampling parameters and sends its effort (`LABELING_EFFORT`, default `medium`, unless the caller passes one, as the FP census's `--effort` does), and records a refusal (`stop_reason: "refusal"`; the labeler sends no server-side `fallbacks`, which Haiku 5.5 does not offer) as a failed article with error type `refusal`. Neither a refusal nor a reply that stopped at `max_tokens` and did not parse is retried; find them with `labeling_error LIKE 'Model declined the request%'` or `LIKE 'Reply stopped at max_tokens%'` (`FAILED_REFUSAL_PREFIX`, `FAILED_MAX_TOKENS_PREFIX` in `src/data_collection/models.py`). Each run's config JSON records the model and effort it ran (`labeling_runs` has no model column).
 
 | Component | Approximate Cost |
 |-----------|------------------|
@@ -231,8 +231,57 @@ class ratio, before retraining (#192 re-judges those rows).
 **Owner-attested tier.** `--attested-before YYYY-MM-DD` also keeps classifier-only negatives whose
 FP skip (UTC) predates the date, on the owner's attestation that articles before it were reviewed.
 It is weaker than a per-article human ruling: those rows keep `label_source: fp_classifier` and gain
-an `attested_cutoff` field. There is no default date; the owner has not confirmed one, and #155's
-review tests the attestation. It cannot be combined with `--include-classifier-labels`.
+an `attested_cutoff` field. The export has no default date. #155 records the owner's initial
+cutoff, 2026-02-19 (the FP census's `--cutoff` default, below); the census reports disagreement
+either side of it and queues pre-cutoff rows, and #155 PR2's review tests the attestation. It cannot be combined with `--include-classifier-labels`.
+
+### Second opinion on the classifier-only negatives (#155)
+
+`scripts/fp_census.py` sends every `fp_classifier` row with sufficient content
+(`has_sufficient_content`, the pipeline's rule; a run prints how many it leaves out) to the labeler,
+under the production prompt, on `claude-sonnet-5-5` at effort `medium` by default (`--model`;
+`--effort`, sent only to a model that takes it), and appends what each reply decides to
+`data/fp_census_<model>.jsonl`. It reads the database and writes nothing to it. No LLM had judged
+these articles: the FP pre-filter skipped them before the labeler.
+
+```bash
+uv run python scripts/fp_census.py --dry-run                   # cohort by band and month, worst-case cost
+uv run python scripts/fp_census.py --limit 3 --max-cost 1      # a first slice
+uv run python scripts/fp_census.py --max-cost 60               # the rest; the cap counts every record in the file
+uv run python scripts/fp_census.py --queue                     # summary + review queue + design; no API call
+```
+
+A parsed reply's verdict comes from `dispose_reply`: `positive` (labeled, or a judged skip),
+`negative` (`false_positive`, which includes `mention_only` and `retail_only` replies) or `unjudged`
+(the reply did not establish sportswear status). A call with no usable reply is `failed` (an API
+error, a refusal, or a reply that did not parse). A positive disagrees with the classifier and a
+negative agrees; unjudged and failed rows are counted, not compared, and are queued for review.
+
+**Spend.** A run needs `--max-cost` (a positive number), counted over every record in the file, and
+stops before a call whose worst case would pass it, after a call that cost more than its worst
+case, and after 3 failed calls in a row. A re-run calls an article again only when its latest record
+is a failed call that got no reply; a failure the model was billed for (a reply that did not parse,
+or one cut at `max_tokens`) and a refusal are final. No other model answers in place of a refused
+call. Articles are tried least recently tried first (never called, then retries by their last
+attempt). Run one invocation at a time: each counts only the records written before it
+started. The cap cannot see a call interrupted after the API billed it and before its record was
+written (at most one call's cost per interruption; the unterminated last line such an interruption leaves
+is ignored, removed before the next record is written, and that article called again; any other
+malformed line is refused), nor a call that timed out (recorded at $0; #264).
+
+**Queue.** `--queue` re-reads the cohort (read only), drops records of articles no longer in it,
+and refuses when a cohort article with sufficient content has no usable record yet, unless
+`--partial`, which queues an article whose latest call got no reply as a row with no verdict and
+leaves out articles never called. It prints disagreement rates overall, per probability band (`[0, 0.2)`, `[0.2, 0.4)`,
+`[0.4, threshold)`), per month of the FP skip (UTC), and either side of `--cutoff` (default
+2026-02-19), and writes `data/fp_census_<model>_queue.jsonl` in review order: every disagreement;
+every row with no verdict; `--agreements-per-band` agreements (default 20) drawn uniformly within
+each band; then the pre-cutoff rows, all of them when there are at most 100, else a uniform sample
+of 60. Within each section rows run nearest their own recorded threshold first; the order never
+changes which rows are drawn. Each row lists why it is queued, and the draws are seeded (`--seed`).
+`data/fp_census_<model>_queue_design.json` records the records file's sha256, the parameters, and
+each draw's pool and size, which a weighted estimate needs. An existing queue is replaced only with
+`--force`. The review, its weighted estimate and the corrections it makes are #155 PR2.
 
 ## ML Classifier Opportunities
 

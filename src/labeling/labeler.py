@@ -43,8 +43,9 @@ STRUCTURAL_AFTER_STRING = frozenset(",}]:\"")
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 
-# error_type of a reply the model declined (stop_reason "refusal"). Haiku 5.5 runs safety
-# classifiers and has no server-side fallback, so a decline is recorded as a failed article.
+# error_type of a reply the model declined (stop_reason "refusal"). Haiku 5.5 and Sonnet 5.5 run
+# safety classifiers, and the labeler sends no server-side `fallbacks` (Haiku 5.5 has none, and
+# the FP census wants no other model answering, #155), so a decline is recorded as a failed article.
 REFUSAL_ERROR_TYPE = "refusal"
 # error_type of a reply that stopped at max_tokens and could not be parsed
 MAX_TOKENS_ERROR_TYPE = "max_tokens"

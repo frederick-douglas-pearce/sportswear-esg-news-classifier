@@ -1113,6 +1113,19 @@ class TestModelRequests:
         # Thinking counts toward max_tokens, so the model's own cap is larger
         assert kwargs["max_tokens"] == 8000
 
+    def test_sonnet_5_5_sends_effort_and_no_sampling_parameters(self):
+        """The FP census's model (#155): a non-default temperature is a 400 on it."""
+        labeler, client = self._labeler(
+            "claude-sonnet-5-5", _api_response([("text", _REPLY_JSON)]), effort="medium", prompt_version="v1.10.0"
+        )
+        assert self._label(labeler).success
+        kwargs = client.messages.create.call_args.kwargs
+        assert not {"temperature", "top_p", "top_k"} & kwargs.keys()
+        assert kwargs["extra_body"] == {"output_config": {"effort": "medium"}}
+        assert kwargs["max_tokens"] == 8000
+        assert labeler.model_spec.input_cost_per_mtok == 2.00
+        assert labeler.model_spec.output_cost_per_mtok == 10.00
+
     def test_reply_text_is_read_by_block_type(self):
         """A model that thinks can start its reply with a thinking block, whose text is empty."""
         response = _api_response([("thinking", ""), ("text", _REPLY_JSON)])
