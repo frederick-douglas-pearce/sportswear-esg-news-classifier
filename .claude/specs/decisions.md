@@ -3150,3 +3150,37 @@ leadership changes as Governance. #252 asked for the policy from `docs/LABELING.
 - The false_positive sample selects by `skipped_at`, which a false positive does not write: only a
   row skipped in the window and later relabeled `false_positive` is sampled, ordered by its skip
   time (#256, which takes the decision time from judgment and prediction rows).
+
+## D043: The Required `test` Check Runs the Database Tier, and `ScorecardSnapshot`'s Period Columns Are `Date` as Migration 006 Says (#258)
+
+**Status:** accepted 2026-11-09 (architect review; at the plan gate the owner chose to change the
+model to `Date` here and convert production in a separate migration, #267, over doing the migration
+in this change or loosening the scorecard tests). #258's second criterion amended by the owner the
+same day, after PR #268's code review.
+
+**Context.** CI ran `uv run pytest` without `RUN_DB_TESTS=1`, so every `RUN_DB_TESTS`-gated test
+was skipped on every PR. `ScorecardSnapshot.period_start` / `period_end` were `DateTime` in the
+model but `DATE` in `migrations/006_scorecard_history.sql`, which creates the table only if it does
+not exist, as `create_all` does; a database got the type of whichever created the table. The tests
+build their schema with `create_all`.
+
+**Decision.**
+1. The required `test` job runs one pytest invocation with `RUN_DB_TESTS=1` against a
+   `pgvector/pgvector:pg16` service (the `docker-compose.yml` image) on port 5432 with no `esg_news`
+   database; the database tests reach it through `TEST_DATABASE_URL`. The workflow sets no
+   `DATABASE_URL`, and the code's defaults for it name `localhost:5434/esg_news`, which the runner
+   does not serve. Unit tests that set `DATABASE_URL` in-process to a fake URL, with the engine
+   mocked, are outside this (#258's amended criterion).
+2. The pytest step fails if `DATABASE_URL` is set in its environment. A step after it fails the job
+   if `junit.xml` is missing or empty, or contains `Set RUN_DB_TESTS=1 to run`, which every
+   `RUN_DB_TESTS` gate's skip reason contains, so it catches `RUN_DB_TESTS` being unset. It does not catch
+   database tests that are deselected or ignored, or skipped with other wording; that is #269.
+3. The model's two period columns become `Date`, matching migration 006. Production's `timestamp`
+   columns are converted by a separate, owner-applied migration (#267), which checks
+   first that every row is at midnight.
+4. No separate test pins the column types. In CI, where `create_all` builds the schema fresh,
+   `test_get_latest_snapshot`'s assertions on `period_end` and `period_start` fail if either column
+   reverts to `DateTime`.
+
+**Not decided here.** The scorecard tables' other model/migration drift goes to the same follow-up,
+#267. The tier checks the schema `create_all` builds, not the migrations.

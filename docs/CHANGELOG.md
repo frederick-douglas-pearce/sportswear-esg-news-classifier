@@ -4,6 +4,25 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-09: The required `test` check runs the database tier (#258, D043)
+
+`.github/workflows/ci.yml`'s `test` job runs pytest with `RUN_DB_TESTS=1` against a
+`pgvector/pgvector:pg16` service (the `docker-compose.yml` image) on port 5432 with no `esg_news`
+database; the database tests reach it through `TEST_DATABASE_URL`. The workflow sets no
+`DATABASE_URL`, and the code's defaults for it name `localhost:5434/esg_news`, which the runner does
+not serve. The pytest step fails if `DATABASE_URL` is set in its environment, and a step after it
+fails the job if `junit.xml` is missing or empty, or contains the skip reason the database tests
+give when `RUN_DB_TESTS` is not `1`. That step does not catch database tests deselected, ignored or
+skipped with other wording (#269). The tier checks the schema `create_all` builds, not the
+migrations.
+
+`ScorecardSnapshot.period_start` and `period_end` were `DateTime` in the model and `DATE` in
+`migrations/006_scorecard_history.sql`, so the type a database got depended on which created the
+table. They are now `Date`, and `test_get_latest_snapshot` asserts both after a round trip.
+`create_all` does not alter an existing table, so a table it built while they were `DateTime` keeps
+`timestamp` columns, and an ORM read of them there returns a `datetime`; the production table has
+`timestamp` columns, and #267 converts them with a migration.
+
 ### 2026-11-09: Scorecard DB tests no longer depend on the calendar (#259)
 
 `tests/test_scorecard_database.py` dated its snapshots in February 2026, while
