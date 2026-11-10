@@ -3150,3 +3150,30 @@ leadership changes as Governance. #252 asked for the policy from `docs/LABELING.
 - The false_positive sample selects by `skipped_at`, which a false positive does not write: only a
   row skipped in the window and later relabeled `false_positive` is sampled, ordered by its skip
   time (#256, which takes the decision time from judgment and prediction rows).
+
+## D043: The Required `test` Check Runs the Database Tier, and `ScorecardSnapshot`'s Period Columns Are `Date` as Migration 006 Says (#258)
+
+**Status:** accepted 2026-11-09 (architect review; owner chose option (a) at the plan gate)
+
+**Context.** CI ran `uv run pytest` with no database, so every `requires_postgres` test was skipped
+on every PR. Run against a freshly created database, which is what CI gets, two scorecard tests
+fail: `ScorecardSnapshot.period_start` / `period_end` are `DateTime` in the model but `DATE` in
+`migrations/006_scorecard_history.sql`, and the tests build their schema with `create_all`. The
+local test database had `DATE` and the production database has `timestamp`, because each was
+created by a different one of the two.
+
+**Decision.**
+1. The required `test` job runs one pytest invocation with `RUN_DB_TESTS=1` against a
+   `pgvector/pgvector:pg16` service (the `docker-compose.yml` image) on port 5432 that hosts only
+   `esg_news_test`, reached through `TEST_DATABASE_URL`. `DATABASE_URL` is never set; its code
+   defaults name `localhost:5434/esg_news`, which the runner does not serve.
+2. The pytest step fails if `DATABASE_URL` is set in its environment, and the job fails if the junit
+   report contains the database gate's skip reason, so a later edit cannot silently skip the tier.
+3. The model's two period columns become `Date`, matching migration 006. Production's `timestamp`
+   columns are converted by a separate, owner-applied migration (#267), which checks
+   first that every row is at midnight.
+4. No separate test pins the column types: in CI the two scorecard tests are the pin.
+
+**Not decided here.** The scorecard table's other model/migration drift (the `similarity_threshold`
+default and two indexes only the migration creates) goes to the same follow-up, #267. The tier checks the
+schema `create_all` builds, not the migrations.

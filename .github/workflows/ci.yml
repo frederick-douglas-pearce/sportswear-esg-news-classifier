@@ -19,6 +19,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The database tier (RUN_DB_TESTS) runs against this service. It hosts only
+    # esg_news_test and listens on 5432, while every DATABASE_URL default in the
+    # code names localhost:5434/esg_news, so nothing reaches it except through
+    # TEST_DATABASE_URL. The image is docker-compose.yml's; change both together.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: esg_news_test
+        ports:
+          - 5432:5432
+        # -h localhost checks over TCP: during init the image runs a temporary
+        # server on the unix socket only, which a socket check would report ready.
+        options: >-
+          --health-cmd "pg_isready -h localhost -U postgres -d esg_news_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -36,7 +56,26 @@ jobs:
           cache-dependency-glob: '**/uv.lock'
           cache-suffix: ci
       - run: uv sync --frozen --extra dev
-      - run: uv run pytest --tb=short --junitxml=junit.xml
+      - name: Test (database tier included)
+        env:
+          RUN_DB_TESTS: '1'
+          TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/esg_news_test
+        # The DATABASE_URL check sits in this step so that it sees this step's
+        # environment, including any env: added to the step later.
+        run: |
+          if [ -n "${DATABASE_URL+x}" ]; then
+            echo "::error::DATABASE_URL is set; database tests must use TEST_DATABASE_URL only"
+            exit 1
+          fi
+          uv run pytest --tb=short --junitxml=junit.xml
+      # Every database test's skip reason says to set RUN_DB_TESTS=1, so finding it in
+      # the report means the tier was skipped while the job stayed green.
+      - name: Check the database tier ran
+        run: |
+          if grep -q 'Set RUN_DB_TESTS=1 to run' junit.xml; then
+            echo "::error::database tests were skipped (RUN_DB_TESTS not set to 1)"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:

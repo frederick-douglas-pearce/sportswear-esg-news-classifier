@@ -53,7 +53,7 @@ uv run pytest
 # Run with verbose output
 uv run pytest -v
 
-# Database tests (requires PostgreSQL, not run in CI)
+# Database tests (requires PostgreSQL; CI runs them against a pgvector service)
 RUN_DB_TESTS=1 uv run pytest tests/test_database.py
 ```
 
