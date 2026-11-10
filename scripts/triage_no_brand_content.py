@@ -2,23 +2,29 @@
 """Move stored articles whose text names none of their brands to 'unlabelable' (#227, D044).
 
 The scraper now skips a scrape whose content names none of the article's brands
-(``SCRAPE_NO_BRAND_ERROR``). This moves stored rows scraped as 'success' before that, which the
-labeling LLM decided from the headline, to the same state: ``scrape_status='skipped'``, that
-``scrape_error``, ``labeling_status='unlabelable'``. Their content is kept, and their brand labels
-are deleted unless a human wrote or reviewed them. The cohort is derived on every run
-(``provenance.select_no_brand_content``); human rulings, human labels and possible hand moves are
-left out and listed.
+(``SCRAPE_NO_BRAND_ERROR``). This moves stored rows scraped as 'success' before that, which were
+labeled, or queued for labeling, with content that does not name the brand, to the same state:
+``scrape_status='skipped'``, that ``scrape_error``, ``labeling_status='unlabelable'``. Their
+content is kept, and their brand labels are deleted (a row with a human's label is not moved). The
+cohort is derived on every run (``provenance.select_no_brand_content``). Human rulings, human
+labels, possible hand moves, eval-case articles and other statuses are left out and counted by
+reason; possible hand moves and eval-case articles are also listed by id.
 
 Usage:
     # What would move, by status and brand, and what is left out; writes nothing
     python scripts/triage_no_brand_content.py --dry-run
 
-    # Move them (back up the database first). Each row's prior state is written to the
-    # manifest before the transaction commits.
+    # Move them (back up the database first: the manifest records each row's prior status,
+    # reason and scrape fields and the number of labels deleted, not the labels themselves,
+    # which only the backup restores). The manifest is written before the transaction commits,
+    # and an existing manifest path is refused.
     python scripts/triage_no_brand_content.py
 
-Run it outside the labeling cron's window: a row whose status changes between selection and write
-is not moved, and is counted.
+Run it outside the labeling cron's window. A row whose status or reason changed since selection,
+or that gained a human label, is not moved and is counted; but the labeling pipeline's status
+write is unconditional, so a labeling run that selected a row before this commits can still
+label it afterwards. Check after the run with the scrape_error query in
+queries/collection_queries.sql: every row with this scrape_error should be unlabelable.
 """
 
 import argparse
@@ -33,7 +39,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data_collection import provenance
 from src.data_collection.database import db, scrape_failure_reason
-from src.data_collection.models import SCRAPE_NO_BRAND_ERROR, Article
+from sqlalchemy import exists
+
+from src.data_collection.models import SCRAPE_NO_BRAND_ERROR, Article, BrandLabel
 
 EVAL_CASES_GLOB = "prompts/labeling/eval_cases/*.json"
 TRIAGE_STATUS = "unlabelable"
@@ -60,7 +68,7 @@ def eval_case_ids(root: Path = Path(__file__).parent.parent) -> set[str]:
     return found
 
 
-def print_cohort(cohort: provenance.NoBrandCohort, case_ids: set[str]) -> None:
+def print_cohort(cohort: provenance.NoBrandCohort) -> None:
     print(f"To move: {len(cohort.selected)}")
     for status, count in sorted(cohort.by_status.items()):
         print(f"  {status}: {count}")
@@ -77,19 +85,24 @@ def print_cohort(cohort: provenance.NoBrandCohort, case_ids: set[str]) -> None:
         print("Possible hand moves (left as stored; rule on them with fix_label.py):")
         for article_id in hand_moves:
             print(f"  {article_id}")
-    in_cases = sorted(set(cohort.selected) & case_ids)
-    print(f"In eval case files: {len(in_cases)}")
-    for article_id in in_cases:
-        print(f"  {article_id}")
+    in_cases = sorted(
+        i for i, why in cohort.left_out.items() if why == provenance.EXCLUDED_EVAL_CASE
+    )
+    if in_cases:
+        print("Eval-case articles (left as stored; the case's verdict is the owner's):")
+        for article_id in in_cases:
+            print(f"  {article_id}")
 
 
 def apply_triage(session, cohort: provenance.NoBrandCohort, manifest_path: Path) -> dict[str, int]:
     """Move the cohort, in the caller's transaction, and write the manifest before returning.
 
-    Each update is guarded on the row still having the status it had at selection; a row that
-    changed is not moved and is counted as ``changed``. The manifest holds one JSON line per moved
-    row with its prior state and the brand labels deleted, and is flushed to disk here, so the
-    caller's commit follows it.
+    Each update is guarded on the row still having the status and reason it had at selection and
+    no brand label a human wrote or reviewed; a row that fails the guard is not moved, keeps its
+    labels, gets no manifest line, and is counted as ``changed``. The manifest holds one JSON line
+    per moved row with its prior status, reason and scrape fields and the number of brand labels
+    deleted (not the labels: restore those from the backup). It is created here, refusing an
+    existing file, and flushed to disk, so the caller's commit follows it.
     """
     # Imported here: the labeling package loads the chunker and tokenizer, which --dry-run needs not
     from src.labeling.database import LabelingDatabase
@@ -101,7 +114,14 @@ def apply_triage(session, cohort: provenance.NoBrandCohort, manifest_path: Path)
         uid = UUID(article_id)
         updated = (
             session.query(Article)
-            .filter(Article.id == uid, Article.labeling_status == status)
+            .filter(
+                Article.id == uid,
+                Article.labeling_status == status,
+                Article.labeling_error.is_not_distinct_from(error),
+                ~exists().where(
+                    BrandLabel.article_id == Article.id, provenance.human_label_criterion()
+                ),
+            )
             .update(
                 {
                     Article.labeling_status: TRIAGE_STATUS,
@@ -128,7 +148,7 @@ def apply_triage(session, cohort: provenance.NoBrandCohort, manifest_path: Path)
         })
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    with manifest_path.open("w") as handle:
+    with manifest_path.open("x") as handle:
         for record in records:
             handle.write(json.dumps(record) + "\n")
         handle.flush()
@@ -152,19 +172,29 @@ def main(argv: list[str] | None = None, database=None) -> int:
     )
     args = parser.parse_args(argv)
     database = database or db
+    manifest = args.manifest or default_manifest_path()
+    if not args.dry_run and manifest.exists():
+        print(f"Manifest {manifest} exists; refusing to overwrite it. Pass another --manifest.")
+        return 2
 
-    with database.get_session() as session:
-        cohort = provenance.select_no_brand_content(session)
-        print_cohort(cohort, eval_case_ids())
-        if args.dry_run:
-            session.rollback()
-            print("Dry run: nothing written.")
-            return 0
-        if not cohort.selected:
-            print("Nothing to move.")
-            return 0
-        manifest = args.manifest or default_manifest_path()
-        counts = apply_triage(session, cohort, manifest)
+    written = False
+    try:
+        with database.get_session() as session:
+            cohort = provenance.select_no_brand_content(session, eval_case_ids())
+            print_cohort(cohort)
+            if args.dry_run:
+                session.rollback()
+                print("Dry run: nothing written.")
+                return 0
+            if not cohort.selected:
+                print("Nothing to move.")
+                return 0
+            counts = apply_triage(session, cohort, manifest)
+            written = True
+    except Exception:
+        if written:
+            print(f"Manifest {manifest} describes a transaction that did not commit.")
+        raise
     print(
         f"Moved {counts['moved']} to {TRIAGE_STATUS}; {counts['changed']} changed since selection "
         f"and left as stored; {counts['labels_deleted']} brand labels deleted. Manifest: {manifest}"

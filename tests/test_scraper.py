@@ -348,3 +348,19 @@ class TestNoBrandGate:
 
         assert result.success is True
         assert result.status == "success"
+
+    def test_scrape_with_delay_passes_expected_brands_to_the_gate(self):
+        """The collector calls scrape_with_delay; the gate is reached only if it passes the
+        expected brands on."""
+        from src.data_collection.models import SCRAPE_NO_BRAND_ERROR
+
+        scraper = ArticleScraper(delay_seconds=0.01)
+        with patch('src.data_collection.scraper.NewspaperArticle') as mock_article_class, \
+                patch('src.data_collection.scraper.time.sleep'):
+            mock_article = MagicMock()
+            mock_article.text = self.BODY
+            mock_article_class.return_value = mock_article
+            result = scraper.scrape_with_delay("https://example.com/article", ["Under Armour"])
+
+        assert result.status == "skipped"
+        assert result.error == SCRAPE_NO_BRAND_ERROR

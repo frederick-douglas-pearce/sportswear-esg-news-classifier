@@ -932,12 +932,14 @@ def recheck_backfill_batch(
 
 
 # --- #227: stored text that names none of the article's brands (D044) ------------------------
-# A row scraped as 'success' whose full_content names none of its brands_mentioned was decided
-# from the headline. scripts/triage_no_brand_content.py moves the rows this selects to the state
-# the scraper now gives such a scrape ('skipped', SCRAPE_NO_BRAND_ERROR, 'unlabelable').
+# A row scraped as 'success' whose full_content names none of its brands_mentioned was labeled, or
+# queued for labeling, with content that does not name the brand. scripts/triage_no_brand_content.py
+# moves the rows this selects to the state the scraper now gives such a scrape ('skipped',
+# SCRAPE_NO_BRAND_ERROR, 'unlabelable').
 
 NO_BRAND_STATUSES = ("pending", FAILED_STATUS, "labeled", "skipped", FP_NEGATIVE_STATUS)
 EXCLUDED_OTHER_STATUS = "other_status"  # a status the triage does not move (deduplicated, ...)
+EXCLUDED_EVAL_CASE = "eval_case"  # an article in an eval case file, whose expected verdict is the owner's
 
 
 @dataclass
@@ -957,14 +959,24 @@ class NoBrandRow:
 def no_brand_exclusion(row: NoBrandRow) -> str | None:
     """Why the triage leaves this row as stored, or None to move it.
 
-    Fail-closed, as the backfill cohorts are: a human's ruling, label or marker, and any status
-    that may have been moved by hand, are left for the owner. A ``false_positive`` row the LLM
-    decided is a possible hand move unless its reason has a reply's form (``possible_hand_move``);
-    one the FP classifier decided keeps the classifier's own reason, so it is moved. A ``skipped``
-    row whose reason no pipeline writes, and a ``labeled`` row with a reason or no label, may have
-    been moved by hand (``relabel_arm``).
+    Fail-closed, as the backfill cohorts are. Left for the owner: a ``HUMAN_RULINGS`` row, a human
+    marker as the reason (``FP_REASON_MANUAL``, ``MANUAL_SKIP_REASON``) whatever the status, a
+    human-written or reviewed label, and a row that may have been moved by hand:
+    - ``false_positive`` the LLM decided, unless its reason has a reply's form
+      (``possible_hand_move``);
+    - ``skipped`` with a reason no pipeline writes (``relabel_arm``);
+    - ``labeled`` with a reason or no label (``relabel_arm``);
+    - ``pending`` with a reason or a label: the pipeline writes neither before a ``pending`` row is
+      labeled, so ``fix_label.py update --status pending`` put it there;
+    - ``failed`` with a label.
+    Moved: a ``false_positive`` the FP classifier decided (its stored reason is the classifier's
+    own) or the keyword sweep wrote (``rule``), a ``skipped`` row at a reason the pipeline writes, a
+    ``labeled`` row with labels and no reason, and a ``pending`` or ``failed`` row with neither.
+    A status outside ``NO_BRAND_STATUSES`` is left as stored.
     """
     if row.article_id in HUMAN_RULINGS:
+        return EXCLUDED_HUMAN
+    if row.labeling_error in (FP_REASON_MANUAL, MANUAL_SKIP_REASON):
         return EXCLUDED_HUMAN
     if row.labeling_status not in NO_BRAND_STATUSES:
         return EXCLUDED_OTHER_STATUS
@@ -986,6 +998,10 @@ def no_brand_exclusion(row: NoBrandRow) -> str | None:
         elif source == UNATTRIBUTED:
             return EXCLUDED_POSSIBLE_HAND_MOVE
     if row.labeling_status == "labeled" and (row.labeling_error or not row.has_labels):
+        return EXCLUDED_POSSIBLE_HAND_MOVE
+    if row.labeling_status == "pending" and (row.labeling_error or row.has_labels):
+        return EXCLUDED_POSSIBLE_HAND_MOVE
+    if row.labeling_status == FAILED_STATUS and row.has_labels:
         return EXCLUDED_POSSIBLE_HAND_MOVE
     return None
 
@@ -1010,10 +1026,13 @@ class NoBrandCohort:
         return Counter(b for i in self.selected for b in self.brands[i])
 
 
-def select_no_brand_content(session) -> NoBrandCohort:
+def select_no_brand_content(session, eval_case_ids: Iterable[str] = ()) -> NoBrandCohort:
     """Rows scraped as 'success' whose stored ``full_content`` names none of their brands, by the
     scraper's own test (``brands_in_text``), not already ``unlabelable``, each decided by
-    ``no_brand_exclusion``. Derived on every call, in id order."""
+    ``no_brand_exclusion``; a row it would move whose id is in ``eval_case_ids`` is left out as
+    ``EXCLUDED_EVAL_CASE``.
+    Derived on every call, in id order."""
+    eval_case_ids = set(eval_case_ids)
     from .brand_match import brands_in_text
 
     latest = latest_prediction_subquery("fp")
@@ -1062,6 +1081,8 @@ def select_no_brand_content(session) -> NoBrandCohort:
             has_labels=article_id in label_ids,
             human_labels=article_id in human_label_ids,
         ))
+        if why is None and article_id in eval_case_ids:
+            why = EXCLUDED_EVAL_CASE
         if why:
             cohort.excluded[why] += 1
             cohort.left_out[article_id] = why

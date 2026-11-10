@@ -96,8 +96,9 @@ class ArticleScraper:
         """
         Find which expected brands the scraped content names (``brand_match.brands_in_text``).
 
-        Content that names none of them is boilerplate, an ad, a login wall or another article,
-        not the article that was collected, and ``scrape_article`` fails the scrape (#227).
+        Content that names none of them is usually boilerplate, an ad, a login wall or another
+        article; some is the article itself, naming the brand only in its title. Either way it
+        carries nothing to label the brand from, and ``scrape_article`` fails the scrape (#227).
 
         Args:
             content: Scraped article text
@@ -131,7 +132,8 @@ class ArticleScraper:
             url: Article URL to scrape
             expected_brands: Brand names expected to appear in content. Content that names
                 none of them fails the scrape as ``skipped`` (#227); the result carries the
-                content, which the collector stores for a later re-check.
+                content, which the collector stores so the row can be re-checked without a
+                re-fetch (no tool does that yet).
 
         Returns:
             ScrapeResult with content or error details
@@ -173,7 +175,7 @@ class ArticleScraper:
                     status="skipped",
                 )
 
-            # Content that names none of the expected brands is not the collected article (#227)
+            # Content that names none of the expected brands carries nothing to label them from (#227)
             brands_found, validation_warning = self._validate_brand_mentions(
                 content, expected_brands or []
             )

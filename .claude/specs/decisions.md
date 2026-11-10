@@ -3188,34 +3188,50 @@ build their schema with `create_all`.
 ## D044: A Scrape Whose Text Names None of Its Brands Is Skipped, and Stored Rows Like It Move to `unlabelable` (#227)
 
 **Status:** accepted 2026-11-09 (architect review; at the plan gate the owner chose a bulk move over
-per-row review, and no labeling-pipeline gate).
+per-row review, and no labeling-pipeline gate). Amended 2026-11-10 by the owner's adoption of the
+architect's scope ruling on PR #271's code review (§3's exclusions, §6).
 
 **Context.** An article's `brands_mentioned` is extracted at collection from its title (and, for
-NewsData, its description and snippet). When the scraped `full_content` named none of them, the
-scraper logged a warning and stored the scrape as `success`, and the labeling LLM decided the
-article from its headline. Such content is boilerplate, an ad, a login wall or a different article.
+NewsData, also its description and content field). When the scraped `full_content` named none of
+them, the scraper logged a warning and stored the scrape as `success`, and the article was labeled
+with content that does not name the brand. Such content is usually boilerplate, an ad, a login wall
+or a different article; some is the article itself, naming the brand only in its title.
 
 **Decision.**
 1. A scrape whose content names none of the article's brands is stored with
    `scrape_status='skipped'`, `scrape_error = SCRAPE_NO_BRAND_ERROR`, `labeling_status='unlabelable'`
    and its content. `skipped`, as for paywalls and non-English pages: the page was fetched and its
-   content refused. It is not re-scraped. The content is kept so the row can be re-checked if the
-   brand patterns widen, without fetching a page that may have changed or gone.
+   content refused. It is not re-scraped. The content is kept so the row could be re-checked without
+   a re-fetch if the brand patterns widen; no tool does that yet.
 2. The brand test is `brand_match.brands_in_text`. Its patterns are never narrower than
-   collection-time extraction; `tests/test_brand_match.py` checks that for every brand in `BRANDS`.
+   collection-time extraction; `tests/test_brand_match.py` checks every brand in `BRANDS` against
+   `NewsDataClient._extract_brands` and `GDELTClient._extract_brands`.
 3. Stored rows scraped as `success` whose content fails the same test move to the state in 1, through
    `scripts/triage_no_brand_content.py`, in bulk. The cohort is derived on every run
-   (`provenance.select_no_brand_content`). Left out: a `HUMAN_RULINGS` row, a row with a brand label
-   a human wrote or reviewed, a human marker as the reason, and a possible hand move (as the
-   backfill cohorts decide one). A moved row's brand labels are deleted, and its prior state is
-   written to a manifest before the transaction commits.
-4. No gate in the labeling pipeline. The scraper is the only writer of `full_content`, and the
-   triage covers the rows already stored.
-5. A moved row's `brand_judgments`, `article_chunks` and `classifier_predictions` are kept as
+   (`provenance.select_no_brand_content`). Left out, fail-closed: a `HUMAN_RULINGS` row; a human
+   marker as the reason, whatever the status; a row with a brand label a human wrote or reviewed; a
+   possible hand move (as the backfill cohorts decide one, plus a `pending` row with a reason or a
+   label and a `failed` row with a label); an article in an eval case file, whose expected verdict
+   is the owner's; and a status the triage does not move (`deduplicated` and the other statuses
+   outside `NO_BRAND_STATUSES`), which stays `scrape_status='success'`, so a query on the
+   `scrape_error` does not find it. A `false_positive` row the keyword sweep wrote (`rule`) is moved:
+   a script decided it, not a human, and the FP export already leaves it out by default.
+4. A moved row's non-human brand labels are deleted. Before the transaction commits, a manifest
+   records each moved row's prior status, reason and scrape fields and the number of labels deleted,
+   not the labels: those are restored from the backup taken before the run. Each write is guarded
+   on the row's status and reason at selection and on no human label; the labeling pipeline's status
+   write is unconditional, so a labeling run that selected a row before the triage commits can still
+   label it afterwards.
+5. No gate in the labeling pipeline. Content is decided at the scrape, through
+   `Database.update_article_content`; `scripts/repair_text_encoding.py` rewrites stored text in
+   place only to repair its encoding. The triage covers the rows already stored and can be run again.
+6. A moved row's `brand_judgments`, `article_chunks` and `classifier_predictions` are kept as
    records of what was decided. A reader of `brand_judgments` filters on `labeling_status`, or it
-   reads content types decided from a headline.
+   reads content types decided without the brand in the text.
 
-**Consequences.** The FP export loses the moved `false_positive` rows, correct title-only negatives
-among them; their text never names the brand, so it carries no brand context to learn from. An
-article with several brands passes when its text names any one of them (#270). Run the triage
+**Consequences.** The FP export loses the moved rows of both classes: `false_positive` negatives,
+correct title-only ones among them, and `labeled` and judged `skipped` positives. Their text never
+names the brand, so it carries no brand context to learn from; read the export's by-source breakdown
+after the run. Title duplicates of a moved article stay `deduplicated` and are not re-queued (#272).
+An article with several brands passes when its text names any one of them (#270). Run the triage
 before regenerating #155's review queue with `fp_census.py --queue --force`.

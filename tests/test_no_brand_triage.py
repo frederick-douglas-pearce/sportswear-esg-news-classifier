@@ -13,12 +13,15 @@ from src.data_collection import models
 from src.data_collection.models import (
     FP_ACTION_CONTINUED_TO_LLM,
     FP_ACTION_SKIPPED_LLM,
+    FP_REASON_AUTO_DETECTED_PREFIX,
     FP_REASON_MANUAL,
     MANUAL_SKIP_REASON,
     SCRAPE_NO_BRAND_ERROR,
+    SKIP_NO_ESG_CATEGORIES,
     SKIP_NO_ESG_CONTENT,
 )
 from src.data_collection.provenance import (
+    EXCLUDED_EVAL_CASE,
     EXCLUDED_HUMAN,
     EXCLUDED_HUMAN_LABELS,
     EXCLUDED_OTHER_STATUS,
@@ -62,6 +65,11 @@ class TestExclusion:
             row("false_positive", "Nike: not the sportswear brand"),  # before the FP classifier
             # the FP classifier decided it: the stored reason is the skip's own
             row("false_positive", FP_SKIP, action=FP_ACTION_SKIPPED_LLM, skip_reason=FP_SKIP),
+            # the keyword sweep wrote it (rule), D044
+            row("false_positive", f"{FP_REASON_AUTO_DETECTED_PREFIX} vehicle keywords"),
+            # a judged skip, before and after the FP classifier
+            row("skipped", SKIP_NO_ESG_CATEGORIES),
+            row("skipped", SKIP_NO_ESG_CATEGORIES, action=FP_ACTION_CONTINUED_TO_LLM),
         ],
     )
     def test_moved(self, candidate):
@@ -84,6 +92,15 @@ class TestExclusion:
             (row("skipped", "Scrape failed: 404"), EXCLUDED_POSSIBLE_HAND_MOVE),
             (row("labeled", "left by fix_label", has_labels=True), EXCLUDED_POSSIBLE_HAND_MOVE),
             (row("labeled", has_labels=False), EXCLUDED_POSSIBLE_HAND_MOVE),
+            # a human marker is a human's whatever the status
+            (row("pending", FP_REASON_MANUAL), EXCLUDED_HUMAN),
+            (row("pending", MANUAL_SKIP_REASON), EXCLUDED_HUMAN),
+            (row("failed", FP_REASON_MANUAL), EXCLUDED_HUMAN),
+            (row("labeled", MANUAL_SKIP_REASON, has_labels=True), EXCLUDED_HUMAN),
+            # the pipeline writes no reason and no label before labeling a pending row
+            (row("pending", "Nike: not sportswear"), EXCLUDED_POSSIBLE_HAND_MOVE),
+            (row("pending", has_labels=True), EXCLUDED_POSSIBLE_HAND_MOVE),
+            (row("failed", "API error", has_labels=True), EXCLUDED_POSSIBLE_HAND_MOVE),
         ],
     )
     def test_left_out(self, candidate, why):
@@ -123,7 +140,7 @@ class TestTriageDatabase:
             session.query(models.Article).delete()
 
     def _article(self, session, key, status, reason=None, *, content=NO_BRAND, article_uuid=None,
-                 brands=("Nike",), scrape_status="success"):
+                 brands=("Nike",), scrape_status="success", scrape_error=None):
         article = models.Article(
             id=article_uuid or uuid.uuid4(),
             article_id=f"nobrand-{key}",
@@ -132,6 +149,7 @@ class TestTriageDatabase:
             full_content=content,
             brands_mentioned=list(brands),
             scrape_status=scrape_status,
+            scrape_error=scrape_error,
             labeling_status=status,
             labeling_error=reason,
         )
@@ -148,7 +166,8 @@ class TestTriageDatabase:
     def _seed(self, session):
         moved = {
             "labeled": self._article(session, "labeled", "labeled"),
-            "fp": self._article(session, "fp", "false_positive", "Nike: not the sportswear brand"),
+            "fp": self._article(session, "fp", "false_positive", "Nike: not the sportswear brand",
+                                scrape_error="prior scrape note"),
             "skipped": self._article(session, "skipped", "skipped", SKIP_NO_ESG_CONTENT),
             "pending": self._article(session, "pending", "pending"),
         }
@@ -160,7 +179,13 @@ class TestTriageDatabase:
             "no_brands": self._article(session, "no-brands", "pending", brands=()),
             "ruled": self._article(session, "ruled", RULED_STATUS, article_uuid=uuid.UUID(RULED_ID)),
             "hand_move": self._article(session, "hand", "false_positive", "moved by hand"),
+            # scraped as success with no content: not this cohort's
+            "null_content": self._article(session, "null-content", "pending", content=None),
+            "eval_case": self._article(session, "eval-case", "skipped", SKIP_NO_ESG_CONTENT),
         }
+        written = self._article(session, "human-written", "labeled")
+        self._label(session, written, labeled_by="human")
+        left["human_written"] = written
         reviewed = self._article(session, "reviewed", "labeled")
         self._label(session, reviewed, reviewed=True)
         left["reviewed"] = reviewed
@@ -173,49 +198,61 @@ class TestTriageDatabase:
     def test_selection(self, test_db):
         with test_db.get_session() as session:
             moved, left = self._seed(session)
-            cohort = select_no_brand_content(session)
+            cohort = select_no_brand_content(
+                session, eval_case_ids={str(left["eval_case"].id), str(left["ruled"].id)}
+            )
 
         assert set(cohort.selected) == {str(a.id) for a in moved.values()}
         assert cohort.left_out == {
+            # a ruled row in an eval case keeps its human reason
             str(left["ruled"].id): EXCLUDED_HUMAN,
             str(left["hand_move"].id): EXCLUDED_POSSIBLE_HAND_MOVE,
             str(left["reviewed"].id): EXCLUDED_HUMAN_LABELS,
+            str(left["human_written"].id): EXCLUDED_HUMAN_LABELS,
+            str(left["eval_case"].id): EXCLUDED_EVAL_CASE,
         }
         assert cohort.selected[str(moved["fp"].id)] == (
-            "false_positive", "Nike: not the sportswear brand", "success", None,
+            "false_positive", "Nike: not the sportswear brand", "success", "prior scrape note",
         )
 
-    def test_apply_moves_to_the_gated_scrape_state(self, test_db, tmp_path):
-        from src.data_collection.database import scrape_failure_reason
-
-        manifest = tmp_path / "manifest.jsonl"
+    @pytest.fixture
+    def seeded(self, test_db, monkeypatch):
+        """The seed, committed, with the seeded eval-case row as the only eval case main sees."""
         with test_db.get_session() as session:
             moved, left = self._seed(session)
-            session.commit()
+        eval_ids = {str(left["eval_case"].id)}
+        monkeypatch.setattr(triage, "eval_case_ids", lambda: eval_ids)
+        return moved, left, eval_ids
+
+    @staticmethod
+    def _state(session, article):
+        a = session.get(models.Article, article.id)
+        return (a.labeling_status, a.labeling_error, a.scrape_status, a.scrape_error, a.full_content)
+
+    def test_apply_moves_to_the_gated_scrape_state(self, test_db, seeded, tmp_path):
+        from src.data_collection.database import scrape_failure_reason
+
+        moved, left, _ = seeded
+        manifest = tmp_path / "manifest.jsonl"
+        with test_db.get_session() as session:
+            before = {k: self._state(session, a) for k, a in left.items()}
             # a scrape the gate skipped, for comparison
             gated_row = self._article(session, "gated", "pending", content=None, scrape_status="pending")
             test_db.update_article_content(
                 session, gated_row.article_id, NO_BRAND, "skipped", SCRAPE_NO_BRAND_ERROR
             )
             gated = SimpleNamespace(id=gated_row.id)
-            session.commit()
-            assert triage.main(["--manifest", str(manifest)], database=test_db) == 0
+        assert triage.main(["--manifest", str(manifest)], database=test_db) == 0
 
         with test_db.get_session() as session:
-            def state(article):
-                a = session.get(models.Article, article.id)
-                return (a.labeling_status, a.labeling_error, a.scrape_status, a.scrape_error,
-                        a.full_content)
-
-            gated_state = state(gated)
+            gated_state = self._state(session, gated)
             assert gated_state == (
                 "unlabelable", scrape_failure_reason("skipped", SCRAPE_NO_BRAND_ERROR),
                 "skipped", SCRAPE_NO_BRAND_ERROR, NO_BRAND,
             )
             for article in moved.values():
-                assert state(article) == gated_state
-            for key in ("names_brand", "ruled", "hand_move", "reviewed"):
-                assert state(left[key])[0] != "unlabelable"
+                assert self._state(session, article) == gated_state
+            assert {k: self._state(session, a) for k, a in left.items()} == before
             assert session.query(models.BrandLabel).filter_by(article_id=moved["labeled"].id).count() == 0
             assert session.query(models.BrandLabel).filter_by(article_id=left["reviewed"].id).count() == 1
 
@@ -229,46 +266,106 @@ class TestTriageDatabase:
             assert by_id[str(moved["labeled"].id)]["brand_labels_deleted"] == 1
             assert by_id[str(moved["fp"].id)]["labeling_error"] == "Nike: not the sportswear brand"
             assert by_id[str(moved["fp"].id)]["scrape_status"] == "success"
+            assert by_id[str(moved["fp"].id)]["scrape_error"] == "prior scrape note"
 
             # a second run finds nothing left to move
-            assert select_no_brand_content(session).selected == {}
+            assert select_no_brand_content(session, triage.eval_case_ids()).selected == {}
 
-    def test_manifest_is_written_before_commit(self, test_db, tmp_path):
+    def test_manifest_is_complete_before_commit(self, test_db, seeded, tmp_path):
+        moved, _, eval_ids = seeded
         manifest = tmp_path / "manifest.jsonl"
         with test_db.get_session() as session:
-            moved, _ = self._seed(session)
-            session.commit()
-            counts = triage.apply_triage(session, select_no_brand_content(session), manifest)
+            counts = triage.apply_triage(session, select_no_brand_content(session, eval_ids), manifest)
             assert counts["moved"] == len(moved)
-            assert len(manifest.read_text().splitlines()) == len(moved)
+            records = [json.loads(line) for line in manifest.read_text().splitlines()]
+            assert {r["article_id"] for r in records} == {str(a.id) for a in moved.values()}
             session.rollback()
             # nothing committed: every row is as seeded
             assert session.get(models.Article, moved["fp"].id).labeling_status == "false_positive"
 
-    def test_row_changed_since_selection_is_not_moved(self, test_db, tmp_path):
+    def test_row_changed_since_selection_is_not_moved(self, test_db, seeded, tmp_path):
+        moved, _, eval_ids = seeded
+        manifest = tmp_path / "m.jsonl"
         with test_db.get_session() as session:
-            moved, _ = self._seed(session)
-            session.commit()
-            cohort = select_no_brand_content(session)
-            # the labeling cron labels the pending row after selection
-            session.get(models.Article, moved["pending"].id).labeling_status = "labeled"
+            cohort = select_no_brand_content(session, eval_ids)
+            # after selection: the labeling cron labels the pending row; a human marks the
+            # skipped row by hand at the same status; a human labels the false positive
+            pending = session.get(models.Article, moved["pending"].id)
+            pending.labeling_status = "labeled"
+            session.add(models.BrandLabel(article_id=pending.id, brand="Nike", labeled_by="claude-sonnet"))
+            session.get(models.Article, moved["skipped"].id).labeling_error = MANUAL_SKIP_REASON
+            session.add(models.BrandLabel(article_id=moved["fp"].id, brand="Nike", labeled_by="human"))
             session.flush()
-            counts = triage.apply_triage(session, cohort, tmp_path / "m.jsonl")
-            session.commit()
+            counts = triage.apply_triage(session, cohort, manifest)
 
-            assert counts["changed"] == 1
-            assert counts["moved"] == len(moved) - 1
-            assert session.get(models.Article, moved["pending"].id).labeling_status == "labeled"
-
-    def test_dry_run_writes_nothing(self, test_db, tmp_path, capsys):
-        manifest = tmp_path / "manifest.jsonl"
+        assert counts == {"moved": 1, "changed": 3, "labels_deleted": 1}
+        records = [json.loads(line) for line in manifest.read_text().splitlines()]
+        assert [r["article_id"] for r in records] == [str(moved["labeled"].id)]
         with test_db.get_session() as session:
-            moved, _ = self._seed(session)
-            session.commit()
+            assert session.get(models.Article, moved["pending"].id).labeling_status == "labeled"
+            assert session.query(models.BrandLabel).filter_by(article_id=moved["pending"].id).count() == 1
+            skipped = session.get(models.Article, moved["skipped"].id)
+            assert (skipped.labeling_status, skipped.labeling_error) == ("skipped", MANUAL_SKIP_REASON)
+            fp = session.get(models.Article, moved["fp"].id)
+            assert (fp.labeling_status, fp.scrape_status) == ("false_positive", "success")
+            assert session.query(models.BrandLabel).filter_by(article_id=moved["fp"].id).count() == 1
+
+    def test_dry_run_writes_nothing_and_prints_the_cohort(self, test_db, seeded, tmp_path, capsys):
+        moved, left, _ = seeded
+        manifest = tmp_path / "manifest.jsonl"
         assert triage.main(["--dry-run", "--manifest", str(manifest)], database=test_db) == 0
 
         assert not manifest.exists()
-        assert f"To move: {len(moved)}" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        lines = out.splitlines()
+        assert f"To move: {len(moved)}" in lines
+        for status in ("false_positive", "labeled", "pending", "skipped"):
+            assert f"  {status}: 1" in lines
+        assert "Left out: 5" in lines
+        assert f"  {EXCLUDED_HUMAN}: 1" in lines
+        assert f"  {EXCLUDED_HUMAN_LABELS}: 2" in lines
+        assert f"  {EXCLUDED_POSSIBLE_HAND_MOVE}: 1" in lines
+        assert f"  {EXCLUDED_EVAL_CASE}: 1" in lines
+        assert f"  {left['hand_move'].id}" in lines
+        assert f"  {left['eval_case'].id}" in lines
         with test_db.get_session() as session:
             assert session.get(models.Article, moved["fp"].id).labeling_status == "false_positive"
             assert session.query(models.BrandLabel).filter_by(article_id=moved["labeled"].id).count() == 1
+
+    def test_existing_manifest_is_refused_before_any_write(self, test_db, seeded, tmp_path):
+        moved, _, _ = seeded
+        manifest = tmp_path / "manifest.jsonl"
+        manifest.write_text('{"earlier": "run"}\n')
+        assert triage.main(["--manifest", str(manifest)], database=test_db) == 2
+
+        assert manifest.read_text() == '{"earlier": "run"}\n'
+        with test_db.get_session() as session:
+            assert session.get(models.Article, moved["fp"].id).labeling_status == "false_positive"
+
+    def test_failed_commit_says_the_manifest_did_not_commit(self, test_db, seeded, tmp_path,
+                                                             monkeypatch, capsys):
+        from contextlib import contextmanager
+
+        moved, _, _ = seeded
+        manifest = tmp_path / "manifest.jsonl"
+
+        @contextmanager
+        def failing_commit():
+            session = test_db.SessionLocal()
+            try:
+                yield session
+                raise RuntimeError("commit failed")
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
+
+        monkeypatch.setattr(test_db, "get_session", failing_commit)
+        with pytest.raises(RuntimeError, match="commit failed"):
+            triage.main(["--manifest", str(manifest)], database=test_db)
+
+        assert f"Manifest {manifest} describes a transaction that did not commit." in capsys.readouterr().out
+        monkeypatch.undo()
+        with test_db.get_session() as session:
+            assert session.get(models.Article, moved["fp"].id).labeling_status == "false_positive"

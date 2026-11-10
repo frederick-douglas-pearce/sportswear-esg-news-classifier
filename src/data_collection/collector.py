@@ -284,8 +284,8 @@ class NewsCollector:
                     stats.articles_scraped += 1
                 else:
                     # result.content is None except for a scrape skipped because the content
-                    # names none of the article's brands (#227): stored, so the row can be
-                    # re-checked if the brand patterns widen
+                    # names none of the article's brands (#227): stored, so the row could be
+                    # re-checked without a re-fetch if the brand patterns widen (no tool does yet)
                     self.db.update_article_content(
                         session,
                         article.article_id,
