@@ -4,6 +4,17 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-09: Scorecard DB tests no longer depend on the calendar (#259)
+
+`tests/test_scorecard_database.py` dated its snapshots in February 2026, while
+`get_brand_score_history`, `get_medal_history` and `get_deduplication_stats` keep only snapshots
+whose `period_end` is within `days` of today (UTC), so with `RUN_DB_TESTS=1` those three tests failed
+once the calendar moved past the window. The fixture's period now ends 2 days ago and every date the
+tests compare against is computed from it, on the clock the queries use. Each of the three tests also
+saves a snapshot ending 5 days before its window, with other values, and keeps its assertions, so it
+fails if the `period_end` cutoff is not applied. No change to `src/scorecard/`. Unblocks #258 (the DB
+tier in CI).
+
 ### 2026-11-08: A second opinion on the FP negatives only the classifier decided (#155 PR1)
 
 `scripts/fp_census.py` sends each `fp_classifier` row of the FP export (#154, D030) with sufficient
