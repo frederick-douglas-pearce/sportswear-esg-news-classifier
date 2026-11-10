@@ -8,6 +8,7 @@ To use a specific test database:
     TEST_DATABASE_URL=postgresql://... RUN_DB_TESTS=1 pytest tests/test_scorecard_database.py -v
 """
 
+import copy
 import os
 from datetime import date, datetime, timedelta, timezone
 
@@ -28,6 +29,38 @@ requires_postgres = pytest.mark.skipif(
     not should_run_db_tests(),
     reason="Database tests require PostgreSQL. Set RUN_DB_TESTS=1 to run.",
 )
+
+
+def _days_ago(days: int) -> date:
+    """The UTC date `days` before today, on the clock the history queries' cutoff uses.
+
+    The queries keep snapshots with period_end >= today - `days`, so fixed dates
+    fall out of the window as the calendar moves (#259).
+    """
+    return datetime.now(timezone.utc).date() - timedelta(days=days)
+
+
+def _set_period(scorecard_data: dict, period_end: date) -> None:
+    """Point the scorecard data at the period ending on `period_end`."""
+    period_start = period_end - timedelta(days=scorecard_data["period_days"])
+    scorecard_data["period_start"] = period_start.isoformat()
+    scorecard_data["period_end"] = period_end.isoformat()
+
+
+def _save_outside_window(test_db, scorecard_db, scorecard_data: dict, days: int) -> None:
+    """Save a snapshot ending 5 days before a `days`-day query window, with other values.
+
+    The windowed queries must leave it out, so a test's assertions fail if the
+    cutoff filter is removed or inverted.
+    """
+    old = copy.deepcopy(scorecard_data)
+    _set_period(old, _days_ago(days + 5))
+    old["articles_in_period"] = 999
+    old["duplicates_removed"] = 99
+    for brand_scores in old["all_brand_scores"]:
+        brand_scores["total"] = 99
+    with test_db.get_session() as session:
+        scorecard_db.save_scorecard_snapshot(session, old)
 
 
 @pytest.fixture
@@ -56,11 +89,15 @@ def scorecard_db(test_db):
 
 @pytest.fixture
 def sample_scorecard_data():
-    """Create sample scorecard data matching the export format."""
+    """Create sample scorecard data matching the export format.
+
+    The period ends 2 days ago, inside every query window the tests use.
+    """
+    period_end = _days_ago(2)
     return {
         "period_days": 14,
-        "period_start": "2026-01-27",
-        "period_end": "2026-02-10",
+        "period_start": (period_end - timedelta(days=14)).isoformat(),
+        "period_end": period_end.isoformat(),
         "articles_in_period": 100,
         "articles_after_dedup": 85,
         "duplicates_removed": 15,
@@ -253,8 +290,7 @@ class TestSaveScorecard:
             snapshot1_id = snapshot1.id
 
         # Change period_end to next day
-        sample_scorecard_data["period_start"] = "2026-01-28"
-        sample_scorecard_data["period_end"] = "2026-02-11"
+        _set_period(sample_scorecard_data, _days_ago(1))
 
         # Save second snapshot
         with test_db.get_session() as session:
@@ -281,7 +317,9 @@ class TestQueryScorecard:
 
         with test_db.get_session() as session:
             snapshot = scorecard_db.get_snapshot_by_date(
-                session, date(2026, 2, 10), period_days=14
+                session,
+                date.fromisoformat(sample_scorecard_data["period_end"]),
+                period_days=14,
             )
 
             assert snapshot is not None
@@ -302,8 +340,8 @@ class TestQueryScorecard:
         with test_db.get_session() as session:
             scorecard_db.save_scorecard_snapshot(session, sample_scorecard_data)
 
-        sample_scorecard_data["period_start"] = "2026-01-28"
-        sample_scorecard_data["period_end"] = "2026-02-11"
+        next_end = _days_ago(1)
+        _set_period(sample_scorecard_data, next_end)
 
         with test_db.get_session() as session:
             scorecard_db.save_scorecard_snapshot(session, sample_scorecard_data)
@@ -312,16 +350,19 @@ class TestQueryScorecard:
             latest = scorecard_db.get_latest_snapshot(session, period_days=14)
 
             assert latest is not None
-            assert latest.period_end == date(2026, 2, 11)
+            assert latest.period_end == next_end
 
     def test_get_brand_score_history(self, test_db, scorecard_db, sample_scorecard_data):
-        """Should return historical scores for a brand."""
+        """Should return historical scores for a brand within the window."""
+        first_end = sample_scorecard_data["period_end"]
+        _save_outside_window(test_db, scorecard_db, sample_scorecard_data, days=30)
+
         # Create two snapshots
         with test_db.get_session() as session:
             scorecard_db.save_scorecard_snapshot(session, sample_scorecard_data)
 
-        sample_scorecard_data["period_start"] = "2026-01-28"
-        sample_scorecard_data["period_end"] = "2026-02-11"
+        next_end = _days_ago(1)
+        _set_period(sample_scorecard_data, next_end)
         sample_scorecard_data["all_brand_scores"][1]["total"] = 10  # Nike
 
         with test_db.get_session() as session:
@@ -333,9 +374,9 @@ class TestQueryScorecard:
             )
 
             assert len(history) == 2
-            assert history[0]["date"] == "2026-02-10"
+            assert history[0]["date"] == first_end
             assert history[0]["total"] == 8
-            assert history[1]["date"] == "2026-02-11"
+            assert history[1]["date"] == next_end.isoformat()
             assert history[1]["total"] == 10
 
     def test_get_all_brand_scores_for_date(
@@ -347,7 +388,9 @@ class TestQueryScorecard:
 
         with test_db.get_session() as session:
             scores = scorecard_db.get_all_brand_scores_for_date(
-                session, date(2026, 2, 10), period_days=14
+                session,
+                date.fromisoformat(sample_scorecard_data["period_end"]),
+                period_days=14,
             )
 
             assert len(scores) == 6
@@ -356,7 +399,9 @@ class TestQueryScorecard:
             assert scores[0]["is_top_performer"] is True
 
     def test_get_medal_history(self, test_db, scorecard_db, sample_scorecard_data):
-        """Should return medal history for a brand."""
+        """Should return medal history for a brand within the window."""
+        _save_outside_window(test_db, scorecard_db, sample_scorecard_data, days=90)
+
         with test_db.get_session() as session:
             scorecard_db.save_scorecard_snapshot(session, sample_scorecard_data)
 
@@ -384,7 +429,9 @@ class TestStatistics:
             assert count == 1
 
     def test_get_deduplication_stats(self, test_db, scorecard_db, sample_scorecard_data):
-        """Should return deduplication statistics."""
+        """Should return deduplication statistics within the window."""
+        _save_outside_window(test_db, scorecard_db, sample_scorecard_data, days=30)
+
         with test_db.get_session() as session:
             scorecard_db.save_scorecard_snapshot(session, sample_scorecard_data)
 
