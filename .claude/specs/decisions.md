@@ -3162,9 +3162,7 @@ same day, after PR #268's code review.
 was skipped on every PR. `ScorecardSnapshot.period_start` / `period_end` were `DateTime` in the
 model but `DATE` in `migrations/006_scorecard_history.sql`, which creates the table only if it does
 not exist, as `create_all` does; a database got the type of whichever created the table. The tests
-build their schema with `create_all`, and `tests/test_scorecard_database.py`'s
-`TestQueryScorecard::test_get_latest_snapshot` and `::test_get_brand_score_history` compare
-`period_end` with a `date`, so on a database `create_all` builds fresh they fail.
+build their schema with `create_all`.
 
 **Decision.**
 1. The required `test` job runs one pytest invocation with `RUN_DB_TESTS=1` against a
@@ -3174,8 +3172,8 @@ build their schema with `create_all`, and `tests/test_scorecard_database.py`'s
    does not serve. Unit tests that set `DATABASE_URL` in-process to a fake URL, with the engine
    mocked, are outside this (#258's amended criterion).
 2. The pytest step fails if `DATABASE_URL` is set in its environment. A step after it fails the job
-   if `junit.xml` is missing or empty, or contains the skip reason every `RUN_DB_TESTS` gate gives
-   (`Set RUN_DB_TESTS=1 to run.`), so it catches `RUN_DB_TESTS` being unset. It does not catch
+   if `junit.xml` is missing or empty, or contains `Set RUN_DB_TESTS=1 to run`, which every
+   `RUN_DB_TESTS` gate's skip reason contains, so it catches `RUN_DB_TESTS` being unset. It does not catch
    database tests that are deselected or ignored, or skipped with other wording; that is #269.
 3. The model's two period columns become `Date`, matching migration 006. Production's `timestamp`
    columns are converted by a separate, owner-applied migration (#267), which checks
@@ -3185,7 +3183,4 @@ build their schema with `create_all`, and `tests/test_scorecard_database.py`'s
    reverts to `DateTime`.
 
 **Not decided here.** The scorecard tables' other model/migration drift goes to the same follow-up,
-#267: the `similarity_threshold` default, the indexes only the migration creates
-(`ix_scorecard_snapshots_created_at`, `ix_scorecard_brand_scores_snapshot_id`,
-`ix_scorecard_brand_scores_performers`) and the migration's server-side defaults. The tier checks
-the schema `create_all` builds, not the migrations.
+#267. The tier checks the schema `create_all` builds, not the migrations.

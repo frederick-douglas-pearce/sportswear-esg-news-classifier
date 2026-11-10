@@ -69,8 +69,8 @@ jobs:
             exit 1
           fi
           uv run pytest --tb=short --junitxml=junit.xml
-      # Each RUN_DB_TESTS gate under tests/ gives the skip reason 'Set RUN_DB_TESTS=1
-      # to run.', so finding it in the report means RUN_DB_TESTS was not 1 and the tier
+      # Each RUN_DB_TESTS gate's skip reason under tests/ contains 'Set RUN_DB_TESTS=1
+      # to run', so finding it in the report means RUN_DB_TESTS was not 1 and the tier
       # was skipped while the job stayed green. A missing report fails too. This does
       # not catch database tests deselected, ignored or skipped with other wording (#269).
       - name: Check the database tier ran
