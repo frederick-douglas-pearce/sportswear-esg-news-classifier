@@ -351,6 +351,9 @@ class TestQueryScorecard:
 
             assert latest is not None
             assert latest.period_end == next_end
+            assert latest.period_start == next_end - timedelta(
+                days=sample_scorecard_data["period_days"]
+            )
 
     def test_get_brand_score_history(self, test_db, scorecard_db, sample_scorecard_data):
         """Should return historical scores for a brand within the window."""

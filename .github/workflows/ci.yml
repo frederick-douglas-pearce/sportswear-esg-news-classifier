@@ -19,10 +19,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # The database tier (RUN_DB_TESTS) runs against this service. It hosts only
-    # esg_news_test and listens on 5432, while every DATABASE_URL default in the
-    # code names localhost:5434/esg_news, so nothing reaches it except through
-    # TEST_DATABASE_URL. The image is docker-compose.yml's; change both together.
+    # The database tier (RUN_DB_TESTS) runs against this service on 5432, which has
+    # no esg_news database; the database tests reach it through TEST_DATABASE_URL.
+    # The workflow sets no DATABASE_URL, and the code's DATABASE_URL defaults name
+    # localhost:5434/esg_news, which this runner does not serve (D043).
+    # The image is docker-compose.yml's; change both together.
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -68,10 +69,16 @@ jobs:
             exit 1
           fi
           uv run pytest --tb=short --junitxml=junit.xml
-      # Every database test's skip reason says to set RUN_DB_TESTS=1, so finding it in
-      # the report means the tier was skipped while the job stayed green.
+      # Each RUN_DB_TESTS gate under tests/ gives the skip reason 'Set RUN_DB_TESTS=1
+      # to run.', so finding it in the report means RUN_DB_TESTS was not 1 and the tier
+      # was skipped while the job stayed green. A missing report fails too. This does
+      # not catch database tests deselected, ignored or skipped with other wording (#269).
       - name: Check the database tier ran
         run: |
+          if [ ! -s junit.xml ]; then
+            echo "::error::junit.xml is missing or empty"
+            exit 1
+          fi
           if grep -q 'Set RUN_DB_TESTS=1 to run' junit.xml; then
             echo "::error::database tests were skipped (RUN_DB_TESTS not set to 1)"
             exit 1

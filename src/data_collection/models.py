@@ -441,9 +441,9 @@ class ScorecardSnapshot(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     period_days = Column(Integer, nullable=False)
-    # DATE, as migrations/006_scorecard_history.sql creates them (D043). A table that
-    # create_all built before this was DateTime keeps timestamp columns until #267's
-    # migration converts them; production is one.
+    # DATE, as migrations/006_scorecard_history.sql creates them (D043). create_all does
+    # not alter an existing table, so a table it built while these were DateTime keeps
+    # timestamp columns until migrated (#267).
     period_start = Column(Date, nullable=False)
     period_end = Column(Date, nullable=False)
     articles_in_period = Column(Integer, nullable=False, default=0)
