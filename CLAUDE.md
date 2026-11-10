@@ -86,6 +86,8 @@ uv run python scripts/fix_label.py update <id> --status skipped   # Correct labe
 uv run python scripts/fix_label.py update <id1> <id2> --status skipped  # Batch update
 uv run python scripts/fix_label.py update <id> --status skipped --manual  # A human ruling: store the status's human marker as the reason (--clear-reason empties it, #234)
 uv run python scripts/fix_label.py statuses                       # List valid statuses
+uv run python scripts/triage_no_brand_content.py --dry-run        # #227, D044: stored rows whose scraped text names none of their brands, by status; exclusions counted by reason, possible hand moves and eval-case articles listed by id
+uv run python scripts/triage_no_brand_content.py                  # Move them to unlabelable (back up first: the manifest data/no_brand_triage_<UTC>.jsonl, written before committing, holds prior statuses and reasons and label counts, not the labels)
 
 # Contrastive Prompt Evaluation (before promoting a labeling prompt, D036)
 uv run python scripts/compare_prompts.py --baseline v1.12.0 --candidate v1.13.0 --case-file prompts/labeling/eval_cases/product_and_stability.json --case-file prompts/labeling/eval_cases/owner_rulings_192.json --sample-size 100 --most-brands 10 --human-rulings --dry-run  # Selection + worst-case cost, no API call; --case-file repeats (#230); drop --dry-run (and set --max-cost) to run
@@ -202,7 +204,8 @@ SQL query examples in `queries/` folder: `collection_queries.sql`, `labeling_que
 - `config.py` - Settings, brands list, keywords, blocked domains, and API configuration
 - `api_client.py` - NewsData.io API wrapper with OR-grouped query generation
 - `gdelt_client.py` - GDELT DOC 2.0 API wrapper (free, 3 months history)
-- `scraper.py` - Full article text extraction with language detection
+- `scraper.py` - Full article text extraction with language detection; skips a scrape whose text names none of the article's brands (#227)
+- `brand_match.py` - Brand patterns and `brands_in_text`, shared by the scraper and `scripts/triage_no_brand_content.py`
 - `database.py` - PostgreSQL operations with SQLAlchemy
 - `models.py` - SQLAlchemy models (Article, CollectionRun, ArticleChunk, BrandLabel, BrandJudgment, LabelEvidence, LabelingRun)
 - `collector.py` - Orchestrates API collection + scraping with in-memory deduplication and domain filtering
@@ -235,6 +238,7 @@ prompts/labeling/
 - `collect_news.py` - CLI for NewsData.io/GDELT data collection
 - `label_articles.py` - CLI for LLM-based article labeling
 - `export_training_data.py` - Export labeled data for ML training (JSONL format)
+- `triage_no_brand_content.py` - Move stored rows whose scraped text names none of their brands to `unlabelable` (#227, D044)
 - `fp_census.py` - Second-opinion census of the classifier-only FP negatives and their review queue (#155 PR1; `src/evaluation/fp_census.py`)
 - `backfill_relabel.py` - Relabel #192's backfill cohort, and `failed` rows (#86), through the pipeline under the production prompt (D039); `--mode 245-relabel` relabels rows stored under an earlier prompt (#245, D041)
 - `train.py` - Unified training script for FP/EP classifiers (with MLflow integration)
@@ -517,6 +521,7 @@ Similar news stories from different sources are deduplicated before scoring usin
 For full changelog, see [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 **Recent changes:**
+- **2026-11-09**: A scrape whose text names none of its brands is skipped (#227, D044). The scraper's brand check, which only warned, now stores such a scrape as `scrape_status='skipped'`, `scrape_error='No expected brand in scraped content'` (`SCRAPE_NO_BRAND_ERROR`), `unlabelable`, with its content, and does not re-scrape it. The patterns are in `src/data_collection/brand_match.py` (curly-apostrophe Arc'teryx, Unicode hyphens, "On Holding", `361°` before a space), checked against the collection-time extractors (`tests/test_brand_match.py`). `scripts/triage_no_brand_content.py` moves stored rows like it to the same state and deletes their brand labels, writing a manifest of each row's prior status, reason and scrape fields first (labels are restored only from the backup); human rulings, human labels, possible hand moves, eval-case articles and other statuses are left out. The owner runs it after a backup, before #154 PR2. Multi-brand articles naming only some brands: #270; title duplicates of a moved article: #272
 - **2026-11-09**: The required `test` check runs the database tier (#258, D043). `ci.yml` adds a `pgvector/pgvector:pg16` service on port 5432 with no `esg_news` database and runs pytest with `RUN_DB_TESTS=1`; the database tests reach it through `TEST_DATABASE_URL`. The workflow sets no `DATABASE_URL` (its code defaults name port 5434), and the pytest step fails if it is set. The job fails if `junit.xml` is missing or shows a database test skipped for want of `RUN_DB_TESTS`; deselected or otherwise-skipped database tests are #269. The tier checks the schema `create_all` builds, not the migrations. `ScorecardSnapshot.period_start`/`period_end` are now `Date`, as migration 006 creates them; a table `create_all` built while they were `DateTime` keeps `timestamp` columns until #267's migration
 - **2026-11-09**: Scorecard DB tests no longer depend on the calendar (#259). `tests/test_scorecard_database.py` dates its snapshots relative to today (UTC), the clock the windowed queries use, instead of February 2026, and the history, medal and deduplication tests each save a snapshot just outside their window that they must leave out. Tests only; unblocks #258
 - **2026-11-08**: A second opinion on the FP negatives only the classifier decided (#155 PR1). `scripts/fp_census.py` sends each `fp_classifier` row with sufficient content to the labeler under the production prompt, on `claude-sonnet-5-5` at effort `medium` by default (`LABELING_MODELS` gains its spec), and appends each reply's verdict (positive, negative or unjudged as `dispose_reply` decides it, or failed when the call got no usable reply) to `data/fp_census_<model>.jsonl`; it writes nothing to the database. A run needs a positive `--max-cost`, counted over the whole file, and stops at it, after a call that cost more than its worst case, and after 3 failed calls in a row; a re-run calls again only articles whose last call got no reply; a refusal is recorded as failed, with no fallback model. `--queue` checks the records against the live cohort, reports disagreement by probability band, month and the attested cutoff, and writes the review queue (disagreements, rows with no verdict, agreements sampled per band, pre-cutoff rows; each nearest its own threshold first) and its design file. The review is #155 PR2; caching the labeling prompt is #262; counting timed-out calls in spend is #264

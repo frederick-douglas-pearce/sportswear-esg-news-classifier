@@ -185,7 +185,7 @@ with engine.connect() as conn:
 | `false_positive` | Brand name matched but article is not about sportswear |
 | `skipped` | Deliberately skipped (insufficient content, duplicate, etc.) |
 | `pending` | Awaiting labeling (scraped successfully, ready to process) |
-| `unlabelable` | Cannot be labeled (scrape failed, paywall, anti-bot, non-English) |
+| `unlabelable` | Cannot be labeled (scrape failed, paywall, anti-bot, non-English, or scraped text that names none of the article's brands: `scrape_status='skipped'`, `scrape_error='No expected brand in scraped content'`, #227) |
 
 ### SQL Queries
 
