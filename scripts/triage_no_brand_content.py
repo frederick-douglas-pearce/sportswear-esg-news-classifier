@@ -35,12 +35,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
+from sqlalchemy import exists
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data_collection import provenance
 from src.data_collection.database import db, scrape_failure_reason
-from sqlalchemy import exists
-
 from src.data_collection.models import SCRAPE_NO_BRAND_ERROR, Article, BrandLabel
 
 EVAL_CASES_GLOB = "prompts/labeling/eval_cases/*.json"

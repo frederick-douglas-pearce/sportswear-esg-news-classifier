@@ -3189,7 +3189,7 @@ build their schema with `create_all`.
 
 **Status:** accepted 2026-11-09 (architect review; at the plan gate the owner chose a bulk move over
 per-row review, and no labeling-pipeline gate). Amended 2026-11-10 by the owner's adoption of the
-architect's scope ruling on PR #271's code review (§3's exclusions, §6).
+architect's scope ruling on PR #271's code review (Context, §§3-6, Consequences).
 
 **Context.** An article's `brands_mentioned` is extracted at collection from its title (and, for
 NewsData, also its description and content field). When the scraped `full_content` named none of

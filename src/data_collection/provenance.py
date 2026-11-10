@@ -969,9 +969,10 @@ def no_brand_exclusion(row: NoBrandRow) -> str | None:
     - ``pending`` with a reason or a label: the pipeline writes neither before a ``pending`` row is
       labeled, so ``fix_label.py update --status pending`` put it there;
     - ``failed`` with a label.
-    Moved: a ``false_positive`` the FP classifier decided (its stored reason is the classifier's
-    own) or the keyword sweep wrote (``rule``), a ``skipped`` row at a reason the pipeline writes, a
-    ``labeled`` row with labels and no reason, and a ``pending`` or ``failed`` row with neither.
+    Moved: a ``false_positive`` the LLM decided whose reason has a reply's form, one the FP
+    classifier decided (its stored reason is the classifier's own) or one the keyword sweep wrote
+    (``rule``); a ``skipped`` row at a reason the pipeline writes; a ``labeled`` row with labels and
+    no reason; a ``pending`` row with no reason and no label; and a ``failed`` row with no label.
     A status outside ``NO_BRAND_STATUSES`` is left as stored.
     """
     if row.article_id in HUMAN_RULINGS:

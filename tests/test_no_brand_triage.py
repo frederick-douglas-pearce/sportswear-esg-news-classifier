@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -108,8 +109,16 @@ class TestExclusion:
 
 
 def test_eval_case_ids_reads_every_case_file():
+    """Every article id written in every case file is excluded from the triage (D044 §3), so an
+    id eval_case_ids misses would be moved."""
+    root = Path(__file__).parent.parent
+    paths = sorted(root.glob(triage.EVAL_CASES_GLOB))
+    assert len(paths) >= 2
     ids = triage.eval_case_ids()
-    assert "fd48d9a7-4993-4651-b770-5d232e70d918" in ids  # owner_rulings_192.json
+    for path in paths:
+        written = set(re.findall(r'"article_id":\s*"([0-9a-f-]{36})"', path.read_text()))
+        assert written, path.name
+        assert written <= ids, path.name
 
 
 requires_postgres = pytest.mark.skipif(
