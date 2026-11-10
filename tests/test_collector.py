@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 from src.data_collection.collector import NewsCollector, CollectionStats, is_blocked_domain
 from src.data_collection.api_client import ArticleData
+from src.data_collection.models import SCRAPE_NO_BRAND_ERROR
+from src.data_collection.scraper import ScrapeResult
 
 
 class TestCollectionStats:
@@ -424,6 +426,40 @@ class TestScrapePendingArticles:
         mock_db.get_articles_pending_scrape.assert_called_once()
         call_args = mock_db.get_articles_pending_scrape.call_args
         assert call_args[1]["limit"] == 50
+
+
+    @pytest.mark.parametrize(
+        "result, stored_content",
+        [
+            # #227: a scrape skipped because the content names no expected brand keeps its content
+            (
+                ScrapeResult(success=False, content="boilerplate", status="skipped",
+                             error=SCRAPE_NO_BRAND_ERROR),
+                "boilerplate",
+            ),
+            (ScrapeResult(success=False, status="failed", error="Content too short or empty"), None),
+        ],
+    )
+    def test_failed_scrape_is_stored_with_its_content(self, result, stored_content):
+        mock_db = MagicMock()
+        mock_scraper = MagicMock()
+        mock_scraper.scrape_with_delay.return_value = result
+        mock_scraper.get_stats.return_value = {}
+        article = MagicMock(article_id="a1", url="http://example.com/a", brands_mentioned=["Nike"])
+        mock_session = MagicMock()
+        mock_db.get_session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.get_session.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.get_articles_pending_scrape.return_value = [article]
+
+        collector = NewsCollector(database=mock_db, api_client=MagicMock(), scraper=mock_scraper)
+        stats = collector.scrape_pending_articles(limit=10)
+
+        mock_scraper.scrape_with_delay.assert_called_once_with("http://example.com/a", ["Nike"])
+        mock_db.update_article_content.assert_called_once_with(
+            mock_session, "a1", stored_content, result.status, result.error
+        )
+        assert stats.articles_scrape_failed == 1
+        assert stats.articles_scraped == 0
 
 
 class TestIsBlockedDomain:

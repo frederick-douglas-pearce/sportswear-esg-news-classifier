@@ -299,3 +299,52 @@ class TestScraperStats:
 
             assert scraper.articles_scraped == 0
             assert scraper.articles_failed == 1
+
+
+class TestNoBrandGate:
+    """Content that names none of the expected brands fails the scrape as skipped (#227)."""
+
+    BODY = (
+        "When Jeff Bezos said that one breakthrough technology would shape Amazon's destiny, even "
+        "Wall Street's biggest analysts were caught off guard by the scale of the investment."
+    )
+
+    def scrape(self, text, expected):
+        scraper = ArticleScraper()
+        with patch('src.data_collection.scraper.NewspaperArticle') as mock_article_class:
+            mock_article = MagicMock()
+            mock_article.text = text
+            mock_article_class.return_value = mock_article
+            result = scraper.scrape_article("https://example.com/article", expected)
+        return scraper, result
+
+    def test_no_expected_brand_is_skipped_with_content(self):
+        from src.data_collection.models import SCRAPE_NO_BRAND_ERROR
+
+        scraper, result = self.scrape(self.BODY, ["Under Armour"])
+
+        assert result.success is False
+        assert result.status == "skipped"
+        assert result.error == SCRAPE_NO_BRAND_ERROR
+        assert result.content == self.BODY
+        assert result.brands_expected == ["Under Armour"]
+        assert scraper.articles_failed == 1
+        assert scraper.articles_scraped == 0
+        assert scraper.get_stats()["brand_validation_warnings"] == 1
+
+    def test_one_expected_brand_named_succeeds(self):
+        text = self.BODY + " Under Armour shares fell."
+        scraper, result = self.scrape(text, ["Nike", "Under Armour"])
+
+        assert result.success is True
+        assert result.status == "success"
+        assert result.brands_found == ["Under Armour"]
+        assert scraper.articles_scraped == 1
+        assert scraper.get_stats()["brand_validation_warnings"] == 0
+
+    @pytest.mark.parametrize("expected", [None, []])
+    def test_no_expected_brands_succeeds(self, expected):
+        _, result = self.scrape(self.BODY, expected)
+
+        assert result.success is True
+        assert result.status == "success"

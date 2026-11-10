@@ -3184,3 +3184,38 @@ build their schema with `create_all`.
 
 **Not decided here.** The scorecard tables' other model/migration drift goes to the same follow-up,
 #267. The tier checks the schema `create_all` builds, not the migrations.
+
+## D044: A Scrape Whose Text Names None of Its Brands Is Skipped, and Stored Rows Like It Move to `unlabelable` (#227)
+
+**Status:** accepted 2026-11-09 (architect review; at the plan gate the owner chose a bulk move over
+per-row review, and no labeling-pipeline gate).
+
+**Context.** An article's `brands_mentioned` is extracted at collection from its title (and, for
+NewsData, its description and snippet). When the scraped `full_content` named none of them, the
+scraper logged a warning and stored the scrape as `success`, and the labeling LLM decided the
+article from its headline. Such content is boilerplate, an ad, a login wall or a different article.
+
+**Decision.**
+1. A scrape whose content names none of the article's brands is stored with
+   `scrape_status='skipped'`, `scrape_error = SCRAPE_NO_BRAND_ERROR`, `labeling_status='unlabelable'`
+   and its content. `skipped`, as for paywalls and non-English pages: the page was fetched and its
+   content refused. It is not re-scraped. The content is kept so the row can be re-checked if the
+   brand patterns widen, without fetching a page that may have changed or gone.
+2. The brand test is `brand_match.brands_in_text`. Its patterns are never narrower than
+   collection-time extraction; `tests/test_brand_match.py` checks that for every brand in `BRANDS`.
+3. Stored rows scraped as `success` whose content fails the same test move to the state in 1, through
+   `scripts/triage_no_brand_content.py`, in bulk. The cohort is derived on every run
+   (`provenance.select_no_brand_content`). Left out: a `HUMAN_RULINGS` row, a row with a brand label
+   a human wrote or reviewed, a human marker as the reason, and a possible hand move (as the
+   backfill cohorts decide one). A moved row's brand labels are deleted, and its prior state is
+   written to a manifest before the transaction commits.
+4. No gate in the labeling pipeline. The scraper is the only writer of `full_content`, and the
+   triage covers the rows already stored.
+5. A moved row's `brand_judgments`, `article_chunks` and `classifier_predictions` are kept as
+   records of what was decided. A reader of `brand_judgments` filters on `labeling_status`, or it
+   reads content types decided from a headline.
+
+**Consequences.** The FP export loses the moved `false_positive` rows, correct title-only negatives
+among them; their text never names the brand, so it carries no brand context to learn from. An
+article with several brands passes when its text names any one of them (#270). Run the triage
+before regenerating #155's review queue with `fp_census.py --queue --force`.

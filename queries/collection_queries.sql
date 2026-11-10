@@ -167,6 +167,15 @@ GROUP BY scrape_error
 ORDER BY count DESC
 LIMIT 10;
 
+-- Articles whose scraped text names none of their brands (#227): skipped by the scraper, or
+-- moved by scripts/triage_no_brand_content.py. Both store this scrape_error.
+SELECT
+    labeling_status,
+    COUNT(*) AS articles
+FROM articles
+WHERE scrape_error = 'No expected brand in scraped content'
+GROUP BY labeling_status;
+
 -- Recent collection run details
 -- Detailed view of recent runs for troubleshooting
 SELECT

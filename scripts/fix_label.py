@@ -219,7 +219,7 @@ def list_statuses() -> None:
         "labeled": "Successfully labeled with ESG categories",
         "skipped": "No ESG content for a sportswear brand, or not established (no LLM reply, or one that did not settle the brand); see labeling_error (UNJUDGED_SKIP_REASONS)",
         "false_positive": "Not actually about the sportswear brand (e.g., 'Vans' = vehicles)",
-        "unlabelable": "Could not be labeled (insufficient content, language issues)",
+        "unlabelable": "Could not be labeled (scrape failed or skipped, insufficient content, language issues, or scraped text naming none of the article's brands, #227)",
         "deduplicated": "Duplicate of another article",
     }
     print("Valid labeling statuses:")

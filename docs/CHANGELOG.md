@@ -4,6 +4,22 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-09: A scrape whose text names none of its brands is skipped (#227, D044)
+
+The scraper already checked that scraped content names one of the brands collection extracted for
+the article (from its title, and for NewsData its description and snippet), but only warned, so the article was stored as `success` and labeled from its
+headline. Such a scrape is now stored with `scrape_status='skipped'`, `scrape_error='No expected
+brand in scraped content'` (`SCRAPE_NO_BRAND_ERROR`), `labeling_status='unlabelable'`, and its
+content, and is not re-scraped. The brand patterns moved to `src/data_collection/brand_match.py`,
+with a curly apostrophe for Arc'teryx, Unicode hyphens for Li-Ning and K-Swiss, and "On Holding"
+for On Running; a test checks every brand in `BRANDS` against them.
+
+`scripts/triage_no_brand_content.py` moves stored rows like it to the same state, deletes their
+brand labels, and writes each row's prior state to `data/no_brand_triage_<UTC>.jsonl` before
+committing. Human rulings, human labels and possible hand moves are left out and listed;
+`--dry-run` writes nothing. The owner runs it on the production database, after a backup, before
+#154 PR2's retrain. Multi-brand articles that name only some of their brands are #270.
+
 ### 2026-11-09: The required `test` check runs the database tier (#258, D043)
 
 `.github/workflows/ci.yml`'s `test` job runs pytest with `RUN_DB_TESTS=1` against a

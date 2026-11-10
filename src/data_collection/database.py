@@ -25,6 +25,15 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def scrape_failure_reason(status: str, error: str | None) -> str:
+    """The ``labeling_error`` of an article made ``unlabelable`` by a failed or skipped scrape.
+
+    ``scripts/triage_no_brand_content.py`` writes the same reason for the stored rows it moves
+    (#227), so a gated scrape and a triaged row read alike.
+    """
+    return f"Scrape {status}: {error}" if error else f"Scrape {status}"
+
+
 class Database:
     """Database connection and operations manager."""
 
@@ -122,7 +131,9 @@ class Database:
         """Update article with scraped content.
 
         If scraping fails (status is 'failed' or 'skipped'), also marks the
-        article as 'unlabelable' since we can't label without content.
+        article as 'unlabelable' since we can't label without content. The content is stored
+        as given: None for every failure except a scrape skipped because the content names
+        none of the article's brands (#227).
         """
         article = session.query(Article).filter_by(article_id=article_id).first()
         if article:
@@ -136,7 +147,7 @@ class Database:
             # Mark as unlabelable if scraping failed - can't label without content
             if status in ('failed', 'skipped'):
                 article.labeling_status = 'unlabelable'
-                article.labeling_error = f'Scrape {status}: {error}' if error else f'Scrape {status}'
+                article.labeling_error = scrape_failure_reason(status, error)
 
     def create_collection_run(self, session: Session) -> CollectionRun:
         """Create a new collection run record."""

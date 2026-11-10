@@ -282,17 +282,14 @@ class NewsCollector:
                         "success",
                     )
                     stats.articles_scraped += 1
-                    # Log brand validation warnings for review
-                    if result.brand_validation_warning:
-                        logger.warning(
-                            f"Brand validation warning for {article.url}: "
-                            f"{result.brand_validation_warning}"
-                        )
                 else:
+                    # result.content is None except for a scrape skipped because the content
+                    # names none of the article's brands (#227): stored, so the row can be
+                    # re-checked if the brand patterns widen
                     self.db.update_article_content(
                         session,
                         article.article_id,
-                        None,
+                        result.content,
                         result.status,
                         result.error,
                     )
