@@ -51,7 +51,7 @@ def _save_outside_window(test_db, scorecard_db, scorecard_data: dict, days: int)
     """Save a snapshot ending 5 days before a `days`-day query window, with other values.
 
     The windowed queries must leave it out, so a test's assertions fail if the
-    period_end cutoff is not applied.
+    cutoff filter is removed or inverted.
     """
     old = copy.deepcopy(scorecard_data)
     _set_period(old, _days_ago(days + 5))
