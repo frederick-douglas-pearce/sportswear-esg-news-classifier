@@ -4,6 +4,24 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-18: The relabeled cohorts' spot-check is recorded as human rulings (#232)
+
+The owner reviewed a seeded random 50 of the `false_positive` rows and 50 of the judged `skipped`
+rows that the #245 relabel wrote and #154 PR2's default FP export reads (`HUMAN_RULINGS` ids left
+out). The population, seed and sampled ids were posted on #232 before any ruling, with the decision
+rule; the error rates, their intervals and the decision for #154 PR2 are on #232.
+
+**`HUMAN_RULINGS` adds 99 rulings.** Seven `false_positive` rows are corrected to `skipped`: three
+sale pieces that describe the product, and four articles about the brand's own marketing,
+sponsorship or consumer demand. The other 92 confirm their stored status. Every listed ruling went
+through `fix_label.py update` (`--manual`, so the stored reason is the status's human marker)
+after a backup. One row, whose stored text is a site's cookie notice, was ruled `unlabelable`
+(set with `--clear-reason`) and is left out of the list, since no export reads that status (#273).
+A test now fails on a duplicate key in the `HUMAN_RULINGS` literal, which Python would otherwise
+collapse silently (`test_rulings_literal_has_no_duplicate_keys`).
+
+The owner's policy rulings from the review are posted on #248 for the next prompt version.
+
 ### 2026-11-09: A scrape whose text names none of its brands is skipped (#227, D044)
 
 The scraper already checked that scraped content names one of the brands collection extracted for
