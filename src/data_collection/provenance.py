@@ -80,7 +80,8 @@ FAILED_STATUS = "failed"
 # (rows confirmed as correctly labeled), and #192's comment of 2026-10-28 (the backfill review; its
 # 3 unlabelable rulings are left out, since no export reads that status), corrected by #234
 # (2026-10-30), #249's review of the #245 relabel (2026-11-03), #248's template rows
-# (2026-11-04), and #232's spot-check of the relabeled cohorts (2026-11-18). #143 backfills these into its audit log and deletes this.
+# (2026-11-04), and #232's spot-check of the relabeled cohorts (2026-11-18). #143 backfills
+# these into its audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -249,7 +250,7 @@ HUMAN_RULINGS: dict[str, str] = {
     "9cd2ca15-a112-4fe1-8cfa-3ee8b51b0333": "false_positive",
     # 2026-11-18, #232: the owner's review of a seeded random 50 + 50 of the #245 relabel's
     # false_positive and judged-skip rows that the FP export reads (record on #232). Corrected
-    # false_positive -> skipped: deal pieces that describe the product, and brand marketing,
+    # false_positive -> skipped: sale pieces that describe the product, and brand marketing,
     # sponsorship or survey content (stored with MANUAL_SKIP_REASON)
     "3bb19314-ab3a-4a52-977f-09eb2c5df027": "skipped",
     "4068c564-5de9-4174-9f5e-45c7b9ea691c": "skipped",

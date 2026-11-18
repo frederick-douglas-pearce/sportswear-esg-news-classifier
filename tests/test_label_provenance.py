@@ -174,6 +174,25 @@ class TestHumanVerifiedIds:
             assert str(uuid.UUID(article_id)) == article_id
             assert status in ("false_positive", "skipped", "labeled")
 
+    def test_rulings_literal_has_no_duplicate_keys(self):
+        """A dict literal keeps the last value for a repeated key, so a pasted id that repeats would
+        override an earlier ruling, and the loaded dict could not show it. Read the source."""
+        import ast
+
+        tree = ast.parse(open(provenance.__file__, encoding="utf-8").read())
+        literals = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "HUMAN_RULINGS"
+        ]
+        assert len(literals) == 1 and isinstance(literals[0], ast.Dict)
+        keys = [key.value for key in literals[0].keys]
+        repeated = sorted({key for key in keys if keys.count(key) > 1})
+        assert repeated == []
+        assert len(keys) == len(HUMAN_RULINGS)
+
 
 def cand(status, reason=None, action=None, at=None, article_id=None, skip_reason="same"):
     """A candidate. For a classifier skip, ``skip_reason`` defaults to the stored reason, as the
