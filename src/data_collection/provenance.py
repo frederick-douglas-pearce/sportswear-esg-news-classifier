@@ -353,11 +353,11 @@ HUMAN_RULINGS: dict[str, str] = {
     "f2756068-5c76-4c62-8685-862cf869e710": "skipped",
     "f6e9211d-9248-4cfe-9e35-bcc99f12d1a1": "skipped",
     "fcabee62-40e7-450f-87d3-ae3a81cb48f4": "skipped",
-    # 2026-11-18, #238: eval-case articles whose stored status contradicted the case expectation
-    # (record on #238). Sale pieces that describe the product (442282ca, bcc52f23, 6ec5fd75,
-    # eb5aa27c), a sale piece with business content (02ffd32e) and market wraps with analysis of the
-    # brand (a7eeaa13, b8891fbc) are sportswear with no ESG category, stored with MANUAL_SKIP_REASON;
-    # Nike's planned layoffs are Social -1, a human label (19832789)
+    # 2026-11-18, #238: the owner's rulings on eval-case articles (record on #238). Sale pieces
+    # that describe the product (442282ca, bcc52f23, 6ec5fd75, eb5aa27c), a sale piece with business
+    # content (02ffd32e) and market wraps with analysis of the brand (a7eeaa13, b8891fbc) are
+    # sportswear with no ESG category, stored with MANUAL_SKIP_REASON; Nike's planned layoffs are
+    # Social -1, a human label (19832789)
     "442282ca-90ae-4811-a7f5-1026bc8fcf75": "skipped",
     "bcc52f23-6048-40e3-ab75-ed701468a5a2": "skipped",
     "6ec5fd75-5e7a-4e06-b53f-58b4326cddba": "skipped",

@@ -941,7 +941,7 @@ class TestCaseFile:
         "02ffd32e-cca0-476d-88f8-1486c790f421": {"cases", "no_category"},
         "19832789-ca96-4c74-ba7a-7df0453c4874": {"cases", "partial_categories", "ruling_1"},
     }
-    # The owner's #238 rulings on the case articles whose stored status contradicted the case
+    # #238: the owner's rulings on eval-case articles (record on #238)
     RULINGS_238 = {
         "442282ca-90ae-4811-a7f5-1026bc8fcf75": "skipped",
         "bcc52f23-6048-40e3-ab75-ed701468a5a2": "skipped",
