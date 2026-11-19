@@ -883,7 +883,8 @@ class TestCaseFile:
         "9a2e5cf2-be8f-46cb-b503-d2b4dfbb6403": ("Reebok", True),
         "c8f6ba97-85f3-4b5f-8552-43c2a2a2bb66": ("Adidas", False),
         "442282ca-90ae-4811-a7f5-1026bc8fcf75": ("Skechers", True),
-        "02ffd32e-cca0-476d-88f8-1486c790f421": ("Lululemon", False),
+        # Re-ruled sportswear by the owner in #238 (2026-11-18)
+        "02ffd32e-cca0-476d-88f8-1486c790f421": ("Lululemon", True),
         "94a563b7-2c67-4c74-9884-66f7a4f35ee8": ("Converse", True),
         "5812c8dc-58a9-4c53-b75e-394e9844322e": ("Lululemon", False),
         "b7eea904-4747-4974-a958-abd78ab0df32": ("Puma", False),
@@ -892,15 +893,17 @@ class TestCaseFile:
         "6d6195b9-5b71-478f-bc38-63e5743381b6": ("Nike", False),
         "de535470-9a93-413a-a69b-e8ca7b6d0028": ("Nike", False),
         "2d4ff51c-d1e9-49e9-bb48-48561bbdd06c": ("Nike", True),
-        "eb5aa27c-2fc8-4db4-a5b7-a202b116c4ea": ("Timberland", False),
+        # Re-ruled sportswear by the owner in #238 (2026-11-18)
+        "eb5aa27c-2fc8-4db4-a5b7-a202b116c4ea": ("Timberland", True),
         "bcc52f23-6048-40e3-ab75-ed701468a5a2": ("Skechers", True),
         "6ec5fd75-5e7a-4e06-b53f-58b4326cddba": ("Brooks Running", True),
         "3c93143f-4a9c-44f0-845b-3c7822450cfa": ("Patagonia", True),
         "efa10606-e4c9-4f33-9c7c-eaa46140e8b8": ("Merrell", True),
         "ed1e5bad-d330-43f9-bb87-d102c9691054": ("Reebok", True),
         # #219: #118's corrections and #215 run 2's financial cases, owner-ruled 2026-10-22
-        "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0": ("Nike", False),
-        "b8891fbc-7d8a-40b2-9b9b-527d9d373858": ("Adidas", False),
+        # a7eeaa13 and b8891fbc re-ruled financial (sportswear) by the owner in #238 (2026-11-18)
+        "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0": ("Nike", True),
+        "b8891fbc-7d8a-40b2-9b9b-527d9d373858": ("Adidas", True),
         "12396c87-b2a4-4563-ac1b-d2923202afe2": ("Nike", True),
         "2df21233-ef21-4ec7-87b7-44334f90ac19": ("Nike", True),
         "1ba1c2a2-ac8a-4077-ac44-11feae1a08ec": ("Nike", True),
@@ -917,6 +920,7 @@ class TestCaseFile:
         "3fee9d78-c7a8-4936-8ff0-2b14edadbcce": ("Nike", True),
         "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72": ("Nike", True),
         "e434b12d-eb59-4406-bd26-f3bad800aaf1": ("Nike", False),
+        # Owner-ruled 2026-10-22; re-ruled Social -1 by #238 (EXPECTED_CATEGORIES)
         "19832789-ca96-4c74-ba7a-7df0453c4874": ("Nike", True),
         # Owner-ruled financial 2026-10-22; re-ruled Social -1 by #234 (EXPECTED_CATEGORIES)
         "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("Puma", True),
@@ -925,6 +929,7 @@ class TestCaseFile:
     EXPECTED_CATEGORIES = {
         "cdb26552-8643-4007-a403-4f0451447e2f": ("social",),
         "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("social",),
+        "19832789-ca96-4c74-ba7a-7df0453c4874": ("social",),
     }
 
     def test_expected_verdicts_are_pinned(self):

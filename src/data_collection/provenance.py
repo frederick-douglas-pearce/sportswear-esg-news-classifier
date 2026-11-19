@@ -80,8 +80,8 @@ FAILED_STATUS = "failed"
 # (rows confirmed as correctly labeled), and #192's comment of 2026-10-28 (the backfill review; its
 # 3 unlabelable rulings are left out, since no export reads that status), corrected by #234
 # (2026-10-30), #249's review of the #245 relabel (2026-11-03), #248's template rows
-# (2026-11-04), and #232's spot-check of the relabeled cohorts (2026-11-18). #143 backfills
-# these into its audit log and deletes this.
+# (2026-11-04), #232's spot-check of the relabeled cohorts (2026-11-18), and #238's eval-case
+# articles (2026-11-18). #143 backfills these into its audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -353,6 +353,19 @@ HUMAN_RULINGS: dict[str, str] = {
     "f2756068-5c76-4c62-8685-862cf869e710": "skipped",
     "f6e9211d-9248-4cfe-9e35-bcc99f12d1a1": "skipped",
     "fcabee62-40e7-450f-87d3-ae3a81cb48f4": "skipped",
+    # 2026-11-18, #238: eval-case articles whose stored status contradicted the case expectation
+    # (record on #238). Sale pieces that describe the product (442282ca, bcc52f23, 6ec5fd75,
+    # eb5aa27c), a sale piece with business content (02ffd32e) and market wraps with analysis of the
+    # brand (a7eeaa13, b8891fbc) are sportswear with no ESG category, stored with MANUAL_SKIP_REASON;
+    # Nike's planned layoffs are Social -1, a human label (19832789)
+    "442282ca-90ae-4811-a7f5-1026bc8fcf75": "skipped",
+    "bcc52f23-6048-40e3-ab75-ed701468a5a2": "skipped",
+    "6ec5fd75-5e7a-4e06-b53f-58b4326cddba": "skipped",
+    "eb5aa27c-2fc8-4db4-a5b7-a202b116c4ea": "skipped",
+    "02ffd32e-cca0-476d-88f8-1486c790f421": "skipped",
+    "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0": "skipped",
+    "b8891fbc-7d8a-40b2-9b9b-527d9d373858": "skipped",
+    "19832789-ca96-4c74-ba7a-7df0453c4874": "labeled",
 }
 
 

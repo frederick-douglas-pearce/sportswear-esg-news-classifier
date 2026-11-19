@@ -4,6 +4,33 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-18: Eval-case articles agree with their stored labels (#238)
+
+A read-only check of every article in `prompts/labeling/eval_cases/` against its stored status
+found eight whose case expectation and stored status disagreed, so the FP export trained them one
+way while the eval scored them the other. The owner ruled all eight (record on #238), applying the
+policy rulings recorded on #248:
+
+- **Stored `false_positive`, ruled sportswear with no ESG category:** three sale pieces that
+  describe the product (`442282ca`, `bcc52f23` Skechers; `6ec5fd75` Brooks). Their cases already
+  expected sportswear.
+- **Case expected "not sportswear", ruled sportswear with no ESG category:** the Timberland gift
+  guide (`eb5aa27c`, it describes the boots' build), Lululemon's "We Made Too Much" piece
+  (`02ffd32e`, its growth plan and inventory strategy are business; moved from `product_false` to
+  `no_category`), and two Zerohedge futures wraps whose analysis of the brand makes them `financial`
+  (`a7eeaa13` for Nike, `b8891fbc` for Adidas). The case expectations change; the stored `skipped`
+  status stays.
+- **`19832789`** (Nike's planned 2027 layoffs) is Social −1 only, as `a70e6272`'s and `fbefe459`'s
+  job cuts are. The #245 relabel had already labeled it so; its label is now the owner's, in
+  `fbefe459`'s shape, with its exact-quote evidence kept. Its case leaves `financial_gray` for
+  `partial_categories` and `ruling_1` and expects `social` at −1.
+
+All eight are in `HUMAN_RULINGS` and stored with `fix_label.py update --manual` after a backup.
+The Haiku 4.5 Governance −1 brand labels left on the two futures wraps are deleted
+(`delete_llm_brand_labels`), since neither article is `labeled`. `tests/test_compare_prompts.py`
+pins the changed verdicts and `19832789`'s categories. The case-against-ruling check still runs one
+way; the converse is #275.
+
 ### 2026-11-18: The relabeled cohorts' spot-check is recorded as human rulings (#232)
 
 The owner reviewed a seeded random 50 of the `false_positive` rows and 50 of the judged `skipped`
