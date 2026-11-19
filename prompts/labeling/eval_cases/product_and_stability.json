@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections, and #238's) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'category_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' cases do), and the report checks every reply against them. #118's Mammut rope review was already a product_true case.",
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections, and #238's 02ffd32e) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'category_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' cases do), and the report checks every reply against them. #118's Mammut rope review was already a product_true case.",
   "cases": [
     {
       "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
@@ -191,7 +191,7 @@
         "no_category"
       ],
       "repeats": 1,
-      "note": "sale section: Lululemon We Made Too Much (not the prompt example's source); was product_false, ruled sportswear with no ESG category by the owner (#238, 2026-11-18): its growth plan, inventory and markdown strategy are business (#248 ruling 2)",
+      "note": "sale section: Lululemon We Made Too Much (not the prompt example's source); was product_false, ruled sportswear with no ESG category by the owner (#238, 2026-11-18): its growth plan, inventory and markdown strategy are business (the principle of #248 ruling 2: no ESG category is not no substantive content)",
       "expected": {
         "brand": "Lululemon",
         "is_sportswear_brand": true
@@ -449,7 +449,7 @@
         "financial"
       ],
       "repeats": 1,
-      "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): JPMorgan's underweight call on Nike's 'Win Now' strategy is analysis, so financial (#248 ruling 3); Adidas, a price move only, stays mention_only",
+      "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): JPMorgan's underweight call on Nike's 'Win Now' strategy is analysis, so financial (#248 ruling 3); Adidas, a price move only, is ruled mention_only",
       "expected": {
         "brand": "Nike",
         "is_sportswear_brand": true

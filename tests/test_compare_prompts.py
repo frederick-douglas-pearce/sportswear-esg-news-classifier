@@ -920,7 +920,7 @@ class TestCaseFile:
         "3fee9d78-c7a8-4936-8ff0-2b14edadbcce": ("Nike", True),
         "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72": ("Nike", True),
         "e434b12d-eb59-4406-bd26-f3bad800aaf1": ("Nike", False),
-        # Owner-ruled 2026-10-22; re-ruled Social -1 by #238 (EXPECTED_CATEGORIES)
+        # Owner-ruled 2026-10-22; re-ruled Social -1 by #238 (EXPECTED_CATEGORIES, EXPECTED_SENTIMENTS)
         "19832789-ca96-4c74-ba7a-7df0453c4874": ("Nike", True),
         # Owner-ruled financial 2026-10-22; re-ruled Social -1 by #234 (EXPECTED_CATEGORIES)
         "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("Puma", True),
@@ -930,6 +930,27 @@ class TestCaseFile:
         "cdb26552-8643-4007-a403-4f0451447e2f": ("social",),
         "fbefe459-5ddf-4e05-b092-1bbc31b823cb": ("social",),
         "19832789-ca96-4c74-ba7a-7df0453c4874": ("social",),
+    }
+    # The cases that rule the sentiment of a category
+    EXPECTED_SENTIMENTS = {
+        "fbefe459-5ddf-4e05-b092-1bbc31b823cb": (("social", -1),),
+        "19832789-ca96-4c74-ba7a-7df0453c4874": (("social", -1),),
+    }
+    # Strata of the cases #238 moved: a stratum decides what the comparator scores a case under
+    EXPECTED_STRATA_238 = {
+        "02ffd32e-cca0-476d-88f8-1486c790f421": {"cases", "no_category"},
+        "19832789-ca96-4c74-ba7a-7df0453c4874": {"cases", "partial_categories", "ruling_1"},
+    }
+    # The owner's #238 rulings on the case articles whose stored status contradicted the case
+    RULINGS_238 = {
+        "442282ca-90ae-4811-a7f5-1026bc8fcf75": "skipped",
+        "bcc52f23-6048-40e3-ab75-ed701468a5a2": "skipped",
+        "6ec5fd75-5e7a-4e06-b53f-58b4326cddba": "skipped",
+        "eb5aa27c-2fc8-4db4-a5b7-a202b116c4ea": "skipped",
+        "02ffd32e-cca0-476d-88f8-1486c790f421": "skipped",
+        "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0": "skipped",
+        "b8891fbc-7d8a-40b2-9b9b-527d9d373858": "skipped",
+        "19832789-ca96-4c74-ba7a-7df0453c4874": "labeled",
     }
 
     def test_expected_verdicts_are_pinned(self):
@@ -954,6 +975,43 @@ class TestCaseFile:
         # A case that rules a category cannot also sit in a stratum that expects none
         for k in got:
             assert not NO_CATEGORY_STRATA & set(specs[k].strata), k
+
+    def test_expected_sentiments_are_pinned(self):
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases/product_and_stability.json"
+        specs = compare_prompts.parse_case_file(json.loads(path.read_text()))
+        got = {k: s.expected.sentiments for k, s in specs.items() if s.expected and s.expected.sentiments}
+        assert got == self.EXPECTED_SENTIMENTS
+
+    def test_product_strata_name_their_verdict(self):
+        """product_true expects sportswear and product_false does not (#238)."""
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases/product_and_stability.json"
+        specs = compare_prompts.parse_case_file(json.loads(path.read_text()))
+        for stratum, verdict in (("product_true", True), ("product_false", False)):
+            cases = {k: s for k, s in specs.items() if stratum in s.strata}
+            assert cases, stratum
+            for k, s in cases.items():
+                assert s.expected and s.expected.is_sportswear_brand is verdict, (stratum, k)
+
+    def test_moved_case_strata_are_pinned(self):
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases/product_and_stability.json"
+        specs = compare_prompts.parse_case_file(json.loads(path.read_text()))
+        assert {k: set(specs[k].strata) for k in self.EXPECTED_STRATA_238} == self.EXPECTED_STRATA_238
+
+    def test_human_rulings_hold_the_238_rulings(self):
+        """Each #238 ruling is in HUMAN_RULINGS at its ruled status; the agreement test below reads
+        only ids already there, so it cannot catch a ruling that is missing."""
+        from src.data_collection.provenance import HUMAN_RULINGS
+
+        assert {k: HUMAN_RULINGS.get(k) for k in self.RULINGS_238} == self.RULINGS_238
 
     def test_case_expectations_agree_with_human_rulings(self):
         """A case and an owner ruling on the same article cannot contradict each other (#234).
