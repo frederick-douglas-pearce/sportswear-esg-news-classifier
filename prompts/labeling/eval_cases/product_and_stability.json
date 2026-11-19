@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'category_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' cases do), and the report checks every reply against them. #118's Mammut rope review was already a product_true case.",
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections, and #238's 02ffd32e) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'category_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' cases do), and the report checks every reply against them. #118's Mammut rope review was already a product_true case.",
   "cases": [
     {
       "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
@@ -179,7 +179,7 @@
         "product_true"
       ],
       "repeats": 1,
-      "note": "sale listing that describes the product (footbed, upper, lining, sole, buyer reviews): Skechers slippers on sale; expected flipped to true by the owner on 2026-10-22 (#215): it describes the product",
+      "note": "sale listing that describes the product (footbed, upper, lining, sole, buyer reviews): Skechers slippers on sale; expected flipped to true by the owner on 2026-10-22 (#215): it describes the product; stored skipped by the owner (#238)",
       "expected": {
         "brand": "Skechers",
         "is_sportswear_brand": true
@@ -188,13 +188,13 @@
     {
       "article_id": "02ffd32e-cca0-476d-88f8-1486c790f421",
       "strata": [
-        "product_false"
+        "no_category"
       ],
       "repeats": 1,
-      "note": "sale section: Lululemon We Made Too Much (not the prompt example's source)",
+      "note": "sale section: Lululemon We Made Too Much (not the prompt example's source); was product_false, ruled sportswear with no ESG category by the owner (#238, 2026-11-18): its growth plan, inventory and markdown strategy are business (the principle of #248 ruling 2: no ESG category is not no substantive content)",
       "expected": {
         "brand": "Lululemon",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true
       }
     },
     {
@@ -299,10 +299,10 @@
         "prompt_example_source"
       ],
       "repeats": 1,
-      "note": "prompt example source: Timberland gift guide with a promo code",
+      "note": "prompt example source: Timberland gift guide with a promo code; expected flipped to true by the owner (#238, 2026-11-18): it describes the boots' build, a product piece (#248 ruling 1)",
       "expected": {
         "brand": "Timberland",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true
       },
       "prompt_example": "Timberland just dropped an epic Gift Guide with a promo code"
     },
@@ -376,7 +376,7 @@
         "product_true"
       ],
       "repeats": 1,
-      "note": "sale listing that describes the product: Skechers slippers reduced to 19 (a v1.11.0 example until 2026-10-22, dropped); expected flipped to true by the owner on 2026-10-22 (#215): it describes the product",
+      "note": "sale listing that describes the product: Skechers slippers reduced to 19 (a v1.11.0 example until 2026-10-22, dropped); expected flipped to true by the owner on 2026-10-22 (#215): it describes the product; stored skipped by the owner (#238)",
       "expected": {
         "brand": "Skechers",
         "is_sportswear_brand": true
@@ -388,7 +388,7 @@
         "prompt_example_source"
       ],
       "repeats": 1,
-      "note": "prompt example source: Brooks Adrenaline GTS 24 $20 off, the rule's true sale-listing example (moved from false on 2026-10-22); expected flipped to true by the owner on 2026-10-22 (#215): it describes the product",
+      "note": "prompt example source: Brooks Adrenaline GTS 24 $20 off, the rule's true sale-listing example (moved from false on 2026-10-22); expected flipped to true by the owner on 2026-10-22 (#215): it describes the product; stored skipped by the owner (#238)",
       "expected": {
         "brand": "Brooks Running",
         "is_sportswear_brand": true
@@ -449,10 +449,10 @@
         "financial"
       ],
       "repeats": 1,
-      "note": "#118: Zerohedge futures wrap, Nike a tangential mention (mention_only); owner-ruled 2026-10-22",
+      "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): JPMorgan's underweight call on Nike's 'Win Now' strategy is analysis, so financial (#248 ruling 3); Adidas, a price move only, is ruled mention_only",
       "expected": {
         "brand": "Nike",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true
       }
     },
     {
@@ -461,10 +461,10 @@
         "financial"
       ],
       "repeats": 1,
-      "note": "#118: Zerohedge futures wrap, Adidas a tangential mention (mention_only); owner-ruled 2026-10-22",
+      "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): Adidas's profit miss explained by its World Cup marketing spending is analysis, so financial (#248 ruling 3)",
       "expected": {
         "brand": "Adidas",
-        "is_sportswear_brand": false
+        "is_sportswear_brand": true
       }
     },
     {
@@ -681,13 +681,20 @@
     {
       "article_id": "19832789-ca96-4c74-ba7a-7df0453c4874",
       "strata": [
-        "financial_gray"
+        "partial_categories",
+        "ruling_1"
       ],
       "repeats": 1,
-      "note": "#215 run 2 gave Governance -1: Nike shares tumble with layoff plans; financial or business (a layoff may be Social), categories read by hand; owner-ruled 2026-10-22",
+      "note": "#215 run 2 gave Governance -1: Nike shares tumble with layoff plans; owner-ruled 2026-10-22 with categories read by hand (financial_gray), re-ruled by #238 (2026-11-18) to Social -1 only for the layoffs Nike plans in 2027, as a70e6272's and fbefe459's job cuts are; ruling_1 (#230): job cuts the brand announces",
       "expected": {
         "brand": "Nike",
-        "is_sportswear_brand": true
+        "is_sportswear_brand": true,
+        "categories": [
+          "social"
+        ],
+        "sentiments": {
+          "social": -1
+        }
       }
     },
     {
