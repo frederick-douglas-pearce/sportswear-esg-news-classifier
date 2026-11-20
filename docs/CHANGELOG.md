@@ -4,6 +4,31 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-20: Candidate prompt v1.14.0 states the owner's rulings from #232's spot-check (#248)
+
+The owner's spot-check of the #245 relabel (#232) found `false_positive` rows wrong in two classes
+v1.13.0 decides, and #248 found template stock and filing pages typed `financial`. Candidate
+v1.14.0 (D046) changes only the system prompt:
+
+- a sale or deal piece that describes the product's build, materials, fit or comfort is `product`,
+  even when its genre is a deal listing;
+- the brand's own marketing campaign, a sponsorship or athlete-deal story, or sourced demand data
+  about it is `business` with no category; the "ESG content decides first" sentence on marketing
+  activations no longer overrides that;
+- `financial` needs a judgment or analysis about the brand, however brief and even in a list of
+  companies or a market wrap; a price move or results against consensus alone, a filing notice, a
+  short summary of reported figures, or a preview or options page that only fills in data is
+  `mention_only`. The market-wrap bullet that made a one-line reason `mention_only` is rewritten;
+- a line of employee severance costs in reported results is not job cuts (narrows D040 ruling 1).
+
+The cases are in `prompts/labeling/eval_cases/owner_rulings_232.json`, every one an owner ruling,
+split into corrections (rows v1.13.0 got wrong) and guards (rows it got right); #238's two R3
+futures wraps in `product_and_stability.json` join the corrections. The comparison report's
+owner-ruling roll-up is now per family (`RULING_FAMILIES` in `src/evaluation/comparator.py`),
+each with the falsifier pair its decision fixed: D040's rulings, D046's corrections and D046's
+guards (no falsifier). Production stays v1.13.0 until the eval meets D046's bar; promotion and a
+targeted relabel are #248's second PR.
+
 ### 2026-11-20: Eval cases and human rulings are checked against each other both ways (#275)
 
 The check that compared eval cases with `HUMAN_RULINGS` read only `product_and_stability.json`, only

@@ -3286,3 +3286,92 @@ a test-only check (a paid eval from a branch can run before the test does).
 **Consequences.** Adding a case on a ruled article, or a ruling on a case's article, needs the other
 side in the same change. `owner_ruled: false` does not mean "not ruled"; each file's description and
 `docs/LABELING.md` say so.
+
+## D046: The Owner's Rulings From #232's Spot-Check Are Stated in Candidate v1.14.0, Which Tightens `financial`, Judged Against a Bar Fixed Before Its Eval (#248)
+
+**Date:** 2026-11-20 · **Status:** accepted (architect review 2026-11-20: approve with changes, all
+applied; the owner approved the plan on 2026-11-20) · **Issues:** #248, #232, #238, #249, #154
+
+**Context.** #232's spot-check of the #245 relabel found the `false_positive` rows the FP export
+reads wrong in two classes v1.13.0 decides: sale pieces that describe the product, stored
+`retail_only`, and the brand's own marketing, sponsorship or demand data, stored `mention_only`.
+The owner ruled six policy points from the review (#248, 2026-11-18) and pulled the next prompt
+version ahead of #154 PR2's retrain. #248 itself found template stock and filing pages that
+v1.13.0 types `financial` while its own reasoning calls them templates (owner, 2026-11-03).
+
+**Decision.**
+1. **Candidate v1.14.0** is a copy of v1.13.0 whose user prompt and reply schema are unchanged.
+   Its system prompt states, each where it beats the rule it would otherwise lose to:
+   - (R1) a sale or deal piece that describes the product's build, materials, fit or comfort is
+     `product` even when its genre is a deal listing; a line of specs or a one-line blurb stays
+     `retail_only`;
+   - (R2) the brand's own marketing campaign, a story about its sponsorship or an athlete's deal,
+     or sourced consumer-demand data about it is `business` with no category, not `mention_only`.
+     The "ESG content decides first" paragraph's sentence on marketing activations now only limits
+     that paragraph's trigger, since read literally it beat R2;
+   - (R3) `financial` needs a judgment or analysis about the brand, however brief and even in a
+     list of companies or a market wrap; a price move or results against consensus alone is
+     `mention_only`; a teaser of human-written analysis counts. This replaces v1.13.0's
+     market-wrap bullet ("even when that line gives a reason") and its "a place in a list of
+     companies is `mention_only` however financial the line is", which contradicted it. #238's
+     re-rulings of `a7eeaa13` and `b8891fbc` are R3 cases;
+   - (#248) a filing notice, a short summary restating reported figures, and an earnings preview
+     or options page that only fills in data are `mention_only`;
+   - (R6) a line of employee severance costs in reported results is cost-cutting language, not a
+     reported workforce reduction. **Amends D040 §1 ruling 1** by narrowing what counts as cuts.
+
+   R4 (a partner's story is `mention_only` for the brands it carries), R5 (a template
+   insider-trading page stays `mention_only`) and R6's brand-hosted events are guarded by cases
+   and not restated: v1.13.0 already decides them, and #232 confirmed its rows.
+2. **The cases** are `prompts/labeling/eval_cases/owner_rulings_232.json`, one per source row,
+   every one `owner_ruled: true` (D045), in two groups:
+   - **corrections** (`v114_correction_*`): rows v1.13.0 stored and the owner corrected: #232's
+     corrections (R1, R2), #248's template rows, #249's Digital row `57acb8be`, and the two R3
+     wraps, which keep their single case in `product_and_stability.json`;
+   - **guards** (`v114_guard_*`): #232 confirmations, R1's other side and R3 to R6.
+
+   The R1 cases repeat three times (D040 §6 measured noise on the sale-listing boundary).
+   `7f3d37d8`, a Nike stock-move wrap named in the issue, is left out until the owner rules it.
+3. **The roll-up is per family.** `RULING_FAMILIES` (`src/evaluation/comparator.py`) names each
+   family's strata and the comparison its falsifier was fixed for: D040 (`ruling_1` to
+   `ruling_8`, v1.12.0 against v1.13.0), D046's corrections (v1.13.0 against v1.14.0) and D046's
+   guards (no falsifier). A case passes as under D040 §3: every answered reply on the expected
+   side, with the ruled categories and sentiments. The report has one section per family with a
+   case.
+4. **The bar, fixed before the run.** v1.14.0 is evaluated against v1.13.0 on Haiku 5.5 at effort
+   medium, from the PR head, over the three case files, the random and most-brands samples and the
+   human rulings. It is promoted only if:
+   - D036 §2's criteria hold;
+   - each correction case passes, or the miss is read and explained;
+   - no guard case, and no case of the other two files, fails under v1.14.0 that passes under
+     v1.13.0 in the same run;
+   - the transitions run the predicted way: `false_positive` → `skipped` for sale pieces that
+     describe the product, the brand's own marketing and a judgment about a brand in a list;
+     `skipped` → `false_positive` for price-only and template `financial` rows; `labeled` →
+     `skipped` only for a severance clause. Any other transition is read.
+
+   **Falsifier:** if v1.13.0 passes at least 85% of the answered correction cases, the edits are
+   not needed and promotion is reconsidered (the owner's threshold, as D040's).
+5. **Promotion and the relabel are a second PR** on #248, made only on a run that meets point 4,
+   with the owner's approval; it pins v1.14.0's hashes. The relabel is a new mode,
+   `248-relabel`, with its own tag, spend cap and report, reusing `relabel_arm`'s exclusions
+   (human rulings and labels, hand moves) and filtered on stored content types: `false_positive`
+   rows with a `retail_only` or `mention_only` judgment (a row typed only `other_entity` is left
+   out), and `skipped` rows judged `financial` with no `business` or `product` judgment. A
+   seeded spot-check of the relabeled rows follows, before #154 PR2.
+
+**Rejected.**
+- **Reusing `--mode 245-relabel`.** Once v1.14.0 is production it selects every LLM-decided row
+  without a v1.14.0 judgment, re-sampling positives #232 found right. Its spend cap counts #245's
+  runs, and its report keeps each row's pre-#245 status.
+- **Scoring from the per-stratum accuracy table.** It scores the sportswear side only, so a
+  category or sentiment ruling would always read correct.
+- **Selecting "non-template" `mention_only` rows.** No stored field tells a template apart; a
+  template row relabeled comes back `mention_only`.
+
+**Consequences.**
+- **Amends D041's consequence** that stored labels follow one prompt version. After the targeted
+  relabel, positives outside the cohort keep v1.13.0 judgments, and `--mode 245-relabel` would
+  select them; that is accepted, not run.
+- A stratum in no family is left out of the roll-up, so a new ruling's strata are added to a
+  family in `RULING_FAMILIES` with its cases.

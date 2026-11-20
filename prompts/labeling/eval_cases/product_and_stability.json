@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections, #238's 02ffd32e, and #275's cfe9e317) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'category_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' cases do), and the report checks every reply against them. #118's Mammut rope review was already a product_true case. 'owner_ruled' (#275, D045): true when the case's expectation is the owner's ruling on the article, which must then be in HUMAN_RULINGS (src/data_collection/provenance.py) at the status the expectation maps to (not sportswear: false_positive; ruled categories: labeled; ruled no category, or a stratum that expects none: skipped; categories not ruled: not false_positive; no expectation: ruled, and not labeled in a no-category stratum); false when the article is ruled but this brand's expectation is not its ruling (a multi-brand article), which still needs the article ruled; absent for a case that is not an owner ruling, which is refused for a ruled article. compare_prompts.py refuses a paid run on any disagreement.",
+  "description": "Named cases for contrastive prompt evaluation (scripts/compare_prompts.py, D036). The ids and strata are reusable for any candidate; 'expected' is the verdict the Product-article rule of prompt v1.11.0 gives the named brand, chosen by reading the article, and is re-read if that rule changes. Gray-zone cases carry none and are reported, not scored. A case whose article is the source of a quoted prompt example names the quote ('prompt_example') and is kept out of accuracy; the harness also flags any other title that matches a quote in the candidate prompt. From #219 (v1.12.0, D037): 'financial' cases (substantive stock, earnings or analyst coverage expected true, a market wrap that only names the brand expected false) and 'no_category' cases (#118's human corrections, #238's 02ffd32e, and #275's cfe9e317) should get no ESG category on any brand; the report lists any category kept on them, and on Product cases. 'financial_gray' and 'category_gray' cases are scored on the verdict and their categories read by hand. A case may also rule the brand's categories ('expected.categories', the applicable ones; the 'partial_categories' cases do), and the report checks every reply against them. #118's Mammut rope review was already a product_true case. 'owner_ruled' (#275, D045): true when the case's expectation is the owner's ruling on the article, which must then be in HUMAN_RULINGS (src/data_collection/provenance.py) at the status the expectation maps to (not sportswear: false_positive; ruled categories: labeled; ruled no category, or a stratum that expects none: skipped; categories not ruled: not false_positive; no expectation: ruled, and not labeled in a no-category stratum); false when the article is ruled but this brand's expectation is not its ruling (a multi-brand article), which still needs the article ruled; absent for a case that is not an owner ruling, which is refused for a ruled article. compare_prompts.py refuses a paid run on any disagreement. #248 (D046): #238's two futures wraps re-ruled financial ('a7eeaa13', 'b8891fbc') also carry 'v114_correction_r3', so D046's roll-up scores them with candidate v1.14.0's corrections.",
   "cases": [
     {
       "article_id": "d79efa45-c131-44ff-a233-d0b4f7c97858",
@@ -461,7 +461,8 @@
     {
       "article_id": "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0",
       "strata": [
-        "financial"
+        "financial",
+        "v114_correction_r3"
       ],
       "repeats": 1,
       "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): JPMorgan's underweight call on Nike's 'Win Now' strategy is analysis, so financial (#248 ruling 3); Adidas, a price move only, is ruled mention_only",
@@ -474,7 +475,8 @@
     {
       "article_id": "b8891fbc-7d8a-40b2-9b9b-527d9d373858",
       "strata": [
-        "financial"
+        "financial",
+        "v114_correction_r3"
       ],
       "repeats": 1,
       "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): Adidas's profit miss explained by its World Cup marketing spending is analysis, so financial (#248 ruling 3)",

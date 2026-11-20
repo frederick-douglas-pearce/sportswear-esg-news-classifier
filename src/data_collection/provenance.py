@@ -241,7 +241,7 @@ HUMAN_RULINGS: dict[str, str] = {
     "ff3d9904-3260-49bb-b231-0a260c27b6c0": "skipped",
     # 2026-11-04, #248: template or contentless stock pages that v1.13.0 judged `financial` while
     # its own reasoning called them templates; mention_only under ruling 6 (were skipped by the
-    # #245 relabel; stored with FP_REASON_MANUAL). v1.14.0 takes them as cases after the retrain
+    # #245 relabel; stored with FP_REASON_MANUAL). v1.14.0 takes them as cases before the retrain (#248)
     "02067ad1-d4dd-4c94-9af6-0d23d2d2122f": "false_positive",
     "201cc55a-2e10-404e-896b-8c9041f02203": "false_positive",
     "45e8c505-57ba-436c-ae91-b7ec261b695d": "false_positive",

@@ -1,0 +1,358 @@
+{
+  "description": "Named cases for #248 (D046): candidate v1.14.0's rulings from the owner's #232 spot-check (2026-11-18) and #248's template-stock finding (2026-11-03), one case per source row, with the owner's ruling as 'expected'. Strata say whether v1.13.0 got the row wrong: 'v114_correction_*' rows are ones v1.13.0 stored and the owner corrected (#232's seven corrections, R1 and R2; #248's seven template rows; #249's Digital row), and 'v114_guard_*' rows are #232 confirmations v1.14.0 must not break (R1's other side, R3 to R6). #238's two futures-wrap cases in product_and_stability.json ('a7eeaa13', 'b8891fbc', re-ruled financial under R3) carry 'v114_correction_r3'. D046's roll-up scores each family on its verdict, ruled categories and ruled sentiments; its falsifier reads the corrections. On a multi-brand row the note names the scored brand; the others are read by hand. 'title' is the stored title, kept so the prompt-example check runs without the database. 'owner_ruled' (#275, D045): true when the case's expectation is the owner's ruling on the article, which must then be in HUMAN_RULINGS at the status it maps to (not sportswear: false_positive; ruled categories: labeled; ruled no category: skipped); false when the article is ruled but this brand's expectation is not its ruling (a multi-brand article). Every case here is true. 7f3d37d8 (a Nike stock-move wrap named in #248) is left out until the owner rules it.",
+  "cases": [
+    {
+      "article_id": "3bb19314-ab3a-4a52-977f-09eb2c5df027",
+      "title": "HOKA has a rare deal on Clifton 10 & Bondi 9 sneakers already in 2026",
+      "strata": [
+        "v114_correction_r1"
+      ],
+      "repeats": 3,
+      "note": "#232 ruling 1 (owner, 2026-11-18): a sale or deal piece that describes the product's build, materials, fit or comfort is product, even as a deal listing; v1.13.0 stored retail_only, corrected to skipped",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Hoka",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "6c12f566-f74d-45f3-b83d-254190b88b7a",
+      "title": "The Adidas Dakota Johnson Wears Are 50 % off Today",
+      "strata": [
+        "v114_correction_r1"
+      ],
+      "repeats": 3,
+      "note": "#232 ruling 1 (owner, 2026-11-18): a sale or deal piece that describes the product's build, materials, fit or comfort is product, even as a deal listing (Samba); v1.13.0 stored retail_only, corrected to skipped",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "4068c564-5de9-4174-9f5e-45c7b9ea691c",
+      "title": "Skechers trainers reduced from £69 to £39 are  super comfy even after 15 hours  ",
+      "strata": [
+        "v114_correction_r1"
+      ],
+      "repeats": 3,
+      "note": "#232 ruling 1 (owner, 2026-11-18): a sale or deal piece that describes the product's build, materials, fit or comfort is product, even as a deal listing; v1.13.0 stored retail_only, corrected to skipped",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Skechers",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "aa37cad0-25ac-49a1-9aa4-db23b0187e28",
+      "title": "Detroit Lions Nike women hoodie sale : $55 . 99 at Fanatics",
+      "strata": [
+        "v114_guard_r1"
+      ],
+      "repeats": 3,
+      "note": "#232 ruling 1's other side: a line of specs or a one-line blurb stays retail_only; v1.13.0's false_positive confirmed",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "c9c97e73-1c8b-4303-8640-ece1c5893d07",
+      "title": "Adidas release stunning £50MILLION World Cup advert featuring football and Hollywood royalty... and an AI David Beckham",
+      "strata": [
+        "v114_correction_r2"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 2 (owner, 2026-11-18): the brand's own marketing campaign, an athlete sponsorship story, or sourced consumer-demand data about the brand is business with no category, not mention_only (its own campaign); v1.13.0 stored mention_only, corrected to skipped",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "83c84d1f-1039-43b6-a12e-5bb904ae99dc",
+      "title": "Are JENNIE, Kendall Jenner and Olivia Dean True Superstars?",
+      "strata": [
+        "v114_correction_r2"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 2 (owner, 2026-11-18): the brand's own marketing campaign, an athlete sponsorship story, or sourced consumer-demand data about the brand is business with no category, not mention_only (the Superstar campaign); v1.13.0 stored mention_only, corrected to skipped",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "ca703893-209b-49bf-89f9-738ddee5ccdf",
+      "title": "Where will Mbappe go if he ditches lucrative Nike boot deal?",
+      "strata": [
+        "v114_correction_r2"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 2 (owner, 2026-11-18): the brand's own marketing campaign, an athlete sponsorship story, or sourced consumer-demand data about the brand is business with no category, not mention_only (an athlete's deal); v1.13.0 stored mention_only, corrected to skipped",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "45d3a491-db08-4d41-9826-c59c17759fd8",
+      "title": "EXEC: Coresight Research Highlights Athleisure as Top Back-To-School Trend",
+      "strata": [
+        "v114_correction_r2"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 2 (owner, 2026-11-18): the brand's own marketing campaign, an athlete sponsorship story, or sourced consumer-demand data about the brand is business with no category, not mention_only (sourced demand data); v1.13.0 stored mention_only for all three brands, corrected to skipped; Nike scored, Adidas and Under Armour read by hand",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "17246bda-9850-453e-b9b1-d04a0a0050cc",
+      "title": "Stifel: Rising Input Costs May Create New Headwinds for Active Lifestyle Sector",
+      "strata": [
+        "v114_guard_r3"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 3 (owner, 2026-11-18): financial needs a judgment or analysis about the brand, even brief or in a list; a price move or results against consensus alone is not financial; a teaser of human-written analysis counts (an analyst's input-cost view, the brand in a list); v1.13.0's financial skip confirmed; Nike scored",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "0d42d019-3335-45ac-8811-40ffbd48b7fb",
+      "title": "Stocks making the biggest moves premarket: On Holding, Under Armour, GameStop, AST SpaceMobile & more",
+      "strata": [
+        "v114_guard_r3"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 3 (owner, 2026-11-18): financial needs a judgment or analysis about the brand, even brief or in a list; a price move or results against consensus alone is not financial; a teaser of human-written analysis counts (a premarket line: price and results against consensus); v1.13.0's false_positive confirmed",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Under Armour",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "7fe795b6-07cb-40f8-b48d-1ce01524dc42",
+      "title": "Why You Need To Pay Attention To Nike Stock",
+      "strata": [
+        "v114_guard_r3"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 3 (owner, 2026-11-18): financial needs a judgment or analysis about the brand, even brief or in a list; a price move or results against consensus alone is not financial; a teaser of human-written analysis counts (a teaser of a human-written piece); v1.13.0's financial skip confirmed",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "16633ce9-af72-4d69-bb16-f940fc30bd6c",
+      "title": "Nike Insider Robert Swan Just Loaded Up on NKE Shares . Should You Too ? ",
+      "strata": [
+        "v114_guard_r3"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 3 (owner, 2026-11-18): financial needs a judgment or analysis about the brand, even brief or in a list; a price move or results against consensus alone is not financial; a teaser of human-written analysis counts (a teaser of a human-written piece); v1.13.0's financial skip confirmed",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "457e531a-9468-4dca-886a-2ce97ddcb8ad",
+      "title": "DBL lifestyles opens premium multi-brand store in Chattogram",
+      "strata": [
+        "v114_guard_r4"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 4 (owner, 2026-11-18): a story about a partner, such as a franchise retailer opening a store, is mention_only for the brands it carries; v1.13.0's false_positive confirmed (retail_only); Nike scored, Adidas read by hand",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "27640210-8aa2-4072-aeb5-0d4b7cdc5d33",
+      "title": "💰 Check out the top 10 clubs earning the most from shirt sales in Europe",
+      "strata": [
+        "v114_guard_r4"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 4 (owner, 2026-11-18): a club's merchandise revenue is mention_only for the brand it carries; v1.13.0's false_positive confirmed",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "113483ca-da72-483a-8702-80cdd2f2d2e6",
+      "title": "Under Armour ( NYSE : UAA ) Major Shareholder V Prem Et Al Watsa Purchases 1 , 837 , 686 Shares of Stock",
+      "strata": [
+        "v114_guard_r5"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 5 (owner, 2026-11-18): a template insider-trading page reporting a large holder's purchases stays mention_only (not a concentrating stake); v1.13.0's false_positive confirmed",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Under Armour",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "f0906277-41d1-48f2-bfe6-6c79d02dc70a",
+      "title": "NIKE , Inc . Reports Fiscal 2026 Third Quarter Results",
+      "strata": [
+        "v114_guard_r6"
+      ],
+      "repeats": 1,
+      "note": "#232 ruling 6 (owner, 2026-11-18): a single employee-severance-costs clause in an earnings release is no Social -1; sportswear (financial) with no category; v1.13.0's skip confirmed",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
+    },
+    {
+      "article_id": "7bf35563-a928-48ad-8c10-b5e8dd556eba",
+      "title": "Top Wall Street Forecasters Revamp Under Armour Expectations Ahead Of Q3 Earnings - Under Armour ( NYSE : UAA ) ",
+      "strata": [
+        "v114_correction_template"
+      ],
+      "repeats": 1,
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (template earnings preview: consensus estimates and a price move)",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Under Armour",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "711b5caa-e4c1-4128-b7f1-bfaa7442eee0",
+      "title": "Decoding Lululemon Athletica Options Activity : What the Big Picture ? - Lululemon Athletica ( NASDAQ : LULU ) ",
+      "strata": [
+        "v114_correction_template"
+      ],
+      "repeats": 1,
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (options-activity data page)",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Lululemon",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "9cd2ca15-a112-4fe1-8cfa-3ee8b51b0333",
+      "title": "Nike Inc Q2 Income Falls",
+      "strata": [
+        "v114_correction_template"
+      ],
+      "repeats": 1,
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (short summary restating reported figures)",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "81ab6c27-f216-431b-bda7-621bb3bac187",
+      "title": "FinancialContent - Nike ( NKE ) To Report Earnings Tomorrow : Here Is What To Expect",
+      "strata": [
+        "v114_correction_template"
+      ],
+      "repeats": 1,
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (earnings preview filling in estimates)",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "02067ad1-d4dd-4c94-9af6-0d23d2d2122f",
+      "title": "With Nike Stock Deep in Oversold Territory , Should You Buy the Dip ? ",
+      "strata": [
+        "v114_correction_template"
+      ],
+      "repeats": 1,
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (technical-indicator and consensus page)",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "201cc55a-2e10-404e-896b-8c9041f02203",
+      "title": "Bernstein says Nike stock now ‘de-risked’, buy on post-earnings dip",
+      "strata": [
+        "v114_correction_template"
+      ],
+      "repeats": 1,
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (headline promising an analyst's view the body does not give)",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "45e8c505-57ba-436c-ae91-b7ec261b695d",
+      "title": "Columbia Sportswear Files 8-K With Third-Quarter Results and CFO Commentary",
+      "strata": [
+        "v114_correction_template"
+      ],
+      "repeats": 1,
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (8-K notice listing exhibits)",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Columbia Sportswear",
+        "is_sportswear_brand": false
+      }
+    },
+    {
+      "article_id": "57acb8be-eff4-456c-83f4-9883b3baf79a",
+      "title": "How Adidas Rewrote the Digital Playbook: Inside the Sportswear Giant’s Radical Shift from Stadium Sponsorships to Screen-First Strategy",
+      "strata": [
+        "v114_correction_digital"
+      ],
+      "repeats": 1,
+      "note": "#249 (owner, 2026-11-03), a case by #248's 2026-11-03 decision: Adidas's shift of marketing spend to digital channels, DTC e-commerce, apps and data-driven personalization is Digital Transformation +1; v1.13.0 judged it business with no category",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Adidas",
+        "is_sportswear_brand": true,
+        "categories": [
+          "digital_transformation"
+        ],
+        "sentiments": {
+          "digital_transformation": 1
+        }
+      }
+    }
+  ]
+}
