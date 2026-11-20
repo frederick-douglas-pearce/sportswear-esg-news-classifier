@@ -16,7 +16,7 @@ from src.data_collection.models import (
     SKIP_NO_ESG_CATEGORIES,
     SKIP_NO_ESG_CONTENT,
 )
-from src.evaluation import comparator
+from src.evaluation import comparator, diff_report
 from src.evaluation.comparator import (
     FAILED,
     MOST_BRANDS,
@@ -1845,9 +1845,41 @@ class TestOwnerRulingScoring:
         assert list(corrections["baseline"]["by_ruling"]) == ["v114_correction_r1", "v114_correction_template"]
         assert (corrections["baseline"]["passed"], corrections["baseline"]["failed"]) == (0, 2)
         assert (corrections["candidate"]["passed"], corrections["candidate"]["failed"]) == (2, 0)
+        assert [(side["cases"], side["passed"], side["failed"], side["unanswered"])
+                for side in (corrections["baseline"], corrections["candidate"])] == [(2, 0, 2, 0), (2, 2, 0, 0)]
         guards = s["D046 guards"]
-        assert (guards["baseline"]["passed"], guards["candidate"]["failed"]) == (1, 1)
+        assert [(side["cases"], side["passed"], side["failed"], side["unanswered"])
+                for side in (guards["baseline"], guards["candidate"])] == [(1, 1, 0, 0), (1, 0, 1, 0)]
         assert [x["article_id"] for x in guards["candidate"]["failed_cases"]] == ["3"]
+
+    def test_rows_follow_the_family_tuple_not_the_alphabet(self, monkeypatch):
+        """`strata` is the report's row order (RulingFamily), in the summary and the table."""
+        family = comparator.RulingFamily("X", "D999", ("x_zeta", "x_alpha"), None)
+        monkeypatch.setattr(comparator, "RULING_FAMILIES", (family,))
+        monkeypatch.setattr(diff_report, "RULING_FAMILIES", (family,))
+        runs = [
+            _run(_article(name, strata=(name,), expected=Expectation("Nike", False)),
+                 [_reply([_not_sportswear("Nike")])], [_reply([_not_sportswear("Nike")])])
+            for name in ("x_alpha", "x_zeta")
+        ]
+        summary = summarize(runs, **SIDES)
+        assert list(summary["rulings"]["X"]["baseline"]["by_ruling"]) == ["x_zeta", "x_alpha"]
+        md = render_markdown(summary, self._config("v1.13.0", "v1.14.0"))
+        section = md[md.index("## Owner rulings (X)"):]
+        assert section.index("| x_zeta |") < section.index("| x_alpha |")
+        assert "Per `x_zeta`, `x_alpha` case" in section
+        assert "- Falsifier: none (D999 compares the candidate's failures with the baseline's)" in section
+
+    def test_a_family_whose_falsifier_applies_is_shown_with_no_case(self):
+        """A run of D046's pair without its case file shows the falsifier unanswered, not no
+        section; a family whose falsifier does not apply is still left out."""
+        runs = [_run(_article("1", strata=("cases",), expected=Expectation("Nike", False)),
+                     [_reply([_not_sportswear("Nike")])], [_reply([_not_sportswear("Nike")])])]
+        md = render_markdown(summarize(runs, **SIDES), self._config("v1.13.0", "v1.14.0"))
+        corrections = md[md.index("## Owner rulings (D046 corrections)"):]
+        assert "- baseline: 0 passed, 0 failed, 0 unanswered, of 0 cases (n/a of answered)" in corrections
+        assert "- Falsifier: baseline n/a (no answered case)" in corrections
+        assert "## Owner rulings (D040)" not in md and "## Owner rulings (D046 guards)" not in md
 
     def test_d046s_falsifier_reads_the_corrections_for_its_pair_and_guards_have_none(self):
         runs = [
@@ -1862,12 +1894,14 @@ class TestOwnerRulingScoring:
         md = render_markdown(summarize(runs, **SIDES), self._config("v1.13.0", "v1.14.0"))
         assert "## Owner rulings (D040)" not in md
         corrections = md[md.index("## Owner rulings (D046 corrections)"):md.index("## Owner rulings (D046 guards)")]
+        assert ("Per `v114_correction_r1`, `v114_correction_r2`, `v114_correction_r3`, "
+                "`v114_correction_template` case") in corrections
         assert "D046's falsifier: a baseline rate of 85.0% or more" in corrections
         assert "- Falsifier: baseline 85.0% meets the threshold" in corrections
         assert "| v114_correction_r2 | 17 / 3 / 0 | 20 / 0 / 0 |" in corrections
         assert "v114_correction_r1" not in corrections.split("|---|---|---|")[1]
         guards = md[md.index("## Owner rulings (D046 guards)"):]
-        assert "- Falsifier: none (this family is scored for new misses only)" in guards
+        assert "- Falsifier: none (D046 compares the candidate's failures with the baseline's)" in guards
         assert "| v114_guard_r4 | 1 / 0 / 0 | 1 / 0 / 0 |" in guards
         other = render_markdown(summarize(runs, **SIDES), self._config("v1.12.0", "v1.14.0"))
         assert "- Falsifier: not applicable (D046's is for v1.14.0 against v1.13.0)" in other

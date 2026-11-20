@@ -49,7 +49,7 @@ NO_CATEGORY_STRATA = frozenset(
 class RulingFamily:
     """Owner-ruling strata scored together, per case, on verdict, ruled categories and ruled
     sentiments. `strata` is the report's row order. `falsifier_pair` is the (baseline, candidate)
-    comparison the decision fixed a falsifier for, or None for a family scored only for misses."""
+    comparison the decision fixed a falsifier for, or None for a family with no falsifier."""
 
     name: str
     decision: str
@@ -62,8 +62,11 @@ class RulingFamily:
 RULING_FALSIFIER_RATE = 0.85
 
 # The roll-up's families. D040's ruling_1 to ruling_8 (#230; ruling 9 is gray, with no expected
-# outcome). D046's v1.14.0 cases (#248): corrections are rows v1.13.0 stored and the owner
-# corrected, which carry the falsifier; guards are rows it got right, scored for no new miss.
+# outcome). D046's v1.14.0 cases (#248): corrections are rows v1.13.0 got wrong (stored and
+# corrected by the owner, or, for #238's two market wraps, answered wrong in D040's run 2), which
+# carry the falsifier; guards are rows it got right, with no falsifier (D046 §4 compares the
+# candidate's failures with the baseline's). A stratum in no family, such as #249's Digital case
+# (r249_digital), is left out of the roll-up.
 RULING_FAMILIES: tuple[RulingFamily, ...] = (
     RulingFamily("D040", "D040", tuple(f"ruling_{n}" for n in range(1, 9)), ("v1.12.0", "v1.13.0")),
     RulingFamily(
@@ -74,7 +77,6 @@ RULING_FAMILIES: tuple[RulingFamily, ...] = (
             "v114_correction_r2",
             "v114_correction_r3",
             "v114_correction_template",
-            "v114_correction_digital",
         ),
         ("v1.13.0", "v1.14.0"),
     ),

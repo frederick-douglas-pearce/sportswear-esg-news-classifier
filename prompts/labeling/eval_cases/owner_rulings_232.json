@@ -1,5 +1,5 @@
 {
-  "description": "Named cases for #248 (D046): candidate v1.14.0's rulings from the owner's #232 spot-check (2026-11-18) and #248's template-stock finding (2026-11-03), one case per source row, with the owner's ruling as 'expected'. Strata say whether v1.13.0 got the row wrong: 'v114_correction_*' rows are ones v1.13.0 stored and the owner corrected (#232's seven corrections, R1 and R2; #248's seven template rows; #249's Digital row), and 'v114_guard_*' rows are #232 confirmations v1.14.0 must not break (R1's other side, R3 to R6). #238's two futures-wrap cases in product_and_stability.json ('a7eeaa13', 'b8891fbc', re-ruled financial under R3) carry 'v114_correction_r3'. D046's roll-up scores each family on its verdict, ruled categories and ruled sentiments; its falsifier reads the corrections. On a multi-brand row the note names the scored brand; the others are read by hand. 'title' is the stored title, kept so the prompt-example check runs without the database. 'owner_ruled' (#275, D045): true when the case's expectation is the owner's ruling on the article, which must then be in HUMAN_RULINGS at the status it maps to (not sportswear: false_positive; ruled categories: labeled; ruled no category: skipped); false when the article is ruled but this brand's expectation is not its ruling (a multi-brand article). Every case here is true. 7f3d37d8 (a Nike stock-move wrap named in #248) is left out until the owner rules it.",
+  "description": "Named cases for #248 (D046): candidate v1.14.0's rulings from the owner's #232 spot-check (2026-11-18) and #248's template-stock finding (2026-11-03), one case per source row, with the owner's ruling as 'expected'. Strata say whether v1.13.0 got the row wrong: 'v114_correction_*' rows are ones v1.13.0 stored and the owner corrected (#232's seven corrections, R1 and R2; #248's seven template rows), and 'v114_guard_*' rows are #232 confirmations v1.14.0 must not break (R1's other side, R3 to R6). '57acb8be' (#249's Digital row, 'r249_digital') is a case by #248's 2026-11-03 decision but in no D046 family: no v1.14.0 text addresses it, so it is scored by the expected-categories and expected-sentiments sections and read, not barred. #238's two futures-wrap cases in product_and_stability.json ('a7eeaa13', 'b8891fbc', re-ruled financial under R3) carry 'v114_correction_r3': v1.13.0 never stored them, and answered them wrong in D040's run 2. D046's roll-up scores each family on its verdict, ruled categories and ruled sentiments; its falsifier reads the corrections. On a multi-brand row the note names the scored brand; the others are read by hand. 'title' is the stored title, kept so the prompt-example check runs without the database. 'owner_ruled' (#275, D045): true when the case's expectation is the owner's ruling on the article, which must then be in HUMAN_RULINGS at the status it maps to (not sportswear: false_positive; ruled categories: labeled; ruled no category: skipped); false when the article is ruled but this brand's expectation is not its ruling (a multi-brand article). Every case here is true. 7f3d37d8 (a Nike stock-move wrap named in #248) is left out until the owner rules it.",
   "cases": [
     {
       "article_id": "3bb19314-ab3a-4a52-977f-09eb2c5df027",
@@ -243,7 +243,7 @@
         "v114_correction_template"
       ],
       "repeats": 1,
-      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (template earnings preview: consensus estimates and a price move)",
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template or empty; mention_only (template earnings preview: consensus estimates and a price move)",
       "owner_ruled": true,
       "expected": {
         "brand": "Under Armour",
@@ -257,7 +257,7 @@
         "v114_correction_template"
       ],
       "repeats": 1,
-      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (options-activity data page)",
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template or empty; mention_only (options-activity data page)",
       "owner_ruled": true,
       "expected": {
         "brand": "Lululemon",
@@ -271,7 +271,7 @@
         "v114_correction_template"
       ],
       "repeats": 1,
-      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (short summary restating reported figures)",
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template or empty; mention_only (short summary restating reported figures)",
       "owner_ruled": true,
       "expected": {
         "brand": "Nike",
@@ -285,7 +285,7 @@
         "v114_correction_template"
       ],
       "repeats": 1,
-      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (earnings preview filling in estimates)",
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template or empty; mention_only (earnings preview filling in estimates)",
       "owner_ruled": true,
       "expected": {
         "brand": "Nike",
@@ -299,7 +299,7 @@
         "v114_correction_template"
       ],
       "repeats": 1,
-      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (technical-indicator and consensus page)",
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template or empty; mention_only (technical-indicator and consensus page)",
       "owner_ruled": true,
       "expected": {
         "brand": "Nike",
@@ -313,7 +313,7 @@
         "v114_correction_template"
       ],
       "repeats": 1,
-      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (headline promising an analyst's view the body does not give)",
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template or empty; mention_only (headline promising an analyst's view the body does not give)",
       "owner_ruled": true,
       "expected": {
         "brand": "Nike",
@@ -327,7 +327,7 @@
         "v114_correction_template"
       ],
       "repeats": 1,
-      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template; mention_only (8-K notice listing exhibits)",
+      "note": "#248 (owner, 2026-11-03): a template or contentless stock or filing page that v1.13.0 judged financial while its own reasoning called it a template or empty; mention_only (8-K notice listing exhibits)",
       "owner_ruled": true,
       "expected": {
         "brand": "Columbia Sportswear",
@@ -338,10 +338,10 @@
       "article_id": "57acb8be-eff4-456c-83f4-9883b3baf79a",
       "title": "How Adidas Rewrote the Digital Playbook: Inside the Sportswear Giant’s Radical Shift from Stadium Sponsorships to Screen-First Strategy",
       "strata": [
-        "v114_correction_digital"
+        "r249_digital"
       ],
       "repeats": 1,
-      "note": "#249 (owner, 2026-11-03), a case by #248's 2026-11-03 decision: Adidas's shift of marketing spend to digital channels, DTC e-commerce, apps and data-driven personalization is Digital Transformation +1; v1.13.0 judged it business with no category",
+      "note": "#249 (owner, 2026-11-03), a case by #248's 2026-11-03 decision: Adidas's shift of marketing spend to digital channels, DTC e-commerce, apps and data-driven personalization is Digital Transformation +1; v1.13.0 judged it business with no category; no v1.14.0 text addresses it, and rule 7 (marketing activations are not Digital Transformation) points the other way, so it is outside D046's roll-up and read, not barred (D046 §2)",
       "owner_ruled": true,
       "expected": {
         "brand": "Adidas",

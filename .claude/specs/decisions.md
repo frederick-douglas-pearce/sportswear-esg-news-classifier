@@ -3290,61 +3290,86 @@ side in the same change. `owner_ruled: false` does not mean "not ruled"; each fi
 ## D046: The Owner's Rulings From #232's Spot-Check Are Stated in Candidate v1.14.0, Which Tightens `financial`, Judged Against a Bar Fixed Before Its Eval (#248)
 
 **Date:** 2026-11-20 · **Status:** accepted (architect review 2026-11-20: approve with changes, all
-applied; the owner approved the plan on 2026-11-20) · **Issues:** #248, #232, #238, #249, #154
+applied; the owner approved the plan on 2026-11-20, and the code-review scope ruling's fix set,
+with the R1 and R3 edges below, on 2026-11-20) · **Issues:** #248, #232, #238, #249, #154, #280,
+#281
 
 **Context.** #232's spot-check of the #245 relabel found the `false_positive` rows the FP export
 reads wrong in two classes v1.13.0 decides: sale pieces that describe the product, stored
 `retail_only`, and the brand's own marketing, sponsorship or demand data, stored `mention_only`.
 The owner ruled six policy points from the review (#248, 2026-11-18) and pulled the next prompt
 version ahead of #154 PR2's retrain. #248 itself found template stock and filing pages that
-v1.13.0 types `financial` while its own reasoning calls them templates (owner, 2026-11-03).
+v1.13.0 types `financial` while its own reasoning calls them templates or empty (owner,
+2026-11-03).
 
 **Decision.**
 1. **Candidate v1.14.0** is a copy of v1.13.0 whose user prompt and reply schema are unchanged.
    Its system prompt states, each where it beats the rule it would otherwise lose to:
    - (R1) a sale or deal piece that describes the product's build, materials, fit or comfort is
-     `product` even when its genre is a deal listing; a line of specs or a one-line blurb stays
-     `retail_only`;
-   - (R2) the brand's own marketing campaign, a story about its sponsorship or an athlete's deal,
-     or sourced consumer-demand data about it is `business` with no category, not `mention_only`.
-     The "ESG content decides first" paragraph's sentence on marketing activations now only limits
-     that paragraph's trigger, since read literally it beat R2;
+     `product` even when its genre is a deal listing; one sentence is enough when it says how the
+     product is built or how it fits or holds up in wear (the owner approved this threshold at
+     code review); a line of specs or a one-line blurb that only praises it stays `retail_only`;
+   - (R2) the brand's own marketing campaign, a story about its own sponsorship or an athlete's
+     deal with it (the deal itself, by either party), or sourced consumer-demand data about it is
+     `business` with no category, not `mention_only`. The "ESG content decides first" paragraph's
+     sentence on marketing activations now only limits that paragraph's trigger, since read
+     literally it beat R2. The Social section's endorsement question names no content type, so a
+     signature product's release stays `product`;
    - (R3) `financial` needs a judgment or analysis about the brand, however brief and even in a
      list of companies or a market wrap; a price move or results against consensus alone is
      `mention_only`; a teaser of human-written analysis counts. This replaces v1.13.0's
      market-wrap bullet ("even when that line gives a reason") and its "a place in a list of
-     companies is `mention_only` however financial the line is", which contradicted it. #238's
-     re-rulings of `a7eeaa13` and `b8891fbc` are R3 cases;
+     companies is `mention_only` however financial the line is", which contradicted it, and the
+     `financial` heading no longer requires the brand to be the article's subject. A rating or
+     price-target change with no reason given is data, not a judgment: `mention_only` (the owner
+     approved this edge at code review). #238's re-rulings of `a7eeaa13` and `b8891fbc` are R3
+     cases; the owner also re-ruled `a7eeaa13`'s Adidas (UBS's downgrade with its stated reason)
+     `financial` on 2026-11-20, which leaves the article's status unchanged;
    - (#248) a filing notice, a short summary restating reported figures, and an earnings preview
      or options page that only fills in data are `mention_only`;
    - (R6) a line of employee severance costs in reported results is cost-cutting language, not a
      reported workforce reduction. **Amends D040 §1 ruling 1** by narrowing what counts as cuts.
 
-   R4 (a partner's story is `mention_only` for the brands it carries), R5 (a template
-   insider-trading page stays `mention_only`) and R6's brand-hosted events are guarded by cases
-   and not restated: v1.13.0 already decides them, and #232 confirmed its rows.
+   R4 (a partner's story is `mention_only` for the brands it carries) and R5 (a template
+   insider-trading page stays `mention_only`) are guarded by cases and not restated: v1.13.0
+   already decides them, and #232 confirmed its rows (R4: `457e531a`, `27640210`; R5:
+   `113483ca`). R6's brand-hosted events are not restated either; D040's `ruling_4` cases in
+   `owner_rulings_192.json` (`af3a3548`, Brooks' own youth meet, among them) guard them.
 2. **The cases** are `prompts/labeling/eval_cases/owner_rulings_232.json`, one per source row,
    every one `owner_ruled: true` (D045), in two groups:
-   - **corrections** (`v114_correction_*`): rows v1.13.0 stored and the owner corrected: #232's
-     corrections (R1, R2), #248's template rows, #249's Digital row `57acb8be`, and the two R3
-     wraps, which keep their single case in `product_and_stability.json`;
+   - **corrections** (`v114_correction_*`): rows v1.13.0 got wrong. #232's corrections (R1, R2)
+     and #248's template rows are rows it stored and the owner corrected. The two R3 wraps, which
+     keep their single case in `product_and_stability.json`, were never stored under v1.13.0; it
+     answered them wrong in D040's run 2;
    - **guards** (`v114_guard_*`): #232 confirmations, R1's other side and R3 to R6.
+
+   `57acb8be` (#249's Digital row) is a case by the owner's 2026-11-03 decision, in the stratum
+   `r249_digital`, which is in no family. No v1.14.0 text addresses it, and rule 7 (marketing
+   activations are not Digital Transformation) points the other way, so it is scored by the
+   expected-categories and expected-sentiments sections and read, not barred. Whether a strategic
+   shift of sales or marketing to digital channels is Digital Transformation is a separate ruling
+   for the owner (#280).
 
    The R1 cases repeat three times (D040 §6 measured noise on the sale-listing boundary).
    `7f3d37d8`, a Nike stock-move wrap named in the issue, is left out until the owner rules it.
 3. **The roll-up is per family.** `RULING_FAMILIES` (`src/evaluation/comparator.py`) names each
    family's strata and the comparison its falsifier was fixed for: D040 (`ruling_1` to
-   `ruling_8`, v1.12.0 against v1.13.0), D046's corrections (v1.13.0 against v1.14.0) and D046's
+   `ruling_8`, v1.13.0 against v1.12.0), D046's corrections (v1.14.0 against v1.13.0) and D046's
    guards (no falsifier). A case passes as under D040 §3: every answered reply on the expected
    side, with the ruled categories and sentiments. The report has one section per family with a
-   case.
+   case, and one for a family whose falsifier applies to the pair even with no case, so a missing
+   case file shows as a falsifier with no answered case.
 4. **The bar, fixed before the run.** v1.14.0 is evaluated against v1.13.0 on Haiku 5.5 at effort
    medium, from the PR head, over the three case files, the random and most-brands samples and the
    human rulings. It is promoted only if:
    - D036 §2's criteria hold;
    - each correction case passes, or the miss is read and explained;
    - no guard case, and no case of the other two files, fails under v1.14.0 that passes under
-     v1.13.0 in the same run;
+     v1.13.0 in the same run. The report computes no such list: the owner compares, side by side,
+     each family's failed cases, the accuracy section's misses (the sportswear side, which covers
+     the Product cases) and the expected-categories and expected-sentiments misses. A case listed
+     under the candidate and not under the baseline is a new miss. A computed list across every
+     scored section is #281;
    - the transitions run the predicted way: `false_positive` → `skipped` for sale pieces that
      describe the product, the brand's own marketing and a judgment about a brand in a list;
      `skipped` → `false_positive` for price-only and template `financial` rows; `labeled` →

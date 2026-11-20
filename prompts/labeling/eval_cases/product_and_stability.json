@@ -465,7 +465,7 @@
         "v114_correction_r3"
       ],
       "repeats": 1,
-      "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): JPMorgan's underweight call on Nike's 'Win Now' strategy is analysis, so financial (#248 ruling 3); Adidas, a price move only, is ruled mention_only",
+      "note": "#118: Zerohedge futures wrap; owner-ruled mention_only 2026-10-22, re-ruled by #238 (2026-11-18): JPMorgan's underweight call on Nike's 'Win Now' strategy is analysis, so financial (#248 ruling 3); Adidas was ruled mention_only (#238) and re-ruled by the owner on 2026-11-20 (#248): UBS's downgrade with its stated reason is analysis, so financial too",
       "owner_ruled": true,
       "expected": {
         "brand": "Nike",

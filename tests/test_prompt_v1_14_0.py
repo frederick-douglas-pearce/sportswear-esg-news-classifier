@@ -28,6 +28,10 @@ RULING_PHRASES = {
     "r3_teaser": "A short teaser of a human-written financial piece is `financial`",
     "template": "**Filing and data-feed notices** → `mention_only`",
     "r6": "a line of employee severance costs in reported results",
+    "r1_one_sentence": "or how it fits or holds up in wear (\"runs half a size small\", \"still comfortable after a full shift\")",
+    "r2_scope": "a story about the brand's own sponsorship or an athlete's deal with it (the deal itself: its signing, terms, renewal or end, by either party)",
+    "r3_rating": "A rating or price-target change with no reason given (\"shares fell after a downgrade\") is data, not a judgment: `mention_only`.",
+    "r3_heading": "whether the company is the article's subject or one of several it judges.**",
 }
 
 # The owner's ruling per case: brand, sportswear, categories, sentiments. One changes only with
@@ -61,13 +65,22 @@ EXPECTED = {
     ),
 }
 
-# #232's corrections (v1.13.0 stored them, the owner corrected them) and #238's two R3 wraps
+# D046's corrections: #232's (R1, R2) and #248's template rows (v1.13.0 stored them, the owner
+# corrected them), and #238's two R3 wraps (v1.13.0 answered them wrong in D040's run 2)
 CORRECTIONS = {
     "v114_correction_r1": {"3bb19314", "6c12f566", "4068c564"},
     "v114_correction_r2": {"c9c97e73", "83c84d1f", "ca703893", "45d3a491"},
     "v114_correction_r3": {"a7eeaa13", "b8891fbc"},
     "v114_correction_template": {"7bf35563", "711b5caa", "9cd2ca15", "81ab6c27", "02067ad1", "201cc55a", "45e8c505"},
-    "v114_correction_digital": {"57acb8be"},
+}
+
+# D046's guards: #232 confirmations v1.14.0 must not break
+GUARDS = {
+    "v114_guard_r1": {"aa37cad0"},
+    "v114_guard_r3": {"17246bda", "0d42d019", "7fe795b6", "16633ce9"},
+    "v114_guard_r4": {"457e531a", "27640210"},
+    "v114_guard_r5": {"113483ca"},
+    "v114_guard_r6": {"f0906277"},
 }
 
 
@@ -131,7 +144,55 @@ class TestCandidate:
         assert "A brief judgment counts, and so does one about the brand as one of several companies" in definition
         key_test = _paragraph(text, "**Key test for financial articles:**")
         assert "however brief the judgment" in key_test
-        assert "A price move or results against consensus, with no judgment about the brand, is not analysis." in key_test
+        assert "A price move or results against consensus, with no judgment about the brand, is not analysis," in key_test
+
+    def test_financial_heading_admits_a_judgment_in_a_list_or_wrap(self, v1_14_0):
+        """The heading no longer makes the brand the article's subject, which beat R3 on market
+        wraps (code review P1), and keeps human-written analysis as the test."""
+        heading = _paragraph(v1_14_0.system_prompt, "**`financial`:")
+        assert "the article's subject is the company's stock" not in heading
+        assert heading.startswith("**`financial`: the article gives human-written analysis or commentary")
+        assert RULING_PHRASES["r3_heading"] in heading
+
+    def test_a_rating_change_with_no_reason_stays_mention_only_in_both_rules(self, v1_14_0):
+        """The owner's edge (code review P6): in the market-wrap bullet and the key test."""
+        text = v1_14_0.system_prompt
+        assert RULING_PHRASES["r3_rating"] in _paragraph(text, "   - **A market wrap or news roundup")
+        assert "neither is a rating or price-target change with no reason given" in _paragraph(
+            text, "**Key test for financial articles:**"
+        )
+
+    def test_preview_and_notice_rules_replace_v1_13_0s_unqualified_preview(self, v1_14_0):
+        """#248: a preview that only lists estimates, and data-feed notices, are mention_only."""
+        text = v1_14_0.system_prompt
+        assert "- An earnings preview, a stock drop explained" not in text
+        assert "An earnings preview that only lists consensus estimates is `mention_only`." in text
+        notices = text[text.index("**Filing and data-feed notices**"):]
+        notices = notices[: notices.index("**Pure stock price/volume articles**")]
+        for phrase in (
+            "lists its exhibits",
+            "a short earnings summary that only restates reported figures",
+            "an earnings preview or options-activity page that only fills in consensus estimates",
+            "a page whose headline promises an analyst's view that the body does not give",
+        ):
+            assert phrase in notices, phrase
+
+    def test_r1s_one_sentence_threshold_covers_fit_and_keeps_praise_retail(self, v1_14_0):
+        line = _paragraph(v1_14_0.system_prompt, "  - A sale listing or deal piece that also describes")
+        assert RULING_PHRASES["r1_one_sentence"] in line
+        assert "a blurb that only praises it (\"a gym-bag staple\"), is not." in line
+
+    def test_r2_is_scoped_to_the_deal_and_names_no_content_type_in_social(self, v1_14_0):
+        """R2 covers the deal itself, by either party, not a partner's revenue (code review P3);
+        the Social endorsement question no longer names a content type, which would pull a
+        signature product's release to business (P4)."""
+        text = v1_14_0.system_prompt
+        mention_only = text[text.index("**`mention_only`:"):text.index("1. **Template financial articles")]
+        assert RULING_PHRASES["r2_scope"] in mention_only
+        assert "a story about its sponsorship or an athlete's deal" not in text
+        endorsement = text[text.index("3. **Is this about a celebrity/athlete endorsement"):]
+        endorsement = endorsement[: endorsement.index("4. **")]
+        assert "`business`" not in endorsement
 
     def test_r2_is_not_overridden_by_the_esg_first_paragraph(self, v1_14_0):
         """ESG-first decides first, so its marketing sentence must not make a campaign
@@ -187,9 +248,9 @@ class TestCaseFile:
         assert compare_prompts.case_ruling_disagreements(merged, HUMAN_RULINGS) == []
 
     def test_corrections_and_guards_are_d046s_families(self):
-        """Every case is in exactly one D046 stratum, the corrections are the rows v1.13.0 got
-        wrong, and every D046 stratum has a case across the case files (#238's R3 wraps are in
-        the product file)."""
+        """Every case in owner_rulings_232.json but 57acb8be is in exactly one D046 stratum, the
+        corrections and guards are the tables above, and every D046 stratum has a case across the
+        case files (#238's R3 wraps are in the product file)."""
         families = {f.name: f.strata for f in RULING_FAMILIES}
         d046 = set(families["D046 corrections"]) | set(families["D046 guards"])
         merged = compare_prompts.read_case_files(ALL_CASE_FILES)
@@ -199,8 +260,18 @@ class TestCaseFile:
                 by_stratum.setdefault(stratum, set()).add(article_id[:8])
         assert set(by_stratum) == d046
         assert {k: v for k, v in by_stratum.items() if k in families["D046 corrections"]} == CORRECTIONS
+        assert {k: v for k, v in by_stratum.items() if k in families["D046 guards"]} == GUARDS
         for article_id, spec in specs_of(CASE_FILE).items():
-            assert len(spec.strata & d046) == 1, article_id
+            want = 0 if article_id.startswith("57acb8be") else 1
+            assert len(spec.strata & d046) == want, article_id
+
+    def test_the_digital_case_is_outside_every_family(self, specs):
+        """No v1.14.0 text addresses #249's Digital ruling, so it is read, not barred (D046 §2,
+        #280): its stratum is in no family, and its categories and sentiment are still ruled."""
+        [(article_id, spec)] = [(k, s) for k, s in specs.items() if k.startswith("57acb8be")]
+        in_a_family = {s for f in RULING_FAMILIES for s in f.strata}
+        assert "r249_digital" in spec.strata and not spec.strata & in_a_family
+        assert spec.expected.categories == ("digital_transformation",)
 
     def test_r1_cases_repeat_for_the_sale_listing_noise(self, cases):
         """D040 §6 measured a few percent per-reply noise on the sale-listing boundary."""

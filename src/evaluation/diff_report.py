@@ -286,9 +286,12 @@ def render_markdown(summary: dict, config: dict) -> str:
 
 
 def _ruling_family(family: RulingFamily, block: dict, config: dict) -> list[str]:
-    """One family's roll-up section; none when neither side scored a case of it. The falsifier
-    verdict is given only for the comparison its decision fixed it for."""
-    if not (block["baseline"]["cases"] or block["candidate"]["cases"]):
+    """One family's roll-up section. The falsifier verdict is given only for the comparison its
+    decision fixed it for; a family with no case is left out unless that falsifier applies, so a
+    missing case file shows as a falsifier with no answered case instead of no section."""
+    pair = family.falsifier_pair
+    falsifier_applies = pair is not None and (config["baseline"], config["candidate"]) == pair
+    if not (block["baseline"]["cases"] or block["candidate"]["cases"] or falsifier_applies):
         return []
     lines = [
         "",
@@ -300,8 +303,6 @@ def _ruling_family(family: RulingFamily, block: dict, config: dict) -> list[str]
         "outside the rate.",
         "",
     ]
-    pair = family.falsifier_pair
-    falsifier_applies = pair is not None and (config["baseline"], config["candidate"]) == pair
     if falsifier_applies:
         lines[-1:-1] = [
             "",
@@ -330,7 +331,9 @@ def _ruling_family(family: RulingFamily, block: dict, config: dict) -> list[str]
                ("meets the threshold" if rate >= RULING_FALSIFIER_RATE else "is below the threshold"))
         )
     elif pair is None:
-        lines.append("- Falsifier: none (this family is scored for new misses only)")
+        lines.append(
+            f"- Falsifier: none ({family.decision} compares the candidate's failures with the baseline's)"
+        )
     else:
         lines.append(
             f"- Falsifier: not applicable ({family.decision}'s is for {pair[1]} against {pair[0]})"
