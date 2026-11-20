@@ -53,7 +53,7 @@ import logging
 import random
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -69,6 +69,7 @@ from src.data_collection.models import (  # noqa: E402
 )
 from src.evaluation.comparator import (  # noqa: E402
     MOST_BRANDS,
+    NO_CATEGORY_STRATA,
     SAMPLE,
     EvalArticle,
     Expectation,
@@ -124,6 +125,9 @@ class Spec:
     note: str = ""
     # A prompt example the case file says this article is the source of
     prompt_example: str | None = None
+    # Whether the expectation is the owner's ruling on the article (#275, D045): True, False for a
+    # ruled article whose per-brand expectation is not its ruling, None when the case does not say
+    owner_ruled: bool | None = None
 
 
 def parse_case_file(data: dict) -> dict[str, Spec]:
@@ -154,6 +158,9 @@ def parse_case_file(data: dict) -> dict[str, Spec]:
             bad = {c: v for c, v in sentiments.items() if v not in (-1, 0, 1) or isinstance(v, bool)}
             if bad:
                 raise ValueError(f"Case {article_id}: expected sentiments must be -1, 0 or 1, got {bad}")
+        owner_ruled = case.get("owner_ruled")
+        if owner_ruled is not None and not isinstance(owner_ruled, bool):
+            raise ValueError(f"Case {article_id}: owner_ruled must be true or false, got {owner_ruled!r}")
         specs[article_id] = Spec(
             strata={CASES, *case.get("strata", [])},
             repeats=int(case.get("repeats", 1)),
@@ -169,6 +176,7 @@ def parse_case_file(data: dict) -> dict[str, Spec]:
             ),
             note=case.get("note", ""),
             prompt_example=case.get("prompt_example"),
+            owner_ruled=owner_ruled,
         )
     return specs
 
@@ -192,11 +200,64 @@ def merge_case_specs(specs: dict[str, Spec], incoming: dict[str, Spec], source: 
             )
         if old.prompt_example and new.prompt_example and old.prompt_example != new.prompt_example:
             raise EvalSetupError(f"Case {article_id}: {source} names a different prompt example")
+        if None not in (old.owner_ruled, new.owner_ruled) and old.owner_ruled != new.owner_ruled:
+            raise EvalSetupError(f"Case {article_id}: {source} declares owner_ruled differently")
         old.strata |= new.strata
         old.repeats = max(old.repeats, new.repeats)
         old.expected = old.expected or new.expected
         old.prompt_example = old.prompt_example or new.prompt_example
+        if old.owner_ruled is None:
+            old.owner_ruled = new.owner_ruled
         old.note = "; ".join(n for n in (old.note, new.note) if n)
+
+
+def case_ruling_disagreements(specs: dict[str, Spec], rulings: Mapping[str, str]) -> list[str]:
+    """Where the case files and the human rulings disagree (#275, D045); empty when they agree.
+
+    A case whose article is ruled must declare ``owner_ruled``. A case declaring it true must be
+    ruled, and at the status its expectation maps to: not sportswear is ``false_positive``; ruled
+    categories are ``labeled``; ruled no category (empty, or a stratum that expects none) is
+    ``skipped``; categories not ruled only rule out ``false_positive``; with no expectation, a
+    no-category stratum rules out ``labeled``. A case declaring it false (a multi-brand article
+    whose named brand's expectation is not the article's ruling) must be ruled, and keeps the checks
+    sound per brand: a sportswear brand rules out ``false_positive``, ruled categories need
+    ``labeled``.
+    """
+    problems: list[str] = []
+    for article_id, spec in sorted(specs.items()):
+        ruling = rulings.get(article_id)
+        if spec.owner_ruled is None:
+            if ruling is not None:
+                problems.append(f"{article_id}: ruled {ruling}, but the case does not declare owner_ruled")
+            continue
+        if ruling is None:
+            problems.append(f"{article_id}: declares owner_ruled {str(spec.owner_ruled).lower()}, but is not ruled")
+            continue
+        expected = spec.expected
+        no_category = bool(spec.strata & NO_CATEGORY_STRATA)
+        if not spec.owner_ruled:
+            if expected and expected.is_sportswear_brand and ruling == "false_positive":
+                problems.append(f"{article_id}: expects {expected.brand} sportswear, ruled false_positive")
+            elif expected and expected.categories and ruling != "labeled":
+                problems.append(f"{article_id}: rules categories, ruled {ruling}")
+            continue
+        if expected is None:
+            if no_category and ruling == "labeled":
+                problems.append(f"{article_id}: a no-category case ruled labeled")
+            continue
+        if not expected.is_sportswear_brand:
+            want = "false_positive"
+        elif expected.categories:
+            want = "labeled"
+        elif expected.categories == () or no_category:
+            want = "skipped"
+        else:
+            if ruling == "false_positive":
+                problems.append(f"{article_id}: expects {expected.brand} sportswear, ruled false_positive")
+            continue
+        if ruling != want:
+            problems.append(f"{article_id}: expectation maps to {want}, ruled {ruling}")
+    return problems
 
 
 def read_case_files(paths: list[Path]) -> dict[str, Spec]:
@@ -453,7 +514,8 @@ def build_eval_article(
     """What the comparison sends for one article, or None when the pipeline would not send it.
 
     Raises EvalSetupError when a case expects a verdict for a brand the article does not list:
-    that case could never be scored.
+    that case could never be scored; and when a case declares ``owner_ruled`` false on an article
+    with fewer than two brands, since that opt-out is for a multi-brand article only (#275, D045).
     """
     article_id = str(article.id)
     content = article_content(article.full_content, article.description)
@@ -466,6 +528,11 @@ def build_eval_article(
         raise EvalSetupError(
             f"Case {article_id} expects a verdict for {spec.expected.brand!r}, "
             f"which is not among its brands {brands}"
+        )
+    if spec.owner_ruled is False and len(brands) < 2:
+        raise EvalSetupError(
+            f"Case {article_id} declares owner_ruled false, which is for a multi-brand article, "
+            f"but its article lists {brands}"
         )
     return EvalArticle(
         article_id=article_id,
@@ -612,6 +679,12 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         specs = read_case_files(args.case_file)
+        disagreements = case_ruling_disagreements(specs, provenance.HUMAN_RULINGS)
+        if disagreements:
+            listed = "Case files disagree with the human rulings: " + "; ".join(disagreements)
+            if not args.dry_run:
+                raise EvalSetupError(f"{listed}. A paid run is refused")
+            logger.warning(f"{listed} (a paid run would be refused)")
         case_hashes = file_sha256(args.case_file)
         tree = git_state(args.case_file)
         if tree["dirty"] is None:

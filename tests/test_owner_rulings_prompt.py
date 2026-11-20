@@ -204,6 +204,9 @@ class TestCaseFile:
         is false_positive, sportswear with no category a judged skip, and categories labeled."""
         from src.data_collection.provenance import HUMAN_RULINGS
 
+        # Every case says it is an owner ruling, the gray ruling 9 case included (#275, D045)
+        assert all(s.owner_ruled is True for s in specs.values())
+        assert HUMAN_RULINGS.get("a4fd8d33-925f-4982-9bd8-21b3d537842d") == "skipped"
         ruled = {k: s.expected for k, s in specs.items() if s.expected}
         assert len(ruled) == len(specs) - 1  # the gray ruling 9 case has no expectation
         for article_id, expected in ruled.items():
