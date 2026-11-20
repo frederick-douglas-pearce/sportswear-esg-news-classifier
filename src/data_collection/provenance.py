@@ -369,12 +369,11 @@ HUMAN_RULINGS: dict[str, str] = {
     "19832789-ca96-4c74-ba7a-7df0453c4874": "labeled",
     # 2026-11-20, #275: eval-case articles whose case notes recorded an owner ruling (#118's human
     # corrections and #215's Product and financial rulings, 2026-10-22) that had not reached this
-    # list. Each is at its stored status, which its expectation maps to (D045). Sale and deal
-    # listings that give the brand only retail details, and a brand named only in a list of
-    # tariff-refund beneficiaries, are false_positive; UGG's grant and donation are Social +1, a
-    # human-reviewed label (cdb26552); the rest are skipped: sportswear with no ESG category, except
-    # 22a41460 and 3c8017cb (corrected to no ESG category, sportswear status or content type not
-    # ruled) and cfe9e317 (ruled sportswear, its categories read by hand)
+    # list, and three the owner ruled on #275 (22a41460, 3c8017cb, cfe9e317). Each is at its stored
+    # status, which its case expectation maps to (D045). Sale and deal listings that give the brand
+    # only retail details, and a brand named only in a list of tariff-refund beneficiaries, are
+    # false_positive; UGG's grant and donation are Social +1, a human-reviewed label (cdb26552); the
+    # rest are sportswear with no ESG category
     "b7eea904-4747-4974-a958-abd78ab0df32": "false_positive",
     "e7968869-86d2-4692-b06c-071d7a9b1de4": "false_positive",
     "63f9fd9b-a7c8-4e49-8baf-52291f925d44": "false_positive",

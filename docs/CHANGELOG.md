@@ -16,8 +16,12 @@ which. `case_ruling_disagreements` in `scripts/compare_prompts.py` decides it; t
 over every case file, and `compare_prompts.py` refuses a paid run on a disagreement (a dry run warns).
 Every case in `owner_rulings_192.json` is declared, and in `product_and_stability.json` every case
 on a ruled article. The product cases whose notes recorded an owner ruling from #118 and #215 are
-added to `HUMAN_RULINGS` at their stored status, which their expectation maps to; the owner stores
-the human marker on them with `fix_label.py update --manual` after a backup.
+added to `HUMAN_RULINGS` at their stored status, which their expectation maps to; three whose notes
+recorded no sportswear status or category ruling (`22a41460`, `3c8017cb`, `cfe9e317`) were ruled by the owner
+on #275, sportswear with no ESG category, and their cases carry it. A case declaring `false` on an
+article with fewer than two brands is refused when the comparison builds it. After a backup, the
+owner stores the human marker on the added rulings with `fix_label.py update --manual` and deletes
+the non-human brand labels left on the `skipped` ones (`delete_llm_brand_labels`), as #238 did.
 
 ### 2026-11-20: A paid prompt eval refuses untracked prompt and case files (#239)
 

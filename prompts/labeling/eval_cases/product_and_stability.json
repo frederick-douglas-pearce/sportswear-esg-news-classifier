@@ -529,8 +529,13 @@
         "no_category"
       ],
       "repeats": 1,
-      "note": "#118: Steak n Shake vs Nike commentary (RedState); human-corrected to no ESG category, sportswear status not ruled",
-      "owner_ruled": true
+      "note": "#118: Steak n Shake vs Nike commentary (RedState); human-corrected to no ESG category; owner ruled 2026-11-20 (#275): sportswear, financial commentary, no ESG category",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Nike",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
     },
     {
       "article_id": "23c30b60-9671-4613-a93a-893d14830a14",
@@ -626,14 +631,15 @@
     {
       "article_id": "cfe9e317-aed2-4c28-9c7b-ca9450d14e59",
       "strata": [
-        "category_gray"
+        "no_category"
       ],
       "repeats": 1,
-      "note": "#118: adidas x Sole Play collab; owner-ruled true 2026-10-22. Was product_true (no category); moved to category_gray 2026-10-23 after #219's P1 run 6 kept Social for adidas's Business Track program: one interview answer from the founder it supports, so Social is defensible but borderline, and the categories are read, not checked",
+      "note": "#118: adidas x Sole Play collab; owner-ruled true 2026-10-22. Was product_true (no category); moved to category_gray 2026-10-23 after #219's P1 run 6 kept Social for adidas's Business Track program (one interview answer from the founder it supports); owner ruled 2026-11-20 (#275): no ESG category, one sentence is not enough evidence, so moved to no_category",
       "owner_ruled": true,
       "expected": {
         "brand": "Adidas",
-        "is_sportswear_brand": true
+        "is_sportswear_brand": true,
+        "categories": []
       }
     },
     {
@@ -655,8 +661,13 @@
         "no_category"
       ],
       "repeats": 1,
-      "note": "#118: Cannes Lions creativity report naming Columbia Sportswear; human-corrected to no ESG category, mention_only vs business not ruled",
-      "owner_ruled": true
+      "note": "#118: Cannes Lions creativity report naming Columbia Sportswear; human-corrected to no ESG category; owner ruled 2026-11-20 (#275): sportswear, business (the brand's own marketing campaign and its results), no ESG category",
+      "owner_ruled": true,
+      "expected": {
+        "brand": "Columbia Sportswear",
+        "is_sportswear_brand": true,
+        "categories": []
+      }
     },
     {
       "article_id": "cdb26552-8643-4007-a403-4f0451447e2f",

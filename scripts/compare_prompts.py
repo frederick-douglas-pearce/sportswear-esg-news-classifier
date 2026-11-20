@@ -514,7 +514,8 @@ def build_eval_article(
     """What the comparison sends for one article, or None when the pipeline would not send it.
 
     Raises EvalSetupError when a case expects a verdict for a brand the article does not list:
-    that case could never be scored.
+    that case could never be scored; and when a case declares ``owner_ruled`` false on an article
+    with fewer than two brands, since that opt-out is for a multi-brand article only (#275, D045).
     """
     article_id = str(article.id)
     content = article_content(article.full_content, article.description)
@@ -527,6 +528,11 @@ def build_eval_article(
         raise EvalSetupError(
             f"Case {article_id} expects a verdict for {spec.expected.brand!r}, "
             f"which is not among its brands {brands}"
+        )
+    if spec.owner_ruled is False and len(brands) < 2:
+        raise EvalSetupError(
+            f"Case {article_id} declares owner_ruled false, which is for a multi-brand article, "
+            f"but its article lists {brands}"
         )
     return EvalArticle(
         article_id=article_id,
