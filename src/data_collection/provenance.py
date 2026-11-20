@@ -80,8 +80,9 @@ FAILED_STATUS = "failed"
 # (rows confirmed as correctly labeled), and #192's comment of 2026-10-28 (the backfill review; its
 # 3 unlabelable rulings are left out, since no export reads that status), corrected by #234
 # (2026-10-30), #249's review of the #245 relabel (2026-11-03), #248's template rows
-# (2026-11-04), #232's spot-check of the relabeled cohorts (2026-11-18), and #238's eval-case
-# articles (2026-11-18). #143 backfills these into its audit log and deletes this.
+# (2026-11-04), #232's spot-check of the relabeled cohorts (2026-11-18), #238's eval-case
+# articles (2026-11-18), and #275's eval-case articles (2026-11-20). #143 backfills these into its
+# audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -366,6 +367,38 @@ HUMAN_RULINGS: dict[str, str] = {
     "a7eeaa13-de2d-4ed6-83ce-64f74a4bbda0": "skipped",
     "b8891fbc-7d8a-40b2-9b9b-527d9d373858": "skipped",
     "19832789-ca96-4c74-ba7a-7df0453c4874": "labeled",
+    # 2026-11-20, #275: eval-case articles whose case notes recorded an owner ruling (#118's human
+    # corrections and #215's Product and financial rulings, 2026-10-22) that had not reached this
+    # list. Each is at its stored status, which its expectation maps to (D045). Sale and deal
+    # listings that give the brand only retail details, and a brand named only in a list of
+    # tariff-refund beneficiaries, are false_positive; UGG's grant and donation are Social +1, a
+    # human-reviewed label (cdb26552); the rest are skipped: sportswear with no ESG category, except
+    # 22a41460 and 3c8017cb (corrected to no ESG category, sportswear status or content type not
+    # ruled) and cfe9e317 (ruled sportswear, its categories read by hand)
+    "b7eea904-4747-4974-a958-abd78ab0df32": "false_positive",
+    "e7968869-86d2-4692-b06c-071d7a9b1de4": "false_positive",
+    "63f9fd9b-a7c8-4e49-8baf-52291f925d44": "false_positive",
+    "6d6195b9-5b71-478f-bc38-63e5743381b6": "false_positive",
+    "de535470-9a93-413a-a69b-e8ca7b6d0028": "false_positive",
+    "e434b12d-eb59-4406-bd26-f3bad800aaf1": "false_positive",
+    "cdb26552-8643-4007-a403-4f0451447e2f": "labeled",
+    "2d4ff51c-d1e9-49e9-bb48-48561bbdd06c": "skipped",
+    "12396c87-b2a4-4563-ac1b-d2923202afe2": "skipped",
+    "2df21233-ef21-4ec7-87b7-44334f90ac19": "skipped",
+    "1ba1c2a2-ac8a-4077-ac44-11feae1a08ec": "skipped",
+    "22a41460-1976-41e4-9a36-e0fe0943441d": "skipped",
+    "23c30b60-9671-4613-a93a-893d14830a14": "skipped",
+    "a058da6e-8656-4dc7-901a-fc1d56d4b745": "skipped",
+    "ea428de7-23a8-4004-80a7-5323c26e2f1a": "skipped",
+    "9e973f0c-458b-4d3d-bf2a-55f3e3439149": "skipped",
+    "eded2885-014c-45d1-8164-4bd6605a0618": "skipped",
+    "3b4de2e6-78d4-47b9-bea1-fe298967a6d0": "skipped",
+    "7dccbf22-de0e-4e60-acb5-f562b551fafc": "skipped",
+    "cfe9e317-aed2-4c28-9c7b-ca9450d14e59": "skipped",
+    "89330b08-e205-48b3-a233-ecce8b03b2d3": "skipped",
+    "3c8017cb-e7f6-47dc-83ea-4d59468118ef": "skipped",
+    "3fee9d78-c7a8-4936-8ff0-2b14edadbcce": "skipped",
+    "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72": "skipped",
 }
 
 

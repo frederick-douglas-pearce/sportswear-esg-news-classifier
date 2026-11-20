@@ -4,6 +4,21 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-20: Eval cases and human rulings are checked against each other both ways (#275)
+
+The check that compared eval cases with `HUMAN_RULINGS` read only `product_and_stability.json`, only
+ids already in `HUMAN_RULINGS`, and only one direction, so a not-sportswear case on an article ruled
+`skipped`, or an owner ruling recorded in a case note but never added to `HUMAN_RULINGS`, passed. A
+case now declares `owner_ruled` (D045): `true` when its expectation is the owner's ruling, which must
+be in `HUMAN_RULINGS` at the status the expectation maps to; `false` for a ruled multi-brand article
+whose named brand's expectation is not the article's ruling; and a case on a ruled article must say
+which. `case_ruling_disagreements` in `scripts/compare_prompts.py` decides it; the test suite runs it
+over every case file, and `compare_prompts.py` refuses a paid run on a disagreement (a dry run warns).
+Every case in `owner_rulings_192.json` is declared, and in `product_and_stability.json` every case
+on a ruled article. The product cases whose notes recorded an owner ruling from #118 and #215 are
+added to `HUMAN_RULINGS` at their stored status, which their expectation maps to; the owner stores
+the human marker on them with `fix_label.py update --manual` after a backup.
+
 ### 2026-11-20: A paid prompt eval refuses untracked prompt and case files (#239)
 
 `scripts/compare_prompts.py` refused a paid run only when tracked files differed from the commit,

@@ -1015,27 +1015,18 @@ class TestCaseFile:
 
         assert {k: HUMAN_RULINGS.get(k) for k in self.RULINGS_238} == self.RULINGS_238
 
-    def test_case_expectations_agree_with_human_rulings(self):
-        """A case and an owner ruling on the same article cannot contradict each other (#234).
-
-        Rulings are per article and expectations per brand, so only two checks are sound: a brand
-        expected sportswear rules out an article-level false_positive, and a brand expected to have
-        categories needs the article labeled.
-        """
-        import json
+    def test_every_case_file_agrees_with_human_rulings(self):
+        """Every case file in eval_cases/ agrees with HUMAN_RULINGS both ways (#275, D045): a ruled
+        article is declared, and a declared owner ruling is ruled at the status it maps to."""
         from pathlib import Path
 
         from src.data_collection.provenance import HUMAN_RULINGS
 
-        path = Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases/product_and_stability.json"
-        specs = compare_prompts.parse_case_file(json.loads(path.read_text()))
-        ruled = {k: s.expected for k, s in specs.items() if s.expected and k in HUMAN_RULINGS}
-        assert ruled
-        for article_id, expected in ruled.items():
-            if expected.is_sportswear_brand:
-                assert HUMAN_RULINGS[article_id] != "false_positive", article_id
-            if expected.categories:
-                assert HUMAN_RULINGS[article_id] == "labeled", article_id
+        paths = sorted((Path(__file__).resolve().parents[1] / "prompts/labeling/eval_cases").glob("*.json"))
+        assert {"owner_rulings_192.json", "product_and_stability.json"} <= {p.name for p in paths}
+        specs = compare_prompts.read_case_files(paths)
+        assert sum(s.owner_ruled is True for s in specs.values()) > 0
+        assert compare_prompts.case_ruling_disagreements(specs, HUMAN_RULINGS) == []
 
     @pytest.mark.parametrize("version", ["v1.11.0", "v1.12.0", "v1.13.0"])
     def test_every_prompt_example_case_names_a_quote_in_the_candidate_prompt(self, version):
@@ -1294,6 +1285,47 @@ class TestOwnerRulingScoring:
     def test_case_file_refuses_a_bad_sentiment(self, expected, message):
         with pytest.raises(ValueError, match=message):
             compare_prompts.parse_case_file({"cases": [_case(**expected)]})
+
+    def test_case_file_reads_owner_ruled(self):
+        ruled = compare_prompts.parse_case_file({"cases": [{**_case("a"), "owner_ruled": True},
+                                                            {**_case("b"), "owner_ruled": False}, _case("c")]})
+        assert (ruled["a"].owner_ruled, ruled["b"].owner_ruled, ruled["c"].owner_ruled) == (True, False, None)
+
+    @pytest.mark.parametrize("value", ["yes", 1, 0, "true"])
+    def test_case_file_refuses_a_non_boolean_owner_ruled(self, value):
+        with pytest.raises(ValueError, match="owner_ruled must be true or false"):
+            compare_prompts.parse_case_file({"cases": [{**_case(), "owner_ruled": value}]})
+
+    def test_case_files_merge_owner_ruled_one_sided_and_refuse_a_conflict(self, tmp_path):
+        ruled = self._write(tmp_path, "one.json", [{**_case("a"), "owner_ruled": True}])
+        silent = self._write(tmp_path, "two.json", [_case("a")])
+        assert compare_prompts.read_case_files([silent, ruled])["a"].owner_ruled is True
+        assert compare_prompts.read_case_files([ruled, silent])["a"].owner_ruled is True
+        opted_out = self._write(tmp_path, "three.json", [{**_case("a"), "owner_ruled": False}])
+        with pytest.raises(compare_prompts.EvalSetupError, match="owner_ruled differently"):
+            compare_prompts.read_case_files([ruled, opted_out])
+
+    def test_a_paid_run_is_refused_when_a_case_disagrees_with_a_ruling(self, tmp_path, caplog):
+        """Checked before the database is read; a dry run warns and goes on (#275)."""
+        from src.data_collection.provenance import HUMAN_RULINGS
+
+        ruled = next(k for k, v in HUMAN_RULINGS.items() if v == "false_positive")
+        case = self._write(tmp_path, "one.json", [{**_case(ruled), "owner_ruled": True}])
+        argv = ["--baseline", "v1.10.0", "--candidate", "v1.11.0", "--case-file", str(case)]
+        session = MagicMock(side_effect=AssertionError("no database"))
+        with caplog.at_level(logging.WARNING, logger="compare_prompts"):
+            with patch.object(compare_prompts.db, "get_session", session):
+                assert compare_prompts.main([*argv, "--max-cost", "5"]) == 2
+            session.assert_not_called()
+            errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+            assert len(errors) == 1 and "disagree with the human rulings" in errors[0] and ruled in errors[0]
+            caplog.clear()
+            with patch.object(compare_prompts.db, "get_session", _session), \
+                 patch.object(compare_prompts, "select_specs"), \
+                 patch.object(compare_prompts, "load_articles", return_value=[]):
+                assert compare_prompts.main([*argv, "--dry-run"]) == 0
+            warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+            assert [w for w in warnings if "a paid run would be refused" in w and ruled in w]
 
     def test_case_file_refuses_an_id_twice(self):
         with pytest.raises(ValueError, match="more than once"):
@@ -1755,3 +1787,63 @@ class TestOwnerRulingScoring:
         assert "| ruling_1 | 20 / 0 / 0 | 20 / 0 / 0 |" in md
         assert "meets the threshold" not in md and "D040's falsifier:" not in md
         assert "- Falsifier: not applicable (D040's is for v1.13.0 against v1.12.0)" in md
+
+
+def _spec(expected=None, strata=(), owner_ruled=True):
+    return compare_prompts.Spec(strata={"cases", *strata}, expected=expected, owner_ruled=owner_ruled)
+
+
+class TestCaseRulingDisagreements:
+    """The case files against the human rulings (#275, D045)."""
+
+    @staticmethod
+    def _check(spec, ruling):
+        rulings = {} if ruling is None else {"a": ruling}
+        return compare_prompts.case_ruling_disagreements({"a": spec}, rulings)
+
+    @pytest.mark.parametrize(
+        "expected,strata,want",
+        [
+            (Expectation("Nike", False), (), "false_positive"),
+            (Expectation("Nike", False, ()), ("financial",), "false_positive"),
+            (Expectation("Nike", True, ("social",)), (), "labeled"),
+            (Expectation("Nike", True, ()), (), "skipped"),
+            (Expectation("Nike", True), ("financial",), "skipped"),
+            (Expectation("Nike", True), ("product_true",), "skipped"),
+        ],
+    )
+    def test_an_owner_ruling_maps_its_expectation_to_one_status(self, expected, strata, want):
+        for ruling in ("labeled", "skipped", "false_positive"):
+            problems = self._check(_spec(expected, strata), ruling)
+            assert (problems == []) is (ruling == want), (ruling, problems)
+
+    def test_categories_not_ruled_outside_a_no_category_stratum_rule_out_only_false_positive(self):
+        spec = _spec(Expectation("Adidas", True), ("stability",))
+        assert self._check(spec, "labeled") == [] and self._check(spec, "skipped") == []
+        assert self._check(spec, "false_positive")
+
+    def test_a_gray_owner_ruling_must_be_ruled_and_not_labeled_in_a_no_category_stratum(self):
+        assert self._check(_spec(None, ("no_category",)), "skipped") == []
+        assert self._check(_spec(None, ("no_category",)), "false_positive") == []
+        assert self._check(_spec(None, ("no_category",)), "labeled")
+        assert self._check(_spec(None, ("ruling_9",)), "labeled") == []
+        assert self._check(_spec(None, ("ruling_9",)), None)
+
+    def test_a_ruled_article_must_declare_owner_ruled(self):
+        undeclared = _spec(Expectation("Nike", False), owner_ruled=None)
+        [problem] = self._check(undeclared, "skipped")
+        assert "does not declare owner_ruled" in problem
+        assert self._check(undeclared, None) == []
+
+    @pytest.mark.parametrize("owner_ruled", [True, False])
+    def test_a_declared_case_must_be_ruled(self, owner_ruled):
+        [problem] = self._check(_spec(Expectation("Nike", True), owner_ruled=owner_ruled), None)
+        assert "is not ruled" in problem
+
+    def test_an_opt_out_keeps_the_per_brand_checks(self):
+        """A multi-brand article: the named brand's expectation is not the article's ruling."""
+        assert self._check(_spec(Expectation("Nike", False), owner_ruled=False), "skipped") == []
+        assert self._check(_spec(Expectation("Nike", False), owner_ruled=False), "labeled") == []
+        assert self._check(_spec(Expectation("Nike", True), owner_ruled=False), "false_positive")
+        assert self._check(_spec(Expectation("Nike", True, ("social",)), owner_ruled=False), "skipped")
+        assert self._check(_spec(Expectation("Nike", True, ("social",)), owner_ruled=False), "labeled") == []

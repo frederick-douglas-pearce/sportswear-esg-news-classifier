@@ -3235,3 +3235,44 @@ names the brand, so it carries no brand context to learn from; read the export's
 after the run. Title duplicates of a moved article stay `deduplicated` and are not re-queued (#272).
 An article with several brands passes when its text names any one of them (#270). Run the triage
 before regenerating #155's review queue with `fp_census.py --queue --force`.
+
+## D045: An Eval Case Declares Whether It Is the Owner's Ruling, and the Case Files Must Agree With `HUMAN_RULINGS` (#275)
+
+**Status:** accepted 2026-11-20 (architect review; at the plan gate the owner chose to add the
+case-noted owner rulings to `HUMAN_RULINGS` in the same change, and a paid-run refusal over a
+test-only check).
+
+**Context.** The test that compared eval cases with `HUMAN_RULINGS` read one case file, only ids
+already in `HUMAN_RULINGS`, and only in one direction (a case expected sportswear rules out
+`false_positive`; ruled categories need `labeled`). Rulings are per article and expectations per
+brand, so the converse is unsound for a multi-brand article, and the case files carry no brand list.
+A case the owner ruled whose ruling never reached `HUMAN_RULINGS` passed unnoticed: notes in
+`product_and_stability.json` recorded owner rulings from #118 and #215 that were not in the list.
+
+**Decision.**
+1. A case carries an optional boolean `owner_ruled`. `true`: the expectation is the owner's ruling
+   on the article. `false`: the article is ruled, but this brand's expectation is not its ruling (a
+   multi-brand article). Absent: not an owner ruling, which is refused for an article in
+   `HUMAN_RULINGS`. Every ruled article in a case file therefore says which it is, whatever its brand
+   count; no brand lists are copied from the database.
+2. A `true` case must be in `HUMAN_RULINGS` at the status its expectation maps to: not sportswear is
+   `false_positive`; ruled categories are `labeled`; ruled no category (`categories: []`, or a stratum
+   in `NO_CATEGORY_STRATA`) is `skipped`; categories not ruled, outside those strata, only rule out
+   `false_positive`; a case with no expectation (gray) must be ruled, and not `labeled` in a
+   no-category stratum. A `false` case must be ruled and keeps the per-brand checks.
+3. `parse_case_file` refuses a non-boolean; `merge_case_specs` reads an absent field as no opinion
+   and refuses `true` against `false`.
+4. One function, `case_ruling_disagreements` (`scripts/compare_prompts.py`), decides it. The test
+   suite runs it over every file in `prompts/labeling/eval_cases/`; `compare_prompts.py` runs it
+   after reading the case files and refuses a paid run on any disagreement (a dry run warns), because
+   D040 §4 runs paid evals from a branch head, before CI has to pass there.
+5. The cases whose notes recorded an owner ruling are added to `HUMAN_RULINGS` at their stored
+   status, which is the status their expectation maps to.
+
+**Rejected.** A file-level flag (`product_and_stability.json` mixes ruled and unruled cases); each
+case's brand list in the case file (copied from the database, with nothing in CI to keep it in step);
+a test-only check (a paid eval from a branch can run before the test does).
+
+**Consequences.** Adding a case on a ruled article, or a ruling on a case's article, needs the other
+side in the same change. `owner_ruled: false` does not mean "not ruled"; each file's description and
+`docs/LABELING.md` say so.
