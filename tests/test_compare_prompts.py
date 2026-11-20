@@ -1848,11 +1848,14 @@ class TestCaseRulingDisagreements:
     def test_every_case_is_checked_past_a_clean_one(self):
         specs = {
             "a": _spec(Expectation("Nike", True), owner_ruled=None),  # not ruled, not declared: clean
+            "a2": _spec(Expectation("Nike", False), owner_ruled=False),  # an opt-out that passes
+            "a3": _spec(Expectation("Nike", True)),  # declared, not ruled: a problem
             "b": _spec(Expectation("Nike", False)),
             "c": _spec(Expectation("Nike", True, ("social",))),
         }
-        problems = compare_prompts.case_ruling_disagreements(specs, {"b": "skipped", "c": "skipped"})
-        assert [p.split(":")[0] for p in problems] == ["b", "c"]
+        rulings = {"a2": "skipped", "b": "skipped", "c": "skipped"}
+        problems = compare_prompts.case_ruling_disagreements(specs, rulings)
+        assert [p.split(":")[0] for p in problems] == ["a3", "b", "c"]
 
     def test_categories_not_ruled_outside_a_no_category_stratum_rule_out_only_false_positive(self):
         spec = _spec(Expectation("Adidas", True), ("stability",))

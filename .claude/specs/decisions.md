@@ -3267,8 +3267,9 @@ A case the owner ruled whose ruling never reached `HUMAN_RULINGS` passed unnotic
    after reading the case files and refuses a paid run on any disagreement (a dry run warns), because
    D040 §4 runs paid evals from a branch head, before CI has to pass there.
 5. The cases whose notes recorded an owner ruling are added to `HUMAN_RULINGS` at their stored
-   status, which is the status their expectation maps to. Three of them recorded no sportswear or
-   category ruling, and the owner ruled them on #275's review: `22a41460` (Nike, financial
+   status, which is the status their expectation maps to. Two of them recorded a no-category
+   correction but no sportswear ruling, and one a sportswear ruling but no category ruling; the
+   owner ruled all three on #275's review: `22a41460` (Nike, financial
    commentary), `3c8017cb` (Columbia Sportswear, its own marketing campaign) and `cfe9e317` (adidas;
    one interview sentence on its Business Track program is not enough for a category), each
    sportswear with no ESG category; their cases now carry that expectation.
