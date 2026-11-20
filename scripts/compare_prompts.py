@@ -622,9 +622,8 @@ def main(argv: list[str] | None = None) -> int:
         elif tree["dirty"]:
             listed = "; not in it: " + ", ".join(tree["uncommitted"]) if tree["uncommitted"] else ""
             dirty = (
-                f"The tree differs from commit {tree['commit']}{listed}. Add and commit before a paid "
-                "run (move a case file outside the repository into it), so the recorded commit holds "
-                "what ran"
+                f"The tree differs from commit {tree['commit']}{listed}. A paid run is refused until "
+                "the recorded commit holds what ran"
             )
             if not args.dry_run:
                 raise EvalSetupError(dirty)
