@@ -53,6 +53,7 @@ import logging
 import random
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -221,15 +222,38 @@ def _git(*args: str) -> str | None:
     return out.stdout
 
 
-def git_state() -> dict[str, object]:
-    """The checked-out commit, and whether tracked files differ from it, read before any call and
-    recorded with the report so a run names the tree it was made from (#230, D040). Each is None
-    when git cannot tell."""
-    commit = _git("rev-parse", "HEAD")
+def _case_file_tracked(path: Path, top: Path) -> bool:
+    """Whether git tracks the case file. One outside the repository, or untracked or ignored in it,
+    is not in any commit."""
+    path = path.resolve()
+    if not path.is_relative_to(top):
+        return False
+    return _git("ls-files", "--error-unmatch", "--", str(path)) is not None
+
+
+def git_state(case_files: Sequence[Path] = ()) -> dict[str, object]:
+    """The checked-out commit, and whether the tree differs from it, read before any call and
+    recorded with the report so a run names the tree it was made from (#230, D040; #239).
+
+    Dirty means tracked files differ from the commit, a file under ``prompts/labeling/`` is
+    untracked, or a case file is not tracked. ``uncommitted`` lists those untracked prompt files and
+    case files. ``dirty`` is None when git cannot tell, and ``commit`` is None when it cannot name
+    one. ``_git`` runs from
+    ``scripts/``, so the prompt directory is named from the repository root (``:/``) and case files
+    by absolute path: a relative pathspec there would match nothing and report a clean tree."""
+    commit = (_git("rev-parse", "HEAD") or "").strip() or None
+    top = _git("rev-parse", "--show-toplevel")
     status = _git("status", "--porcelain", "--untracked-files=no")
+    prompts = _git("status", "--porcelain", "--untracked-files=all", "--", ":/prompts/labeling")
+    if commit is None or not (top or "").strip() or status is None or prompts is None:
+        return {"commit": commit, "dirty": None, "uncommitted": []}
+    root = Path(top.strip()).resolve()
+    uncommitted = [line[3:] for line in prompts.splitlines() if line.startswith("??")]
+    uncommitted += [str(p) for p in case_files if not _case_file_tracked(p, root)]
     return {
-        "commit": (commit or "").strip() or None,
-        "dirty": None if status is None else bool(status.strip()),
+        "commit": commit,
+        "dirty": bool(status.strip()) or bool(uncommitted),
+        "uncommitted": sorted(set(uncommitted)),
     }
 
 
@@ -583,13 +607,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         specs = read_case_files(args.case_file)
         case_hashes = file_sha256(args.case_file)
-        tree = git_state()
-        if tree["dirty"] and not args.dry_run:
-            raise EvalSetupError(
-                f"Tracked files differ from commit {tree['commit']}: commit them before a run, so "
-                "the recorded commit holds the tracked files evaluated (untracked files are not "
-                "checked; the prompt and case-file hashes identify what ran)"
+        tree = git_state(args.case_file)
+        if tree["dirty"] is None:
+            unknown = "git could not report the tree's state, so the recorded commit may not hold what ran"
+            if not args.dry_run:
+                raise EvalSetupError(f"{unknown}: a paid run is refused")
+            logger.warning(f"{unknown} (a run would be refused)")
+        elif tree["dirty"]:
+            listed = "; not in it: " + ", ".join(tree["uncommitted"]) if tree["uncommitted"] else ""
+            dirty = (
+                f"The tree differs from commit {tree['commit']}{listed}. Commit before a run, so "
+                "the recorded commit holds the prompts and case files evaluated"
             )
+            if not args.dry_run:
+                raise EvalSetupError(dirty)
+            logger.warning(f"{dirty} (a run would be refused)")
         with db.get_session() as session:
             select_specs(session, args, specs)
             articles = load_articles(session, specs, baseline, sides["baseline"].model, examples)
