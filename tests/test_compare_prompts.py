@@ -2,6 +2,7 @@
 scripts/compare_prompts.py. No live API: labelers are fakes returning canned results."""
 
 import hashlib
+import logging
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
@@ -1455,38 +1456,49 @@ class TestOwnerRulingScoring:
             str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in (first, second)
         }
 
-    def _refused_paid_dry_ok(self, tmp_path, tree):
-        """A paid run from ``tree`` is refused before the database is read; a dry run goes on."""
+    def _refused_paid_dry_ok(self, tmp_path, caplog, tree, says):
+        """A paid run from ``tree`` is refused before the database is read, with an error naming
+        ``says`` and every uncommitted path; a dry run reads the tree too, warns the same, and goes on."""
         case = self._write(tmp_path, "one.json", [_case("a")])
         session = MagicMock(side_effect=AssertionError("no database"))
         argv = ["--baseline", "v1.10.0", "--candidate", "v1.11.0", "--case-file", str(case)]
-        with patch.object(compare_prompts, "git_state", return_value=tree) as state, \
-             patch.object(compare_prompts.db, "get_session", session):
-            assert compare_prompts.main([*argv, "--max-cost", "5"]) == 2
-        session.assert_not_called()
-        state.assert_called_once_with([case])
-        with patch.object(compare_prompts, "git_state", return_value=tree), \
-             patch.object(compare_prompts.db, "get_session", _session), \
-             patch.object(compare_prompts, "select_specs"), \
-             patch.object(compare_prompts, "load_articles", return_value=[]):
-            assert compare_prompts.main([*argv, "--dry-run"]) == 0
+        expected = [says, *tree["uncommitted"]]
+        with caplog.at_level(logging.WARNING, logger="compare_prompts"):
+            with patch.object(compare_prompts, "git_state", return_value=tree) as state, \
+                 patch.object(compare_prompts.db, "get_session", session):
+                assert compare_prompts.main([*argv, "--max-cost", "5"]) == 2
+            session.assert_not_called()
+            state.assert_called_once_with([case])
+            errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+            assert len(errors) == 1 and all(text in errors[0] for text in expected)
+            caplog.clear()
+            with patch.object(compare_prompts, "git_state", return_value=tree) as state, \
+                 patch.object(compare_prompts.db, "get_session", _session), \
+                 patch.object(compare_prompts, "select_specs"), \
+                 patch.object(compare_prompts, "load_articles", return_value=[]):
+                assert compare_prompts.main([*argv, "--dry-run"]) == 0
+            state.assert_called_once_with([case])
+            warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+            assert [w for w in warnings if "a paid run would be refused" in w and all(t in w for t in expected)]
 
-    def test_a_paid_run_from_a_dirty_tree_is_refused_before_the_database(self, tmp_path):
-        self._refused_paid_dry_ok(tmp_path, {"commit": "abc123", "dirty": True, "uncommitted": []})
+    def test_a_paid_run_from_a_dirty_tree_is_refused_before_the_database(self, tmp_path, caplog):
+        tree = {"commit": "abc123", "dirty": True, "uncommitted": []}
+        self._refused_paid_dry_ok(tmp_path, caplog, tree, "differs from commit abc123")
 
-    def test_a_paid_run_with_an_untracked_candidate_directory_is_refused(self, tmp_path):
+    def test_a_paid_run_with_an_untracked_candidate_directory_is_refused(self, tmp_path, caplog):
         tree = {"commit": "abc123", "dirty": True, "uncommitted": ["prompts/labeling/v9.0.0/system_prompt.txt"]}
-        self._refused_paid_dry_ok(tmp_path, tree)
+        self._refused_paid_dry_ok(tmp_path, caplog, tree, "differs from commit abc123")
 
-    def test_a_paid_run_with_an_untracked_case_file_is_refused(self, tmp_path):
+    def test_a_paid_run_with_an_untracked_case_file_is_refused(self, tmp_path, caplog):
         tree = {"commit": "abc123", "dirty": True, "uncommitted": [str(tmp_path / "one.json")]}
-        self._refused_paid_dry_ok(tmp_path, tree)
+        self._refused_paid_dry_ok(tmp_path, caplog, tree, "differs from commit abc123")
 
-    def test_a_paid_run_is_refused_when_git_cannot_report_the_tree(self, tmp_path):
-        self._refused_paid_dry_ok(tmp_path, {"commit": None, "dirty": None, "uncommitted": []})
+    def test_a_paid_run_is_refused_when_git_cannot_report_the_tree(self, tmp_path, caplog):
+        tree = {"commit": None, "dirty": None, "uncommitted": []}
+        self._refused_paid_dry_ok(tmp_path, caplog, tree, "git could not report the tree's state")
 
     @staticmethod
-    def _fake_git(top, tracked_status="", prompts_status="", untracked_cases=()):
+    def _fake_git(top, tracked_status="", others="", untracked_cases=()):
         """A subprocess.run for git_state's commands, recording each one and its cwd."""
         calls = []
 
@@ -1497,9 +1509,11 @@ class TestOwnerRulingScoring:
             if cmd[1:] == ["rev-parse", "--show-toplevel"]:
                 return MagicMock(stdout=f"{top}\n")
             if cmd[1] == "status":
-                return MagicMock(stdout=prompts_status if cmd[-1] == ":/prompts/labeling" else tracked_status)
+                return MagicMock(stdout=tracked_status)
+            if cmd[1:3] == ["ls-files", "--others"]:
+                return MagicMock(stdout=others)
             if cmd[1] == "ls-files":
-                if cmd[-1] in untracked_cases:
+                if cmd[-1].removeprefix(":(literal)") in untracked_cases:
                     raise subprocess.CalledProcessError(1, cmd)
                 return MagicMock(stdout=cmd[-1] + "\n")
             raise AssertionError(cmd)
@@ -1516,8 +1530,8 @@ class TestOwnerRulingScoring:
             ["git", "rev-parse", "--show-toplevel"],
             ["git", "status", "--porcelain", "--untracked-files=no"],
             # From the repository root: _git runs in scripts/, where "prompts/labeling" matches nothing
-            ["git", "status", "--porcelain", "--untracked-files=all", "--", ":/prompts/labeling"],
-            ["git", "ls-files", "--error-unmatch", "--", str(tracked.resolve())],
+            ["git", "ls-files", "--others", "-z", "--full-name", "--", ":/prompts/labeling"],
+            ["git", "ls-files", "--error-unmatch", "--", f":(literal){tracked.resolve()}"],
         ]
         assert {cwd for _, cwd in calls} == {Path(compare_prompts.__file__).parent}
         run, _ = self._fake_git(tmp_path)
@@ -1525,11 +1539,12 @@ class TestOwnerRulingScoring:
             assert REAL_GIT_STATE([tracked]) == {"commit": "f" * 40, "dirty": False, "uncommitted": []}
 
     def test_git_state_counts_an_untracked_prompt_file_as_dirty(self, tmp_path):
-        run, _ = self._fake_git(tmp_path, prompts_status="?? prompts/labeling/v9.0.0/system_prompt.txt\n")
+        others = "prompts/labeling/v9.0.0/system_prompt.txt\0prompts/labeling/v 9/s é.txt\0"
+        run, _ = self._fake_git(tmp_path, others=others)
         with patch.object(compare_prompts.subprocess, "run", side_effect=run):
             assert REAL_GIT_STATE([]) == {
                 "commit": "f" * 40, "dirty": True,
-                "uncommitted": ["prompts/labeling/v9.0.0/system_prompt.txt"],
+                "uncommitted": ["prompts/labeling/v 9/s é.txt", "prompts/labeling/v9.0.0/system_prompt.txt"],
             }
 
     def test_git_state_counts_an_untracked_or_outside_case_file_as_dirty(self, tmp_path):
@@ -1541,9 +1556,11 @@ class TestOwnerRulingScoring:
             state = REAL_GIT_STATE([untracked, outside])
         assert state == {"commit": "f" * 40, "dirty": True, "uncommitted": sorted([str(untracked), str(outside)])}
         # A file outside the repository is not asked about: git would fail on it
-        assert [c[-1] for c, _ in calls if c[1] == "ls-files"] == [str(untracked.resolve())]
+        assert [c[-1] for c, _ in calls if c[1:3] == ["ls-files", "--error-unmatch"]] == [
+            f":(literal){untracked.resolve()}"
+        ]
 
-    @pytest.mark.parametrize("failing", ["HEAD", "--show-toplevel", "--untracked-files=no", ":/prompts/labeling"])
+    @pytest.mark.parametrize("failing", ["HEAD", "--show-toplevel", "--untracked-files=no", "--others"])
     def test_git_state_is_unknown_when_any_repository_question_fails(self, tmp_path, failing):
         run, _ = self._fake_git(tmp_path)
 
@@ -1561,21 +1578,25 @@ class TestOwnerRulingScoring:
         with patch.object(compare_prompts.subprocess, "run", side_effect=error):
             assert REAL_GIT_STATE() == {"commit": None, "dirty": None, "uncommitted": []}
 
-    def test_git_state_sees_untracked_prompts_and_case_files_in_a_real_repository(self, tmp_path):
-        """git itself, from a subdirectory as _git runs from scripts/: relative pathspecs would miss."""
+    def test_git_state_sees_untracked_prompts_and_case_files_in_a_real_repository(self, tmp_path, monkeypatch):
+        """git itself, from a subdirectory as _git runs from scripts/, with case files given relative
+        to the caller's directory, as the documented command gives them."""
         def git(*args):
             subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
 
         git("init", "-q")
         git("config", "user.email", "t@example.com")
         git("config", "user.name", "t")
+        (tmp_path / ".gitignore").write_text("*.ign\n")
         (tmp_path / "scripts").mkdir()
         (tmp_path / "prompts" / "labeling" / "v1.0.0").mkdir(parents=True)
         (tmp_path / "prompts" / "labeling" / "v1.0.0" / "system_prompt.txt").write_text("a")
-        committed = tmp_path / "prompts" / "labeling" / "cases.json"
-        committed.write_text("{}")
+        (tmp_path / "prompts" / "labeling" / "cases.json").write_text("{}")
+        (tmp_path / "cases1.json").write_text("{}")
         git("add", ".")
         git("commit", "-q", "-m", "init")
+        monkeypatch.chdir(tmp_path)
+        committed = Path("prompts/labeling/cases.json")
 
         def real_git(*args):
             try:
@@ -1587,18 +1608,30 @@ class TestOwnerRulingScoring:
             return out.stdout
 
         with patch.object(compare_prompts, "_git", side_effect=real_git):
-            assert REAL_GIT_STATE([committed])["dirty"] is False
+            assert REAL_GIT_STATE([committed, Path("cases1.json")]) == {
+                "commit": REAL_GIT_STATE()["commit"], "dirty": False, "uncommitted": [],
+            }
+            # An untracked candidate directory, an ignored prompt file and a name git would quote
             (tmp_path / "prompts" / "labeling" / "v2.0.0").mkdir()
             (tmp_path / "prompts" / "labeling" / "v2.0.0" / "system_prompt.txt").write_text("b")
+            (tmp_path / "prompts" / "labeling" / "v1.0.0" / "notes.ign").write_text("c")
+            (tmp_path / "prompts" / "labeling" / "v 3é.txt").write_text("d")
             state = REAL_GIT_STATE([committed])
             assert state["dirty"] is True
-            assert state["uncommitted"] == ["prompts/labeling/v2.0.0/system_prompt.txt"]
-            git("add", ".")
+            assert state["uncommitted"] == [
+                "prompts/labeling/v 3é.txt",
+                "prompts/labeling/v1.0.0/notes.ign",
+                "prompts/labeling/v2.0.0/system_prompt.txt",
+            ]
+            git("add", "-f", ".")
             git("commit", "-q", "-m", "v2")
-            new_case = tmp_path / "new_cases.json"
-            new_case.write_text("{}")
-            state = REAL_GIT_STATE([committed, new_case])
-            assert state["dirty"] is True and state["uncommitted"] == [str(new_case)]
+            # An untracked case file, one whose name is a pattern matching the tracked cases1.json,
+            # and an ignored one
+            for name in ("new_cases.json", "cases[1].json", "old.ign"):
+                Path(name).write_text("{}")
+            state = REAL_GIT_STATE([committed, Path("new_cases.json"), Path("cases[1].json"), Path("old.ign")])
+            assert state["dirty"] is True
+            assert state["uncommitted"] == ["cases[1].json", "new_cases.json", "old.ign"]
 
     def test_report_names_a_dirty_tree_and_each_case_files_hash(self):
         runs = [_run(_article("1"), [_reply([])], [_reply([])])]

@@ -224,31 +224,37 @@ def _git(*args: str) -> str | None:
 
 def _case_file_tracked(path: Path, top: Path) -> bool:
     """Whether git tracks the case file. One outside the repository, or untracked or ignored in it,
-    is not in any commit."""
+    is not in the checked-out commit. The path is resolved, since ``_git`` runs from ``scripts/``,
+    and passed literally, so a name such as ``cases[1].json`` is not read as a pattern matching a
+    tracked ``cases1.json``."""
     path = path.resolve()
     if not path.is_relative_to(top):
         return False
-    return _git("ls-files", "--error-unmatch", "--", str(path)) is not None
+    return _git("ls-files", "--error-unmatch", "--", f":(literal){path}") is not None
 
 
 def git_state(case_files: Sequence[Path] = ()) -> dict[str, object]:
     """The checked-out commit, and whether the tree differs from it, read before any call and
     recorded with the report so a run names the tree it was made from (#230, D040; #239).
 
-    Dirty means tracked files differ from the commit, a file under ``prompts/labeling/`` is
-    untracked, or a case file is not tracked. ``uncommitted`` lists those untracked prompt files and
-    case files. ``dirty`` is None when git cannot tell, and ``commit`` is None when it cannot name
-    one. ``_git`` runs from
-    ``scripts/``, so the prompt directory is named from the repository root (``:/``) and case files
-    by absolute path: a relative pathspec there would match nothing and report a clean tree."""
+    Dirty means tracked files differ from the commit, a file under ``prompts/labeling/`` is not
+    tracked (ignored files included), or a case file is not tracked. ``uncommitted`` lists those
+    prompt files and case files. ``dirty`` is None when git cannot tell, and ``commit`` is None when
+    it cannot name one. ``_git`` runs from ``scripts/``, so the prompt directory is named from the
+    repository root (``:/``, listed with ``--full-name``) and case files by absolute path: a relative
+    pathspec there would match nothing and report a clean tree.
+
+    Not checked: a tracked file git is told to ignore changes to (``skip-worktree`` or
+    ``assume-unchanged``). The report's prompt and case-file hashes still record what ran."""
     commit = (_git("rev-parse", "HEAD") or "").strip() or None
     top = _git("rev-parse", "--show-toplevel")
     status = _git("status", "--porcelain", "--untracked-files=no")
-    prompts = _git("status", "--porcelain", "--untracked-files=all", "--", ":/prompts/labeling")
+    # --others without --exclude-standard lists ignored files too; -z keeps paths unquoted
+    prompts = _git("ls-files", "--others", "-z", "--full-name", "--", ":/prompts/labeling")
     if commit is None or not (top or "").strip() or status is None or prompts is None:
         return {"commit": commit, "dirty": None, "uncommitted": []}
     root = Path(top.strip()).resolve()
-    uncommitted = [line[3:] for line in prompts.splitlines() if line.startswith("??")]
+    uncommitted = [name for name in prompts.split("\0") if name]
     uncommitted += [str(p) for p in case_files if not _case_file_tracked(p, root)]
     return {
         "commit": commit,
@@ -612,16 +618,17 @@ def main(argv: list[str] | None = None) -> int:
             unknown = "git could not report the tree's state, so the recorded commit may not hold what ran"
             if not args.dry_run:
                 raise EvalSetupError(f"{unknown}: a paid run is refused")
-            logger.warning(f"{unknown} (a run would be refused)")
+            logger.warning(f"{unknown} (a paid run would be refused)")
         elif tree["dirty"]:
             listed = "; not in it: " + ", ".join(tree["uncommitted"]) if tree["uncommitted"] else ""
             dirty = (
-                f"The tree differs from commit {tree['commit']}{listed}. Commit before a run, so "
-                "the recorded commit holds the prompts and case files evaluated"
+                f"The tree differs from commit {tree['commit']}{listed}. Add and commit before a paid "
+                "run (move a case file outside the repository into it), so the recorded commit holds "
+                "what ran"
             )
             if not args.dry_run:
                 raise EvalSetupError(dirty)
-            logger.warning(f"{dirty} (a run would be refused)")
+            logger.warning(f"{dirty} (a paid run would be refused)")
         with db.get_session() as session:
             select_specs(session, args, specs)
             articles = load_articles(session, specs, baseline, sides["baseline"].model, examples)

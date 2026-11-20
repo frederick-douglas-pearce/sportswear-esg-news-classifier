@@ -7,10 +7,13 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 ### 2026-11-20: A paid prompt eval refuses untracked prompt and case files (#239)
 
 `scripts/compare_prompts.py` refused a paid run only when tracked files differed from the commit,
-so a new candidate prompt directory or case file, untracked until committed, passed, and the report
-recorded a commit that did not hold what ran. `git_state()` now also counts an untracked file under
-`prompts/labeling/` and a `--case-file` that git does not track (untracked, ignored, or outside the
-repository) as uncommitted, and the refusal names them. A paid run is also refused when git cannot
+so a new candidate prompt directory or case file, untracked until added, passed, and the report
+recorded a commit that did not hold what ran. `git_state()` now also counts a file under
+`prompts/labeling/` that git does not track (ignored files included) and a `--case-file` that git
+does not track (untracked, ignored, or outside the repository) as uncommitted, and the refusal names
+them. Case files are matched literally, so a name with `[` or `*` is not read as a pattern. A
+tracked file flagged `skip-worktree` or `assume-unchanged` is not checked; the prompt and case-file
+hashes still record what ran. A paid run is also refused when git cannot
 report the tree's state or name the commit; a dry run warns and goes on. The prompt directory is
 named from the repository root (`:/prompts/labeling`) and case files by absolute path, because the
 script runs git from `scripts/`, where a relative pathspec matches nothing.
