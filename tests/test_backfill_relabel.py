@@ -1566,7 +1566,8 @@ class TestRelabel248AgainstPostgres(TestAgainstPostgres):
         assert cohort.prior_content_types[neg_id] == ["mention_only", "other_entity"]
         assert cohort.prior_content_types[fin_id] == ["financial"]
         assert kept == [neg_id, fin_id] and dropped == {}
-        # one targeted unscraped row; the untargeted one is not counted
+        # one targeted unscraped row not yet judged under production; the untargeted one and the one
+        # judged under production are not counted
         assert cohort.excluded[provenance.EXCLUDED_NOT_SCRAPED] == before + 1
         assert report["transitions_by_prior_type"] == {
             ("mention_only/other_entity", "false_positive", "labeled"): 1,
