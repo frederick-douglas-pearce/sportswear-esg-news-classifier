@@ -568,11 +568,33 @@ ARM_RELABEL_FALSE_POSITIVE = "relabel_false_positive"  # N: a negative judged un
 RELABEL_ARMS = (ARM_RELABEL_LABELED, ARM_RELABEL_SKIPPED, ARM_RELABEL_FALSE_POSITIVE)
 RELABEL_STATUSES = ("labeled", "skipped", FP_NEGATIVE_STATUS)
 
-# The two selections, by the run tag each invocation records
+# --- The #248 targeted relabel cohort (D046 §5) ------------------------------------------------
+# The two classes v1.14.0 decides differently from what is stored: negatives typed retail_only or
+# mention_only (#232's corrections), and skips typed financial with no business or product
+# judgment (#248's template and price-only rows). Each row must first be a #245 relabel candidate,
+# so its exclusions hold. Negatives run first: the class #232 measured, and the one #154 PR2 reads.
+
+ARM_248_FALSE_POSITIVE = "relabel_248_false_positive"  # a negative typed retail_only or mention_only
+ARM_248_FINANCIAL_SKIP = "relabel_248_financial_skip"  # a skip typed financial, not business/product
+RELABEL_248_ARMS = (ARM_248_FALSE_POSITIVE, ARM_248_FINANCIAL_SKIP)
+RELABEL_248_STATUSES = (FP_NEGATIVE_STATUS, "skipped")
+# A negative is targeted with any of these; a skip with TARGET_SKIP_TYPE and none of the others
+TARGET_NEGATIVE_TYPES = frozenset({"retail_only", "mention_only"})
+TARGET_SKIP_TYPE = "financial"
+SKIP_TYPES_NOT_TARGETED = frozenset({"business", "product"})
+
+# The selections, by the run tag each invocation records
 MODE_BACKFILL = "192-backfill"
 MODE_RELABEL = "245-relabel"
-MODE_ARMS = {MODE_BACKFILL: BACKFILL_ARMS, MODE_RELABEL: RELABEL_ARMS}
-MODE_STATUSES = {MODE_BACKFILL: BACKFILL_STATUSES, MODE_RELABEL: RELABEL_STATUSES}
+MODE_RELABEL_248 = "248-relabel"
+MODE_ARMS = {MODE_BACKFILL: BACKFILL_ARMS, MODE_RELABEL: RELABEL_ARMS, MODE_RELABEL_248: RELABEL_248_ARMS}
+MODE_STATUSES = {
+    MODE_BACKFILL: BACKFILL_STATUSES,
+    MODE_RELABEL: RELABEL_STATUSES,
+    MODE_RELABEL_248: RELABEL_248_STATUSES,
+}
+# Modes that end at a judgment under the production version, decided by relabel_arm
+RELABEL_MODES = frozenset({MODE_RELABEL, MODE_RELABEL_248})
 
 # Unjudged reasons a reply writes, or wrote (SKIP_NO_SPORTSWEAR_BRAND: the pipeline before #200).
 # The other two are written before any LLM call, and a relabel would write them again.
@@ -772,6 +794,44 @@ def relabel_arm(
     return BackfillDecision(arm)
 
 
+def targeted_248(labeling_status: str, content_types: set[str]) -> bool:
+    """Whether a row is in #248's targeted classes by its stored content types (D046 §5).
+
+    A negative with any ``retail_only`` or ``mention_only`` judgment (every brand of a negative is
+    a non-sportswear type, so this leaves out only a row typed ``other_entity`` alone). A skip with
+    a ``financial`` judgment and no ``business`` or ``product`` one; its other brands' non-sportswear
+    types do not change that.
+    """
+    if labeling_status == FP_NEGATIVE_STATUS:
+        return bool(content_types & TARGET_NEGATIVE_TYPES)
+    if labeling_status == "skipped":
+        return TARGET_SKIP_TYPE in content_types and not content_types & SKIP_TYPES_NOT_TARGETED
+    return False
+
+
+# relabel_arm's arm for a targeted row -> the #248 arm
+_ARM_248 = {
+    ARM_RELABEL_FALSE_POSITIVE: ARM_248_FALSE_POSITIVE,
+    ARM_RELABEL_SKIPPED: ARM_248_FINANCIAL_SKIP,
+}
+
+
+def relabel_248_arm(*, content_types: set[str], **relabel_args) -> BackfillDecision:
+    """The #248 relabel arm of one row, or why it is left out (D046 §5).
+
+    The targeted classes are decided first, so a row outside them is not a candidate and counts
+    toward no exclusion: selected plus excluded is the targeted population. A targeted row then
+    takes ``relabel_arm``'s decision (human rulings and labels, hand moves, already judged under
+    production, not LLM-decided, insufficient content), with its arm renamed.
+    """
+    if not targeted_248(relabel_args["labeling_status"], content_types):
+        return NOT_A_CANDIDATE
+    decision = relabel_arm(**relabel_args)
+    if decision.arm is None:
+        return decision
+    return BackfillDecision(_ARM_248[decision.arm])
+
+
 @dataclass
 class BackfillRow:
     """One row of the FP export query, as the backfill reads it."""
@@ -798,7 +858,7 @@ class BackfillCohort:
     judged_skip_cutoff: datetime | None
     bound: datetime
     mode: str = MODE_BACKFILL
-    # the production version a MODE_RELABEL cohort ends at (None in MODE_BACKFILL)
+    # the production version a RELABEL_MODES cohort ends at (None in MODE_BACKFILL)
     production_version: str | None = None
     selected: dict[str, list[str]] = field(default_factory=dict)
     # article id -> [status, reason, arm] before the relabel
@@ -819,6 +879,9 @@ class BackfillCohort:
     hand_move_reasons: Counter = field(default_factory=Counter)
     # article id -> the reason the first tagged run to relabel it recorded (arm X's pass end)
     tried: dict[str, str | None] = field(default_factory=dict)
+    # article id -> its stored content types before the relabel, sorted (MODE_RELABEL_248 only;
+    # a relabel replaces the judgments, so this is the record of what selected each row)
+    prior_content_types: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self):
         for arm in self.arms:
@@ -847,16 +910,19 @@ def build_backfill_cohort(
     mode: str = MODE_BACKFILL,
     judgment_versions: dict[str, set[str]] | None = None,
     production_version: str | None = None,
+    content_types: dict[str, set[str]] | None = None,
 ) -> BackfillCohort:
-    """The cohort over rows in id order; ``backfill_arm`` decides each row, or ``relabel_arm`` in
-    MODE_RELABEL. ``tried`` is ``tried_reasons`` over the tagged runs so far.
-    ``judgment_versions`` maps an article id to the prompt versions of its ``brand_judgments``
-    rows (MODE_RELABEL only)."""
-    if mode == MODE_RELABEL and not production_version:
+    """The cohort over rows in id order; ``backfill_arm`` decides each row, ``relabel_arm`` in
+    MODE_RELABEL, or ``relabel_248_arm`` in MODE_RELABEL_248. ``tried`` is ``tried_reasons`` over
+    the tagged runs so far. ``judgment_versions`` and ``content_types`` map an article id to the
+    prompt versions and the content types of its ``brand_judgments`` rows (RELABEL_MODES, and
+    MODE_RELABEL_248, only)."""
+    if mode in RELABEL_MODES and not production_version:
         raise ValueError("A relabel cohort needs the production version it ends at")
     rows = list(rows)
     tried = dict(tried or {})
     judgment_versions = judgment_versions or {}
+    content_types = content_types or {}
     cohort = BackfillCohort(
         judged_skip_cutoff=judged_skip_cutoff,
         bound=bound,
@@ -877,8 +943,14 @@ def build_backfill_cohort(
             human_verified=r.article_id in verified,
             article_id=r.article_id,
         )
-        if mode == MODE_RELABEL:
-            decision = relabel_arm(
+        if mode in RELABEL_MODES:
+            decide = relabel_arm
+            extra = {}
+            if mode == MODE_RELABEL_248:
+                decide = relabel_248_arm
+                extra = {"content_types": content_types.get(r.article_id, set())}
+            decision = decide(
+                **extra,
                 article_id=r.article_id,
                 labeling_status=r.labeling_status,
                 labeling_error=r.labeling_error,
@@ -916,9 +988,13 @@ def build_backfill_cohort(
         cohort.selected[arm].append(r.article_id)
         cohort.prior[r.article_id] = [r.labeling_status, r.labeling_error, arm]
         cohort.content_chars[r.article_id] = r.content_chars
-        if mode == MODE_RELABEL:
+        if mode in RELABEL_MODES:
             versions = judgment_versions.get(r.article_id)
             reason_key = f"{source}, judged under {', '.join(sorted(versions)) if versions else 'no version'}"
+            if mode == MODE_RELABEL_248:
+                types = sorted(content_types.get(r.article_id, set()))
+                cohort.prior_content_types[r.article_id] = types
+                reason_key = f"{source}, typed {'/'.join(types)}, judged under {', '.join(sorted(versions or ()))}"
         elif arm == ARM_FALSE_POSITIVE:
             reason_key = source
         elif arm == ARM_FAILED:
@@ -1000,14 +1076,18 @@ def _cohort_from_db(
 
     human = human_label_criterion()
     judgment_versions: dict[str, set[str]] = {}
-    if mode == MODE_RELABEL:
-        # Distinct (article, version) pairs: a relabel replaces every judgment row, so an article
-        # has one version, but the set does not assume it
-        query = session.query(BrandJudgment.article_id, BrandJudgment.prompt_version).distinct()
+    content_types: dict[str, set[str]] = {}
+    if mode in RELABEL_MODES:
+        # Distinct (article, version, type) rows: a relabel replaces every judgment row, so an
+        # article has one version, but the set does not assume it
+        query = session.query(
+            BrandJudgment.article_id, BrandJudgment.prompt_version, BrandJudgment.content_type
+        ).distinct()
         if ids is not None:
             query = query.filter(BrandJudgment.article_id.in_(ids))
-        for article_id, version in query:
+        for article_id, version, content_type in query:
             judgment_versions.setdefault(str(article_id), set()).add(version)
+            content_types.setdefault(str(article_id), set()).add(content_type)
     return build_backfill_cohort(
         rows,
         judged_ids=article_ids(BrandJudgment.article_id),
@@ -1019,6 +1099,7 @@ def _cohort_from_db(
         mode=mode,
         judgment_versions=judgment_versions,
         production_version=production_version,
+        content_types=content_types,
     )
 
 
@@ -1034,7 +1115,7 @@ def select_backfill_cohort(
     """The #192 backfill cohort from the database (D039): the FP export's rows and the
     ``failed`` rows (#86), decided by ``backfill_arm``, plus a count of rows at a cohort status
     outside the export's scrape filter. In MODE_RELABEL, the #245 relabel cohort, decided by
-    ``relabel_arm``.
+    ``relabel_arm``; in MODE_RELABEL_248, #248's targeted cohort, decided by ``relabel_248_arm``.
     """
     cohort = _cohort_from_db(
         session,
@@ -1044,12 +1125,28 @@ def select_backfill_cohort(
         mode=mode,
         production_version=production_version,
     )
-    not_scraped = (
-        session.query(func.count(Article.id))
-        .filter(Article.labeling_status.in_(MODE_STATUSES[mode]))
-        .filter(or_(Article.scrape_status.is_(None), Article.scrape_status != "success"))
-        .scalar()
-    )
+    unscraped = or_(Article.scrape_status.is_(None), Article.scrape_status != "success")
+    if mode == MODE_RELABEL_248:
+        # Only targeted rows count, so selected plus excluded stays the targeted population
+        statuses: dict[str, str] = {}
+        types: dict[str, set[str]] = {}
+        query = (
+            session.query(Article.id, Article.labeling_status, BrandJudgment.content_type)
+            .join(BrandJudgment, BrandJudgment.article_id == Article.id)
+            .filter(Article.labeling_status.in_(MODE_STATUSES[mode]))
+            .filter(unscraped)
+        )
+        for article_id, status, content_type in query:
+            statuses[str(article_id)] = status
+            types.setdefault(str(article_id), set()).add(content_type)
+        not_scraped = sum(1 for i, status in statuses.items() if targeted_248(status, types[i]))
+    else:
+        not_scraped = (
+            session.query(func.count(Article.id))
+            .filter(Article.labeling_status.in_(MODE_STATUSES[mode]))
+            .filter(unscraped)
+            .scalar()
+        )
     if not_scraped:
         cohort.excluded[EXCLUDED_NOT_SCRAPED] += not_scraped
     return cohort

@@ -3292,8 +3292,9 @@ side in the same change. `owner_ruled: false` does not mean "not ruled"; each fi
 **Date:** 2026-11-20 · **Status:** accepted (architect review 2026-11-20: approve with changes, all
 applied; the owner approved the plan on 2026-11-20, and the code-review scope ruling's fix set,
 with the R3 edge below, on 2026-11-20; the owner later withdrew the R1 threshold it approved,
-see R1) · **Issues:** #248, #232, #238, #249, #154, #280,
-#281
+see R1; v1.14.0 promoted 2026-11-21 in #248 PR2 on the owner's acceptance in §6, with §5's mode
+as amended there after architect review) · **Issues:** #248, #232, #238, #249, #154, #280,
+#281, #283
 
 **Context.** #232's spot-check of the #245 relabel found the `false_positive` rows the FP export
 reads wrong in two classes v1.13.0 decides: sale pieces that describe the product, stored
@@ -3400,6 +3401,22 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
    rows with a `retail_only` or `mention_only` judgment (a row typed only `other_entity` is left
    out), and `skipped` rows judged `financial` with no `business` or `product` judgment. A
    seeded spot-check of the relabeled rows follows, before #154 PR2.
+
+   **As built (architect review of PR2's plan, 2026-11-21, approve with changes).** The targeted
+   classes are decided first: a row outside them is not a candidate and counts toward no
+   exclusion, so the dry run's selected plus left-out rows are the targeted rows. A skip's other
+   brands typed `other_entity`, `mention_only` or `retail_only` do not change its decision, and
+   rows judged under v1.12.0 are in scope (same reply schema). Since the relabel replaces the
+   judgments, each batch records each row's prior content types (`prior_content_types`, beside
+   `prior`, whose shape earlier runs use), and the report breaks transitions down by them and
+   lists every row that came back `labeled`, which writes scorecard labels. The owner starts the
+   paid run after a daily run under v1.14.0, so the observed cost check has a run to read. The
+   spot-check is a new issue: the seeded sample (split by the two classes), every row now
+   `labeled`, and two reads outside the cohort, which cannot hold them: the daily run's v1.14.0
+   verdicts on Allbirds articles (ruling 7, #282; `76204e0b` is a human ruling and the rows it
+   governs are not targeted) and §6's ANTA and Nike articles, read by id whether or not the cohort
+   holds them. Making
+   `--mode 245-relabel` refuse after the promotion is #283.
 6. **The run (2026-11-20) and the owner's reads (2026-11-21).** The evidence is the run from
    commit `633cf65` (report `v1.13.0_vs_v1.14.0_20261121T063814Z`; candidate hashes
    `817934a576fe` / `f9e786d07439` / schema `96064689a1f3`; Haiku 5.5 at effort medium; the three

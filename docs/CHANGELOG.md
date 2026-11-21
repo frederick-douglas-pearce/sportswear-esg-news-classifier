@@ -4,6 +4,31 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-21: Prompt v1.14.0 is production; a targeted relabel of the rows it decides differently (#248)
+
+The owner accepted v1.14.0's eval against v1.13.0 as meeting D046's bar, with the reads in D046 §6
+(report `v1.13.0_vs_v1.14.0_20261121T063814Z`, commit `633cf65`, and a 5-repeat check of its
+misses). The registry's production moves to v1.14.0 and v1.13.0 is superseded. The evaluated hashes
+(`817934a576fe` / `f9e786d07439`, schema `96064689a1f3`) are pinned in
+`tests/test_prompt_v1_14_0.py`, so a change to v1.14.0's files fails until a new eval runs.
+
+`scripts/backfill_relabel.py --mode 248-relabel` (D046 §5) relabels, of the rows
+`--mode 245-relabel` would select, `false_positive` rows with a `retail_only` or `mention_only`
+judgment, then `skipped` rows with a `financial` judgment and no `business` or `product` one. Human
+rulings, human labels and possible hand moves stay out (`relabel_248_arm` takes `relabel_arm`'s
+decision for a targeted row). A row outside the two classes is not counted as left out, so the dry
+run's counts are the targeted rows. Runs are tagged `248-relabel`, with their own `--max-cost`
+spend and `--report`. Each batch's run config records the content types each row had
+(`prior_content_types`); the report breaks transitions down by them and lists every row that came
+back `labeled`, since those write brand labels the scorecard and the feed read.
+
+- Rows labeled for a severance line (R6) are not in the cohort; their labels stay until a relabel
+  of `labeled` rows.
+- The daily LLM analysis (D042) is given v1.14.0's instructions, so until rows judged under v1.13.0
+  leave its window it can flag them where the two versions differ.
+- `--mode 245-relabel` would now select every LLM-decided row without a v1.14.0 judgment; making it
+  refuse is #283.
+
 ### 2026-11-20: Candidate prompt v1.14.0 states the owner's rulings from #232's spot-check (#248)
 
 The owner's spot-check of the #245 relabel (#232) found `false_positive` rows wrong in two classes

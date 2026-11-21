@@ -1,4 +1,4 @@
-"""Tests for candidate prompt v1.14.0 and its case file (#248, D046): the owner's rulings from
+"""Tests for prompt v1.14.0 (production since #248 PR2) and its case file (#248, D046): the owner's rulings from
 #232's spot-check and #248's template-stock finding, stated in the prompt and scored by
 owner_rulings_232.json."""
 
@@ -18,6 +18,11 @@ CASES_DIR = PROMPTS_DIR / "eval_cases"
 CASE_FILE = CASES_DIR / "owner_rulings_232.json"
 PRODUCT_CASE_FILE = CASES_DIR / "product_and_stability.json"
 ALL_CASE_FILES = sorted(CASES_DIR.glob("*.json"))
+
+# The hashes the eval evaluated (report v1.13.0_vs_v1.14.0_20261121T063814Z, D046 §6)
+V1_14_0_SYSTEM_HASH = "817934a576fe"
+V1_14_0_USER_HASH = "f9e786d07439"
+V1_14_0_SCHEMA_HASH = "96064689a1f3"
 
 # One phrase per change v1.14.0 states (#248); a reworded ruling fails here
 RULING_PHRASES = {
@@ -104,14 +109,23 @@ def _paragraph(text: str, start: str) -> str:
     return rest[: rest.index("\n")]
 
 
-class TestCandidate:
-    def test_registered_as_a_candidate_with_v1_13_0s_call_settings(self):
-        """Production stays v1.13.0 until v1.14.0's eval meets D046's bar."""
+class TestPromoted:
+    def test_registered_as_production_with_v1_13_0s_call_settings(self):
+        """Promoted on its eval against v1.13.0, which the owner accepted as meeting D046's bar
+        (#248 PR2, D046 §6)."""
         registry = json.loads((PROMPTS_DIR / "registry.json").read_text())
         entry = registry["versions"]["v1.14.0"]
-        assert registry["production"] == "v1.13.0"
-        assert entry["tags"]["status"] == "candidate"
+        assert registry["production"] == "v1.14.0"
+        assert entry["tags"]["status"] == "production"
+        assert registry["versions"]["v1.13.0"]["tags"]["status"] == "superseded"
         assert entry["model_recommendations"] == registry["versions"]["v1.13.0"]["model_recommendations"]
+
+    def test_text_and_schema_are_the_hashes_evaluated(self, v1_14_0):
+        """The hashes evaluated are the hashes promoted (D036 §3, D046 §4): report
+        v1.13.0_vs_v1.14.0_20261121T063814Z from commit 633cf65. A change means a new run."""
+        assert (v1_14_0.system_prompt_hash, v1_14_0.user_prompt_hash, v1_14_0.reply_schema_hash) == (
+            V1_14_0_SYSTEM_HASH, V1_14_0_USER_HASH, V1_14_0_SCHEMA_HASH,
+        ), "v1.14.0 changed after its eval: rerun it (D046 §4)"
 
     def test_config_names_its_version_and_v1_13_0s_files(self):
         config = json.loads((PROMPTS_DIR / "v1.14.0" / "config.json").read_text())

@@ -162,6 +162,25 @@ uv run python scripts/backfill_relabel.py --report
 - **Before the run:** apply `migrations/009_brand_judgments.sql`.
 - **Report** (printed at the end of a run, or with `--report`): prior → current status and source by arm, brand judgments by content type, `failed` outcomes by arm, the articles still unjudged, split into those skipped again (not retried) and those not yet relabeled (retried next invocation), and the `failed` rows whose status a run kept (retried next invocation).
 
+### Targeted relabel under v1.14.0 (#248, D046 §5)
+
+`--mode 248-relabel` relabels the two classes v1.14.0 decides differently from v1.13.0, with its own run tag (`248-relabel`), `--max-cost` spend and `--report`. Of the rows `--mode 245-relabel` would select (D041: LLM-decided, judged under an earlier version, with its exclusions for human rulings and labels, possible hand moves and content the pipeline would not send), it takes:
+
+| Arm | Rows |
+|---|---|
+| `relabel_248_false_positive` (first) | `false_positive` rows with a `retail_only` or `mention_only` judgment; a row typed only `other_entity` is not targeted |
+| `relabel_248_financial_skip` | `skipped` rows with a `financial` judgment and no `business` or `product` one; other brands typed `other_entity`, `mention_only` or `retail_only` do not change that |
+
+A row outside those classes is not a candidate and is not counted as left out, so the dry run's selected plus left-out rows are the targeted rows. Each batch's run config records the content types each row had (`prior_content_types`, beside `prior`), since the relabel replaces the judgments; the report adds transitions by those prior types and lists every row that came back `labeled` (those write brand labels the scorecard and the feed read). The rows `labeled` → `skipped` for a severance line (R6) are not in this cohort.
+
+```bash
+uv run python scripts/backfill_relabel.py --mode 248-relabel --dry-run
+uv run python scripts/backfill_relabel.py --mode 248-relabel --max-cost 10
+uv run python scripts/backfill_relabel.py --mode 248-relabel --report
+```
+
+Start the paid run after at least one daily run under v1.14.0, so the check of observed cost per call against the worst case has a finished run to read. A seeded spot-check of the relabeled rows follows, before #154 PR2.
+
 ## Exporting Training Data
 
 Export labeled data for ML classifier training:
@@ -427,9 +446,9 @@ The owner's review of #192's backfill (2026-10-27 to 28) ruled on cases the prom
 
 The cases are in `prompts/labeling/eval_cases/owner_rulings_192.json`, one per source row, with the owner's ruling as the expected outcome. A ninth ruling (an evergreen marketing explainer is not news) is borderline and is a gray-zone case only.
 
-### The owner's rulings from #232's spot-check (candidate prompt v1.14.0, D046)
+### The owner's rulings from #232's spot-check (prompt v1.14.0, D046)
 
-The owner's spot-check of the #245 relabel (#232, 2026-11-18) found `false_positive` rows wrong in two classes, and #248 found template stock and filing pages typed `financial`. Candidate v1.14.0 states the rulings (#248); D046 records them and the bar its eval is judged against. Production stays v1.13.0 until that eval meets it.
+The owner's spot-check of the #245 relabel (#232, 2026-11-18) found `false_positive` rows wrong in two classes, and #248 found template stock and filing pages typed `financial`. v1.14.0 states the rulings (#248); D046 records them and the bar its eval was judged against. It is production since #248 PR2 (2026-11-21), on an eval the owner accepted with the reads in D046 §6.
 
 1. A sale or deal piece that describes the product is `product`, even when its genre is a deal listing. What counts as describing it is v1.13.0's Product-article wording: the owner's ruling names build, materials, fit or comfort, but code review found no sentence-level wording that separates a fit or comfort line from a listing's attributes on the ruled cases, a boundary D040 §6 measured as noisy (D046). A line of specs or a one-line blurb that only praises it stays `retail_only`; the boundary rows `aa37cad0` and `94a563b7` are read, not barred, in v1.14.0's eval (neither counts as a new miss).
 2. The brand's own marketing campaign, a story about its own sponsorship or an athlete's deal with it (a story whose subject is the deal, by either party; one sentence on the deal in a story about something else, such as a match report, does not count), or sourced consumer-demand data about it is `business` with no category, not `mention_only`.
