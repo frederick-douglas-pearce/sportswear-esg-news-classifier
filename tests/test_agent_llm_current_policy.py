@@ -106,9 +106,11 @@ def _row(status_reason, *, brands=("Nike",), fp_action=FP_ACTION_CONTINUED_TO_LL
     }
 
 
-def _judgment(article_id, brand, content_type, reasoning="r", gated=(), version="v1.13.0"):
+def _judgment(article_id, brand, content_type, reasoning="r", gated=(), version=None):
+    """A judgment under the production version unless another is given."""
     return {"article_id": article_id, "brand": brand, "content_type": content_type,
-            "reasoning": reasoning, "gated_categories": list(gated), "prompt_version": version}
+            "reasoning": reasoning, "gated_categories": list(gated),
+            "prompt_version": version or _production_version()}
 
 
 class TestModelAndRequest:

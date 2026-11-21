@@ -1,4 +1,4 @@
-"""Tests for prompt v1.13.0 (production since #230 PR2) and its case file (#230, D040): the owner's policy rulings
+"""Tests for prompt v1.13.0 (production from #230 PR2 until #248 PR2) and its case file (#230, D040): the owner's policy rulings
 from #192's backfill review, stated in the prompt and scored by owner_rulings_192.json."""
 
 import json
@@ -82,12 +82,13 @@ def v1_13_0():
 
 
 class TestPromoted:
-    def test_registered_as_production_with_v1_12_0s_call_settings(self):
-        """Promoted on eval run 2 against v1.12.0 (#230 PR2, D040 §6)."""
+    def test_registered_and_superseded_with_v1_12_0s_call_settings(self):
+        """Promoted on eval run 2 against v1.12.0 (#230 PR2, D040 §6); superseded by v1.14.0
+        (#248 PR2, D046)."""
         registry = json.loads((PROMPTS_DIR / "registry.json").read_text())
         entry = registry["versions"]["v1.13.0"]
-        assert registry["production"] == "v1.13.0"
-        assert entry["tags"]["status"] == "production"
+        assert registry["production"] == "v1.14.0"
+        assert entry["tags"]["status"] == "superseded"
         assert registry["versions"]["v1.12.0"]["tags"]["status"] == "superseded"
         assert entry["model_recommendations"] == registry["versions"]["v1.12.0"]["model_recommendations"]
 

@@ -191,9 +191,10 @@ class TestReplySchema:
 
 class TestV1_12_0:
     def test_registered_and_superseded_by_v1_13_0(self, manager):
-        """v1.13.0 states the owner's rulings on top of it (#230, D040)."""
+        """v1.13.0 states the owner's rulings on top of it (#230, D040), and v1.14.0 #232's (#248,
+        D046)."""
         assert manager.get_version_info("v1.12.0")["tags"]["status"] == "superseded"
-        assert manager.get_production_version() == "v1.13.0"
+        assert manager.get_production_version() == "v1.14.0"
 
     def test_config_names_the_schema(self):
         config = json.loads((PROMPTS_DIR / "v1.12.0" / "config.json").read_text())

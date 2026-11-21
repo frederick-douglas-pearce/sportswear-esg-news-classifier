@@ -27,6 +27,14 @@ judgment under the production version, ``labeled`` rows first, then judged skips
 Its runs are tagged ``245-relabel``; the spend cap and the report count only that tag. A reply
 that is not ``labeled`` deletes the article's non-human labels from an earlier reply.
 
+``--mode 248-relabel`` selects #248's targeted cohort (D046 §5; ``relabel_248_arm``): of the
+``245-relabel`` candidates, ``false_positive`` rows with a ``retail_only`` or ``mention_only``
+judgment, then ``skipped`` rows judged ``financial`` with no ``business`` or ``product`` judgment.
+A row already judged under the production version, or outside those classes, is not counted as
+excluded. Each run's config also records the content types each row had (``prior_content_types``),
+and the report breaks the transitions down by them and lists every relabeled row whose status is
+now ``labeled``.
+
 Run one invocation at a time: nothing locks the cohort, so a second one would pay again for the
 same articles (the cap still holds, since it counts the other's unfinished runs).
 
@@ -215,7 +223,7 @@ def batches(ids: list[str], size: int) -> list[list[str]]:
 
 def print_cohort(cohort: provenance.BackfillCohort, ids: list[str], per_call: dict[str, float]) -> None:
     print(f"\n{'=' * 60}\nBACKFILL COHORT ({cohort.mode})\n{'=' * 60}")
-    if cohort.mode == provenance.MODE_RELABEL:
+    if cohort.mode in provenance.RELABEL_MODES:
         print(f"Ends at: a brand_judgments row under {cohort.production_version}")
     else:
         print(f"Arm J cutoff (first production-version run): {cohort.judged_skip_cutoff}")
@@ -287,6 +295,10 @@ def run_batches(
             "prior": {i: cohort.prior[i] for i in batch},
             "dropped": dropped,
         }
+        if cohort.mode == provenance.MODE_RELABEL_248:
+            # Beside prior, whose [status, reason, arm] shape earlier runs and tried_reasons read:
+            # the relabel replaces the judgments, so this is what selected each row (D046 §5)
+            run_config["prior_content_types"] = {i: cohort.prior_content_types[i] for i in batch}
         logger.info(f"Batch {ran + 1}: {len(batch)} articles, worst case ${worst:.2f}")
         stats = pipeline.label_articles(
             article_ids=[UUID(i) for i in batch],
@@ -313,10 +325,14 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
     pass retries them."""
     runs = tagged_runs(session, tag)
     prior: dict[str, list] = {}
+    prior_types: dict[str, list[str]] = {}
     for run in runs:
-        for article_id, values in (((run.config or {}).get("run_config") or {}).get("prior") or {}).items():
+        run_config = (run.config or {}).get("run_config") or {}
+        for article_id, values in (run_config.get("prior") or {}).items():
             # A retried article's first record is its status from before the backfill
             prior.setdefault(article_id, values)
+        for article_id, types in (run_config.get("prior_content_types") or {}).items():
+            prior_types.setdefault(article_id, types)
     report = {
         "runs": len(runs),
         "transitions": Counter(),
@@ -328,6 +344,10 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
         "unjudged_retried": [],
         # arm X rows still failed with the reason recorded before the relabel: retried
         "failed_retried": [],
+        # (prior content types, prior status, status) over rows with recorded types (248-relabel)
+        "transitions_by_prior_type": Counter(),
+        # relabeled rows now labeled, with their prior status and content types (248-relabel)
+        "now_labeled": [],
     }
     if not prior:
         return report
@@ -351,6 +371,11 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
         else:
             source = None
         report["transitions"][(arm, old_status, status, source)] += 1
+        if str(article_id) in prior_types:
+            types = "/".join(prior_types[str(article_id)])
+            report["transitions_by_prior_type"][(types, old_status, status)] += 1
+            if status == "labeled":
+                report["now_labeled"].append((str(article_id), old_status, types))
         if status == provenance.FAILED_STATUS:
             if arm == provenance.ARM_FAILED and reason == old_reason:
                 report["failed_retried"].append(str(article_id))
@@ -376,6 +401,13 @@ def print_report(report: dict, tag: str = RUN_TAG) -> None:
     print("arm: prior status -> status (source): articles")
     for (arm, old, new, source), n in sorted(report["transitions"].items(), key=lambda kv: str(kv[0])):
         print(f"  {arm}: {old} -> {new} ({source}): {n}")
+    if report["transitions_by_prior_type"]:
+        print("prior content types: prior status -> status: articles")
+        for (types, old, new), n in sorted(report["transitions_by_prior_type"].items()):
+            print(f"  {types}: {old} -> {new}: {n}")
+        print(f"Now labeled: {len(report['now_labeled'])}")
+        for article_id, old, types in sorted(report["now_labeled"]):
+            print(f"  {article_id} (was {old}, typed {types})")
     print("Brand judgments by content type:")
     for content_type, n in sorted(report["content_types"].items()):
         print(f"  {content_type}: {n}")
@@ -402,8 +434,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         choices=sorted(provenance.MODE_ARMS),
         default=provenance.MODE_BACKFILL,
-        help=f"Which cohort, and the tag its runs record: {provenance.MODE_BACKFILL} (#192, D039) "
-        f"or {provenance.MODE_RELABEL} (rows stored under an earlier prompt, #245)",
+        help=f"Which cohort, and the tag its runs record: {provenance.MODE_BACKFILL} (#192, D039), "
+        f"{provenance.MODE_RELABEL} (rows stored under an earlier prompt, #245) or "
+        f"{provenance.MODE_RELABEL_248} (negatives typed retail_only/mention_only and skips with a "
+        "financial judgment and no business/product one, stored under an earlier prompt, #248, D046)",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args(argv)

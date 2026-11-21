@@ -626,6 +626,7 @@ def env():
          patch.object(script, "backfill_report", return_value={
              "runs": 0, "transitions": {}, "content_types": {}, "failed_by_arm": {},
              "unjudged_left_out": [], "unjudged_retried": [], "failed_retried": [],
+             "transitions_by_prior_type": {}, "now_labeled": [],
          }), \
          patch.object(script, "LabelingPipeline") as m.pipeline_cls:
         m.label_articles = m.pipeline_cls.return_value.label_articles
@@ -1249,3 +1250,328 @@ class TestRelabelTag:
     def test_the_mode_flag(self):
         assert script.parse_args([]).mode == provenance.MODE_BACKFILL
         assert script.parse_args(["--mode", "245-relabel"]).mode == provenance.MODE_RELABEL
+
+
+# --- #248: the targeted relabel cohort (D046 §5) -----------------------------------------------
+
+
+def relabel_248(content_types, **overrides) -> BackfillDecision:
+    """relabel_248_arm on a negative judged under an earlier version that every #245 check passes."""
+    kwargs = dict(
+        article_id=str(uuid4()),
+        source=LLM,
+        brands=["Puma"],
+        sufficient_content=True,
+        human_labels=False,
+        production_version=PRODUCTION,
+        **FP_V12,
+    )
+    kwargs.update(overrides)
+    return provenance.relabel_248_arm(content_types=set(content_types), **kwargs)
+
+
+class TestRelabel248Arm:
+    @pytest.mark.parametrize("types", [
+        {"retail_only"}, {"mention_only"}, {"other_entity", "mention_only"}, {"other_entity", "retail_only"},
+    ])
+    def test_a_negative_typed_retail_only_or_mention_only_is_selected(self, types):
+        assert relabel_248(types) == BackfillDecision(provenance.ARM_248_FALSE_POSITIVE)
+
+    def test_a_negative_typed_other_entity_alone_is_not_a_candidate(self):
+        """Not targeted, so not counted as an exclusion either."""
+        assert relabel_248({"other_entity"}) == NOT_A_CANDIDATE
+
+    @pytest.mark.parametrize("types", [
+        {"financial"}, {"financial", "other_entity"}, {"financial", "mention_only"}, {"financial", "retail_only"},
+    ])
+    def test_a_skip_typed_financial_without_business_or_product_is_selected(self, types):
+        assert relabel_248(types, **SKIP_V12) == BackfillDecision(provenance.ARM_248_FINANCIAL_SKIP)
+
+    @pytest.mark.parametrize("types", [
+        {"financial", "business"}, {"financial", "product"}, {"business"}, {"product"}, {"mention_only"}, set(),
+    ])
+    def test_any_other_skip_is_not_a_candidate(self, types):
+        assert relabel_248(types, **SKIP_V12) == NOT_A_CANDIDATE
+
+    @pytest.mark.parametrize("types", [{"financial"}, {"mention_only"}, {"product"}])
+    def test_a_labeled_row_is_not_a_candidate(self, types):
+        assert relabel_248(types, labeling_status="labeled", labeling_error=None, has_labels=True) == NOT_A_CANDIDATE
+
+    @pytest.mark.parametrize("overrides, types, excluded", [
+        ({"source": HUMAN}, {"mention_only"}, EXCLUDED_HUMAN),
+        ({"article_id": RULED_FP}, {"mention_only"}, EXCLUDED_HUMAN),
+        ({"human_labels": True}, {"retail_only"}, EXCLUDED_HUMAN_LABELS),
+        ({"labeling_error": "Fixed by hand"}, {"mention_only"}, EXCLUDED_POSSIBLE_HAND_MOVE),
+        ({"source": FP_CLASSIFIER}, {"mention_only"}, provenance.EXCLUDED_NOT_LLM_DECIDED),
+        ({"sufficient_content": False}, {"retail_only"}, EXCLUDED_INSUFFICIENT_CONTENT),
+        ({**SKIP_V12, "source": HUMAN}, {"financial"}, EXCLUDED_HUMAN),
+        ({**SKIP_V12, "labeling_error": "checked by hand", "source": UNATTRIBUTED}, {"financial"},
+         EXCLUDED_POSSIBLE_HAND_MOVE),
+    ])
+    def test_relabel_arms_exclusions_hold_on_a_targeted_row(self, overrides, types, excluded):
+        assert relabel_248(types, **overrides) == BackfillDecision(None, excluded)
+
+    def test_an_untargeted_row_excluded_by_relabel_arm_is_not_counted(self):
+        assert relabel_248({"other_entity"}, source=HUMAN) == NOT_A_CANDIDATE
+
+    @pytest.mark.parametrize("overrides, types", [
+        ({}, {"mention_only"}), ({}, {"retail_only"}), (SKIP_V12, {"financial"}),
+        # judged under production and now outside the classes (relabeled, or the daily run)
+        ({}, {"other_entity"}), (SKIP_V12, {"business"}),
+        # one relabel_arm would exclude: the production check comes first, so it is not counted
+        ({"source": HUMAN}, {"mention_only"}),
+    ])
+    def test_a_row_judged_under_production_is_not_a_candidate_and_not_counted(self, overrides, types):
+        assert relabel_248(types, **{**overrides, "judgment_versions": {PRODUCTION}}) == NOT_A_CANDIDATE
+
+    @pytest.mark.parametrize("types", [{"product"}, {"financial"}, {"business"}, {"product", "financial"}])
+    def test_a_negative_with_only_sportswear_types_is_not_targeted(self, types):
+        """A negative moved by hand that kept its earlier reply's sportswear types; even with a
+        reason a hand move would fail on, it is not targeted and not counted."""
+        assert relabel_248(types) == NOT_A_CANDIDATE
+        assert relabel_248(types, labeling_error="Fixed by hand") == NOT_A_CANDIDATE
+
+
+def cohort_248_of(rows, versions, types, labeled=(), human_labeled=()):
+    return build_backfill_cohort(
+        sorted(rows, key=lambda r: r.article_id),
+        judged_ids=set(versions),
+        human_label_ids=set(human_labeled),
+        label_ids=set(labeled),
+        judged_skip_cutoff=None,
+        bound=BOUND,
+        mode=provenance.MODE_RELABEL_248,
+        judgment_versions=versions,
+        production_version=PRODUCTION,
+        content_types=types,
+    )
+
+
+class TestRelabel248Cohort:
+    def test_negatives_run_first_and_only_targeted_rows_are_counted(self):
+        fin = row(reason=models.SKIP_NO_ESG_CATEGORIES, article_id="0" * 8)
+        neg = row("false_positive", LLM_FP_REASON, article_id="1" * 8, skipped_at=None)
+        other = row("false_positive", LLM_FP_REASON, article_id="2" * 8, skipped_at=None)
+        biz = row(reason=models.SKIP_NO_ESG_CATEGORIES, article_id="3" * 8)
+        done = row("false_positive", LLM_FP_REASON, article_id="4" * 8, skipped_at=None)
+        lab = row("labeled", None, article_id="5" * 8)
+        # untargeted rows relabel_arm would exclude (human ruling; hand-move reason; human labels)
+        ruled = row("false_positive", LLM_FP_REASON, article_id=RULED_FP, skipped_at=None)
+        hand = row("false_positive", "Fixed by hand", article_id="6" * 8, skipped_at=None)
+        reviewed = row("false_positive", LLM_FP_REASON, article_id="7" * 8, skipped_at=None)
+        # targeted, and excluded by relabel_arm: counted
+        held = row("false_positive", LLM_FP_REASON, article_id="8" * 8, skipped_at=None)
+        rows = [fin, neg, other, biz, done, lab, ruled, hand, reviewed, held]
+        versions = {r.article_id: EARLIER for r in rows} | {done.article_id: {PRODUCTION}}
+        types = {
+            fin.article_id: {"financial", "other_entity"}, neg.article_id: {"retail_only"},
+            other.article_id: {"other_entity"}, biz.article_id: {"financial", "business"},
+            done.article_id: {"mention_only"}, lab.article_id: {"financial"},
+            ruled.article_id: {"other_entity"}, hand.article_id: {"product"},
+            reviewed.article_id: {"other_entity"}, held.article_id: {"mention_only"},
+        }
+        cohort = cohort_248_of(rows, versions, types, labeled=[lab.article_id],
+                               human_labeled=[reviewed.article_id, held.article_id])
+        assert cohort.arms == provenance.RELABEL_248_ARMS
+        assert cohort.ids == [neg.article_id, fin.article_id]
+        assert cohort.prior[neg.article_id] == ["false_positive", LLM_FP_REASON, provenance.ARM_248_FALSE_POSITIVE]
+        assert cohort.prior[fin.article_id] == ["skipped", models.SKIP_NO_ESG_CATEGORIES,
+                                                provenance.ARM_248_FINANCIAL_SKIP]
+        # selected + excluded is the targeted rows not yet judged under production: held only
+        assert cohort.excluded == {EXCLUDED_HUMAN_LABELS: 1}
+        assert cohort.left_out == {held.article_id: EXCLUDED_HUMAN_LABELS}
+        assert cohort.prior_content_types == {
+            neg.article_id: ["retail_only"], fin.article_id: ["financial", "other_entity"],
+        }
+        # no FP prediction: decided before the pre-filter, so the source is pre_classifier
+        assert dict(cohort.by_reason) == {
+            (provenance.ARM_248_FALSE_POSITIVE, "pre_classifier, typed retail_only, judged under v1.12.0"): 1,
+            (provenance.ARM_248_FINANCIAL_SKIP, "pre_classifier, typed financial/other_entity, judged under v1.12.0"): 1,
+        }
+
+    def test_the_245_mode_records_no_content_types(self):
+        lab = row("labeled", None)
+        cohort = relabel_cohort_of([lab], labeled=[lab.article_id])
+        assert cohort.prior_content_types == {}
+
+    def test_a_248_cohort_names_its_production_version(self):
+        with pytest.raises(ValueError, match="production version"):
+            build_backfill_cohort([], judged_ids=set(), human_label_ids=set(), label_ids=set(),
+                                  judged_skip_cutoff=None, bound=BOUND, mode=provenance.MODE_RELABEL_248)
+
+    def test_the_recheck_keeps_the_mode(self):
+        neg = row("false_positive", LLM_FP_REASON, skipped_at=None)
+        cohort = cohort_248_of([neg], {neg.article_id: EARLIER}, {neg.article_id: {"mention_only"}})
+        with patch.object(provenance, "_cohort_from_db", return_value=cohort) as read:
+            assert provenance.recheck_backfill_batch(MagicMock(), cohort, cohort.ids) == ([neg.article_id], {})
+        assert read.call_args.kwargs["mode"] == provenance.MODE_RELABEL_248
+
+
+class TestRelabel248Run:
+    def _cohort(self):
+        neg = row("false_positive", LLM_FP_REASON, skipped_at=None)
+        return neg, cohort_248_of([neg], {neg.article_id: EARLIER}, {neg.article_id: {"mention_only", "other_entity"}})
+
+    def test_each_batch_records_prior_content_types_beside_prior_under_its_tag(self):
+        neg, cohort = self._cohort()
+        pipeline = MagicMock()
+        pipeline.label_articles.return_value = SimpleNamespace(articles_left_non_transient=0)
+        with patch.object(script.db, "get_session"), \
+             patch.object(provenance, "recheck_backfill_batch", return_value=([neg.article_id], {})), \
+             patch.object(script, "tagged_runs", return_value=[]) as runs:
+            assert script.run_batches(pipeline, cohort.ids, cohort, {neg.article_id: 0.01}, 10, 1.0) == script.EXIT_DONE
+        assert runs.call_args.args[1] == provenance.MODE_RELABEL_248
+        kwargs = pipeline.label_articles.call_args.kwargs
+        assert kwargs["run_tag"] == "248-relabel"
+        assert kwargs["run_config"]["prior"] == {
+            neg.article_id: ["false_positive", LLM_FP_REASON, provenance.ARM_248_FALSE_POSITIVE]
+        }
+        assert kwargs["run_config"]["prior_content_types"] == {neg.article_id: ["mention_only", "other_entity"]}
+
+    def test_a_245_batch_records_no_content_types(self):
+        lab = row("labeled", None)
+        cohort = relabel_cohort_of([lab], labeled=[lab.article_id])
+        pipeline = MagicMock()
+        pipeline.label_articles.return_value = SimpleNamespace(articles_left_non_transient=0)
+        with patch.object(script.db, "get_session"), \
+             patch.object(provenance, "recheck_backfill_batch", return_value=([lab.article_id], {})), \
+             patch.object(script, "tagged_runs", return_value=[]):
+            script.run_batches(pipeline, cohort.ids, cohort, {lab.article_id: 0.01}, 10, 1.0)
+        assert "prior_content_types" not in pipeline.label_articles.call_args.kwargs["run_config"]
+
+    def test_the_mode_flag_and_its_end(self, capsys):
+        assert script.parse_args(["--mode", "248-relabel"]).mode == provenance.MODE_RELABEL_248
+        _, cohort = self._cohort()
+        script.print_cohort(cohort, cohort.ids, {})
+        assert f"Ends at: a brand_judgments row under {PRODUCTION}" in capsys.readouterr().out
+
+    def test_main_passes_the_mode_to_selection_spend_and_report(self, env):
+        """AC-E: the mode's own tag reaches the cohort, the spend cap's runs and the report."""
+        assert script.main(["--mode", "248-relabel", "--dry-run"]) == script.EXIT_DONE
+        assert env.select.call_args.kwargs["mode"] == "248-relabel"
+        assert env.tagged_runs.call_args.args[1] == "248-relabel"
+        with patch.object(script, "backfill_report", return_value={
+            "runs": 0, "transitions": {}, "content_types": {}, "failed_by_arm": {},
+            "unjudged_left_out": [], "unjudged_retried": [], "failed_retried": [],
+            "transitions_by_prior_type": {}, "now_labeled": [],
+        }) as report:
+            assert script.main(["--mode", "248-relabel", "--report"]) == script.EXIT_DONE
+        assert report.call_args.args[1] == "248-relabel"
+
+    def test_the_report_prints_prior_types_and_every_row_now_labeled(self, capsys):
+        report = {
+            "runs": 1, "transitions": {}, "content_types": {}, "failed_by_arm": {},
+            "unjudged_left_out": [], "unjudged_retried": [], "failed_retried": [],
+            "transitions_by_prior_type": {("mention_only", "false_positive", "labeled"): 1,
+                                          ("retail_only", "false_positive", "skipped"): 2},
+            "now_labeled": [("abc", "false_positive", "mention_only")],
+        }
+        script.print_report(report, "248-relabel")
+        out = capsys.readouterr().out
+        assert "  retail_only: false_positive -> skipped: 2" in out
+        assert "Now labeled: 1" in out
+        assert "  abc (was false_positive, typed mention_only)" in out
+
+
+@requires_postgres
+class TestRelabel248AgainstPostgres(TestAgainstPostgres):
+    """The 248 cohort, spend and report from real rows; inherits the fixtures, not the tests."""
+
+    test_the_real_cohort_query = None
+    test_the_recheck_reads_the_batchs_rows_again = None
+    test_tagged_run_queries_and_the_report = None
+
+    def _judge(self, session, run, article, *types, version="v1.13.0"):
+        for i, content_type in enumerate(types):
+            session.add(models.BrandJudgment(
+                article_id=article.id, labeling_run_id=run.id, brand=f"Brand{i}", content_type=content_type,
+                reasoning="r", gated_categories=[], prompt_version=version, model="claude-haiku-5-5",
+            ))
+
+    def test_the_real_248_cohort_spend_and_report(self, database):
+        db, created = database
+        production = f"vt-{uuid4().hex[:12]}"
+
+        def not_scraped(session):
+            return provenance.select_backfill_cohort(
+                session, judged_skip_cutoff=None, bound=BOUND, mode=provenance.MODE_RELABEL_248,
+                production_version=production,
+            ).excluded[provenance.EXCLUDED_NOT_SCRAPED]
+
+        with db.get_session() as session:
+            before = not_scraped(session)
+            run = self._run(session, created, prompt_version="v1.13.0")
+            neg = self._article(session, created, "false_positive", LLM_FP_REASON, brands=("Puma", "Nike"))
+            self._judge(session, run, neg, "other_entity", "mention_only")
+            only_other = self._article(session, created, "false_positive", LLM_FP_REASON)
+            self._judge(session, run, only_other, "other_entity")
+            fin = self._article(session, created, "skipped", models.SKIP_NO_ESG_CATEGORIES, skipped_at=BEFORE)
+            self._judge(session, run, fin, "financial")
+            fin_biz = self._article(session, created, "skipped", models.SKIP_NO_ESG_CATEGORIES, skipped_at=BEFORE,
+                                    brands=("Puma", "Nike"))
+            self._judge(session, run, fin_biz, "financial", "business")
+            unscraped_fin = self._article(session, created, "skipped", models.SKIP_NO_ESG_CATEGORIES,
+                                          skipped_at=BEFORE, scrape="failed")
+            self._judge(session, run, unscraped_fin, "financial")
+            unscraped_other = self._article(session, created, "false_positive", LLM_FP_REASON, scrape="failed")
+            self._judge(session, run, unscraped_other, "other_entity")
+            unscraped_done = self._article(session, created, "false_positive", LLM_FP_REASON, scrape="failed")
+            self._judge(session, run, unscraped_done, "mention_only", version=production)
+            # targeted, but already judged under production (the daily run): not a candidate, not counted
+            judged_done = self._article(session, created, "false_positive", LLM_FP_REASON)
+            self._judge(session, run, judged_done, "mention_only", version=production)
+            session.commit()
+
+            cohort = provenance.select_backfill_cohort(
+                session, judged_skip_cutoff=None, bound=BOUND, mode=provenance.MODE_RELABEL_248,
+                production_version=production,
+            )
+            kept, dropped = provenance.recheck_backfill_batch(session, cohort, [str(neg.id), str(fin.id)])
+            ours = {str(i) for i in created.articles}
+            selected = {arm: [i for i in ids if i in ours] for arm, ids in cohort.selected.items()}
+            neg_id, fin_id = str(neg.id), str(fin.id)
+            for untargeted in (only_other, fin_biz, judged_done):
+                assert str(untargeted.id) not in cohort.left_out and str(untargeted.id) not in cohort.prior
+
+            # A 245-tagged run's spend does not count toward 248's cap, and the report reads 248's
+            tagged = self._run(
+                session, created, prompt_version=production, started_at=BOUND, completed_at=AFTER,
+                estimated_cost_usd=0.25, config={"run_tag": "248-relabel", "run_config": {
+                    "batch_worst_case_usd": 0.5, "bound": BOUND.isoformat(),
+                    "prior": {neg_id: ["false_positive", LLM_FP_REASON, provenance.ARM_248_FALSE_POSITIVE],
+                              fin_id: ["skipped", models.SKIP_NO_ESG_CATEGORIES, provenance.ARM_248_FINANCIAL_SKIP]},
+                    "prior_content_types": {neg_id: ["mention_only", "other_entity"], fin_id: ["financial"]},
+                }},
+            )
+            self._run(
+                session, created, prompt_version=production, started_at=BOUND, completed_at=AFTER,
+                estimated_cost_usd=9.0, config={"run_tag": "245-relabel", "run_config": {"batch_worst_case_usd": 9.0}},
+            )
+            neg.labeling_status, neg.labeling_error = "labeled", None
+            fin.labeling_status, fin.labeling_error = "false_positive", "Puma: mention_only: a price move"
+            # the relabel replaced the judgments: the report must read the recorded prior types
+            session.query(models.BrandJudgment).filter(
+                models.BrandJudgment.article_id.in_([neg.id, fin.id])
+            ).delete(synchronize_session=False)
+            self._judge(session, tagged, neg, "business", version=production)
+            self._judge(session, tagged, fin, "mention_only", version=production)
+            session.commit()
+            runs = [r for r in script.tagged_runs(session, "248-relabel") if r.id in created.runs]
+            assert [r.id for r in runs] == [tagged.id]
+            assert script.spend_of(runs).usd == pytest.approx(0.25)
+            with patch.object(script, "tagged_runs", return_value=runs):
+                report = script.backfill_report(session, "248-relabel")
+
+        assert selected == {provenance.ARM_248_FALSE_POSITIVE: [neg_id], provenance.ARM_248_FINANCIAL_SKIP: [fin_id]}
+        assert cohort.prior_content_types[neg_id] == ["mention_only", "other_entity"]
+        assert cohort.prior_content_types[fin_id] == ["financial"]
+        assert kept == [neg_id, fin_id] and dropped == {}
+        # one targeted unscraped row not yet judged under production; the untargeted one and the one
+        # judged under production are not counted
+        assert cohort.excluded[provenance.EXCLUDED_NOT_SCRAPED] == before + 1
+        assert report["transitions_by_prior_type"] == {
+            ("mention_only/other_entity", "false_positive", "labeled"): 1,
+            ("financial", "skipped", "false_positive"): 1,
+        }
+        # only the row now labeled is listed
+        assert report["now_labeled"] == [(neg_id, "false_positive", "mention_only/other_entity")]
