@@ -68,9 +68,9 @@ UNJUDGED_SKIP_REASONS = frozenset({
 # The one skip that follows an explicit sportswear judgment by the LLM.
 JUDGED_SKIP_REASONS = frozenset({SKIP_NO_ESG_CATEGORIES})
 
-# The scrape_error of an article whose scraped content names none of its brands_mentioned: the
-# scraper stores it as 'skipped' (#227), and scripts/triage_no_brand_content.py moves stored rows
-# like it to the same state. Select both with `scrape_error = SCRAPE_NO_BRAND_ERROR`. Never reword it.
+# The scrape_error of an article whose scraped content names none of its brands_mentioned outside a
+# cookie notice (#273; a notice that names the brand does not count): the scraper stores it as
+# 'skipped' (#227), and scripts/triage_no_brand_content.py moves stored rows like it to the same state. Select both with `scrape_error = SCRAPE_NO_BRAND_ERROR`. Never reword it.
 SCRAPE_NO_BRAND_ERROR = "No expected brand in scraped content"
 
 # Prefix of the reason a title duplicate is stored with ('deduplicated' status); the id of the

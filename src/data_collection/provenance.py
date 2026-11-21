@@ -1293,13 +1293,13 @@ class NoBrandCohort:
 
 
 def select_no_brand_content(session, eval_case_ids: Iterable[str] = ()) -> NoBrandCohort:
-    """Rows scraped as 'success' whose stored ``full_content`` names none of their brands, by the
-    scraper's own test (``brands_in_text``), not already ``unlabelable``, each decided by
-    ``no_brand_exclusion``; a row it would move whose id is in ``eval_case_ids`` is left out as
-    ``EXCLUDED_EVAL_CASE``.
+    """Rows scraped as 'success' whose stored ``full_content`` names none of their brands outside a
+    cookie notice, by the scraper's own test (``brands_in_article_text``, #273), not already
+    ``unlabelable``, each decided by ``no_brand_exclusion``; a row it would move whose id is in
+    ``eval_case_ids`` is left out as ``EXCLUDED_EVAL_CASE``.
     Derived on every call, in id order."""
     eval_case_ids = set(eval_case_ids)
-    from .brand_match import brands_in_text
+    from .brand_match import brands_in_article_text
 
     latest = latest_prediction_subquery("fp")
     query = (
@@ -1325,7 +1325,7 @@ def select_no_brand_content(session, eval_case_ids: Iterable[str] = ()) -> NoBra
     candidates = []
     for article, fp_action, fp_skip_reason in query.all():
         brands = list(article.brands_mentioned or [])
-        if not brands_in_text(article.full_content, brands):
+        if not brands_in_article_text(article.full_content, brands):
             candidates.append((article, fp_action, fp_skip_reason, brands))
 
     ids = [article.id for article, *_ in candidates]

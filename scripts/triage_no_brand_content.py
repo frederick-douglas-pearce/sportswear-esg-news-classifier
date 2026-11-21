@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Move stored articles whose text names none of their brands to 'unlabelable' (#227, D044).
 
-The scraper now skips a scrape whose content names none of the article's brands
-(``SCRAPE_NO_BRAND_ERROR``). This moves stored rows scraped as 'success' before that, which were
-labeled, or queued for labeling, with content that does not name the brand, to the same state:
-``scrape_status='skipped'``, that ``scrape_error``, ``labeling_status='unlabelable'``. Their
+The scraper now skips a scrape whose content names none of the article's brands outside a cookie
+notice (``SCRAPE_NO_BRAND_ERROR``; a notice that names the brand does not count, #273). This moves
+stored rows scraped as 'success' before that, which were labeled, or queued for labeling, with
+content that does not name the brand, to the same state: ``scrape_status='skipped'``, that ``scrape_error``, ``labeling_status='unlabelable'``. Their
 content is kept, and their brand labels are deleted (a row with a human's label is not moved). The
 cohort is derived on every run (``provenance.select_no_brand_content``). Human rulings, human
 labels, possible hand moves, eval-case articles and other statuses are left out and counted by

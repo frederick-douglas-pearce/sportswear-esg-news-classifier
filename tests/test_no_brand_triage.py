@@ -128,6 +128,11 @@ requires_postgres = pytest.mark.skipif(
 
 NO_BRAND = "When Jeff Bezos said that one technology would shape Amazon, analysts were caught off guard."
 NAMES_BRAND = "Nike reported quarterly results and raised its guidance for the year."
+# A site's cookie notice that names the brand: the brand test does not count it (#273)
+NOTICE_NAMES_BRAND = (
+    "Your Privacy Choices\n\nOn this website, we use cookies and similar tracking technologies, so "
+    "we can show you ads promoting Nike on other sites and services."
+)
 
 
 @requires_postgres
@@ -223,6 +228,24 @@ class TestTriageDatabase:
         assert cohort.selected[str(moved["fp"].id)] == (
             "false_positive", "Nike: not the sportswear brand", "success", "prior scrape note",
         )
+
+    def test_brand_named_only_in_a_cookie_notice_is_selected(self, test_db):
+        """A stored page whose text names the brand only in a cookie notice is selected; one
+        that also names it outside the notice is not (#273)."""
+        with test_db.get_session() as session:
+            notice_only = self._article(session, "notice", "false_positive",
+                                        "Nike: mention_only: a cookie notice",
+                                        content=NOTICE_NAMES_BRAND)
+            self._article(session, "notice-article", "labeled",
+                          content=NOTICE_NAMES_BRAND + "\n\n" + NAMES_BRAND)
+            cohort = select_no_brand_content(session)
+
+            assert cohort.selected == {
+                str(notice_only.id): (
+                    "false_positive", "Nike: mention_only: a cookie notice", "success", None,
+                ),
+            }
+            assert cohort.left_out == {}
 
     @pytest.fixture
     def seeded(self, test_db, monkeypatch):

@@ -1,9 +1,16 @@
-"""The scraper's brand test, which now fails a scrape (#227, D044)."""
+"""The scraper's brand test, which now fails a scrape (#227, D044), and leaves out a cookie notice
+(#273, D047)."""
 
 import pytest
 
 from src.data_collection.api_client import NewsDataClient
-from src.data_collection.brand_match import BRAND_PATTERNS, brands_in_text
+from src.data_collection.brand_match import (
+    BRAND_PATTERNS,
+    brands_in_article_text,
+    brands_in_text,
+    is_consent_notice_paragraph,
+    without_consent_notice,
+)
 from src.data_collection.config import BRANDS
 from src.data_collection.gdelt_client import GDELTClient
 
@@ -14,9 +21,18 @@ EXTRACTORS = [
 ]
 
 
+# The scraper's test and the pattern matcher must both be at least as wide as collection on text
+# with no cookie notice
+BRAND_TESTS = [
+    pytest.param(brands_in_text, id="brands_in_text"),
+    pytest.param(brands_in_article_text, id="brands_in_article_text"),
+]
+
+
+@pytest.mark.parametrize("brand_test", BRAND_TESTS)
 @pytest.mark.parametrize("extract", EXTRACTORS)
 @pytest.mark.parametrize("brand", BRANDS)
-def test_matches_whatever_collection_extracted(extract, brand):
+def test_matches_whatever_collection_extracted(extract, brand, brand_test):
     """Differential: every brand a collection extractor finds in a text, brands_in_text finds in
     the same text. The gate skips an article whose content names none of its extracted brands,
     so a narrower test would skip an article that names its own brand."""
@@ -24,17 +40,18 @@ def test_matches_whatever_collection_extracted(extract, brand):
                  f"REPORT: {brand.upper()} SAID", f"{brand}'s results"):
         extracted = extract(text)
         assert brand in extracted
-        assert set(extracted) <= set(brands_in_text(text, BRANDS))
+        assert set(extracted) <= set(brand_test(text, BRANDS))
 
 
+@pytest.mark.parametrize("brand_test", BRAND_TESTS)
 @pytest.mark.parametrize("brand", BRANDS)
-def test_never_narrower_than_collection_extraction(brand):
+def test_never_narrower_than_collection_extraction(brand, brand_test):
     """Collection extracts a brand by its name, case-insensitively, at word boundaries
     (api_client._extract_brands). Text containing that string must pass, or the gate would skip
     an article that names its own brand."""
-    assert brands_in_text(f"Report: {brand} said", [brand]) == [brand]
-    assert brands_in_text(f"report: {brand.lower()} said", [brand]) == [brand]
-    assert brands_in_text(f"REPORT: {brand.upper()} SAID", [brand]) == [brand]
+    assert brand_test(f"Report: {brand} said", [brand]) == [brand]
+    assert brand_test(f"report: {brand.lower()} said", [brand]) == [brand]
+    assert brand_test(f"REPORT: {brand.upper()} SAID", [brand]) == [brand]
 
 
 def test_every_tracked_brand_has_patterns():
@@ -86,3 +103,90 @@ def test_untracked_brand_matches_its_own_name():
 @pytest.mark.parametrize("text", [None, ""])
 def test_empty_text(text):
     assert brands_in_text(text, ["Nike"]) == []
+
+
+# reebok.com's cookie notice, verbatim as stored on its store pages (#273)
+REEBOK_NOTICE = (
+    "Your Privacy Choices\n\nOn this website, we use cookies and similar tracking technologies, and "
+    "allow our advertising partners to use such technologies, so we can, among other things, show "
+    "you ads promoting Reebok on other sites and services. These activities may be considered "
+    "\u201csales,\u201d \u201csharing,\u201d or \u201ctargeted advertising\u201d under certain "
+    "privacy laws.\n\nTo opt out, slide the toggle below to \u201coff\u201d and then click "
+    "\u201cConfirm My Choices.\u201d Note that you will need to renew this opt-out choice if you "
+    "visit our website from another device or browser or if you clear your cookies. You can also "
+    "opt out by visiting our website with a legally-recognized opt-out preference signal, such as "
+    "the Global Privacy Control."
+)
+ARTICLE = "Reebok opened a new store in Boston on Monday."
+
+
+def test_the_stored_reebok_notice_is_the_one_found():
+    assert len(REEBOK_NOTICE) == 703
+
+
+def test_brand_named_only_in_a_cookie_notice_does_not_count():
+    assert brands_in_text(REEBOK_NOTICE, ["Reebok"]) == ["Reebok"]
+    assert brands_in_article_text(REEBOK_NOTICE, ["Reebok"]) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        ARTICLE + "\n\n" + REEBOK_NOTICE,
+        REEBOK_NOTICE + "\n\n" + ARTICLE,
+        REEBOK_NOTICE + "\n \n" + ARTICLE,  # a blank line holding whitespace
+    ],
+)
+def test_article_beside_a_notice_keeps_its_brand(text):
+    assert brands_in_article_text(text, ["Reebok"]) == ["Reebok"]
+
+
+def test_text_with_no_blank_line_is_one_paragraph():
+    """An article run together with a notice in one block is one paragraph, dropped whole."""
+    block = ARTICLE + " We use cookies on this website."
+    assert not is_consent_notice_paragraph(ARTICLE)
+    assert is_consent_notice_paragraph(block)
+    assert brands_in_article_text(block, ["Reebok"]) == []
+    assert brands_in_article_text(ARTICLE + "\n" + "We use cookies on this website.", ["Reebok"]) == []
+
+
+@pytest.mark.parametrize(
+    "paragraph",
+    [
+        "On this website we use Cookies.",
+        "THIS SITE USES COOKIES.",
+        "Our site relies on cookie-based ad targeting.",
+        "Click Accept All to allow cookies.",
+        "Manage your Cookie Settings.",
+    ],
+)
+def test_notice_paragraphs(paragraph):
+    assert is_consent_notice_paragraph(paragraph)
+
+
+@pytest.mark.parametrize(
+    "paragraph",
+    [
+        # news about cookies, not in the site's voice
+        "Nike was fined after regulators found tracking cookies were set without consent.",
+        # the site's voice, no cookie
+        "On this website you can opt out of marketing emails from Nike.",
+        "Your Privacy Choices",
+    ],
+)
+def test_paragraphs_that_are_not_a_notice(paragraph):
+    assert not is_consent_notice_paragraph(paragraph)
+    assert without_consent_notice(paragraph) == paragraph
+
+
+def test_a_two_brand_notice_counts_for_neither():
+    notice = "On this website we use cookies to show you ads for Vans and Converse."
+    assert brands_in_text(notice, ["Vans", "Converse"]) == ["Vans", "Converse"]
+    assert brands_in_article_text(notice, ["Vans", "Converse"]) == []
+    assert brands_in_article_text(notice + "\n\nVans sales rose.", ["Vans", "Converse"]) == ["Vans"]
+
+
+@pytest.mark.parametrize("text", [None, ""])
+def test_article_text_of_empty_text(text):
+    assert without_consent_notice(text) == ""
+    assert brands_in_article_text(text, ["Reebok"]) == []

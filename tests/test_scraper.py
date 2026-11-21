@@ -332,6 +332,34 @@ class TestNoBrandGate:
         assert scraper.articles_scraped == 0
         assert scraper.get_stats()["brand_validation_warnings"] == 1
 
+    NOTICE = (
+        "Your Privacy Choices\n\nOn this website, we use cookies and similar tracking technologies, "
+        "so we can, among other things, show you ads promoting Reebok on other sites and services. "
+        "These activities may be considered sales under certain privacy laws."
+    )
+
+    def test_brand_named_only_in_a_cookie_notice_is_skipped_with_content(self):
+        """A store page stored with the site's cookie notice as its text names the brand only in
+        the notice; that does not count (#273)."""
+        from src.data_collection.models import SCRAPE_NO_BRAND_ERROR
+
+        scraper, result = self.scrape(self.NOTICE, ["Reebok"])
+
+        assert result.success is False
+        assert result.status == "skipped"
+        assert result.error == SCRAPE_NO_BRAND_ERROR
+        assert result.content == self.NOTICE
+        assert scraper.get_stats()["brand_validation_warnings"] == 1
+
+    def test_cookie_notice_beside_an_article_naming_the_brand_succeeds(self):
+        text = "Reebok opened a new store in Boston on Monday.\n\n" + self.NOTICE
+        _, result = self.scrape(text, ["Reebok"])
+
+        assert result.success is True
+        assert result.status == "success"
+        assert result.brands_found == ["Reebok"]
+        assert result.content == text
+
     def test_one_expected_brand_named_succeeds(self):
         text = self.BODY + " Under Armour shares fell."
         scraper, result = self.scrape(text, ["Nike", "Under Armour"])
