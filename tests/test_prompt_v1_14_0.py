@@ -21,17 +21,15 @@ ALL_CASE_FILES = sorted(CASES_DIR.glob("*.json"))
 
 # One phrase per change v1.14.0 states (#248); a reworded ruling fails here
 RULING_PHRASES = {
-    "r1": "even when the article's genre is a deal listing: what it is made of, how it is built, how it fits or feels to wear",
     "r2": "No ESG category is not the same as no substantive content.",
     "r3": "It needs a judgment or analysis about the brand",
     "r3_price": "A price move, or results reported against consensus, is not `financial` on its own",
     "r3_teaser": "A short teaser of a human-written financial piece is `financial`",
     "template": "**Filing and data-feed notices** → `mention_only`",
     "r6": "a line of employee severance costs in reported results",
-    "r1_one_sentence": "One sentence is enough when it says what the build does or how the product performs, feels or holds up in use",
-    "r1_attributes": "a sentence that only names attributes a listing would show (the cut or fit, the fabric weight, the pockets, the colorway)",
+    "r1_lead": "A sale listing or deal piece that also describes the product is `product`, whatever the sale framing and even when the article's genre is a deal listing:",
     "r2_scope": "a story about the brand's own sponsorship or an athlete's deal with it (a story whose subject is the deal: its signing, terms, renewal or end, by either party",
-    "r2_passing": "a sentence reporting the deal in a story about something else, such as a club's revenue, does not make it one",
+    "r2_passing": "a sentence reporting the deal in a story about something else, such as a match report, does not make it one",
     "r3_rating": "A rating or price-target change with no reason given (\"shares fell after a downgrade\") is data, not a judgment: `mention_only`.",
     "r3_heading": "whether the company is the article's subject or one of several it judges.**",
 }
@@ -78,7 +76,6 @@ CORRECTIONS = {
 
 # D046's guards: #232 confirmations v1.14.0 must not break
 GUARDS = {
-    "v114_guard_r1": {"aa37cad0"},
     "v114_guard_r3": {"17246bda", "0d42d019", "7fe795b6", "16633ce9"},
     "v114_guard_r4": {"457e531a", "27640210"},
     "v114_guard_r5": {"113483ca"},
@@ -181,15 +178,18 @@ class TestCandidate:
         ):
             assert phrase in notices, phrase
 
-    def test_r1s_one_sentence_threshold_covers_fit_and_keeps_praise_retail(self, v1_14_0):
-        """Effect or in-wear experience counts; naming listing attributes does not, which keeps
-        guard aa37cad0's cut-and-fabric line retail_only (code review N1)."""
+    def test_r1_adds_only_the_deal_listing_lead_to_v1_13_0s_wording(self, v1_14_0):
+        """The owner withdrew code review's reworded one-sentence threshold (D046 §1 R1): the
+        bullet is v1.13.0's with the deal-listing lead, and the check line is v1.13.0's."""
+        v1_13_0 = (PROMPTS_DIR / "v1.13.0" / "system_prompt.txt").read_text()
+        old = _paragraph(v1_13_0, "  - A sale listing that also describes the product")
         line = _paragraph(v1_14_0.system_prompt, "  - A sale listing or deal piece that also describes")
-        assert RULING_PHRASES["r1_one_sentence"] in line
-        assert RULING_PHRASES["r1_attributes"] in line
-        assert "a blurb that only praises it (\"a gym-bag staple\"), is a line of specs, not a description." in line
-        check = _paragraph(v1_14_0.system_prompt, "- Check your reasoning against the type: if your reasoning says the article describes")
-        assert "(not only names them)" in check
+        lead = "  - " + RULING_PHRASES["r1_lead"]
+        assert line.startswith(lead)
+        assert line[len(lead):] == old[old.index(" what it is made of"):]
+        assert "how it fits or feels to wear" not in line and "attributes a listing would show" not in line
+        check = "- Check your reasoning against the type: if your reasoning says the article describes"
+        assert _paragraph(v1_14_0.system_prompt, check) == _paragraph(v1_13_0, check)
 
     def test_r2_is_scoped_to_the_deal_and_names_no_content_type_in_social(self, v1_14_0):
         """R2 covers a story whose subject is the deal, by either party, not a sentence on it in a
@@ -273,8 +273,17 @@ class TestCaseFile:
         assert {k: v for k, v in by_stratum.items() if k in families["D046 corrections"]} == CORRECTIONS
         assert {k: v for k, v in by_stratum.items() if k in families["D046 guards"]} == GUARDS
         for article_id, spec in specs_of(CASE_FILE).items():
-            want = 0 if article_id.startswith("57acb8be") else 1
+            want = 0 if article_id[:8] in {"57acb8be", "aa37cad0"} else 1
             assert len(spec.strata & d046) == want, article_id
+
+    def test_the_r1_boundary_row_is_outside_every_family(self, specs):
+        """aa37cad0 is read, not barred (D046 §2): its feature line has the same shape as
+        owner-ruled product case 94a563b7's; its ruling still stands."""
+        [(article_id, spec)] = [(k, s) for k, s in specs.items() if k.startswith("aa37cad0")]
+        in_a_family = {s for f in RULING_FAMILIES for s in f.strata}
+        assert "r232_gray_r1" in spec.strata and not spec.strata & in_a_family
+        assert "v114_guard_r1" not in in_a_family
+        assert HUMAN_RULINGS[article_id] == "false_positive"
 
     def test_the_digital_case_is_outside_every_family(self, specs):
         """No v1.14.0 text addresses #249's Digital ruling, so it is read, not barred (D046 §2,
@@ -286,7 +295,7 @@ class TestCaseFile:
 
     def test_r1_cases_repeat_for_the_sale_listing_noise(self, cases):
         """D040 §6 measured a few percent per-reply noise on the sale-listing boundary."""
-        r1 = [c for c in cases if {"v114_correction_r1", "v114_guard_r1"} & set(c["strata"])]
+        r1 = [c for c in cases if {"v114_correction_r1", "r232_gray_r1"} & set(c["strata"])]
         assert len(r1) == 4 and all(c["repeats"] == 3 for c in r1)
 
     def test_r3_wraps_keep_one_expectation_across_files(self):

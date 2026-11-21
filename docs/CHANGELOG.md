@@ -10,9 +10,9 @@ The owner's spot-check of the #245 relabel (#232) found `false_positive` rows wr
 v1.13.0 decides, and #248 found template stock and filing pages typed `financial`. Candidate
 v1.14.0 (D046) changes only the system prompt:
 
-- a sale or deal piece that describes the product's build, materials, fit or comfort is `product`,
-  even when its genre is a deal listing, and one sentence on what the build does or how it
-  performs, feels or holds up in use is enough (one that only names listing attributes is not);
+- a sale or deal piece that describes the product is `product`, even when its genre is a deal
+  listing; otherwise v1.13.0's Product-article wording stands, since no sentence-level wording
+  separated a fit or comfort line from a listing's attributes on the ruled cases (D046);
 - the brand's own marketing campaign, a story whose subject is its own sponsorship or an
   athlete's deal with it, or sourced demand data about it is `business` with no category; the "ESG content decides first" sentence on marketing
   activations no longer overrides that;
@@ -25,7 +25,8 @@ v1.14.0 (D046) changes only the system prompt:
 - a line of employee severance costs in reported results is not job cuts (narrows D040 ruling 1).
 
 The cases are in `prompts/labeling/eval_cases/owner_rulings_232.json`, every one an owner ruling,
-split into corrections (rows v1.13.0 got wrong) and guards (rows it got right); #238's two R3
+split into corrections (rows v1.13.0 got wrong) and guards (rows it got right), with the
+sale-listing boundary rows `aa37cad0` and `94a563b7` read rather than counted; #238's two R3
 futures wraps in `product_and_stability.json` join the corrections. `57acb8be` (#249's Digital +1
 row) is a case outside the roll-up, read rather than barred, since no v1.14.0 text addresses it
 (#280). The comparison report's

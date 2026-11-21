@@ -66,7 +66,7 @@ RULING_FALSIFIER_RATE = 0.85
 # corrected by the owner, or, for #238's two market wraps, answered wrong in D040's run 2), which
 # carry the falsifier; guards are rows it got right, with no falsifier (D046 §4 compares the
 # candidate's failures with the baseline's). A stratum in no family, such as #249's Digital case
-# (r249_digital), is left out of the roll-up.
+# (r249_digital) or the sale-listing boundary row aa37cad0 (r232_gray_r1), is left out of the roll-up.
 RULING_FAMILIES: tuple[RulingFamily, ...] = (
     RulingFamily("D040", "D040", tuple(f"ruling_{n}" for n in range(1, 9)), ("v1.12.0", "v1.13.0")),
     RulingFamily(
@@ -83,7 +83,7 @@ RULING_FAMILIES: tuple[RulingFamily, ...] = (
     RulingFamily(
         "D046 guards",
         "D046",
-        ("v114_guard_r1", "v114_guard_r3", "v114_guard_r4", "v114_guard_r5", "v114_guard_r6"),
+        ("v114_guard_r3", "v114_guard_r4", "v114_guard_r5", "v114_guard_r6"),
         None,
     ),
 )

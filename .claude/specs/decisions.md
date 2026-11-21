@@ -3291,7 +3291,8 @@ side in the same change. `owner_ruled: false` does not mean "not ruled"; each fi
 
 **Date:** 2026-11-20 · **Status:** accepted (architect review 2026-11-20: approve with changes, all
 applied; the owner approved the plan on 2026-11-20, and the code-review scope ruling's fix set,
-with the R1 and R3 edges below, on 2026-11-20) · **Issues:** #248, #232, #238, #249, #154, #280,
+with the R3 edge below, on 2026-11-20; the owner later withdrew the R1 threshold it approved,
+see R1) · **Issues:** #248, #232, #238, #249, #154, #280,
 #281
 
 **Context.** #232's spot-check of the #245 relabel found the `false_positive` rows the FP export
@@ -3305,17 +3306,19 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
 **Decision.**
 1. **Candidate v1.14.0** is a copy of v1.13.0 whose user prompt and reply schema are unchanged.
    Its system prompt states, each where it beats the rule it would otherwise lose to:
-   - (R1) a sale or deal piece that describes the product's build, materials, fit or comfort is
-     `product` even when its genre is a deal listing; one sentence is enough when it says what
-     the build does or how the product performs, feels or holds up in use, while a sentence that
-     only names attributes a listing would show (the cut or fit, the fabric weight, the pockets) is
-     a line of specs (the owner approved this threshold at code review: each R1 correction has an
-     effect or in-wear sentence, and guard `aa37cad0` names only attributes); a one-line blurb
-     that only praises it stays `retail_only`;
+   - (R1) a sale or deal piece that describes the product is `product` even when its genre is a
+     deal listing. That is the only R1 edit: otherwise v1.13.0's Product-article wording stands,
+     its one-sentence rule ("how the product is built and what that does") included. Code review
+     reworded the threshold twice (fit and comfort, then effect against listing attributes), and
+     each wording contradicted a ruled case. Owner-ruled `product` case `94a563b7` (Converse at
+     DSW) and guard `aa37cad0` (a Lions hoodie, ruled `retail_only`) describe the product in
+     sentences of the same shape (an attribute, then what it gives), so no sentence-level wording
+     separates them, and this is the boundary D040 §6 measured as noisy under both versions. The
+     owner withdrew the reworded threshold at code review (2026-11-20);
    - (R2) the brand's own marketing campaign, a story about its own sponsorship or an athlete's
      deal with it (a story whose subject is the deal, by either party; a sentence reporting the
-     deal in a story about something else, such as guard `27640210`'s club revenue, does not
-     count), or sourced consumer-demand data about it is
+     deal in a story about something else, such as a match report, does not count; the example
+     matches no case), or sourced consumer-demand data about it is
      `business` with no category, not `mention_only`. The "ESG content decides first" paragraph's
      sentence on marketing activations now only limits that paragraph's trigger, since read
      literally it beat R2. The Social section's endorsement question names no content type, so a
@@ -3346,7 +3349,10 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
      and #248's template rows are rows it stored and the owner corrected. The two R3 wraps, which
      keep their single case in `product_and_stability.json`, were never stored under v1.13.0; it
      answered them wrong in D040's run 2;
-   - **guards** (`v114_guard_*`): #232 confirmations, R1's other side and R3 to R6.
+   - **guards** (`v114_guard_*`): #232 confirmations, R3 to R6.
+
+   `aa37cad0` (R1's other side) is in the stratum `r232_gray_r1`, in no family: it is read, not
+   barred, for the reason under R1, and repeats three times like the R1 cases.
 
    `57acb8be` (#249's Digital row) is a case by the owner's 2026-11-03 decision, in the stratum
    `r249_digital`, which is in no family. No v1.14.0 text addresses it, and rule 7 (marketing
@@ -3375,8 +3381,10 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
      the Product cases) and the expected-categories and expected-sentiments misses. A case the
      baseline passed and the candidate got wrong, or left the brand not judged (D032: every brand
      is judged), is a new miss; a case whose candidate replies all failed (unanswered) is listed
-     and read, not counted, as under D040 §3. A computed list across every
-     scored section is #281;
+     and read, not counted, as under D040 §3. The accuracy section prints both as "not judged",
+     so for each such case the owner tells them apart from the run's per-article records. A
+     computed list across every scored section, with that split, is #281. `aa37cad0` and
+     `94a563b7` (the R1 boundary rows, under R1 above) are read, not counted as new misses;
    - the transitions run the predicted way: `false_positive` → `skipped` for sale pieces that
      describe the product, the brand's own marketing and a judgment about a brand in a list;
      `skipped` → `false_positive` for price-only and template `financial` rows; `labeled` →
