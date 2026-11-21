@@ -30,9 +30,10 @@ that is not ``labeled`` deletes the article's non-human labels from an earlier r
 ``--mode 248-relabel`` selects #248's targeted cohort (D046 §5; ``relabel_248_arm``): of the
 ``245-relabel`` candidates, ``false_positive`` rows with a ``retail_only`` or ``mention_only``
 judgment, then ``skipped`` rows judged ``financial`` with no ``business`` or ``product`` judgment.
-A row outside those classes is not counted as excluded. Each run's config also records the content
-types each row had (``prior_content_types``), and the report breaks the transitions down by them
-and lists every row that came back ``labeled`` (those write scorecard labels).
+A row already judged under the production version, or outside those classes, is not counted as
+excluded. Each run's config also records the content types each row had (``prior_content_types``),
+and the report breaks the transitions down by them and lists every relabeled row whose status is
+now ``labeled``.
 
 Run one invocation at a time: nothing locks the cohort, so a second one would pay again for the
 same articles (the cap still holds, since it counts the other's unfinished runs).
@@ -404,7 +405,7 @@ def print_report(report: dict, tag: str = RUN_TAG) -> None:
         print("prior content types: prior status -> status: articles")
         for (types, old, new), n in sorted(report["transitions_by_prior_type"].items()):
             print(f"  {types}: {old} -> {new}: {n}")
-        print(f"Now labeled (scorecard labels written): {len(report['now_labeled'])}")
+        print(f"Now labeled: {len(report['now_labeled'])}")
         for article_id, old, types in sorted(report["now_labeled"]):
             print(f"  {article_id} (was {old}, typed {types})")
     print("Brand judgments by content type:")
@@ -435,8 +436,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=provenance.MODE_BACKFILL,
         help=f"Which cohort, and the tag its runs record: {provenance.MODE_BACKFILL} (#192, D039), "
         f"{provenance.MODE_RELABEL} (rows stored under an earlier prompt, #245) or "
-        f"{provenance.MODE_RELABEL_248} (negatives typed retail_only/mention_only and skips typed "
-        "financial only, stored under an earlier prompt, #248, D046)",
+        f"{provenance.MODE_RELABEL_248} (negatives typed retail_only/mention_only and skips with a "
+        "financial judgment and no business/product one, stored under an earlier prompt, #248, D046)",
     )
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args(argv)

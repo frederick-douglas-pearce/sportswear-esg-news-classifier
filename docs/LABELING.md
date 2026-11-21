@@ -171,7 +171,7 @@ uv run python scripts/backfill_relabel.py --report
 | `relabel_248_false_positive` (first) | `false_positive` rows with a `retail_only` or `mention_only` judgment; a row typed only `other_entity` is not targeted |
 | `relabel_248_financial_skip` | `skipped` rows with a `financial` judgment and no `business` or `product` one; other brands typed `other_entity`, `mention_only` or `retail_only` do not change that |
 
-A row outside those classes is not a candidate and is not counted as left out, so the dry run's selected plus left-out rows are the targeted rows. Each batch's run config records the content types each row had (`prior_content_types`, beside `prior`), since the relabel replaces the judgments; the report adds transitions by those prior types and lists every row that came back `labeled` (those write brand labels the scorecard and the feed read). The rows `labeled` → `skipped` for a severance line (R6) are not in this cohort.
+A row already judged under the production version (by this pass or by the daily run) is not a candidate, nor is a row outside those classes, and neither is counted as left out: the dry run's selected plus left-out rows are the targeted rows not yet judged under production, and the pass ends when it selects none. Its progress is the report's, read from the tagged runs' recorded `prior`. Each batch's run config records the content types each row had (`prior_content_types`, beside `prior`), since the relabel replaces the judgments; the report adds transitions by those prior types and lists every relabeled row whose status is now `labeled` (a pipeline `labeled` write stores brand labels the scorecard and the feed read). The rows `labeled` → `skipped` for a severance line (R6) are not in this cohort.
 
 ```bash
 uv run python scripts/backfill_relabel.py --mode 248-relabel --dry-run
@@ -433,7 +433,7 @@ Three rules decide between types (revised in place after #219's P1 runs, before 
 
 ### The owner's rulings from #192's review (prompt v1.13.0, D040)
 
-The owner's review of #192's backfill (2026-10-27 to 28) ruled on cases the prompt did not decide, or decided otherwise. Prompt v1.13.0 states them (#230); D040 records them as policy and fixes the bar its eval was judged against. v1.13.0 is production since 2026-11-02 (#230 PR2, eval run 2); rows labeled before then were labeled under v1.12.0 or earlier until #245 relabels them.
+The owner's review of #192's backfill (2026-10-27 to 28) ruled on cases the prompt did not decide, or decided otherwise. Prompt v1.13.0 states them (#230); D040 records them as policy and fixes the bar its eval was judged against. v1.13.0 was production from 2026-11-02 (#230 PR2, eval run 2) until v1.14.0 replaced it on 2026-11-21 (#248 PR2, D046); rows labeled before 2026-11-02 were labeled under v1.12.0 or earlier until #245 relabeled them.
 
 1. Job cuts the brand announces or carries out are Social, usually -1, wherever the article reports them (an earnings summary included), including cuts made to automate or adopt AI, which are not Digital Transformation. Cost-cutting language with no cuts reported is not job cuts.
 2. A data breach or cybersecurity incident is Digital Transformation -1, and Governance as well when the subject is the board's oversight of it.

@@ -571,8 +571,10 @@ RELABEL_STATUSES = ("labeled", "skipped", FP_NEGATIVE_STATUS)
 # --- The #248 targeted relabel cohort (D046 §5) ------------------------------------------------
 # The two classes v1.14.0 decides differently from what is stored: negatives typed retail_only or
 # mention_only (#232's corrections), and skips typed financial with no business or product
-# judgment (#248's template and price-only rows). Each row must first be a #245 relabel candidate,
-# so its exclusions hold. Negatives run first: the class #232 measured, and the one #154 PR2 reads.
+# judgment (#248's template and price-only rows). A row is decided in this order: one already
+# judged under the production version is not a candidate, then one outside both classes is not,
+# and only then does relabel_arm apply #245's exclusions. Negatives run first: the class #232
+# measured, and the one #154 PR2 reads.
 
 ARM_248_FALSE_POSITIVE = "relabel_248_false_positive"  # a negative typed retail_only or mention_only
 ARM_248_FINANCIAL_SKIP = "relabel_248_financial_skip"  # a skip typed financial, not business/product
@@ -797,10 +799,10 @@ def relabel_arm(
 def targeted_248(labeling_status: str, content_types: set[str]) -> bool:
     """Whether a row is in #248's targeted classes by its stored content types (D046 §5).
 
-    A negative with any ``retail_only`` or ``mention_only`` judgment (every brand of a negative is
-    a non-sportswear type, so this leaves out only a row typed ``other_entity`` alone). A skip with
-    a ``financial`` judgment and no ``business`` or ``product`` one; its other brands' non-sportswear
-    types do not change that.
+    A negative with any ``retail_only`` or ``mention_only`` judgment; one with neither is not
+    targeted whatever its other types, including a negative moved by hand that kept a sportswear
+    type. A skip with a ``financial`` judgment and no ``business`` or ``product`` one; its other
+    brands' non-sportswear types do not change that.
     """
     if labeling_status == FP_NEGATIVE_STATUS:
         return bool(content_types & TARGET_NEGATIVE_TYPES)
@@ -819,11 +821,16 @@ _ARM_248 = {
 def relabel_248_arm(*, content_types: set[str], **relabel_args) -> BackfillDecision:
     """The #248 relabel arm of one row, or why it is left out (D046 §5).
 
-    The targeted classes are decided first, so a row outside them is not a candidate and counts
-    toward no exclusion: selected plus excluded is the targeted population. A targeted row then
-    takes ``relabel_arm``'s decision (human rulings and labels, hand moves, already judged under
-    production, not LLM-decided, insufficient content), with its arm renamed.
+    In order: a row already judged under the production version (by this pass or by the daily run)
+    is not a candidate; nor is a row outside the targeted classes. Neither counts toward any
+    exclusion, so selected plus excluded is the targeted rows not yet judged under production; the
+    pass's progress is the report's, read from the tagged runs' recorded ``prior``. A remaining row
+    takes ``relabel_arm``'s decision, every exclusion it has (``human``, ``deterministic_skip``,
+    ``possible_hand_move``, ``not_llm_decided``, ``human_reviewed_labels``, ``no_brands``,
+    ``insufficient_content``), with its arm renamed.
     """
+    if relabel_args["production_version"] in relabel_args["judgment_versions"]:
+        return NOT_A_CANDIDATE
     if not targeted_248(relabel_args["labeling_status"], content_types):
         return NOT_A_CANDIDATE
     decision = relabel_arm(**relabel_args)
@@ -1127,19 +1134,28 @@ def select_backfill_cohort(
     )
     unscraped = or_(Article.scrape_status.is_(None), Article.scrape_status != "success")
     if mode == MODE_RELABEL_248:
-        # Only targeted rows count, so selected plus excluded stays the targeted population
+        # Only rows relabel_248_arm would decide count: targeted, and not yet judged under the
+        # production version, so selected plus excluded stays the targeted rows not yet judged
         statuses: dict[str, str] = {}
         types: dict[str, set[str]] = {}
+        versions: dict[str, set[str]] = {}
         query = (
-            session.query(Article.id, Article.labeling_status, BrandJudgment.content_type)
+            session.query(
+                Article.id, Article.labeling_status, BrandJudgment.content_type, BrandJudgment.prompt_version
+            )
             .join(BrandJudgment, BrandJudgment.article_id == Article.id)
             .filter(Article.labeling_status.in_(MODE_STATUSES[mode]))
             .filter(unscraped)
         )
-        for article_id, status, content_type in query:
+        for article_id, status, content_type, version in query:
             statuses[str(article_id)] = status
             types.setdefault(str(article_id), set()).add(content_type)
-        not_scraped = sum(1 for i, status in statuses.items() if targeted_248(status, types[i]))
+            versions.setdefault(str(article_id), set()).add(version)
+        not_scraped = sum(
+            1
+            for i, status in statuses.items()
+            if production_version not in versions[i] and targeted_248(status, types[i])
+        )
     else:
         not_scraped = (
             session.query(func.count(Article.id))

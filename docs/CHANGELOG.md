@@ -16,11 +16,14 @@ misses). The registry's production moves to v1.14.0 and v1.13.0 is superseded. T
 `--mode 245-relabel` would select, `false_positive` rows with a `retail_only` or `mention_only`
 judgment, then `skipped` rows with a `financial` judgment and no `business` or `product` one. Human
 rulings, human labels and possible hand moves stay out (`relabel_248_arm` takes `relabel_arm`'s
-decision for a targeted row). A row outside the two classes is not counted as left out, so the dry
-run's counts are the targeted rows. Runs are tagged `248-relabel`, with their own `--max-cost`
+decision for a targeted row). A row already judged under the production version (by this pass or by
+the daily run), or outside the two classes, is not a candidate and is not counted as left out, so
+the dry run's counts are the targeted rows not yet judged under v1.14.0, and the pass ends when it
+selects none. Runs are tagged `248-relabel`, with their own `--max-cost`
 spend and `--report`. Each batch's run config records the content types each row had
-(`prior_content_types`); the report breaks transitions down by them and lists every row that came
-back `labeled`, since those write brand labels the scorecard and the feed read.
+(`prior_content_types`); the report breaks transitions down by them and lists every relabeled row
+whose status is now `labeled`, since a pipeline `labeled` write stores brand labels the scorecard
+and the feed read.
 
 - Rows labeled for a severance line (R6) are not in the cohort; their labels stay until a relabel
   of `labeled` rows.

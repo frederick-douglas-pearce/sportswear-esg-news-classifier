@@ -3402,14 +3402,20 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
    out), and `skipped` rows judged `financial` with no `business` or `product` judgment. A
    seeded spot-check of the relabeled rows follows, before #154 PR2.
 
-   **As built (architect review of PR2's plan, 2026-11-21, approve with changes).** The targeted
-   classes are decided first: a row outside them is not a candidate and counts toward no
-   exclusion, so the dry run's selected plus left-out rows are the targeted rows. A skip's other
+   **As built (architect review of PR2's plan, 2026-11-21, approve with changes; amended on the
+   code-review scope ruling, owner-approved 2026-11-21).** A row already judged under the
+   production version, by this pass or by the daily run, is not a candidate, and then neither is
+   a row outside the targeted classes; neither counts toward any exclusion, so the dry run's
+   selected plus left-out rows are the targeted rows not yet judged under production, and the pass
+   ends when it selects none. Its progress is the report's, read from the tagged runs' recorded
+   `prior`. A negative with no `retail_only` or `mention_only` judgment is not targeted whatever
+   its other types, a negative moved by hand that kept a sportswear type included; `--mode
+   245-relabel`'s dry run still shows those. A skip's other
    brands typed `other_entity`, `mention_only` or `retail_only` do not change its decision, and
    rows judged under v1.12.0 are in scope (same reply schema). Since the relabel replaces the
    judgments, each batch records each row's prior content types (`prior_content_types`, beside
    `prior`, whose shape earlier runs use), and the report breaks transitions down by them and
-   lists every row that came back `labeled`, which writes scorecard labels. The owner starts the
+   lists every relabeled row whose status is now `labeled`. The owner starts the
    paid run after a daily run under v1.14.0, so the observed cost check has a run to read. The
    spot-check is a new issue: the seeded sample (split by the two classes), every row now
    `labeled`, and two reads outside the cohort, which cannot hold them: the daily run's v1.14.0

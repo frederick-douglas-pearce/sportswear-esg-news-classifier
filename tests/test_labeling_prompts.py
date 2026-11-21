@@ -55,8 +55,8 @@ def manager():
 
 class TestRegistry:
     def test_production_is_v1_14_0(self):
-        """v1.14.0 passed its contrastive eval against v1.13.0 (#248, D046); v1.11.0 failed its
-        own (#215)."""
+        """v1.14.0's contrastive eval against v1.13.0 was accepted by the owner with reads (#248,
+        D046 §6); v1.11.0 failed its own (#215)."""
         registry = json.loads((PROMPTS_DIR / "registry.json").read_text())
         assert registry["production"] == "v1.14.0"
 
