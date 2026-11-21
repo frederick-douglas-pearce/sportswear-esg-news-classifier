@@ -3311,7 +3311,7 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
      its one-sentence rule ("how the product is built and what that does") included. Code review
      reworded the threshold twice (fit and comfort, then effect against listing attributes), and
      each wording contradicted a ruled case. Owner-ruled `product` case `94a563b7` (Converse at
-     DSW) and guard `aa37cad0` (a Lions hoodie, ruled `retail_only`) describe the product in
+     DSW) and boundary row `aa37cad0` (a Lions hoodie, ruled `retail_only`) describe the product in
      sentences of the same shape (an attribute, then what it gives), so no sentence-level wording
      separates them, and this is the boundary D040 §6 measured as noisy under both versions. The
      owner withdrew the reworded threshold at code review (2026-11-20);
@@ -3382,7 +3382,8 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
      baseline passed and the candidate got wrong, or left the brand not judged (D032: every brand
      is judged), is a new miss; a case whose candidate replies all failed (unanswered) is listed
      and read, not counted, as under D040 §3. The accuracy section prints both as "not judged",
-     so for each such case the owner tells them apart from the run's per-article records. A
+     so for each such case the owner tells them apart from the report JSON's `runs` entries
+     (`data/evaluation/comparisons/<stem>.json`), which record each reply. A
      computed list across every scored section, with that split, is #281. `aa37cad0` and
      `94a563b7` (the R1 boundary rows, under R1 above) are read, not counted as new misses;
    - the transitions run the predicted way: `false_positive` → `skipped` for sale pieces that

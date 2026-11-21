@@ -25,8 +25,9 @@ v1.14.0 (D046) changes only the system prompt:
 - a line of employee severance costs in reported results is not job cuts (narrows D040 ruling 1).
 
 The cases are in `prompts/labeling/eval_cases/owner_rulings_232.json`, every one an owner ruling,
-split into corrections (rows v1.13.0 got wrong) and guards (rows it got right), with the
-sale-listing boundary rows `aa37cad0` and `94a563b7` read rather than counted; #238's two R3
+split into corrections (rows v1.13.0 got wrong) and guards (rows it got right). The sale-listing
+boundary rows `aa37cad0` (in that file, outside every roll-up family) and `94a563b7` (in
+`product_and_stability.json`) are read, not barred: neither counts as a new miss; #238's two R3
 futures wraps in `product_and_stability.json` join the corrections. `57acb8be` (#249's Digital +1
 row) is a case outside the roll-up, read rather than barred, since no v1.14.0 text addresses it
 (#280). The comparison report's
