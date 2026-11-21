@@ -28,8 +28,10 @@ RULING_PHRASES = {
     "r3_teaser": "A short teaser of a human-written financial piece is `financial`",
     "template": "**Filing and data-feed notices** → `mention_only`",
     "r6": "a line of employee severance costs in reported results",
-    "r1_one_sentence": "or how it fits or holds up in wear (\"runs half a size small\", \"still comfortable after a full shift\")",
-    "r2_scope": "a story about the brand's own sponsorship or an athlete's deal with it (the deal itself: its signing, terms, renewal or end, by either party)",
+    "r1_one_sentence": "One sentence is enough when it says what the build does or how the product performs, feels or holds up in use",
+    "r1_attributes": "a sentence that only names attributes a listing would show (the cut or fit, the fabric weight, the pockets, the colorway)",
+    "r2_scope": "a story about the brand's own sponsorship or an athlete's deal with it (a story whose subject is the deal: its signing, terms, renewal or end, by either party",
+    "r2_passing": "a sentence reporting the deal in a story about something else, such as a club's revenue, does not make it one",
     "r3_rating": "A rating or price-target change with no reason given (\"shares fell after a downgrade\") is data, not a judgment: `mention_only`.",
     "r3_heading": "whether the company is the article's subject or one of several it judges.**",
 }
@@ -151,6 +153,8 @@ class TestCandidate:
         wraps (code review P1), and keeps human-written analysis as the test."""
         heading = _paragraph(v1_14_0.system_prompt, "**`financial`:")
         assert "the article's subject is the company's stock" not in heading
+        bold = heading[: heading.index(".**") + 3]
+        assert "an analyst's or investor's view of it)" not in bold
         assert heading.startswith("**`financial`: the article gives human-written analysis or commentary")
         assert RULING_PHRASES["r3_heading"] in heading
 
@@ -178,17 +182,24 @@ class TestCandidate:
             assert phrase in notices, phrase
 
     def test_r1s_one_sentence_threshold_covers_fit_and_keeps_praise_retail(self, v1_14_0):
+        """Effect or in-wear experience counts; naming listing attributes does not, which keeps
+        guard aa37cad0's cut-and-fabric line retail_only (code review N1)."""
         line = _paragraph(v1_14_0.system_prompt, "  - A sale listing or deal piece that also describes")
         assert RULING_PHRASES["r1_one_sentence"] in line
-        assert "a blurb that only praises it (\"a gym-bag staple\"), is not." in line
+        assert RULING_PHRASES["r1_attributes"] in line
+        assert "a blurb that only praises it (\"a gym-bag staple\"), is a line of specs, not a description." in line
+        check = _paragraph(v1_14_0.system_prompt, "- Check your reasoning against the type: if your reasoning says the article describes")
+        assert "(not only names them)" in check
 
     def test_r2_is_scoped_to_the_deal_and_names_no_content_type_in_social(self, v1_14_0):
-        """R2 covers the deal itself, by either party, not a partner's revenue (code review P3);
+        """R2 covers a story whose subject is the deal, by either party, not a sentence on it in a
+        partner's revenue story (code review P3, N2);
         the Social endorsement question no longer names a content type, which would pull a
         signature product's release to business (P4)."""
         text = v1_14_0.system_prompt
         mention_only = text[text.index("**`mention_only`:"):text.index("1. **Template financial articles")]
         assert RULING_PHRASES["r2_scope"] in mention_only
+        assert RULING_PHRASES["r2_passing"] in mention_only
         assert "a story about its sponsorship or an athlete's deal" not in text
         endorsement = text[text.index("3. **Is this about a celebrity/athlete endorsement"):]
         endorsement = endorsement[: endorsement.index("4. **")]

@@ -11,10 +11,10 @@ v1.13.0 decides, and #248 found template stock and filing pages typed `financial
 v1.14.0 (D046) changes only the system prompt:
 
 - a sale or deal piece that describes the product's build, materials, fit or comfort is `product`,
-  even when its genre is a deal listing, and one sentence on how it is built or how it fits or
-  holds up in wear is enough;
-- the brand's own marketing campaign, a story about its own sponsorship or an athlete's deal with
-  it, or sourced demand data about it is `business` with no category; the "ESG content decides first" sentence on marketing
+  even when its genre is a deal listing, and one sentence on what the build does or how it
+  performs, feels or holds up in use is enough (one that only names listing attributes is not);
+- the brand's own marketing campaign, a story whose subject is its own sponsorship or an
+  athlete's deal with it, or sourced demand data about it is `business` with no category; the "ESG content decides first" sentence on marketing
   activations no longer overrides that;
 - `financial` needs a judgment or analysis about the brand, however brief and even in a list of
   companies or a market wrap; a price move or results against consensus alone, a filing notice, a

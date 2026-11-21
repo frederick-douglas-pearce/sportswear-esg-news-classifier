@@ -3306,11 +3306,16 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
 1. **Candidate v1.14.0** is a copy of v1.13.0 whose user prompt and reply schema are unchanged.
    Its system prompt states, each where it beats the rule it would otherwise lose to:
    - (R1) a sale or deal piece that describes the product's build, materials, fit or comfort is
-     `product` even when its genre is a deal listing; one sentence is enough when it says how the
-     product is built or how it fits or holds up in wear (the owner approved this threshold at
-     code review); a line of specs or a one-line blurb that only praises it stays `retail_only`;
+     `product` even when its genre is a deal listing; one sentence is enough when it says what
+     the build does or how the product performs, feels or holds up in use, while a sentence that
+     only names attributes a listing would show (the cut or fit, the fabric weight, the pockets) is
+     a line of specs (the owner approved this threshold at code review: each R1 correction has an
+     effect or in-wear sentence, and guard `aa37cad0` names only attributes); a one-line blurb
+     that only praises it stays `retail_only`;
    - (R2) the brand's own marketing campaign, a story about its own sponsorship or an athlete's
-     deal with it (the deal itself, by either party), or sourced consumer-demand data about it is
+     deal with it (a story whose subject is the deal, by either party; a sentence reporting the
+     deal in a story about something else, such as guard `27640210`'s club revenue, does not
+     count), or sourced consumer-demand data about it is
      `business` with no category, not `mention_only`. The "ESG content decides first" paragraph's
      sentence on marketing activations now only limits that paragraph's trigger, since read
      literally it beat R2. The Social section's endorsement question names no content type, so a
@@ -3367,8 +3372,10 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
    - no guard case, and no case of the other two files, fails under v1.14.0 that passes under
      v1.13.0 in the same run. The report computes no such list: the owner compares, side by side,
      each family's failed cases, the accuracy section's misses (the sportswear side, which covers
-     the Product cases) and the expected-categories and expected-sentiments misses. A case listed
-     under the candidate and not under the baseline is a new miss. A computed list across every
+     the Product cases) and the expected-categories and expected-sentiments misses. A case the
+     baseline passed and the candidate got wrong, or left the brand not judged (D032: every brand
+     is judged), is a new miss; a case whose candidate replies all failed (unanswered) is listed
+     and read, not counted, as under D040 §3. A computed list across every
      scored section is #281;
    - the transitions run the predicted way: `false_positive` → `skipped` for sale pieces that
      describe the product, the brand's own marketing and a judgment about a brand in a list;
