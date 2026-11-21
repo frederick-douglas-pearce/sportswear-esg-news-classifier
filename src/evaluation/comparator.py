@@ -43,9 +43,50 @@ MOST_BRANDS = "most_brands"
 NO_CATEGORY_STRATA = frozenset(
     {"product_true", "product_false", "product_gray", "financial", "no_category"}
 )
-# The owner-ruling strata D040's roll-up scores (#230); ruling 9 is gray and has no expected outcome
-RULING_PREFIX = "ruling_"
-SCORED_RULINGS = frozenset(f"{RULING_PREFIX}{n}" for n in range(1, 9))
+
+
+@dataclass(frozen=True)
+class RulingFamily:
+    """Owner-ruling strata scored together, per case, on verdict, ruled categories and ruled
+    sentiments. `strata` is the report's row order. `falsifier_pair` is the (baseline, candidate)
+    comparison the decision fixed a falsifier for, or None for a family with no falsifier."""
+
+    name: str
+    decision: str
+    strata: tuple[str, ...]
+    falsifier_pair: tuple[str, str] | None
+
+
+# A baseline that already passes this share of a family's cases does not need the rulings in its
+# prompt (D040 §3, #230; D046, #248)
+RULING_FALSIFIER_RATE = 0.85
+
+# The roll-up's families. D040's ruling_1 to ruling_8 (#230; ruling 9 is gray, with no expected
+# outcome). D046's v1.14.0 cases (#248): corrections are rows v1.13.0 got wrong (stored and
+# corrected by the owner, or, for #238's two market wraps, answered wrong in D040's run 2), which
+# carry the falsifier; guards are rows it got right, with no falsifier (D046 §4 compares the
+# candidate's failures with the baseline's). A stratum in no family, such as #249's Digital case
+# (r249_digital) or the sale-listing boundary row aa37cad0 (r232_gray_r1), is left out of the roll-up.
+RULING_FAMILIES: tuple[RulingFamily, ...] = (
+    RulingFamily("D040", "D040", tuple(f"ruling_{n}" for n in range(1, 9)), ("v1.12.0", "v1.13.0")),
+    RulingFamily(
+        "D046 corrections",
+        "D046",
+        (
+            "v114_correction_r1",
+            "v114_correction_r2",
+            "v114_correction_r3",
+            "v114_correction_template",
+        ),
+        ("v1.13.0", "v1.14.0"),
+    ),
+    RulingFamily(
+        "D046 guards",
+        "D046",
+        ("v114_guard_r3", "v114_guard_r4", "v114_guard_r5", "v114_guard_r6"),
+        None,
+    ),
+)
 
 # Shortest quoted prompt text treated as an example an article could be the source of
 _MIN_EXAMPLE_CHARS = 15
@@ -593,17 +634,17 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
             "unanswered_cases": unanswered,
         }
 
-    def rulings(side: str) -> dict:
-        """D040's per-ruling roll-up over the `ruling_1` to `ruling_8` cases with an expected
-        outcome (gray and prompt-example cases excluded). A case passes if it has an answered
-        reply and every answered reply judges the expected brand on the expected side, gives it
-        exactly the ruled categories (where ruled) and each ruled sentiment (where ruled). A case
-        whose replies all failed is unanswered, counted apart and outside the rate."""
+    def rulings(family: RulingFamily, side: str) -> dict:
+        """One family's per-ruling roll-up over its cases with an expected outcome (gray and
+        prompt-example cases excluded). A case passes if it has an answered reply and every
+        answered reply judges the expected brand on the expected side, gives it exactly the ruled
+        categories (where ruled) and each ruled sentiment (where ruled). A case whose replies all
+        failed is unanswered, counted apart and outside the rate."""
         by_ruling: dict[str, dict[str, int]] = {}
         passed, failed, unanswered = [], [], []
         for r in paired:
             exp = r.article.expected
-            ruled = sorted(set(r.article.strata) & SCORED_RULINGS)
+            ruled = [stratum for stratum in family.strata if stratum in r.article.strata]
             if exp is None or r.article.prompt_example or not ruled:
                 continue
             key = normalize_brand(exp.brand)
@@ -629,7 +670,7 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
                 counts = by_ruling.setdefault(ruling, {"passed": 0, "failed": 0, "unanswered": 0})
                 counts[outcome] += 1
         return {
-            "by_ruling": dict(sorted(by_ruling.items(), key=lambda kv: int(kv[0].removeprefix(RULING_PREFIX)))),
+            "by_ruling": {stratum: by_ruling[stratum] for stratum in family.strata if stratum in by_ruling},
             "cases": len(passed) + len(failed) + len(unanswered),
             "passed": len(passed),
             "failed": len(failed),
@@ -739,7 +780,10 @@ def summarize(runs: list[ArticleRun], *, baseline: SideSettings, candidate: Side
             "baseline": expected_sentiments("baseline"),
             "candidate": expected_sentiments("candidate"),
         },
-        "rulings": {"baseline": rulings("baseline"), "candidate": rulings("candidate")},
+        "rulings": {
+            family.name: {"baseline": rulings(family, "baseline"), "candidate": rulings(family, "candidate")}
+            for family in RULING_FAMILIES
+        },
         "gated_categories": {"baseline": gated("baseline"), "candidate": gated("candidate")},
         "prompt_example_cases": [
             {**_brief(r), "example": r.article.prompt_example}

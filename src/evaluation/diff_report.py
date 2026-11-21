@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-from src.evaluation.comparator import RULING_PREFIX
-
-# D040's falsifier: a baseline that already passes this share of the ruling cases does not need
-# the rulings in its prompt (#230)
-RULING_FALSIFIER_RATE = 0.85
-# The comparison D040's falsifier was fixed for; any other pair gets the roll-up without a verdict
-RULING_FALSIFIER_PAIR = ("v1.12.0", "v1.13.0")
+from src.evaluation.comparator import RULING_FALSIFIER_RATE, RULING_FAMILIES, RulingFamily
 
 
 def _pct(value: float | None) -> str:
@@ -258,59 +252,8 @@ def render_markdown(summary: dict, config: dict) -> str:
             )
         for item in block["not_assessed_cases"]:
             lines.append(f"  - not assessed: {item['title']} (`{item['article_id']}`), {item['brand']}")
-    lines += [
-        "",
-        "## Owner rulings (D040)",
-        "",
-        "Per `ruling_1` to `ruling_8` case (gray and prompt-example cases excluded): passed if every "
-        "answered reply judges the expected brand on the expected side with exactly the ruled "
-        "categories and sentiments; unanswered if every reply failed, outside the rate.",
-        "",
-    ]
-    falsifier_applies = (config["baseline"], config["candidate"]) == RULING_FALSIFIER_PAIR
-    if falsifier_applies:
-        lines[-1:-1] = [
-            "",
-            f"D040's falsifier: a baseline rate of {_pct(RULING_FALSIFIER_RATE)} or more means the "
-            "rulings are not needed in the prompt, and promotion is reconsidered.",
-        ]
-    for side in ("baseline", "candidate"):
-        block = summary["rulings"][side]
-        lines.append(
-            f"- {side}: {block['passed']} passed, {block['failed']} failed, {block['unanswered']} "
-            f"unanswered, of {block['cases']} cases ({_pct(block['rate'])} of answered)"
-        )
-        for item in block["failed_cases"]:
-            lines.append(
-                f"  - failed: {item['title']} (`{item['article_id']}`) [{', '.join(item['rulings'])}], "
-                f"{item['brand']}"
-            )
-        for item in block["unanswered_cases"]:
-            lines.append(f"  - unanswered: {item['title']} (`{item['article_id']}`), {item['brand']}")
-    rate = summary["rulings"]["baseline"]["rate"]
-    if falsifier_applies:
-        lines.append(
-            f"- Falsifier: baseline {_pct(rate)} "
-            + ("(no answered case)" if rate is None else
-               ("meets the threshold" if rate >= RULING_FALSIFIER_RATE else "is below the threshold"))
-        )
-    else:
-        lines.append(
-            f"- Falsifier: not applicable (D040's is for {RULING_FALSIFIER_PAIR[1]} against "
-            f"{RULING_FALSIFIER_PAIR[0]})"
-        )
-    lines += ["", "| Ruling | Baseline passed / failed / unanswered | Candidate passed / failed / unanswered |", "|---|---|---|"]
-    rulings = sorted(
-        set(summary["rulings"]["baseline"]["by_ruling"]) | set(summary["rulings"]["candidate"]["by_ruling"]),
-        key=lambda name: int(name.removeprefix(RULING_PREFIX)),
-    )
-    for ruling in rulings:
-        cells = []
-        for side in ("baseline", "candidate"):
-            n = summary["rulings"][side]["by_ruling"].get(ruling, {"passed": 0, "failed": 0, "unanswered": 0})
-            cells.append(f"{n['passed']} / {n['failed']} / {n['unanswered']}")
-        lines.append(f"| {ruling} | {cells[0]} | {cells[1]} |")
-    lines.append("")
+    for family in RULING_FAMILIES:
+        lines += _ruling_family(family, summary["rulings"][family.name], config)
     lines += _category_list(
         "Categories the content type dropped (D037 gate)",
         summary["gated_categories"],
@@ -340,3 +283,69 @@ def render_markdown(summary: dict, config: dict) -> str:
             f"Candidate: {f['candidate_explanation']}"
         )
     return "\n".join(lines) + "\n"
+
+
+def _ruling_family(family: RulingFamily, block: dict, config: dict) -> list[str]:
+    """One family's roll-up section. The falsifier verdict is given only for the comparison its
+    decision fixed it for; a family with no case is left out unless that falsifier applies, so a
+    missing case file shows as a falsifier with no answered case instead of no section."""
+    pair = family.falsifier_pair
+    falsifier_applies = pair is not None and (config["baseline"], config["candidate"]) == pair
+    if not (block["baseline"]["cases"] or block["candidate"]["cases"] or falsifier_applies):
+        return []
+    lines = [
+        "",
+        f"## Owner rulings ({family.name})",
+        "",
+        f"Per {', '.join(f'`{x}`' for x in family.strata)} case (gray and prompt-example cases "
+        "excluded): passed if every answered reply judges the expected brand on the expected side "
+        "with exactly the ruled categories and sentiments; unanswered if every reply failed, "
+        "outside the rate.",
+        "",
+    ]
+    if falsifier_applies:
+        lines[-1:-1] = [
+            "",
+            f"{family.decision}'s falsifier: a baseline rate of {_pct(RULING_FALSIFIER_RATE)} or more "
+            "means the rulings are not needed in the prompt, and promotion is reconsidered.",
+        ]
+    for side in ("baseline", "candidate"):
+        side_block = block[side]
+        lines.append(
+            f"- {side}: {side_block['passed']} passed, {side_block['failed']} failed, "
+            f"{side_block['unanswered']} unanswered, of {side_block['cases']} cases "
+            f"({_pct(side_block['rate'])} of answered)"
+        )
+        for item in side_block["failed_cases"]:
+            lines.append(
+                f"  - failed: {item['title']} (`{item['article_id']}`) [{', '.join(item['rulings'])}], "
+                f"{item['brand']}"
+            )
+        for item in side_block["unanswered_cases"]:
+            lines.append(f"  - unanswered: {item['title']} (`{item['article_id']}`), {item['brand']}")
+    rate = block["baseline"]["rate"]
+    if falsifier_applies:
+        lines.append(
+            f"- Falsifier: baseline {_pct(rate)} "
+            + ("(no answered case)" if rate is None else
+               ("meets the threshold" if rate >= RULING_FALSIFIER_RATE else "is below the threshold"))
+        )
+    elif pair is None:
+        lines.append(
+            f"- Falsifier: none ({family.decision} compares the candidate's failures with the baseline's)"
+        )
+    else:
+        lines.append(
+            f"- Falsifier: not applicable ({family.decision}'s is for {pair[1]} against {pair[0]})"
+        )
+    lines += ["", "| Ruling | Baseline passed / failed / unanswered | Candidate passed / failed / unanswered |", "|---|---|---|"]
+    for ruling in family.strata:
+        counts = [block[side]["by_ruling"].get(ruling) for side in ("baseline", "candidate")]
+        if not any(counts):
+            continue
+        cells = [
+            f"{n['passed']} / {n['failed']} / {n['unanswered']}" if n else "0 / 0 / 0" for n in counts
+        ]
+        lines.append(f"| {ruling} | {cells[0]} | {cells[1]} |")
+    lines.append("")
+    return lines

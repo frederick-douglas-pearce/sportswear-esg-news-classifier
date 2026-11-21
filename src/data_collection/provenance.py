@@ -240,8 +240,8 @@ HUMAN_RULINGS: dict[str, str] = {
     "f95d95a9-e882-42e2-b141-62aba5e2a5dd": "skipped",
     "ff3d9904-3260-49bb-b231-0a260c27b6c0": "skipped",
     # 2026-11-04, #248: template or contentless stock pages that v1.13.0 judged `financial` while
-    # its own reasoning called them templates; mention_only under ruling 6 (were skipped by the
-    # #245 relabel; stored with FP_REASON_MANUAL). v1.14.0 takes them as cases after the retrain
+    # its own reasoning called them templates or empty; mention_only under D040 ruling 6 (were skipped by the
+    # #245 relabel; stored with FP_REASON_MANUAL). v1.14.0 takes them as cases before the retrain (#248)
     "02067ad1-d4dd-4c94-9af6-0d23d2d2122f": "false_positive",
     "201cc55a-2e10-404e-896b-8c9041f02203": "false_positive",
     "45e8c505-57ba-436c-ae91-b7ec261b695d": "false_positive",
@@ -358,7 +358,8 @@ HUMAN_RULINGS: dict[str, str] = {
     # that describe the product (442282ca, bcc52f23, 6ec5fd75, eb5aa27c), a sale piece with business
     # content (02ffd32e) and market wraps with analysis of the brand (a7eeaa13, b8891fbc) are
     # sportswear with no ESG category, stored with MANUAL_SKIP_REASON; Nike's planned layoffs are
-    # Social -1, a human label (19832789)
+    # Social -1, a human label (19832789). 2026-11-20, #248: the owner also ruled a7eeaa13's
+    # Adidas (UBS's downgrade with its stated reason) sportswear, financial; the status is unchanged
     "442282ca-90ae-4811-a7f5-1026bc8fcf75": "skipped",
     "bcc52f23-6048-40e3-ab75-ed701468a5a2": "skipped",
     "6ec5fd75-5e7a-4e06-b53f-58b4326cddba": "skipped",
