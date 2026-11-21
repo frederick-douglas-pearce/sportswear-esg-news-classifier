@@ -6,6 +6,7 @@ import pytest
 from src.data_collection.api_client import NewsDataClient
 from src.data_collection.brand_match import (
     BRAND_PATTERNS,
+    CONSENT_NOTICE_MARKERS,
     brands_in_article_text,
     brands_in_text,
     is_consent_notice_paragraph,
@@ -33,8 +34,8 @@ BRAND_TESTS = [
 @pytest.mark.parametrize("extract", EXTRACTORS)
 @pytest.mark.parametrize("brand", BRANDS)
 def test_matches_whatever_collection_extracted(extract, brand, brand_test):
-    """Differential: every brand a collection extractor finds in a text, brands_in_text finds in
-    the same text. The gate skips an article whose content names none of its extracted brands,
+    """Differential: every brand a collection extractor finds in a text, the brand test under test
+    finds in the same text. The gate skips an article whose content names none of its extracted brands,
     so a narrower test would skip an article that names its own brand."""
     for text in (f"Report: {brand} said", f"report: {brand.lower()} said",
                  f"REPORT: {brand.upper()} SAID", f"{brand}'s results"):
@@ -105,7 +106,7 @@ def test_empty_text(text):
     assert brands_in_text(text, ["Nike"]) == []
 
 
-# reebok.com's cookie notice, verbatim as stored on its store pages (#273)
+# reebok.com's cookie notice, transcribed for #273 from a stored reebok.com row (eadb57c8)
 REEBOK_NOTICE = (
     "Your Privacy Choices\n\nOn this website, we use cookies and similar tracking technologies, and "
     "allow our advertising partners to use such technologies, so we can, among other things, show "
@@ -118,10 +119,6 @@ REEBOK_NOTICE = (
     "the Global Privacy Control."
 )
 ARTICLE = "Reebok opened a new store in Boston on Monday."
-
-
-def test_the_stored_reebok_notice_is_the_one_found():
-    assert len(REEBOK_NOTICE) == 703
 
 
 def test_brand_named_only_in_a_cookie_notice_does_not_count():
@@ -150,14 +147,19 @@ def test_text_with_no_blank_line_is_one_paragraph():
     assert brands_in_article_text(ARTICLE + "\n" + "We use cookies on this website.", ["Reebok"]) == []
 
 
+@pytest.mark.parametrize("marker", CONSENT_NOTICE_MARKERS)
+def test_every_marker_makes_a_notice(marker):
+    paragraph = f"{marker.capitalize()} to show you ads for Reebok."
+    assert is_consent_notice_paragraph(paragraph)
+    assert is_consent_notice_paragraph(paragraph.upper())
+    assert brands_in_article_text(paragraph, ["Reebok"]) == []
+
+
 @pytest.mark.parametrize(
     "paragraph",
     [
         "On this website we use Cookies.",
         "THIS SITE USES COOKIES.",
-        "Our site relies on cookie-based ad targeting.",
-        "Click Accept All to allow cookies.",
-        "Manage your Cookie Settings.",
     ],
 )
 def test_notice_paragraphs(paragraph):
@@ -165,18 +167,33 @@ def test_notice_paragraphs(paragraph):
 
 
 @pytest.mark.parametrize(
-    "paragraph",
+    "paragraph, brand",
     [
-        # news about cookies, not in the site's voice
-        "Nike was fined after regulators found tracking cookies were set without consent.",
+        # news about cookies (ESG Digital), which a notice test must not take for a notice
+        ("Nike was fined after regulators found tracking cookies were set without consent.", "Nike"),
+        ("Lululemon faces a lawsuit claiming its website shared shoppers' data via cookies; the "
+         "complaint says users who tried to opt out were still tracked.", "Lululemon"),
+        ("The suit says Adidas changed its cookie policy and ignored users' cookie settings on "
+         "our website, the plaintiffs' lawyers said.", "Adidas"),
+        # a colorway named for cookies, in a post that speaks as the site does
+        ("The Nike Dunk Low 'Cookies and Cream' drops Friday for $115; we use affiliate links, so "
+         "this site may earn a commission.", "Nike"),
+        # phrases a notice uses, without the site stating its cookie use
+        ("Our site relies on cookie-based ad targeting, Puma said.", "Puma"),
+        ("Click Accept All to allow cookies, Puma's banner says.", "Puma"),
+        ("Manage your Cookie Settings on the Puma app.", "Puma"),
         # the site's voice, no cookie
-        "On this website you can opt out of marketing emails from Nike.",
-        "Your Privacy Choices",
+        ("On this website you can opt out of marketing emails from Nike.", "Nike"),
     ],
 )
-def test_paragraphs_that_are_not_a_notice(paragraph):
+def test_paragraphs_that_are_not_a_notice(paragraph, brand):
     assert not is_consent_notice_paragraph(paragraph)
     assert without_consent_notice(paragraph) == paragraph
+    assert brands_in_article_text(paragraph + "\n\nSizes run true.", [brand]) == [brand]
+
+
+def test_a_heading_alone_is_not_a_notice():
+    assert not is_consent_notice_paragraph("Your Privacy Choices")
 
 
 def test_a_two_brand_notice_counts_for_neither():

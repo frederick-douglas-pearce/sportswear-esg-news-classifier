@@ -3468,9 +3468,10 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
 
 ## D047: A Brand Named Only in a Site's Cookie Notice Does Not Count as Named (#273)
 
-**Date:** 2026-11-21 · **Status:** accepted (architect review 2026-11-21: approve with changes, all
-applied; the owner approved the plan on 2026-11-21: detection at scrape time only, a new D-entry) ·
-**Issues:** #273, #227, #232 · **Amends:** D044 §2, §3 and Consequences
+**Date:** 2026-11-21 · **Status:** accepted (architect review 2026-11-21: approve with changes,
+applied except amending D044 in place, for which the owner chose this new D-entry; the owner
+approved the plan on 2026-11-21: detection at scrape time only; markers narrowed on the code-review
+scope ruling, approved by the owner 2026-11-21) · **Issues:** #273, #227, #232 · **Amends:** D044 §2
 
 **Context.** reebok.com store pages are stored `success` with the site's cookie and privacy notice as
 their whole text. The notice names the brand ("show you ads promoting Reebok on other sites"), so
@@ -3481,8 +3482,15 @@ the notice at scrape time.
 **Decision.**
 1. Detect at scrape time. A paragraph (text split on blank lines; text with no blank line is one
    paragraph) is a cookie notice when it contains "cookie" and one of
-   `brand_match.CONSENT_NOTICE_MARKERS`, phrases in the site's own voice ("this website", "we use",
-   "opt out", …), all matched as substrings ignoring case.
+   `brand_match.CONSENT_NOTICE_MARKERS`, all matched as substrings ignoring case. A marker is a
+   phrase in which a site states its own cookie use ("we use cookies", "this website uses cookies",
+   "this site uses cookies", "accept all cookies"). The markers err narrow because the two errors
+   cost different amounts: a news paragraph read as a notice loses an ESG article silently (stored
+   `unlabelable`, never labeled, moved by the triage), while a missed notice costs one LLM call and
+   a negative judgment, as before #273. Looser phrases ("opt out", "this site", "cookie policy",
+   "cookie settings", …) also match news about cookie tracking, which is ESG Digital content, and
+   are not markers. Residual risk, accepted by the owner: a news paragraph that quotes a site's
+   banner verbatim ("we use cookies …") is still dropped.
 2. The brand test is `brand_match.brands_in_article_text`: `brands_in_text` over the text without its
    cookie-notice paragraphs. The scraper and `provenance.select_no_brand_content` both use it.
    `brands_in_text` is unchanged and stays the pattern matcher the collection-parity tests pin; its
@@ -3499,8 +3507,11 @@ the notice at scrape time.
 
 **Consequences.**
 - The triage's dry run selects the notice rows; a page that is a no-brand sale blurb followed by
-  the notice is D044's case too. A row whose stored reason is not a reply's is left out as a
-  possible hand move and listed for a `fix_label.py` ruling.
+  the notice is D044's case too. Rows are left out as D044 §3 and `no_brand_exclusion` decide, and
+  possible hand moves are listed by id for a `fix_label.py` ruling.
 - The FP export loses the moved `false_positive` rows. Run the triage after a backup, before #154
   PR2 and before `fp_census.py --queue --force`, as D044 orders.
-- **Amends D044 §2:** the brand test is `brands_in_article_text`, not `brands_in_text`.
+- **Amends D044 §2:** the brand test is `brands_in_article_text`, not `brands_in_text`. D044 §3's
+  cohort ("fails the same test") follows by reference.
+- Notices in other wording ("We and our partners use cookies") pass as before; a missed notice costs
+  one LLM call. A new marker is added if a spot-check finds one.

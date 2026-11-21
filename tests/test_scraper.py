@@ -302,7 +302,8 @@ class TestScraperStats:
 
 
 class TestNoBrandGate:
-    """Content that names none of the expected brands fails the scrape as skipped (#227)."""
+    """Content that names none of the expected brands outside a cookie notice fails the scrape as
+    skipped (#227, #273)."""
 
     BODY = (
         "When Jeff Bezos said that one breakthrough technology would shape Amazon's destiny, even "

@@ -42,7 +42,8 @@ PAYWALL_INDICATORS = [
 @dataclass
 class ScrapeResult:
     """Result of scraping an article. ``content`` is set on success, and on a scrape skipped
-    because the content names none of the expected brands (``SCRAPE_NO_BRAND_ERROR``)."""
+    because the content names none of the expected brands outside a cookie notice
+    (``SCRAPE_NO_BRAND_ERROR``, #273)."""
 
     success: bool
     content: str | None = None
@@ -176,7 +177,8 @@ class ArticleScraper:
                     status="skipped",
                 )
 
-            # Content that names none of the expected brands carries nothing to label them from (#227)
+            # Content that names none of the expected brands outside a cookie notice carries nothing
+            # to label them from (#227, #273)
             brands_found, validation_warning = self._validate_brand_mentions(
                 content, expected_brands or []
             )

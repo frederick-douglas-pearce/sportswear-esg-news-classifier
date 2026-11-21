@@ -1,4 +1,5 @@
-"""Stored rows whose text names none of their brands (#227, D044): the cohort and the triage."""
+"""Stored rows whose text names none of their brands outside a cookie notice (#227, D044, #273,
+D047): the cohort and the triage."""
 
 import json
 import os
