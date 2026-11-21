@@ -3400,6 +3400,31 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
    rows with a `retail_only` or `mention_only` judgment (a row typed only `other_entity` is left
    out), and `skipped` rows judged `financial` with no `business` or `product` judgment. A
    seeded spot-check of the relabeled rows follows, before #154 PR2.
+6. **The run (2026-11-20) and the owner's reads (2026-11-21).** The evidence is the run from
+   commit `633cf65` (report `v1.13.0_vs_v1.14.0_20261121T063814Z`; candidate hashes
+   `817934a576fe` / `f9e786d07439` / schema `96064689a1f3`; Haiku 5.5 at effort medium; the three
+   case files, sample 100, most-brands 10, human rulings), with a 5-repeat check of its misses
+   (reports `repeat248_r1` to `repeat248_r5`, from the same commit, run by `--article-ids`
+   because #239 refuses an untracked case file for a paid run).
+   - D036 §2's mechanical criteria hold: no parse failures, refusals or truncated replies, and
+     full compliance on both sides.
+   - Falsifier: v1.13.0 passes 7 of 16 correction cases (43.8%), below 85%, so the edits are
+     needed. v1.14.0 passes 14 of 16.
+   - The two correction misses are R1's: `3bb19314` (HOKA) was on the expected side in 2 of 5
+     repeats under v1.14.0 (1 of 5 under v1.13.0), and `6c12f566` (Samba) in 4 of 5 (2 of 5).
+     The deal-listing lead helps, but does not fix the sale-listing boundary; a whole-article
+     criterion is #282.
+   - The run showed three new misses on one sample each. The repeat check reads two as noise:
+     `457e531a` (R4 guard; 4 of 5 under v1.14.0, 5 of 5 under v1.13.0) and `442282ca`
+     (`product_true`; 5 of 5, 4 of 5). The third, `76204e0b` (ruling 7, Allbirds renamed
+     Smartbird; 3 of 5, 5 of 5), may be a small effect on the pivot-versus-sale line D040 §6
+     already listed as unstable; it is watched in the relabel spot-check (#282).
+   - Transitions: `57acb8be` is newly labeled Digital +1 (the owner's #249 ruling, with no
+     v1.14.0 text for it, #280); `8185da14` and `d2873bbb` stop being labeled, both matching the
+     owner's rulings. Two other new labels are read in PR2's spot-check: ANTA's Tsinghua
+     institute (Social, low confidence) and Nike's leadership reset (Social, the removed roles
+     read as a workforce reduction with no headcount).
+   - The owner accepted the run as meeting point 4 with these reads (2026-11-21).
 
 **Rejected.**
 - **Reusing `--mode 245-relabel`.** Once v1.14.0 is production it selects every LLM-decided row
