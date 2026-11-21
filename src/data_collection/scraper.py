@@ -15,7 +15,7 @@ from newspaper import Article as NewspaperArticle
 warnings.filterwarnings("ignore", category=UnknownTimezoneWarning)
 from newspaper import ArticleException
 
-from .brand_match import brands_in_text
+from .brand_match import brands_in_article_text
 from .config import settings
 from .models import SCRAPE_NO_BRAND_ERROR
 from .text_normalize import normalize_text
@@ -42,7 +42,8 @@ PAYWALL_INDICATORS = [
 @dataclass
 class ScrapeResult:
     """Result of scraping an article. ``content`` is set on success, and on a scrape skipped
-    because the content names none of the expected brands (``SCRAPE_NO_BRAND_ERROR``)."""
+    because the content names none of the expected brands outside a cookie notice
+    (``SCRAPE_NO_BRAND_ERROR``, #273)."""
 
     success: bool
     content: str | None = None
@@ -94,7 +95,8 @@ class ArticleScraper:
         self, content: str, expected_brands: list[str]
     ) -> tuple[list[str], str | None]:
         """
-        Find which expected brands the scraped content names (``brand_match.brands_in_text``).
+        Find which expected brands the scraped content names outside a cookie notice
+        (``brand_match.brands_in_article_text``, #273).
 
         Content that names none of them is usually boilerplate, an ad, a login wall or another
         article; some is the article itself, naming the brand only in its title. Either way it
@@ -110,7 +112,7 @@ class ArticleScraper:
         if not expected_brands:
             return [], None
 
-        brands_found = brands_in_text(content, expected_brands)
+        brands_found = brands_in_article_text(content, expected_brands)
 
         # Generate warning if no expected brands found
         warning = None
@@ -131,9 +133,9 @@ class ArticleScraper:
         Args:
             url: Article URL to scrape
             expected_brands: Brand names expected to appear in content. Content that names
-                none of them fails the scrape as ``skipped`` (#227); the result carries the
-                content, which the collector stores so the row can be re-checked without a
-                re-fetch (no tool does that yet).
+                none of them outside a cookie notice fails the scrape as ``skipped`` (#227,
+                #273); the result carries the content, which the collector stores so the row
+                can be re-checked without a re-fetch (no tool does that yet).
 
         Returns:
             ScrapeResult with content or error details
@@ -175,7 +177,8 @@ class ArticleScraper:
                     status="skipped",
                 )
 
-            # Content that names none of the expected brands carries nothing to label them from (#227)
+            # Content that names none of the expected brands outside a cookie notice carries nothing
+            # to label them from (#227, #273)
             brands_found, validation_warning = self._validate_brand_mentions(
                 content, expected_brands or []
             )

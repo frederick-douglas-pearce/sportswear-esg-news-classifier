@@ -1197,8 +1197,9 @@ def recheck_backfill_batch(
 
 
 # --- #227: stored text that names none of the article's brands (D044) ------------------------
-# A row scraped as 'success' whose full_content names none of its brands_mentioned was labeled, or
-# queued for labeling, with content that does not name the brand. scripts/triage_no_brand_content.py
+# A row scraped as 'success' whose full_content names none of its brands_mentioned outside a cookie
+# notice (#273, D047) was labeled, or queued for labeling, with content that carries nothing to label
+# the brand from. scripts/triage_no_brand_content.py
 # moves the rows this selects to the state the scraper now gives such a scrape ('skipped',
 # SCRAPE_NO_BRAND_ERROR, 'unlabelable').
 
@@ -1209,7 +1210,8 @@ EXCLUDED_EVAL_CASE = "eval_case"  # an article in an eval case file, whose expec
 
 @dataclass
 class NoBrandRow:
-    """One stored row whose text names none of its brands, as the triage decides it."""
+    """One stored row whose text names none of its brands outside a cookie notice, as the triage
+    decides it."""
 
     article_id: str
     labeling_status: str
@@ -1293,13 +1295,13 @@ class NoBrandCohort:
 
 
 def select_no_brand_content(session, eval_case_ids: Iterable[str] = ()) -> NoBrandCohort:
-    """Rows scraped as 'success' whose stored ``full_content`` names none of their brands, by the
-    scraper's own test (``brands_in_text``), not already ``unlabelable``, each decided by
-    ``no_brand_exclusion``; a row it would move whose id is in ``eval_case_ids`` is left out as
-    ``EXCLUDED_EVAL_CASE``.
+    """Rows scraped as 'success' whose stored ``full_content`` names none of their brands outside a
+    cookie notice, by the scraper's own test (``brands_in_article_text``, #273), not already
+    ``unlabelable``, each decided by ``no_brand_exclusion``; a row it would move whose id is in
+    ``eval_case_ids`` is left out as ``EXCLUDED_EVAL_CASE``.
     Derived on every call, in id order."""
     eval_case_ids = set(eval_case_ids)
-    from .brand_match import brands_in_text
+    from .brand_match import brands_in_article_text
 
     latest = latest_prediction_subquery("fp")
     query = (
@@ -1325,7 +1327,7 @@ def select_no_brand_content(session, eval_case_ids: Iterable[str] = ()) -> NoBra
     candidates = []
     for article, fp_action, fp_skip_reason in query.all():
         brands = list(article.brands_mentioned or [])
-        if not brands_in_text(article.full_content, brands):
+        if not brands_in_article_text(article.full_content, brands):
             candidates.append((article, fp_action, fp_skip_reason, brands))
 
     ids = [article.id for article, *_ in candidates]

@@ -2,7 +2,10 @@
 
 The scraper fails a scrape whose content names none of the article's brands, and
 ``scripts/triage_no_brand_content.py`` selects stored rows by the same test, so both use this
-module. It imports no scraping library, so the triage and its tests load none.
+module. It imports no scraping library, so the triage and its tests load none. The test is
+``brands_in_article_text``: a brand named only in a site's cookie notice does not count (#273,
+D047), since a page whose text is only that notice carries nothing to label the brand from.
+``brands_in_text`` matches the patterns over the whole text and is not the test.
 
 A brand's patterns must match at least what collection-time extraction matched: the brand name
 itself, case-insensitively, at word boundaries (``api_client._extract_brands``). Otherwise an
@@ -11,6 +14,19 @@ brand in ``BRANDS``.
 """
 
 import re
+
+# A paragraph is a cookie notice when it says "cookie" and one of these phrases (any case), each a
+# phrase in which a site states its own cookie use. They err narrow (D047): a news paragraph read as
+# a notice loses its article silently, while a missed notice costs one LLM call. reebok.com store
+# pages are stored with such a notice as their text, and it names the brand (#273).
+CONSENT_NOTICE_MARKERS = (
+    "we use cookies",
+    "this website uses cookies",
+    "this site uses cookies",
+    "accept all cookies",
+)
+
+_PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
 
 # Hyphen forms a source may use where the brand name has an ASCII hyphen.
 _HYPHEN = "[-‐‑–]"
@@ -73,7 +89,11 @@ BRAND_PATTERNS: dict[str, list[str]] = {
 
 
 def brands_in_text(text: str | None, brands: list[str]) -> list[str]:
-    """The brands, of those given, that ``text`` names, in the order given."""
+    """The brands, of those given, that ``text`` names, in the order given.
+
+    Pattern matching only, over the whole text. Whether scraped content names its brands is
+    ``brands_in_article_text``, which leaves out a cookie notice (#273).
+    """
     if not text:
         return []
     found = []
@@ -82,3 +102,30 @@ def brands_in_text(text: str | None, brands: list[str]) -> list[str]:
         if any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns):
             found.append(brand)
     return found
+
+
+def is_consent_notice_paragraph(paragraph: str) -> bool:
+    """Whether ``paragraph`` is part of a site's cookie notice: it contains "cookie" and one of
+    ``CONSENT_NOTICE_MARKERS``, both matched as substrings ignoring case."""
+    lowered = paragraph.lower()
+    return "cookie" in lowered and any(marker in lowered for marker in CONSENT_NOTICE_MARKERS)
+
+
+def without_consent_notice(text: str | None) -> str:
+    """``text`` without its cookie-notice paragraphs (``is_consent_notice_paragraph``).
+
+    Paragraphs are split on blank lines (a line break, optional whitespace, a line break). Text
+    with no blank line is one paragraph, kept or dropped whole, so an article run together with a
+    notice in one block is dropped only if the block says "cookie" and a marker.
+    """
+    if not text:
+        return ""
+    return "\n\n".join(
+        p for p in _PARAGRAPH_BREAK.split(text) if not is_consent_notice_paragraph(p)
+    )
+
+
+def brands_in_article_text(text: str | None, brands: list[str]) -> list[str]:
+    """The brands, of those given, that scraped ``text`` names outside its cookie notice, in the
+    order given: the scraper's brand test and the triage's (#227, #273)."""
+    return brands_in_text(without_consent_notice(text), brands)
