@@ -13,8 +13,9 @@ patterns over the text without its cookie-notice paragraphs. A paragraph is part
 contains "cookie" and one of `CONSENT_NOTICE_MARKERS` (phrases in which a site states its own cookie
 use: "we use cookies", "this website uses cookies", "this site uses cookies", "accept all
 cookies"), ignoring case; paragraphs are split on blank lines. The markers are narrow on purpose: a
-news paragraph about cookie tracking read as a notice would lose its article, while a missed notice
-costs one LLM call. A news paragraph quoting a site's banner verbatim is still dropped. The scraper and
+news paragraph about cookie tracking read as a notice would be dropped, and its article with it when
+no other paragraph names the brand, while a missed notice costs one LLM call. A news paragraph
+quoting a site's banner verbatim is still dropped. The scraper and
 `provenance.select_no_brand_content` use it, so such a scrape is stored as #227 stores a no-brand
 scrape (`scrape_status='skipped'`, `SCRAPE_NO_BRAND_ERROR`, `unlabelable`, content kept), and
 `scripts/triage_no_brand_content.py` moves the stored rows like it, with #227's exclusions and

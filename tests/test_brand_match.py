@@ -35,8 +35,8 @@ BRAND_TESTS = [
 @pytest.mark.parametrize("brand", BRANDS)
 def test_matches_whatever_collection_extracted(extract, brand, brand_test):
     """Differential: every brand a collection extractor finds in a text, the brand test under test
-    finds in the same text. The gate skips an article whose content names none of its extracted brands,
-    so a narrower test would skip an article that names its own brand."""
+    finds in the same text. The gate skips an article whose content names none of its extracted
+    brands, so a narrower test would skip an article that names its own brand."""
     for text in (f"Report: {brand} said", f"report: {brand.lower()} said",
                  f"REPORT: {brand.upper()} SAID", f"{brand}'s results"):
         extracted = extract(text)

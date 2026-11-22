@@ -1196,12 +1196,11 @@ def recheck_backfill_batch(
     return kept, dropped
 
 
-# --- #227: stored text that names none of the article's brands (D044) ------------------------
-# A row scraped as 'success' whose full_content names none of its brands_mentioned outside a cookie
-# notice (#273, D047) was labeled, or queued for labeling, with content that carries nothing to label
-# the brand from. scripts/triage_no_brand_content.py
-# moves the rows this selects to the state the scraper now gives such a scrape ('skipped',
-# SCRAPE_NO_BRAND_ERROR, 'unlabelable').
+# --- #227, #273: stored text that names none of the article's brands outside a cookie notice ---
+# (D044, D047). A row scraped as 'success' whose full_content names none of its brands_mentioned
+# outside a cookie notice was labeled, or queued for labeling, with content that carries nothing to
+# label the brand from. scripts/triage_no_brand_content.py moves the rows this selects to the state
+# the scraper now gives such a scrape ('skipped', SCRAPE_NO_BRAND_ERROR, 'unlabelable').
 
 NO_BRAND_STATUSES = ("pending", FAILED_STATUS, "labeled", "skipped", FP_NEGATIVE_STATUS)
 EXCLUDED_OTHER_STATUS = "other_status"  # a status the triage does not move (deduplicated, ...)

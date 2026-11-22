@@ -17,8 +17,9 @@ import re
 
 # A paragraph is a cookie notice when it says "cookie" and one of these phrases (any case), each a
 # phrase in which a site states its own cookie use. They err narrow (D047): a news paragraph read as
-# a notice loses its article silently, while a missed notice costs one LLM call. reebok.com store
-# pages are stored with such a notice as their text, and it names the brand (#273).
+# a notice is dropped, and its article with it when no other paragraph names the brand, while a
+# missed notice costs one LLM call. reebok.com store pages are stored with such a notice as their
+# text, and it names the brand (#273).
 CONSENT_NOTICE_MARKERS = (
     "we use cookies",
     "this website uses cookies",

@@ -3485,8 +3485,9 @@ the notice at scrape time.
    `brand_match.CONSENT_NOTICE_MARKERS`, all matched as substrings ignoring case. A marker is a
    phrase in which a site states its own cookie use ("we use cookies", "this website uses cookies",
    "this site uses cookies", "accept all cookies"). The markers err narrow because the two errors
-   cost different amounts: a news paragraph read as a notice loses an ESG article silently (stored
-   `unlabelable`, never labeled, moved by the triage), while a missed notice costs one LLM call and
+   cost different amounts: a news paragraph read as a notice is dropped, and when no other paragraph
+   names the brand its ESG article is lost silently (stored `unlabelable`, never labeled, moved by
+   the triage), while a missed notice costs one LLM call and
    a negative judgment, as before #273. Looser phrases ("opt out", "this site", "cookie policy",
    "cookie settings", …) also match news about cookie tracking, which is ESG Digital content, and
    are not markers. Residual risk, accepted by the owner: a news paragraph that quotes a site's
