@@ -81,8 +81,8 @@ FAILED_STATUS = "failed"
 # 3 unlabelable rulings are left out, since no export reads that status), corrected by #234
 # (2026-10-30), #249's review of the #245 relabel (2026-11-03), #248's template rows
 # (2026-11-04), #232's spot-check of the relabeled cohorts (2026-11-18), #238's eval-case
-# articles (2026-11-18), and #275's eval-case articles (2026-11-20). #143 backfills these into its
-# audit log and deletes this.
+# articles (2026-11-18), #275's eval-case articles (2026-11-20), and #248's review of its
+# targeted relabel (2026-11-22). #143 backfills these into its audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -399,6 +399,19 @@ HUMAN_RULINGS: dict[str, str] = {
     "3c8017cb-e7f6-47dc-83ea-4d59468118ef": "skipped",
     "3fee9d78-c7a8-4936-8ff0-2b14edadbcce": "skipped",
     "a39e8011-0d4b-4c77-b7c9-c4b8857d7f72": "skipped",
+    # 2026-11-22, #248: the owner's review of the 15 rows #248's targeted relabel moved to labeled
+    # (record on #248). Template stock pages whose ESG item is only in an appended news summary
+    # (2d031846) and a supplier's plant closure that gives the brand nothing of its own (5dff6b2e)
+    # are mention_only; a one-item headline list (726d045a), the brand as a theft victim (0b2efd6c)
+    # and an opinion piece on its marketing (def4658d) are sportswear with no ESG category, skipped
+    # rather than false_positive so a contentless list stays out of the FP negatives; critics'
+    # attack on its DEI goals is Social 0 (49b43ed7). The other 9 keep their LLM labels, unruled
+    "2d031846-82ae-4351-8aab-b15a0ecbf86a": "false_positive",
+    "5dff6b2e-d749-4433-b843-62933b946c26": "false_positive",
+    "726d045a-d575-4bdc-a421-dcae313c5e61": "skipped",
+    "0b2efd6c-f6fd-4b3b-98fb-1981027c8e7a": "skipped",
+    "def4658d-405c-4431-a03c-f0f9a18dca36": "skipped",
+    "49b43ed7-442e-47fd-9290-5b0253a11632": "labeled",
 }
 
 
