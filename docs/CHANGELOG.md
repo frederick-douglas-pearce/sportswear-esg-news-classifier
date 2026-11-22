@@ -4,6 +4,26 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-21: A brand named only in a site's cookie notice does not count as named (#273)
+
+reebok.com store pages were stored as `success` with the site's cookie and privacy notice as their
+whole text. The notice names the brand, so #227's brand check passed them and the labeler judged a
+cookie notice. The brand test is now `brand_match.brands_in_article_text` (D047): the brand
+patterns over the text without its cookie-notice paragraphs. A paragraph is part of a notice when it
+contains "cookie" and one of `CONSENT_NOTICE_MARKERS` (phrases in which a site states its own cookie
+use: "we use cookies", "this website uses cookies", "this site uses cookies", "accept all
+cookies"), ignoring case; paragraphs are split on blank lines. The markers are narrow on purpose: a
+news paragraph about cookie tracking read as a notice would be dropped, and its article with it when
+no other paragraph names the brand, while a missed notice costs one LLM call. A news paragraph
+quoting a site's banner verbatim is still dropped. The scraper and
+`provenance.select_no_brand_content` use it, so such a scrape is stored as #227 stores a no-brand
+scrape (`scrape_status='skipped'`, `SCRAPE_NO_BRAND_ERROR`, `unlabelable`, content kept), and
+`scripts/triage_no_brand_content.py` moves the stored rows like it, with #227's exclusions and
+manifest. Pages are not blocked at collection.
+
+The owner runs `triage_no_brand_content.py --dry-run`, then the move after a backup, before #154
+PR2 and before `fp_census.py --queue --force`.
+
 ### 2026-11-21: Prompt v1.14.0 is production; a targeted relabel of the rows it decides differently (#248)
 
 The owner accepted v1.14.0's eval against v1.13.0 as meeting D046's bar, with the reads in D046 §6

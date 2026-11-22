@@ -167,8 +167,8 @@ GROUP BY scrape_error
 ORDER BY count DESC
 LIMIT 10;
 
--- Articles whose scraped text names none of their brands (#227): skipped by the scraper, or
--- moved by scripts/triage_no_brand_content.py. Both store this scrape_error.
+-- Articles whose scraped text names none of their brands outside a cookie notice (#227, #273):
+-- skipped by the scraper, or moved by scripts/triage_no_brand_content.py. Both store this scrape_error.
 SELECT
     labeling_status,
     COUNT(*) AS articles

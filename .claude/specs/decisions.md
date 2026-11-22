@@ -3189,7 +3189,8 @@ build their schema with `create_all`.
 
 **Status:** accepted 2026-11-09 (architect review; at the plan gate the owner chose a bulk move over
 per-row review, and no labeling-pipeline gate). Amended 2026-11-10 by the owner's adoption of the
-architect's scope ruling on PR #271's code review.
+architect's scope ruling on PR #271's code review. Amended by D047 (#273): the brand test leaves
+out a site's cookie notice.
 
 **Context.** An article's `brands_mentioned` is extracted at collection from its title (and, for
 NewsData, also its description and content field). When the scraped `full_content` named none of
@@ -3464,3 +3465,54 @@ v1.13.0 types `financial` while its own reasoning calls them templates or empty 
   select them; that is accepted, not run.
 - A stratum in no family is left out of the roll-up, so a new ruling's strata are added to a
   family in `RULING_FAMILIES` with its cases.
+
+## D047: A Brand Named Only in a Site's Cookie Notice Does Not Count as Named (#273)
+
+**Date:** 2026-11-21 · **Status:** accepted (architect review 2026-11-21: approve with changes,
+applied except amending D044 in place, for which the owner chose this new D-entry; the owner
+approved the plan on 2026-11-21: detection at scrape time only; markers narrowed on the code-review
+scope ruling, approved by the owner 2026-11-21) · **Issues:** #273, #227, #232 · **Amends:** D044 §2
+
+**Context.** reebok.com store pages are stored `success` with the site's cookie and privacy notice as
+their whole text. The notice names the brand ("show you ads promoting Reebok on other sites"), so
+D044's brand test passes and the labeler judges a cookie notice. #232's spot-check found one; the
+owner ruled it `unlabelable`. The issue left open whether to block the pages at collection or detect
+the notice at scrape time.
+
+**Decision.**
+1. Detect at scrape time. A paragraph (text split on blank lines; text with no blank line is one
+   paragraph) is a cookie notice when it contains "cookie" and one of
+   `brand_match.CONSENT_NOTICE_MARKERS`, all matched as substrings ignoring case. A marker is a
+   phrase in which a site states its own cookie use ("we use cookies", "this website uses cookies",
+   "this site uses cookies", "accept all cookies"). The markers err narrow because the two errors
+   cost different amounts: a news paragraph read as a notice is dropped, and when no other paragraph
+   names the brand its ESG article is lost silently (stored `unlabelable`, never labeled, moved by
+   the triage), while a missed notice costs one LLM call and
+   a negative judgment, as before #273. Looser phrases ("opt out", "this site", "cookie policy",
+   "cookie settings", …) also match news about cookie tracking, which is ESG Digital content, and
+   are not markers. Residual risk, accepted by the owner: a news paragraph that quotes a site's
+   banner verbatim ("we use cookies …") is still dropped.
+2. The brand test is `brand_match.brands_in_article_text`: `brands_in_text` over the text without its
+   cookie-notice paragraphs. The scraper and `provenance.select_no_brand_content` both use it.
+   `brands_in_text` is unchanged and stays the pattern matcher the collection-parity tests pin; its
+   docstring names `brands_in_article_text` as the test. A later caller of the gate (#270) calls
+   `brands_in_article_text`.
+3. A page that names its brands only inside a notice is D044's case and takes D044's state, with
+   the same `SCRAPE_NO_BRAND_ERROR` (never reworded). The two causes stay distinguishable from the
+   stored content: a row where `brands_in_text` finds a brand and `brands_in_article_text` finds
+   none is a notice row.
+4. Stored rows like it are moved by D044's triage (`scripts/triage_no_brand_content.py`), with
+   D044 §3's exclusions and §4's manifest. No collection-time block: a path block covers one site
+   and no stored rows. Saving LLM calls on store pages that pass this test is a separate issue if
+   the owner wants it.
+
+**Consequences.**
+- The triage's dry run selects the notice rows; a page that is a no-brand sale blurb followed by
+  the notice is D044's case too. Rows are left out as D044 §3 and `no_brand_exclusion` decide, and
+  possible hand moves are listed by id for a `fix_label.py` ruling.
+- The FP export loses the moved `false_positive` rows. Run the triage after a backup, before #154
+  PR2 and before `fp_census.py --queue --force`, as D044 orders.
+- **Amends D044 §2:** the brand test is `brands_in_article_text`, not `brands_in_text`. D044 §3's
+  cohort ("fails the same test") follows by reference.
+- Notices in other wording ("We and our partners use cookies") pass as before; a missed notice costs
+  one LLM call. A new marker is added if a spot-check finds one.
