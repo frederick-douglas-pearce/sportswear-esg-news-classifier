@@ -4,6 +4,19 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-22: #248's targeted relabel ran; the owner ruled the rows it moved to labeled (#248)
+
+`backfill_relabel.py --mode 248-relabel` relabeled all 1,389 candidates under v1.14.0 (56 runs, no
+failed calls, $3.20 tagged spend), after a backup. Of the 999 `false_positive` rows, 177 moved to
+`skipped` (100 of the 280 typed `retail_only`) and 7 to `labeled`; of the 390 `financial` skips,
+17 moved to `false_positive` and 8 to `labeled`. The owner read the 15 now `labeled` and ruled 6
+(record on #248): two template or supplier pieces are `false_positive` (`mention_only`), three are
+`skipped` with no category (a one-item headline list kept out of the FP negatives on purpose), and
+one keeps its Social 0 label. They were written with `fix_label.py update --manual` after a backup,
+their LLM brand labels deleted on the five negatives, and added to `HUMAN_RULINGS`. The other 9 keep
+their LLM labels. A seeded spot-check of the changed rows follows, before #154 PR2. The relabel
+also surfaced #287: On Running's pattern matches the phrase "on running".
+
 ### 2026-11-21: A brand named only in a site's cookie notice does not count as named (#273)
 
 reebok.com store pages were stored as `success` with the site's cookie and privacy notice as their
