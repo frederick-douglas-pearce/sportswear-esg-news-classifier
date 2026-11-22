@@ -138,6 +138,14 @@ def test_article_beside_a_notice_keeps_its_brand(text):
     assert brands_in_article_text(text, ["Reebok"]) == ["Reebok"]
 
 
+def test_a_blank_line_holding_whitespace_separates_paragraphs():
+    """The notice paragraph right before the whitespace line is dropped alone; split only on a bare
+    blank line, it would run into the article and take the article with it."""
+    notice = "We use cookies to show you ads for Reebok."
+    assert brands_in_article_text(notice + "\n \n" + ARTICLE, ["Reebok"]) == ["Reebok"]
+    assert brands_in_article_text(notice + "\n\t\n" + ARTICLE, ["Reebok"]) == ["Reebok"]
+
+
 def test_text_with_no_blank_line_is_one_paragraph():
     """An article run together with a notice in one block is one paragraph, dropped whole."""
     block = ARTICLE + " We use cookies on this website."
@@ -160,9 +168,13 @@ def test_every_marker_makes_a_notice(marker):
     [
         "On this website we use Cookies.",
         "THIS SITE USES COOKIES.",
+        "This website uses cookies to give you the best experience on Reebok.com.",
+        "By clicking Accept All Cookies you agree to the storing of cookies on your device.",
     ],
 )
 def test_notice_paragraphs(paragraph):
+    """Notice wordings written out, so a marker taken off the list fails here (the parametrized
+    test above reads the list, so it cannot notice a marker missing from it)."""
     assert is_consent_notice_paragraph(paragraph)
 
 
