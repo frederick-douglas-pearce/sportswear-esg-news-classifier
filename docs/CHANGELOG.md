@@ -4,6 +4,21 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-23: The owner's spot-check of #248's targeted relabel (#289)
+
+The owner reviewed a seeded sample of the 1,389 rows #248 relabeled under v1.14.0, stratified by arm and by whether the row's status moved (100 rows). Claude wrote a verdict on every card before the owner ruled. The decision rule was fixed before the strata after SM were reviewed: #232's bands as rates, judged per stratum.
+
+| Stratum | Errors | Outcome for #154 PR2 |
+|---|---|---|
+| SM `skipped` → `false_positive` | 1/17 (census) | Trains, with its correction |
+| FM `false_positive` → `skipped` | 4/25 | Excluded: the 152 unreviewed rows are left out |
+| FK kept `false_positive` | 1/25 | Trains as is |
+| SK kept `skipped` | 2/33 | Review band |
+
+The SK follow-up covered every SK row not sampled whose text is under 1,500 characters. Under 1,000 characters, 6 of 16 were wrong; at 1,000–1,500, 0 of 11. The remaining 305 SK rows train as is.
+
+All 127 rulings, confirmations included, were applied with `fix_label.py update --manual` after backups, and they are now in `HUMAN_RULINGS`. The policy points are #290. The eval's two new labels (`05b0ed9e`, `8b0719e4`) contradict the owner's #249 rulings and join #290 as guard cases. The Allbirds read moves to #282.
+
 ### 2026-11-22: #248's targeted relabel ran; the owner ruled the rows it moved to labeled (#248)
 
 `backfill_relabel.py --mode 248-relabel` relabeled all 1,389 candidates under v1.14.0 (56 runs, no
