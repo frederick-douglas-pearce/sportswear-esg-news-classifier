@@ -37,10 +37,10 @@ import json
 import logging
 import sys
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
-from collections.abc import Mapping
 from typing import Any, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -94,6 +94,7 @@ class FPExportReport:
     excluded_unjudged_by_reason: Counter = field(default_factory=Counter)
     excluded_rule: int = 0
     excluded_strata: Counter = field(default_factory=Counter)  # stratum name -> rows left out
+    strata_records: dict = field(default_factory=dict)  # stratum name -> where its spot-check is
     attested_included: int = 0
     attested_before: date | None = None
     positives_by_source: Counter = field(default_factory=Counter)
@@ -134,7 +135,8 @@ def build_fp_dataset(
     """Build FP training records from candidates, applying the provenance exclusions.
 
     Every record carries ``label_source`` (see ``src.data_collection.provenance``). By default,
-    classifier-only negatives, unjudged skips and keyword-sweep negatives are left out and counted.
+    classifier-only negatives, unjudged skips, keyword-sweep negatives and the rows of an excluded
+    relabel stratum are left out and counted.
     Each ``include_*`` flag puts one cohort back. ``attested_before`` puts back only classifier-only
     negatives whose FP skip predates that date (UTC), marked with ``attested_cutoff``; it does not
     change their ``label_source``.
@@ -145,7 +147,10 @@ def build_fp_dataset(
     ``spot_check_stratum`` field. A row a source exclusion already left out is counted there only.
     """
     strata = strata or {}
-    report = FPExportReport(attested_before=attested_before)
+    report = FPExportReport(
+        attested_before=attested_before,
+        strata_records={s.name: s.record for s in provenance.EXCLUDED_STRATA},
+    )
     records: list[dict[str, Any]] = []
     verified = human_verified_ids((c.article_id, c.labeling_status) for c in candidates)
     # One flag per default-excluded source; a source added to EXCLUDED_BY_DEFAULT without a
@@ -170,7 +175,6 @@ def build_fp_dataset(
             if source == provenance.FP_CLASSIFIER:
                 if attested_before is not None and _before(c.fp_action_at, attested_before):
                     attested = True
-                    report.attested_included += 1
                 else:
                     report.excluded_classifier_only += 1
                     report.excluded_classifier_only_by_month[_month(c.fp_action_at)] += 1
@@ -209,6 +213,9 @@ def build_fp_dataset(
             record["attested_cutoff"] = attested_before.isoformat()
         if stratum is not None:
             record["spot_check_stratum"] = stratum
+        if attested:
+            # counted here, after the stratum test, so a row both tiers touch is counted once
+            report.attested_included += 1
         records.append(record)
 
     return FPExport(records, report)
@@ -429,7 +436,8 @@ def print_fp_report(report: FPExportReport) -> None:
     print(f"Excluded keyword-sweep negatives: {report.excluded_rule}")
     print(f"Excluded spot-checked relabel strata: {sum(report.excluded_strata.values())}")
     for name, count in sorted(report.excluded_strata.items()):
-        print(f"  {name}: {count}")
+        record = report.strata_records.get(name)
+        print(f"  {name}{f' ({record})' if record else ''}: {count}")
     if report.attested_before is not None:
         print(
             f"Owner-attested tier (classifier-only negatives skipped before "

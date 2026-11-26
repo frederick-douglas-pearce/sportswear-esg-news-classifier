@@ -756,99 +756,6 @@ MODE_STATUSES = {
 # Modes that end at a judgment under the production version, decided by relabel_arm
 RELABEL_MODES = frozenset({MODE_RELABEL, MODE_RELABEL_248})
 
-
-# --- Spot-checked strata the FP export leaves out (#154 PR2, #289) ----------------------------
-# A relabel stratum whose seeded spot-check measured an error rate in the exclude band. Its
-# unreviewed rows are LLM-decided, so their label_source stays what derive_label_source says; the
-# exclusion is a second, independent test. A row leaves the stratum, and is exported again, when
-# its status moves (a human ruling, a fix_label.py move) or when a later run judges it again (a
-# brand_judgments row from a run outside the stratum's tag). Reviewed rows are human rulings,
-# which the export keeps whatever their stratum.
-
-
-@dataclass(frozen=True)
-class SpotCheckStratum:
-    name: str  # reported by the export and stamped on a row kept with --include-spot-check-strata
-    run_tag: str  # the relabel mode whose tagged runs recorded the rows' prior status
-    prior_status: str  # the status the tagged runs recorded before relabeling
-    status: str  # the status the relabel moved them to
-    record: str  # where the spot-check and its decision are recorded
-
-
-EXCLUDED_STRATA = (
-    # #289: 4 of 25 sampled rows wrong (16%, Clopper-Pearson 95% interval 4.5-36.1%), at or above
-    # the 15% exclude band. 152 unreviewed rows on 2026-11-25.
-    SpotCheckStratum(
-        name="248-relabel false_positive -> skipped",
-        run_tag=MODE_RELABEL_248,
-        prior_status=FP_NEGATIVE_STATUS,
-        status="skipped",
-        record="#289",
-    ),
-)
-
-
-def stratum_members(
-    stratum: SpotCheckStratum,
-    prior_status: dict[str, str],
-    status: dict[str, str],
-    judgment_runs: dict[str, set],
-    tagged_run_ids: set,
-) -> set[str]:
-    """Ids in a stratum: the tagged runs recorded ``stratum.prior_status`` for them, they are at
-    ``stratum.status`` now, and every brand judgment they have came from a tagged run.
-
-    ``prior_status`` is each article's first recorded prior status across the tagged runs,
-    ``status`` its current ``labeling_status``, ``judgment_runs`` the ``labeling_run_id`` of each
-    of its ``brand_judgments`` rows. A row with no judgment is not in the stratum: the relabel
-    wrote one for every brand it judged, so none means something else decided the row since.
-    """
-    return {
-        article_id
-        for article_id, prior in prior_status.items()
-        if prior == stratum.prior_status
-        and status.get(article_id) == stratum.status
-        and judgment_runs.get(article_id)
-        and judgment_runs[article_id] <= tagged_run_ids
-    }
-
-
-def excluded_stratum_ids(session, strata: Sequence[SpotCheckStratum] = EXCLUDED_STRATA) -> dict[str, str]:
-    """Article id -> the name of the excluded stratum it is in, read from the database."""
-    members: dict[str, str] = {}
-    for stratum in strata:
-        runs = (
-            session.query(LabelingRun.id, LabelingRun.config)
-            .filter(LabelingRun.config["run_tag"].as_string() == stratum.run_tag)
-            .order_by(LabelingRun.started_at)
-            .all()
-        )
-        prior_status: dict[str, str] = {}
-        for _, config in runs:
-            for article_id, values in (((config or {}).get("run_config") or {}).get("prior") or {}).items():
-                # A retried article's first record is its status from before the relabel
-                prior_status.setdefault(article_id, values[0])
-        candidates = [UUID(i) for i, prior in prior_status.items() if prior == stratum.prior_status]
-        if not candidates:
-            continue
-        status = {
-            str(article_id): current
-            for article_id, current in session.query(Article.id, Article.labeling_status)
-            .filter(Article.id.in_(candidates))
-            .all()
-        }
-        judgment_runs: dict[str, set] = {}
-        for article_id, run_id in (
-            session.query(BrandJudgment.article_id, BrandJudgment.labeling_run_id)
-            .filter(BrandJudgment.article_id.in_(candidates))
-            .all()
-        ):
-            judgment_runs.setdefault(str(article_id), set()).add(run_id)
-        tagged = {run_id for run_id, _ in runs}
-        for article_id in stratum_members(stratum, prior_status, status, judgment_runs, tagged):
-            members.setdefault(article_id, stratum.name)
-    return members
-
 # Unjudged reasons a reply writes, or wrote (SKIP_NO_SPORTSWEAR_BRAND: the pipeline before #200).
 # The other two are written before any LLM call, and a relabel would write them again.
 LLM_REACHABLE_UNJUDGED_REASONS = UNJUDGED_SKIP_REASONS - {SKIP_INSUFFICIENT_CONTENT, SKIP_NO_BRANDS}
@@ -1267,15 +1174,28 @@ def build_backfill_cohort(
     return cohort
 
 
-def tried_reasons(run_configs: Iterable[dict | None]) -> dict[str, str | None]:
-    """Article id -> the reason the first tagged run to relabel it recorded, from the runs'
-    configs in start order. A retried article's first record is its reason from before the
-    backfill."""
-    tried: dict[str, str | None] = {}
+class PriorRecord(NamedTuple):
+    """What a tagged run recorded for an article before relabeling it (``run_config["prior"]``)."""
+
+    status: str
+    reason: str | None
+    arm: str
+
+
+def first_prior(run_configs: Iterable[dict | None]) -> dict[str, PriorRecord]:
+    """Article id -> the first record the tagged runs made of it, from the runs' configs in start
+    order. A retried article's first record is its state from before the relabel; a later run's
+    record of it is the state an earlier tagged run left."""
+    prior: dict[str, PriorRecord] = {}
     for config in run_configs:
         for article_id, values in (((config or {}).get("run_config") or {}).get("prior") or {}).items():
-            tried.setdefault(article_id, values[1])
-    return tried
+            prior.setdefault(article_id, PriorRecord(*values))
+    return prior
+
+
+def tried_reasons(run_configs: Iterable[dict | None]) -> dict[str, str | None]:
+    """Article id -> the reason the first tagged run to relabel it recorded (``first_prior``)."""
+    return {article_id: record.reason for article_id, record in first_prior(run_configs).items()}
 
 
 def _cohort_from_db(
@@ -1445,6 +1365,115 @@ def recheck_backfill_batch(
         else:
             dropped[i] = fresh.left_out.get(i, "changed")
     return kept, dropped
+
+
+# --- Spot-checked strata the FP export leaves out (#154 PR2, #289) ----------------------------
+# A relabel stratum whose seeded spot-check measured an error rate in the exclude band. A stratum
+# is the rows one relabel pass moved from one status to another: the runs with its tag that
+# started before the sample was drawn, so a later invocation of the same mode adds no row to it.
+# A row stays in the stratum only while it holds that pass's verdict: the status it moved to, the
+# reason the reply wrote, and brand judgments from the pass's runs alone. A status move (a human
+# ruling, a fix_label.py move) or a later run's judgment takes it out, and the export reads it as
+# any other row. Its label_source is unchanged, since the LLM decided it: the exclusion is a
+# second, independent test. Reviewed rows are human rulings, which the export keeps.
+
+
+@dataclass(frozen=True)
+class SpotCheckStratum:
+    name: str  # reported by the export and stamped on a row kept with --include-spot-check-strata
+    record: str  # where the spot-check and its decision are recorded, printed beside the name
+    run_tag: str  # the relabel mode whose tagged runs recorded the rows' prior status
+    runs_before: datetime  # the pass: tagged runs that started before this (UTC)
+    prior_status: str  # the status the pass recorded before relabeling
+    status: str  # the status the pass moved them to
+    reasons: frozenset[str]  # the stored reasons a reply writes at that status
+
+
+EXCLUDED_STRATA = (
+    # #289: 4 of 25 sampled rows wrong (16%, Clopper-Pearson 95% interval 4.5-36.1%), at or above
+    # the 15% exclude band. The pass: 56 runs, 2026-11-22 08:38-10:02 UTC under v1.14.0, before
+    # #289 drew its sample that day. 152 unreviewed rows on 2026-11-25.
+    SpotCheckStratum(
+        name="248-relabel false_positive -> skipped",
+        record="#289",
+        run_tag=MODE_RELABEL_248,
+        runs_before=datetime(2026, 11, 23, tzinfo=timezone.utc),
+        prior_status=FP_NEGATIVE_STATUS,
+        status="skipped",
+        reasons=JUDGED_SKIP_REASONS,
+    ),
+)
+
+
+class StratumRow(NamedTuple):
+    """An article's current state, as stratum membership reads it."""
+
+    status: str
+    reason: str | None
+    judgment_runs: frozenset  # labeling_run_id of each of its brand_judgments rows
+
+
+def stratum_members(
+    stratum: SpotCheckStratum,
+    prior: dict[str, PriorRecord],
+    current: dict[str, StratumRow],
+    pass_run_ids: set,
+) -> set[str]:
+    """Ids still holding the pass's verdict: the pass recorded ``stratum.prior_status`` first, and
+    the row is at ``stratum.status`` with one of ``stratum.reasons`` and judged by the pass's runs
+    alone (``pass_run_ids``).
+
+    A judged reply writes a judgment for each brand it judged, and a later reply replaces them
+    (``save_brand_judgments``), so a row with none, or with one from another run, was decided by
+    something else since. A row at an unjudged reason is not a member: its source already
+    excludes it from the export by default.
+    """
+    members = set()
+    for article_id, record in prior.items():
+        row = current.get(article_id)
+        if (
+            record.status == stratum.prior_status
+            and row is not None
+            and row.status == stratum.status
+            and row.reason in stratum.reasons
+            and row.judgment_runs
+            and row.judgment_runs <= pass_run_ids
+        ):
+            members.add(article_id)
+    return members
+
+
+def excluded_stratum_ids(session, strata: Sequence[SpotCheckStratum] = EXCLUDED_STRATA) -> dict[str, str]:
+    """Article id -> the name of the excluded stratum it is in, read from the database."""
+    members: dict[str, str] = {}
+    for stratum in strata:
+        runs = (
+            session.query(LabelingRun.id, LabelingRun.config)
+            .filter(LabelingRun.config["run_tag"].as_string() == stratum.run_tag)
+            .filter(LabelingRun.started_at < stratum.runs_before)
+            .order_by(LabelingRun.started_at)
+            .all()
+        )
+        prior = first_prior(config for _, config in runs)
+        candidates = [UUID(i) for i, record in prior.items() if record.status == stratum.prior_status]
+        if not candidates:
+            continue
+        state: dict[str, tuple[str, str | None, set]] = {}
+        for article_id, status, reason, run_id in (
+            session.query(
+                Article.id, Article.labeling_status, Article.labeling_error, BrandJudgment.labeling_run_id
+            )
+            .outerjoin(BrandJudgment, BrandJudgment.article_id == Article.id)
+            .filter(Article.id.in_(candidates))
+            .all()
+        ):
+            entry = state.setdefault(str(article_id), (status, reason, set()))
+            if run_id is not None:
+                entry[2].add(run_id)
+        current = {i: StratumRow(st, reason, frozenset(runs_)) for i, (st, reason, runs_) in state.items()}
+        for article_id in stratum_members(stratum, prior, current, {run_id for run_id, _ in runs}):
+            members.setdefault(article_id, stratum.name)
+    return members
 
 
 # --- #227, #273: stored text that names none of the article's brands outside a cookie notice ---

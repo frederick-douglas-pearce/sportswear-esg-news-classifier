@@ -254,9 +254,11 @@ class ratio, before retraining (#192 re-judges those rows).
 stratum whose seeded spot-check measured an error rate in the exclude band (`EXCLUDED_STRATA` in
 `src/data_collection/provenance.py`). Today that is one stratum: the rows #248's targeted relabel
 moved from `false_positive` to `skipped` (4 of 25 sampled rows wrong; 152 unreviewed rows on
-2026-11-25). A row is in it while the `248-relabel` runs recorded `false_positive` as its prior
-status, it is `skipped` now, and all its `brand_judgments` rows come from `248-relabel` runs, so a
-status move or a later relabel takes it out. Human rulings are kept. This is an exclusion beside
+2026-11-25). The stratum is the pass #289 measured, the `248-relabel` runs that started before
+2026-11-23, so a later invocation of the mode adds no row to it. A row is in it while it holds that
+pass's verdict: the pass recorded `false_positive` as its prior status, it is `skipped` now at the
+reason a judged reply writes, and all its `brand_judgments` rows come from the pass's runs. A status
+move, a hand move or a later relabel takes it out. Human rulings are kept. This is an exclusion beside
 `label_source`, not a source: the rows stay `llm`. The export prints the count per stratum;
 `--include-spot-check-strata` keeps the rows, each with `spot_check_stratum`.
 
