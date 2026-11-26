@@ -303,6 +303,16 @@ supported build (#172, D034): `docker build`, `docker compose build`, `deploy.ym
 pointer with the committed artifact (`v2.4.0`, the bytes the labeling pipeline is served), and
 `tests/test_committed_model_registry.py` runs the guard on the committed tree in CI.
 
+**Training data of the production model.** `data/fp_training_data.jsonl` is the file the fp notebooks,
+`train.py` and `ablation_study.py` read, so it holds the latest export, not necessarily what the
+production model was trained on. The registry's `trained_on` names that path for every version, so
+it does not identify the bytes. v2.4.0's training data is kept beside it as
+`data/fp_training_data_v2_4_0_ref.jsonl` (1,634 records, sha256 `5cc6ca8d6c74…`), copied from
+`51edccb`, the last commit of the file before v2.4.0 was created (2026-01-16T02:15Z; the registry
+notes say 1,634 samples). It predates `label_source` and the #154 exclusions. On 2026-11-26 the
+fixed path was overwritten with #154 PR2's export (4,923 records); the export it replaced (2,318
+records, `55c3b87`) trained no registered model and stays in git history.
+
 **EP has no production version while it is on hold** (#180, D029). v1.0.0's registered bytes are not
 recoverable (#175), so `ep.production` is `null`. The v1.0.0 record and its metrics stay in
 `models/registry.json` as the reference for a retrained EP. The unpromoted SVM that was committed as

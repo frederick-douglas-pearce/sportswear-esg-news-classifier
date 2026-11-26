@@ -4,6 +4,12 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-26: #154 PR2's training data
+
+- **The FP export leaves out skips with a not-sportswear reason.** A `skipped` row whose stored reason is a reply's not-sportswear judgment for a brand the article mentions (`"<brand>: <reason>"`) is a positive whose reason says it is not. `provenance.not_sportswear_reason_on_skip` tests it with `possible_hand_move`'s brand-prefix rule. The rows keep `label_source: unattributed`; the export leaves them out unless a human ruled on them, prints the count, and keeps them with `--include-not-sportswear-skips`. 10 rows on 2026-11-26: 9 template or short financial pages and one product review.
+- **The training data file.** `data/fp_training_data.jsonl`, the path the notebooks and scripts read, now holds #154 PR2's export: 4,923 records (3,572 positive, 1,351 negative). v2.4.0's training data is kept as `data/fp_training_data_v2_4_0_ref.jsonl`: 1,634 records from `51edccb`, the last version of the file before v2.4.0 was created. The file it replaced (2,318 records, `55c3b87`) trained no registered model. See `docs/MLOPS.md`.
+- The other 509 `unattributed` positives are kept. Relabeling the ~400 with no reason or the batch reclassification reason is #293.
+
 ### 2026-11-25: The FP export leaves out #289's FM stratum (#154 PR2)
 
 `scripts/export_training_data.py --dataset fp` now leaves out the unreviewed rows of a relabel stratum whose spot-check measured an error rate in the exclude band. One stratum is listed (`EXCLUDED_STRATA` in `src/data_collection/provenance.py`): the rows #248's targeted relabel moved from `false_positive` to `skipped` (#289: 4 of 25 sampled rows wrong). On 2026-11-25 that is 152 rows.

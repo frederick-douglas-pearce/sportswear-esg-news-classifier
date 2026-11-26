@@ -462,6 +462,61 @@ class TestSpotCheckStrata:
         assert workflow_count_lines("\n".join(lines)) == []
 
 
+class TestNotSportswearSkips:
+    """#154 PR2: a skipped row storing a reply's not-sportswear reason for one of its brands."""
+
+    NIKE_NEGATIVE = "Nike: purely a financial investment analysis article"
+
+    @pytest.mark.parametrize(
+        "status, reason, brands, expected",
+        [
+            ("skipped", NIKE_NEGATIVE, ["Nike"], True),
+            ("skipped", "nike: lowercase brand; Puma: second brand", ["Nike", "Puma"], True),
+            # not a brand the article mentions (a fix note, another brand)
+            ("skipped", "Fixed: Removed Anta (Santa/Santana substring match)", ["Nike"], False),
+            ("skipped", "Puma: the animal", ["Nike"], False),
+            # pipeline and human reasons
+            ("skipped", JUDGED, ["Nike"], False),
+            ("skipped", models.MANUAL_SKIP_REASON, ["Nike"], False),
+            ("skipped", None, ["Nike"], False),
+            ("skipped", "", ["Nike"], False),
+            # a negative's reply reason is where it belongs
+            ("false_positive", NIKE_NEGATIVE, ["Nike"], False),
+        ],
+    )
+    def test_predicate(self, status, reason, brands, expected):
+        assert provenance.not_sportswear_reason_on_skip(status, reason, brands) is expected
+
+    def candidates(self):
+        nike = lambda **kw: FPCandidate(**{**cand("skipped").__dict__, "brands": ["Nike"], **kw})
+        return [
+            nike(article_id="contradicted", labeling_error=self.NIKE_NEGATIVE),
+            nike(article_id="fix-note", labeling_error="Fixed: Removed Anta"),
+            nike(article_id="no-reason", labeling_error=None),
+            # ruled skipped by the owner (#289), so human, and kept
+            nike(article_id=RULED_FM_ID, labeling_error=self.NIKE_NEGATIVE),
+        ]
+
+    def test_excluded_by_default_and_counted(self):
+        records, report = build_fp_dataset(self.candidates())
+        assert ids(records) == {"fix-note", "no-reason", RULED_FM_ID}
+        assert report.excluded_not_sportswear_skips == 1
+        sources = {r["article_id"]: r["label_source"] for r in records}
+        assert sources == {"fix-note": UNATTRIBUTED, "no-reason": UNATTRIBUTED, RULED_FM_ID: HUMAN}
+
+    def test_include_flag_keeps_them_as_unattributed(self):
+        records, report = build_fp_dataset(self.candidates(), include_not_sportswear_skips=True)
+        assert ids(records) == {"contradicted", "fix-note", "no-reason", RULED_FM_ID}
+        assert report.excluded_not_sportswear_skips == 0
+
+    def test_report_line(self, capsys):
+        _, report = build_fp_dataset(self.candidates())
+        print_fp_report(report)
+        out = capsys.readouterr().out
+        assert "Excluded skips with a not-sportswear reason: 1" in out.splitlines()
+        assert workflow_count_lines(out) == []
+
+
 class TestStratumMembers:
     PASS = {"run-a", "run-b"}
 
@@ -583,6 +638,7 @@ class TestArgs:
         assert not args.include_unjudged_skips
         assert not args.include_rule_labels
         assert not args.include_spot_check_strata
+        assert not args.include_not_sportswear_skips
         assert args.attested_before is None
 
     def test_attested_before_parses_to_date(self):
@@ -604,6 +660,7 @@ class TestArgs:
             ["--include-unjudged-skips"],
             ["--include-rule-labels"],
             ["--include-spot-check-strata"],
+            ["--include-not-sportswear-skips"],
             ["--attested-before", "2026-01-01"],
             ["--attested-before", ""],
         ],
@@ -639,6 +696,7 @@ class TestMainWiring:
             include_rule_labels=True,
             attested_before=date(2026, 2, 1),
             include_spot_check_strata=False,
+            include_not_sportswear_skips=False,
         )
         assert "Excluded classifier-only negatives" in capsys.readouterr().out
 
@@ -992,5 +1050,8 @@ class TestExportQuery:
         assert "provenance test fm-member" not in by_title
         assert "provenance test fm-retried" not in by_title
         assert by_title["provenance test fm-ruled"]["label_source"] == HUMAN
-        for kept in ("fm-rejudged", "fm-later-pass", "fk-hand-moved", "fk-kept", "sk-kept", "other-tag"):
+        for kept in ("fm-rejudged", "fm-later-pass", "fk-kept", "sk-kept", "other-tag"):
             assert f"provenance test {kept}" in by_title
+        # not a stratum member, but its reply's not-sportswear reason on a skip leaves it out
+        assert "provenance test fk-hand-moved" not in by_title
+        assert report.excluded_not_sportswear_skips >= 1

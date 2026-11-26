@@ -206,6 +206,7 @@ uv run python scripts/export_training_data.py --dataset fp --include-classifier-
 uv run python scripts/export_training_data.py --dataset fp --include-unjudged-skips
 uv run python scripts/export_training_data.py --dataset fp --include-rule-labels
 uv run python scripts/export_training_data.py --dataset fp --include-spot-check-strata
+uv run python scripts/export_training_data.py --dataset fp --include-not-sportswear-skips
 
 # FP only: owner-attested tier (see below)
 uv run python scripts/export_training_data.py --dataset fp --attested-before YYYY-MM-DD
@@ -233,7 +234,7 @@ moved by hand reads as `llm` until #143's audit log records such moves.
 | `llm` | The labeling LLM decided it, with an FP prediction recorded (pre-filter running, failed, or disabled with a novelty score). Inferred for `false_positive`/`labeled` rows (see above) | kept |
 | `pre_classifier` | As `llm`, but no FP prediction is recorded: labeled before the FP classifier existed, or with the pre-filter off and no novelty score | kept |
 | `human` | A human ruled on it (today: the `HUMAN_RULINGS` list from #182, until #143's audit log; `cleanup_false_positives.py`'s manual marks) | kept |
-| `unattributed` | A `skipped` row whose reason no pipeline path writes (no reason, or one left by a status move) | kept, counted |
+| `unattributed` | A `skipped` row whose reason no pipeline path writes (no reason, or one left by a status move) | kept, counted; but one whose reason is a reply's not-sportswear judgment for one of its brands (`"<brand>: …"`) is excluded (`--include-not-sportswear-skips`) |
 | `fp_classifier` | A `false_positive` whose latest FP prediction is a skip and whose stored reason is that skip's own reason, so nothing has relabeled it since | excluded (`--include-classifier-labels`) |
 | `unjudged` | A `skipped` row whose reply, or lack of one, does not establish whether the article has a sportswear brand ("No ESG content found", "Insufficient content", "No brands mentioned", "No sportswear brand ESG content", "Some brands not judged; the rest not sportswear") | excluded (`--include-unjudged-skips`) |
 | `rule` | A `false_positive` from `cleanup_false_positives.py`'s keyword sweep (`Auto-detected:`) | excluded (`--include-rule-labels`) |
@@ -249,6 +250,14 @@ excluded (classifier-only negatives by the month of the FP skip, unjudged skips 
 both classes broken down by `label_source`. Unjudged skips are "no ESG" rows, so excluding them
 shrinks the "sportswear, no ESG" part of the positive class: read the composition, not only the
 class ratio, before retraining (#192 re-judges those rows).
+
+**Skips with a not-sportswear reason (#154 PR2).** A `skipped` row whose stored reason is a reply's
+not-sportswear judgment for a brand the article mentions (`"<brand>: <reason>"`,
+`provenance.not_sportswear_reason_on_skip`) has a status that says sportswear and a reason that
+says the opposite. Most are negatives moved to `skipped` before #143's audit log, with the reply's
+reason left behind. They stay `unattributed`, and the export leaves them out unless a human ruled
+on them (10 rows on 2026-11-26: template financial pages and one product review).
+`--include-not-sportswear-skips` keeps them.
 
 **Spot-checked relabel strata (#289).** The export also leaves out the unreviewed rows of a relabel
 stratum whose seeded spot-check measured an error rate in the exclude band (`EXCLUDED_STRATA` in

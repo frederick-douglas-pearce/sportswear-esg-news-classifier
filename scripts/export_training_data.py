@@ -24,6 +24,7 @@ Usage:
     python scripts/export_training_data.py --dataset fp --include-unjudged-skips
     python scripts/export_training_data.py --dataset fp --include-rule-labels
     python scripts/export_training_data.py --dataset fp --include-spot-check-strata
+    python scripts/export_training_data.py --dataset fp --include-not-sportswear-skips
 
     # FP: owner-attested tier - also keep classifier-only negatives skipped before a date
     python scripts/export_training_data.py --dataset fp --attested-before YYYY-MM-DD
@@ -93,6 +94,7 @@ class FPExportReport:
     excluded_unjudged: int = 0
     excluded_unjudged_by_reason: Counter = field(default_factory=Counter)
     excluded_rule: int = 0
+    excluded_not_sportswear_skips: int = 0
     excluded_strata: Counter = field(default_factory=Counter)  # stratum name -> rows left out
     strata_records: dict = field(default_factory=dict)  # stratum name -> where its spot-check is
     attested_included: int = 0
@@ -131,12 +133,15 @@ def build_fp_dataset(
     attested_before: date | None = None,
     strata: Mapping[str, str] | None = None,
     include_spot_check_strata: bool = False,
+    include_not_sportswear_skips: bool = False,
 ) -> FPExport:
     """Build FP training records from candidates, applying the provenance exclusions.
 
     Every record carries ``label_source`` (see ``src.data_collection.provenance``). By default,
     classifier-only negatives, unjudged skips, keyword-sweep negatives and the rows of an excluded
-    relabel stratum are left out and counted.
+    relabel stratum are left out and counted, and so are ``skipped`` rows whose stored reason is a
+    reply's not-sportswear judgment (``provenance.not_sportswear_reason_on_skip``), unless a human
+    ruled on them; ``include_not_sportswear_skips`` keeps those.
     Each ``include_*`` flag puts one cohort back. ``attested_before`` puts back only classifier-only
     negatives whose FP skip predates that date (UTC), marked with ``attested_cutoff``; it does not
     change their ``label_source``.
@@ -187,6 +192,14 @@ def build_fp_dataset(
                 report.excluded_rule += 1
                 continue
 
+        if (
+            source == provenance.UNATTRIBUTED
+            and not include_not_sportswear_skips
+            and provenance.not_sportswear_reason_on_skip(c.labeling_status, c.labeling_error, c.brands)
+        ):
+            report.excluded_not_sportswear_skips += 1
+            continue
+
         stratum = strata.get(c.article_id) if source != provenance.HUMAN else None
         if stratum is not None and not include_spot_check_strata:
             report.excluded_strata[stratum] += 1
@@ -229,6 +242,7 @@ def export_false_positive_data(
     include_rule_labels: bool = False,
     attested_before: date | None = None,
     include_spot_check_strata: bool = False,
+    include_not_sportswear_skips: bool = False,
 ) -> FPExport:
     """Export data for the false positive brand classifier.
 
@@ -269,6 +283,7 @@ def export_false_positive_data(
         attested_before=attested_before,
         strata=provenance.excluded_stratum_ids(session),
         include_spot_check_strata=include_spot_check_strata,
+        include_not_sportswear_skips=include_not_sportswear_skips,
     )
 
 
@@ -434,6 +449,7 @@ def print_fp_report(report: FPExportReport) -> None:
     for reason, count in report.excluded_unjudged_by_reason.most_common():
         print(f"  {reason}: {count}")
     print(f"Excluded keyword-sweep negatives: {report.excluded_rule}")
+    print(f"Excluded skips with a not-sportswear reason: {report.excluded_not_sportswear_skips}")
     print(f"Excluded spot-checked relabel strata: {sum(report.excluded_strata.values())}")
     for name, count in sorted(report.excluded_strata.items()):
         record = report.strata_records.get(name)
@@ -555,6 +571,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     fp_group.add_argument(
+        "--include-not-sportswear-skips",
+        action="store_true",
+        help="Keep skipped rows whose stored reason is a reply's not-sportswear judgment (label_source unattributed)",
+    )
+    fp_group.add_argument(
         "--attested-before",
         type=str,
         metavar="YYYY-MM-DD",
@@ -579,6 +600,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             "include_unjudged_skips",
             "include_rule_labels",
             "include_spot_check_strata",
+            "include_not_sportswear_skips",
             "attested_before",
         )
         if getattr(args, name) not in (None, False)
@@ -643,6 +665,7 @@ def main() -> int:
                 include_rule_labels=args.include_rule_labels,
                 attested_before=args.attested_before,
                 include_spot_check_strata=args.include_spot_check_strata,
+                include_not_sportswear_skips=args.include_not_sportswear_skips,
             )
         elif args.dataset == "esg-prefilter":
             records = export_esg_prefilter_data(session, since)
