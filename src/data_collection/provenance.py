@@ -86,8 +86,8 @@ FAILED_STATUS = "failed"
 # (2026-10-30), #249's review of the #245 relabel (2026-11-03), #248's template rows
 # (2026-11-04), #232's spot-check of the relabeled cohorts (2026-11-18), #238's eval-case
 # articles (2026-11-18), #275's eval-case articles (2026-11-20), and #248's review of its
-# targeted relabel (2026-11-22), and #289's spot-check of that relabel (2026-11-23). #143 backfills
-# these into its audit log and deletes this.
+# targeted relabel (2026-11-22), #289's spot-check of that relabel (2026-11-23), and #154's
+# not-sportswear-reason skips (2026-11-26). #143 backfills these into its audit log and deletes this.
 HUMAN_RULINGS: dict[str, str] = {
     # 2026-10-09: corrected to false_positive
     "aabc7f6e-8fc5-4c02-9880-b9e404bd840a": "false_positive",
@@ -557,6 +557,21 @@ HUMAN_RULINGS: dict[str, str] = {
     "c737ac71-3406-404b-ac34-15d4db147259": "skipped",
     "d2835c20-c6db-42ae-aa2d-6c22752ac367": "skipped",
     "d425bd98-76f5-4d47-b481-a81cd4b8ce79": "skipped",
+    # 2026-11-26, #154 (record on #154): skips whose stored reason was a reply's not-sportswear
+    # judgment, moved by hand from false_positive on 2026-02-19 and 2026-04-11 under the stock-article
+    # guideline of the time, ruled again under D046. Analysis that judges the brand and a product
+    # review are skipped; a price move with no reason, a data-only earnings preview and a dividend
+    # template are false_positive
+    "14f44740-1afa-458f-822e-acd8707261ea": "false_positive",
+    "a0d10ff0-c65f-40d7-8c5a-e8ca9d0c4644": "false_positive",
+    "e5b29b2b-0224-4f99-a312-02a57e8c11de": "false_positive",
+    "01f6dd9f-43da-4ca6-b8f9-a2b749ea8cea": "skipped",
+    "228cf69b-e4c9-4f89-aa63-6d88e4ccc4d9": "skipped",
+    "7088fe97-5227-4567-830e-792d0ba212f3": "skipped",
+    "ad174e5e-db91-4258-a734-4703d891e50f": "skipped",
+    "b5635bfe-9773-4d33-a3e4-950f54000d8d": "skipped",
+    "b641157a-c728-4b1d-99a4-d98aadc4e0c6": "skipped",
+    "d88212fe-f6d7-4001-9202-09dda79d76c7": "skipped",
 }
 
 

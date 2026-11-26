@@ -33,7 +33,7 @@ uv run jupyter lab notebooks/
 | `fp2_model_selection_tuning.ipynb` | Model Selection & Tuning | Best model (Random Forest), CV metrics |
 | `fp3_model_evaluation_deployment.ipynb` | Test Evaluation & Deployment | Threshold optimization, pipeline export |
 
-**Training data:** `data/fp_training_data.jsonl` (the latest export: 4,933 articles on 2026-11-26, 3,582 sportswear and 1,351 false positives). The production model, v2.4.0, was trained on `data/fp_training_data_v2_4_0_ref.jsonl` (1,634 articles; see `docs/MLOPS.md`)
+**Training data:** `data/fp_training_data.jsonl` (the latest export: 4,933 articles on 2026-11-26, 3,579 sportswear and 1,354 false positives). The production model, v2.4.0, was trained on `data/fp_training_data_v2_4_0_ref.jsonl` (1,634 articles; see `docs/MLOPS.md`)
 
 **Key metrics to look for:**
 - CV F2 Score: ~0.98
