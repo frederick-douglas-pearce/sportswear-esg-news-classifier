@@ -139,7 +139,7 @@ text stays on the step).
 **What this replaces.** Three workflows hand-rolled a terminal raising step to get the same effect:
 `website_export.send_error_notification`, `daily_labeling.send_notification` (narrower — it fires
 only when *every* notification channel failed, so it says nothing about whether labeling worked),
-and `drift_monitoring.fail_on_unknown_verdict` (added in #71). Only `model_training` has none.
+and `drift_monitoring.fail_on_unknown_verdict` (added in #71). Only `model_training` has none; its export step returns `StepFailure` when an export fails or writes no file (#154), and its other steps still report failure in a dict.
 `drift_monitoring`'s was migrated in #74 onto the shared gate below; the remaining two are
 #77's and #78's work.
 

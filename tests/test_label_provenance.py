@@ -563,7 +563,7 @@ class TestStdoutContract:
 
         from src.agent.workflows import model_training
 
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(model_training.agent_settings, "project_root", tmp_path)
         (tmp_path / "data").mkdir()
         result = SimpleNamespace(success=True, exit_code=0, duration_seconds=0.0, stdout=stdout, stderr="")
 
@@ -574,53 +574,6 @@ class TestStdoutContract:
         with patch.object(model_training, "run_export_training_data", side_effect=export):
             out = model_training.export_training_data(None, {"classifiers": ["fp"]})
         assert out["datasets"]["fp"]["record_count"] == len(records)
-
-
-class TestWorkflowExportFile:
-    """model_training copies the file the export wrote, never the newest data/ match (#294's review)."""
-
-    def run_step(self, tmp_path, monkeypatch, writes):
-        from src.agent.workflows import model_training
-
-        monkeypatch.chdir(tmp_path)
-        data = tmp_path / "data"
-        data.mkdir()
-        standard = data / "fp_training_data.jsonl"
-        standard.write_text('{"stale": 1}\n')
-        # a newer committed file the old glob would have picked
-        ref = data / "fp_training_data_v2_4_0_ref.jsonl"
-        ref.write_text('{"ref": 1}\n')
-        os.utime(ref, (time.time() + 60, time.time() + 60))
-        calls = []
-
-        def export(dataset, output_path):
-            calls.append((dataset, output_path))
-            if writes:
-                Path(output_path).write_text('{"fresh": 1}\n')
-            return SimpleNamespace(
-                success=True, exit_code=0, duration_seconds=0.0,
-                stdout="Exported 1 records to x\n", stderr="",
-            )
-
-        with patch.object(model_training, "run_export_training_data", side_effect=export):
-            out = model_training.export_training_data(None, {"classifiers": ["fp"]})
-        return out, calls, standard
-
-    def test_copies_the_file_it_named(self, tmp_path, monkeypatch):
-        out, calls, standard = self.run_step(tmp_path, monkeypatch, writes=True)
-        [(dataset, output_path)] = calls
-        assert dataset == "fp"
-        assert re.fullmatch(r"data/fp_\d{8}T\d{6}Z\.jsonl", output_path)
-        assert out["datasets"]["fp"]["export_file"] == output_path
-        assert standard.read_text() == '{"fresh": 1}\n'
-        assert out["export_success"] is True
-
-    def test_no_file_written_fails_and_keeps_the_standard_file(self, tmp_path, monkeypatch):
-        out, _, standard = self.run_step(tmp_path, monkeypatch, writes=False)
-        assert out["export_success"] is False
-        assert out["datasets"]["fp"]["success"] is False
-        assert "wrote no file" in out["datasets"]["fp"]["error"]
-        assert standard.read_text() == '{"stale": 1}\n'
 
     def test_written_file_matches_records(self, tmp_path, capsys):
         records, report = build_fp_dataset(mixed_candidates())

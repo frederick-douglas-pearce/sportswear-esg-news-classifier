@@ -22,7 +22,8 @@ Usage:
 
 import json
 import logging
-import shutil
+import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,7 @@ from typing import Any
 from ..config import agent_settings
 from ..notifications import Notification, NotificationManager, NotificationType
 from ..runner import run_export_training_data, run_script
-from .base import StepDefinition, Workflow, WorkflowRegistry
+from .base import StepDefinition, StepFailure, Workflow, WorkflowRegistry
 
 # Lazy imports for experiment tracking (avoid import errors if not needed)
 _ExperimentTracker = None
@@ -62,17 +63,21 @@ MIN_RECORDS_EP = 200
 MAX_IMBALANCE_RATIO = 10.0
 
 
-def export_training_data(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any]:
+def export_training_data(workflow: Workflow, context: dict[str, Any]) -> dict[str, Any] | StepFailure:
     """Export training data for FP and EP classifiers.
 
-    Exports JSONL files to data/ directory for notebook consumption.
+    Each export is written to a temporary file in ``<project_root>/data/``, removed first so no
+    earlier attempt's file can stand in for it, then moved onto the standard file the notebooks
+    read with ``os.replace``, which is atomic: an interrupted run leaves the standard file whole.
+    An export that fails, or that exits 0 without writing a file (it finds no records), fails the
+    step (``StepFailure``), so the workflow neither reports data as ready nor pauses for the
+    notebooks on the earlier export.
     """
     results = {
         "export_success": True,
         "datasets": {},
     }
 
-    # Determine which classifiers to export
     # Map classifier types to dataset names and standard output files
     classifier_to_dataset = {
         "fp": "fp",
@@ -80,70 +85,62 @@ def export_training_data(workflow: Workflow, context: dict[str, Any]) -> dict[st
     }
     # Standard output files that notebooks expect
     classifier_to_standard_file = {
-        "fp": "data/fp_training_data.jsonl",
-        "ep": "data/ep_training_data.jsonl",
+        "fp": "fp_training_data.jsonl",
+        "ep": "ep_training_data.jsonl",
     }
     classifiers = context.get("classifiers", ["fp", "ep"])
     if isinstance(classifiers, str):
         classifiers = [classifiers]
 
-    data_dir = Path("data")
+    # The export runs with project_root as its working directory (run_script), so every path
+    # this step checks or moves is absolute under the same root
+    data_dir = Path(agent_settings.project_root) / "data"
+    errors = []
 
     for classifier in classifiers:
         dataset_name = classifier_to_dataset.get(classifier, classifier)
-        standard_file = classifier_to_standard_file.get(classifier)
+        standard_name = classifier_to_standard_file.get(classifier, f"{dataset_name}_training_data.jsonl")
+        standard_file = data_dir / standard_name
+        export_file = data_dir / f".{standard_name}.export.tmp"
         logger.info(f"Exporting {classifier} training data (dataset: {dataset_name})...")
 
-        # Export to a timestamped file this step names, then copy exactly that file to the
-        # standard name. Never pick a file by pattern: data/ also holds committed files such as
-        # fp_training_data_v2_4_0_ref.jsonl, which a "newest match" could copy over the training
-        # data (#154 PR2's review).
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        export_file = data_dir / f"{dataset_name}_{stamp}.jsonl"
+        export_file.unlink(missing_ok=True)
         result = run_export_training_data(dataset=dataset_name, output_path=str(export_file))
 
         dataset_result = {
             "success": result.success,
             "exit_code": result.exit_code,
             "duration_seconds": result.duration_seconds,
-            "export_file": str(export_file),
         }
-
-        if result.success and not export_file.exists():
-            # The export exits 0 without writing a file when it finds no records; the standard
-            # file then still holds an earlier export, so training on it would be stale.
-            result_error = f"export wrote no file at {export_file} (no records?)"
-            dataset_result["success"] = False
-            results["export_success"] = False
-            dataset_result["error"] = result_error
-            logger.error(f"Failed to export {classifier} data: {result_error}")
-            results["datasets"][classifier] = dataset_result
-            continue
-
-        if result.success and standard_file:
-            shutil.copy2(export_file, standard_file)
-            logger.info(f"Copied {export_file.name} to {standard_file}")
-
-        if result.success:
+        error = None
+        if not result.success:
+            error = result.stderr[:500]
+        elif not export_file.exists():
+            error = "export exited 0 but wrote no file (no records)"
+        else:
+            os.replace(export_file, standard_file)
+            dataset_result["file"] = str(standard_file)
+            logger.info(f"Moved {classifier} export to {standard_file}")
             # Parse record count from output
             for line in result.stdout.split("\n"):
                 if "records" in line.lower() or "exported" in line.lower():
-                    try:
-                        # Extract number from line
-                        import re
-                        numbers = re.findall(r'\d+', line)
-                        if numbers:
-                            dataset_result["record_count"] = int(numbers[0])
-                    except (ValueError, IndexError):
-                        pass
+                    numbers = re.findall(r"\d+", line)
+                    if numbers:
+                        dataset_result["record_count"] = int(numbers[0])
             logger.info(f"Exported {classifier} data: {dataset_result.get('record_count', 'unknown')} records")
-        else:
+
+        if error is not None:
+            export_file.unlink(missing_ok=True)
             results["export_success"] = False
-            dataset_result["error"] = result.stderr[:500]
-            logger.error(f"Failed to export {classifier} data: {result.stderr[:200]}")
+            dataset_result["success"] = False
+            dataset_result["error"] = error
+            errors.append(f"{classifier}: {error}")
+            logger.error(f"Failed to export {classifier} data: {error[:200]}")
 
         results["datasets"][classifier] = dataset_result
 
+    if errors:
+        return StepFailure(error="; ".join(errors), context=results)
     return results
 
 
@@ -279,6 +276,11 @@ def notify_and_pause(workflow: Workflow, context: dict[str, Any]) -> dict[str, A
     This step explicitly pauses the workflow after sending the notification,
     rather than using requires_approval=True which pauses before execution.
     """
+    if not context.get("export_success", False):
+        # The export step failed (StepFailure): the standard files hold an earlier export, so
+        # report nothing as ready and do not pause for the notebooks
+        return {"notify_skipped": True, "reason": "export_failed"}
+
     # Build notification content
     datasets = context.get("datasets", {})
     quality = context.get("quality_passed", True)
