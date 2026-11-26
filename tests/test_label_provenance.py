@@ -43,6 +43,11 @@ AUTO = "Auto-detected: Puma matched pattern 'puma biotechnology'"
 FP_SKIP = "High-confidence false positive: probability 0.234 < threshold 0.53"
 # #182: in HUMAN_RULINGS as false_positive; the fixtures below give it a classifier skip
 CORRECTED_FP_ID = "aabc7f6e-8fc5-4c02-9880-b9e404bd840a"
+JUDGED = models.SKIP_NO_ESG_CATEGORIES
+FM = provenance.EXCLUDED_STRATA[0]
+STRATUM = FM.name
+# #289: an FM row the owner ruled skipped, so it is in HUMAN_RULINGS at the stratum's status
+RULED_FM_ID = "1fe66929-a227-4ce3-a7fb-78df8661c7c9"
 
 
 class TestStoredLiterals:
@@ -398,6 +403,88 @@ class TestBuildFpDataset:
             build_fp_dataset([cand("labeled", action="rerouted")])
 
 
+class TestSpotCheckStrata:
+    """#289: the unreviewed rows of a relabel stratum in the exclude band are left out."""
+
+    def strata_candidates(self):
+        return [
+            cand("skipped", JUDGED, "continued_to_llm", article_id="fm-unreviewed"),
+            cand("skipped", JUDGED, "continued_to_llm", article_id=RULED_FM_ID),
+            cand("skipped", "No ESG content found", "continued_to_llm", article_id="fm-unjudged"),
+            cand("skipped", JUDGED, "continued_to_llm", article_id="not-in-stratum"),
+        ]
+
+    def strata(self):
+        return {i: STRATUM for i in ("fm-unreviewed", RULED_FM_ID, "fm-unjudged")}
+
+    def test_the_fm_stratum_is_the_289_decision(self):
+        assert FM.run_tag == provenance.MODE_RELABEL_248 == "248-relabel"
+        assert (FM.prior_status, FM.status, FM.record) == ("false_positive", "skipped", "#289")
+        assert HUMAN_RULINGS[RULED_FM_ID] == FM.status
+
+    def test_unreviewed_rows_are_excluded_and_counted(self):
+        records, report = build_fp_dataset(self.strata_candidates(), strata=self.strata())
+        assert ids(records) == {RULED_FM_ID, "not-in-stratum"}
+        assert report.excluded_strata == {STRATUM: 1}
+        # a row a source exclusion already left out is counted there, not twice
+        assert report.excluded_unjudged == 1
+        assert all("spot_check_stratum" not in r for r in records)
+
+    def test_a_human_ruling_is_kept_whatever_its_stratum(self):
+        records, _ = build_fp_dataset(self.strata_candidates(), strata=self.strata())
+        ruled = next(r for r in records if r["article_id"] == RULED_FM_ID)
+        assert ruled["label_source"] == HUMAN
+
+    def test_include_flag_keeps_and_stamps_them(self):
+        records, report = build_fp_dataset(
+            self.strata_candidates(), strata=self.strata(), include_spot_check_strata=True
+        )
+        stamped = {r["article_id"]: r.get("spot_check_stratum") for r in records}
+        assert stamped == {"fm-unreviewed": STRATUM, RULED_FM_ID: None, "not-in-stratum": None}
+        assert report.excluded_strata == {}
+
+    def test_no_strata_changes_nothing(self):
+        assert build_fp_dataset(mixed_candidates(), strata={}) == build_fp_dataset(mixed_candidates())
+
+    def test_report_prints_each_stratum(self, capsys):
+        _, report = build_fp_dataset(self.strata_candidates(), strata=self.strata())
+        print_fp_report(report)
+        lines = capsys.readouterr().out.splitlines()
+        assert "Excluded spot-checked relabel strata: 1" in lines
+        assert f"  {STRATUM}: 1" in lines
+        assert workflow_count_lines("\n".join(lines)) == []
+
+
+class TestStratumMembers:
+    TAGGED = {"run-a", "run-b"}
+
+    def members(self, prior, status, judgments):
+        return provenance.stratum_members(FM, prior, status, judgments, self.TAGGED)
+
+    def test_member_at_its_relabel_judgment(self):
+        assert self.members({"a": "false_positive"}, {"a": "skipped"}, {"a": {"run-a", "run-b"}}) == {"a"}
+
+    @pytest.mark.parametrize(
+        "prior, status, judgments",
+        [
+            # the relabel recorded another prior status
+            ({"a": "skipped"}, {"a": "skipped"}, {"a": {"run-a"}}),
+            # its status moved since (kept false_positive, a human move, a later relabel)
+            ({"a": "false_positive"}, {"a": "false_positive"}, {"a": {"run-a"}}),
+            ({"a": "false_positive"}, {"a": "labeled"}, {"a": {"run-a"}}),
+            # judged again by a run outside the tag
+            ({"a": "false_positive"}, {"a": "skipped"}, {"a": {"run-a", "daily"}}),
+            ({"a": "false_positive"}, {"a": "skipped"}, {"a": {"daily"}}),
+            # no judgment: something else decided it since
+            ({"a": "false_positive"}, {"a": "skipped"}, {}),
+            # gone from the database
+            ({"a": "false_positive"}, {}, {"a": {"run-a"}}),
+        ],
+    )
+    def test_not_a_member(self, prior, status, judgments):
+        assert self.members(prior, status, judgments) == set()
+
+
 def workflow_count_lines(stdout):
     """The lines model_training.export_training_data reads a record count from."""
     return [l for l in stdout.split("\n") if "records" in l.lower() or "exported" in l.lower()]
@@ -467,6 +554,7 @@ class TestArgs:
         assert not args.include_classifier_labels
         assert not args.include_unjudged_skips
         assert not args.include_rule_labels
+        assert not args.include_spot_check_strata
         assert args.attested_before is None
 
     def test_attested_before_parses_to_date(self):
@@ -487,6 +575,7 @@ class TestArgs:
             ["--include-classifier-labels"],
             ["--include-unjudged-skips"],
             ["--include-rule-labels"],
+            ["--include-spot-check-strata"],
             ["--attested-before", "2026-01-01"],
             ["--attested-before", ""],
         ],
@@ -521,6 +610,7 @@ class TestMainWiring:
             include_unjudged_skips=True,
             include_rule_labels=True,
             attested_before=date(2026, 2, 1),
+            include_spot_check_strata=False,
         )
         assert "Excluded classifier-only negatives" in capsys.readouterr().out
 
@@ -530,6 +620,12 @@ class TestMainWiring:
         self._run_main(monkeypatch, ["--dataset", "fp", "-o", str(tmp_path / "fp.jsonl"), "--include-classifier-labels"])
         assert spy.call_args.kwargs["include_classifier_labels"] is True
         assert spy.call_args.kwargs["attested_before"] is None
+
+    def test_include_spot_check_strata_reaches_the_export(self, monkeypatch, tmp_path, capsys):
+        spy = MagicMock(return_value=build_fp_dataset(mixed_candidates()))
+        monkeypatch.setattr(export_script, "export_false_positive_data", spy)
+        self._run_main(monkeypatch, ["--dataset", "fp", "-o", str(tmp_path / "fp.jsonl"), "--include-spot-check-strata"])
+        assert spy.call_args.kwargs["include_spot_check_strata"] is True
 
     @pytest.mark.parametrize(
         "dataset, exporter, record",
@@ -556,6 +652,13 @@ class TestMainWiring:
 class TestExportRowMapping:
     """export_false_positive_data turns query rows into candidates."""
 
+    @pytest.fixture(autouse=True)
+    def no_strata(self, monkeypatch):
+        """The session here is a placeholder, so the strata query is stubbed."""
+        stub = MagicMock(return_value={})
+        monkeypatch.setattr(provenance, "excluded_stratum_ids", stub)
+        return stub
+
     def test_rows_map_to_candidates(self):
         article_uuid = uuid.UUID(CORRECTED_FP_ID)
         article = SimpleNamespace(
@@ -574,6 +677,21 @@ class TestExportRowMapping:
         assert records[0]["label_source"] == HUMAN
         assert records[0]["content"] == "d"
         assert records[0]["brands"] == [] and records[0]["category"] == []
+
+    def test_strata_are_read_from_the_session_and_applied(self, no_strata):
+        article = SimpleNamespace(
+            id=uuid.uuid4(), title="t", full_content="c", description=None, brands_mentioned=["Nike"],
+            source_name="s", category=None, labeling_status="skipped", labeling_error=JUDGED,
+        )
+        no_strata.return_value = {str(article.id): STRATUM}
+        query = MagicMock()
+        query.all.return_value = [query_row(Article=article, action_taken=None, skip_reason=None, created_at=None)]
+        with patch.object(export_script, "fp_export_query", return_value=query):
+            records, report = export_false_positive_data("session", None)
+            assert records == [] and report.excluded_strata == {STRATUM: 1}
+            records, report = export_false_positive_data("session", None, include_spot_check_strata=True)
+            assert [r["spot_check_stratum"] for r in records] == [STRATUM]
+        no_strata.assert_called_with("session")
 
     def test_prediction_fields_reach_the_candidate(self):
         """The latest prediction's action, skip reason and time decide a classifier-only row; the
@@ -704,7 +822,9 @@ class TestExportQuery:
         yield database
         with database.get_session() as session:
             session.query(models.ClassifierPrediction).delete()
+            session.query(models.BrandJudgment).delete()
             session.query(models.Article).delete()
+            session.query(models.LabelingRun).delete()
 
     def _article(self, session, key, status, reason=None, article_uuid=None):
         article = models.Article(
@@ -768,3 +888,60 @@ class TestExportQuery:
         assert report.excluded_classifier_only_by_month == {"2026-03": 1}
         assert report.excluded_unjudged == 1
         assert [r["article_id"] for r in records] == sorted(r["article_id"] for r in records)
+
+    def _judge(self, session, article, run):
+        session.add(models.BrandJudgment(
+            article_id=article.id, labeling_run_id=run.id, brand="Puma", content_type="product",
+            reasoning="r", prompt_version="v1.14.0", model="m",
+        ))
+
+    def test_excluded_strata_from_the_tagged_runs(self, test_db):
+        """#289: the FM stratum is read from the 248-relabel runs' recorded prior status and the
+        rows' judgments, and the export leaves its members out."""
+        with test_db.get_session() as session:
+            first = models.LabelingRun(started_at=JAN, config={"run_tag": FM.run_tag})
+            second = models.LabelingRun(started_at=MAR, config={"run_tag": FM.run_tag})
+            daily = models.LabelingRun(started_at=MAR + timedelta(days=2), config={})
+            other_tag = models.LabelingRun(started_at=MAR, config={"run_tag": provenance.MODE_RELABEL})
+            session.add_all([first, second, daily, other_tag])
+            session.flush()
+            member = self._article(session, "fm-member", "skipped", JUDGED)
+            retried = self._article(session, "fm-retried", "skipped", JUDGED)
+            rejudged = self._article(session, "fm-rejudged", "skipped", JUDGED)
+            kept_fp = self._article(session, "fk-kept", "false_positive", "Puma: the animal")
+            was_skip = self._article(session, "sk-kept", "skipped", JUDGED)
+            untagged = self._article(session, "other-tag", "skipped", JUDGED)
+            ruled = self._article(session, "fm-ruled", "skipped", JUDGED, article_uuid=uuid.UUID(RULED_FM_ID))
+            prior = lambda status: [status, "reason", "arm"]
+            first.config = {"run_tag": FM.run_tag, "run_config": {"prior": {
+                str(member.id): prior("false_positive"),
+                str(retried.id): prior("false_positive"),
+                str(rejudged.id): prior("false_positive"),
+                str(kept_fp.id): prior("false_positive"),
+                str(was_skip.id): prior("skipped"),
+                str(ruled.id): prior("false_positive"),
+            }}}
+            # a retry's later record is not its prior status
+            second.config = {"run_tag": FM.run_tag, "run_config": {"prior": {str(retried.id): prior("failed")}}}
+            other_tag.config = {"run_tag": provenance.MODE_RELABEL, "run_config": {"prior": {
+                str(untagged.id): prior("false_positive"),
+            }}}
+            for article in (member, kept_fp, was_skip, ruled):
+                self._judge(session, article, first)
+            self._judge(session, retried, second)
+            self._judge(session, rejudged, daily)
+            self._judge(session, untagged, other_tag)
+            session.commit()
+
+            members = provenance.excluded_stratum_ids(session)
+            records, report = export_false_positive_data(session)
+            expected = {str(member.id): STRATUM, str(retried.id): STRATUM, RULED_FM_ID: STRATUM}
+
+        assert members == expected
+        by_title = {r["title"]: r for r in records}
+        assert "provenance test fm-member" not in by_title
+        assert "provenance test fm-retried" not in by_title
+        assert by_title["provenance test fm-ruled"]["label_source"] == HUMAN
+        for kept in ("fm-rejudged", "fk-kept", "sk-kept", "other-tag"):
+            assert f"provenance test {kept}" in by_title
+        assert report.excluded_strata == {STRATUM: 2}

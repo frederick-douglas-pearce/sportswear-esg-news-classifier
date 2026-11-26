@@ -4,6 +4,15 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-25: The FP export leaves out #289's FM stratum (#154 PR2)
+
+`scripts/export_training_data.py --dataset fp` now leaves out the unreviewed rows of a relabel stratum whose spot-check measured an error rate in the exclude band. One stratum is listed (`EXCLUDED_STRATA` in `src/data_collection/provenance.py`): the rows #248's targeted relabel moved from `false_positive` to `skipped` (#289: 4 of 25 sampled rows wrong). On 2026-11-25 that is 152 rows.
+
+- **Membership is derived, not stored.** A row is in the stratum while the `248-relabel` runs recorded `false_positive` as its prior status (first record, as the backfill report reads it), it is `skipped` now, and every `brand_judgments` row it has came from a `248-relabel` run. A row leaves when its status moves or when a later run judges it again (#290's prompt, for instance), and it is then exported as any other row.
+- **Human rulings win.** The 25 reviewed rows are in `HUMAN_RULINGS` and are kept, with `label_source: human`.
+- **The exclusion is beside `label_source`, not a source.** The LLM decided these rows, so their source stays `llm`. A row a source exclusion already leaves out (`unjudged`, say) is counted there only.
+- The export prints `Excluded spot-checked relabel strata` with a count per stratum. `--include-spot-check-strata` keeps them, each with a `spot_check_stratum` field.
+
 ### 2026-11-23: The owner's spot-check of #248's targeted relabel (#289)
 
 The owner reviewed a seeded sample of the 1,389 rows #248 relabeled under v1.14.0, stratified by arm and by whether the row's status moved (100 rows). Claude wrote a verdict on every card before the owner ruled. The decision rule was fixed before the strata after SM were reviewed: #232's bands as rates, judged per stratum.
