@@ -22,6 +22,7 @@ Usage:
 
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -93,24 +94,35 @@ def export_training_data(workflow: Workflow, context: dict[str, Any]) -> dict[st
         standard_file = classifier_to_standard_file.get(classifier)
         logger.info(f"Exporting {classifier} training data (dataset: {dataset_name})...")
 
-        # Export to timestamped file (default behavior)
-        result = run_export_training_data(dataset=dataset_name)
-
-        if result.success:
-            # Find the latest timestamped file and copy to standard name
-            pattern = f"{dataset_name}_*.jsonl"
-            timestamped_files = sorted(data_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-            if timestamped_files and standard_file:
-                import shutil
-                latest_file = timestamped_files[0]
-                shutil.copy2(latest_file, standard_file)
-                logger.info(f"Copied {latest_file.name} to {standard_file}")
+        # Export to a timestamped file this step names, then copy exactly that file to the
+        # standard name. Never pick a file by pattern: data/ also holds committed files such as
+        # fp_training_data_v2_4_0_ref.jsonl, which a "newest match" could copy over the training
+        # data (#154 PR2's review).
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        export_file = data_dir / f"{dataset_name}_{stamp}.jsonl"
+        result = run_export_training_data(dataset=dataset_name, output_path=str(export_file))
 
         dataset_result = {
             "success": result.success,
             "exit_code": result.exit_code,
             "duration_seconds": result.duration_seconds,
+            "export_file": str(export_file),
         }
+
+        if result.success and not export_file.exists():
+            # The export exits 0 without writing a file when it finds no records; the standard
+            # file then still holds an earlier export, so training on it would be stale.
+            result_error = f"export wrote no file at {export_file} (no records?)"
+            dataset_result["success"] = False
+            results["export_success"] = False
+            dataset_result["error"] = result_error
+            logger.error(f"Failed to export {classifier} data: {result_error}")
+            results["datasets"][classifier] = dataset_result
+            continue
+
+        if result.success and standard_file:
+            shutil.copy2(export_file, standard_file)
+            logger.info(f"Copied {export_file.name} to {standard_file}")
 
         if result.success:
             # Parse record count from output

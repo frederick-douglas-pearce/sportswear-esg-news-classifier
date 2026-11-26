@@ -800,17 +800,6 @@ def possible_hand_move(labeling_error: str | None, brands: Sequence[str]) -> boo
     return not separator or _brand_key(name) not in {_brand_key(b) for b in brands}
 
 
-def not_sportswear_reason_on_skip(labeling_status: str, labeling_error: str | None, brands: Sequence[str]) -> bool:
-    """Whether a ``skipped`` row stores a reply's not-sportswear reason (``"<brand>: <reason>"``
-    for a brand the article mentions): its status says sportswear, its reason says the opposite.
-
-    No pipeline path writes that reason on a ``skipped`` row, so ``derive_label_source`` reads it
-    as ``unattributed``; most are negatives moved to ``skipped`` before #143's audit log, with the
-    reply's reason left behind. The FP export leaves them out by default (#154 PR2).
-    """
-    return labeling_status == "skipped" and bool(labeling_error) and not possible_hand_move(labeling_error, brands)
-
-
 class BackfillDecision(NamedTuple):
     """A row's arm, or why it is left out. Both None: not a backfill candidate at all."""
 

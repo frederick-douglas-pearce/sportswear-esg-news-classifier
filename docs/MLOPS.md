@@ -310,7 +310,7 @@ it does not identify the bytes. v2.4.0's training data is kept beside it as
 `data/fp_training_data_v2_4_0_ref.jsonl` (1,634 records, sha256 `5cc6ca8d6c74…`), copied from
 `51edccb`, the last commit of the file before v2.4.0 was created (2026-01-16T02:15Z; the registry
 notes say 1,634 samples). It predates `label_source` and the #154 exclusions. On 2026-11-26 the
-fixed path was overwritten with #154 PR2's export (4,923 records); the export it replaced (2,318
+fixed path was overwritten with #154 PR2's export (4,933 records); the export it replaced (2,318
 records, `55c3b87`) trained no registered model and stays in git history.
 
 **EP has no production version while it is on hold** (#180, D029). v1.0.0's registered bytes are not

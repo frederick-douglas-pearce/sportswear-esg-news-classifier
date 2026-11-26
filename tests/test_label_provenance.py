@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,7 @@ from scripts.export_training_data import (
     parse_args,
     print_fp_report,
     write_and_report,
+    write_jsonl,
 )
 from src.data_collection import models, provenance
 from src.data_collection.provenance import (
@@ -462,61 +464,6 @@ class TestSpotCheckStrata:
         assert workflow_count_lines("\n".join(lines)) == []
 
 
-class TestNotSportswearSkips:
-    """#154 PR2: a skipped row storing a reply's not-sportswear reason for one of its brands."""
-
-    NIKE_NEGATIVE = "Nike: purely a financial investment analysis article"
-
-    @pytest.mark.parametrize(
-        "status, reason, brands, expected",
-        [
-            ("skipped", NIKE_NEGATIVE, ["Nike"], True),
-            ("skipped", "nike: lowercase brand; Puma: second brand", ["Nike", "Puma"], True),
-            # not a brand the article mentions (a fix note, another brand)
-            ("skipped", "Fixed: Removed Anta (Santa/Santana substring match)", ["Nike"], False),
-            ("skipped", "Puma: the animal", ["Nike"], False),
-            # pipeline and human reasons
-            ("skipped", JUDGED, ["Nike"], False),
-            ("skipped", models.MANUAL_SKIP_REASON, ["Nike"], False),
-            ("skipped", None, ["Nike"], False),
-            ("skipped", "", ["Nike"], False),
-            # a negative's reply reason is where it belongs
-            ("false_positive", NIKE_NEGATIVE, ["Nike"], False),
-        ],
-    )
-    def test_predicate(self, status, reason, brands, expected):
-        assert provenance.not_sportswear_reason_on_skip(status, reason, brands) is expected
-
-    def candidates(self):
-        nike = lambda **kw: FPCandidate(**{**cand("skipped").__dict__, "brands": ["Nike"], **kw})
-        return [
-            nike(article_id="contradicted", labeling_error=self.NIKE_NEGATIVE),
-            nike(article_id="fix-note", labeling_error="Fixed: Removed Anta"),
-            nike(article_id="no-reason", labeling_error=None),
-            # ruled skipped by the owner (#289), so human, and kept
-            nike(article_id=RULED_FM_ID, labeling_error=self.NIKE_NEGATIVE),
-        ]
-
-    def test_excluded_by_default_and_counted(self):
-        records, report = build_fp_dataset(self.candidates())
-        assert ids(records) == {"fix-note", "no-reason", RULED_FM_ID}
-        assert report.excluded_not_sportswear_skips == 1
-        sources = {r["article_id"]: r["label_source"] for r in records}
-        assert sources == {"fix-note": UNATTRIBUTED, "no-reason": UNATTRIBUTED, RULED_FM_ID: HUMAN}
-
-    def test_include_flag_keeps_them_as_unattributed(self):
-        records, report = build_fp_dataset(self.candidates(), include_not_sportswear_skips=True)
-        assert ids(records) == {"contradicted", "fix-note", "no-reason", RULED_FM_ID}
-        assert report.excluded_not_sportswear_skips == 0
-
-    def test_report_line(self, capsys):
-        _, report = build_fp_dataset(self.candidates())
-        print_fp_report(report)
-        out = capsys.readouterr().out
-        assert "Excluded skips with a not-sportswear reason: 1" in out.splitlines()
-        assert workflow_count_lines(out) == []
-
-
 class TestStratumMembers:
     PASS = {"run-a", "run-b"}
 
@@ -616,12 +563,64 @@ class TestStdoutContract:
 
         from src.agent.workflows import model_training
 
-        # run from an empty directory so the step finds no data/ files to copy
         monkeypatch.chdir(tmp_path)
+        (tmp_path / "data").mkdir()
         result = SimpleNamespace(success=True, exit_code=0, duration_seconds=0.0, stdout=stdout, stderr="")
-        with patch.object(model_training, "run_export_training_data", return_value=result):
+
+        def export(dataset, output_path):
+            write_jsonl(records, Path(output_path))
+            return result
+
+        with patch.object(model_training, "run_export_training_data", side_effect=export):
             out = model_training.export_training_data(None, {"classifiers": ["fp"]})
         assert out["datasets"]["fp"]["record_count"] == len(records)
+
+
+class TestWorkflowExportFile:
+    """model_training copies the file the export wrote, never the newest data/ match (#294's review)."""
+
+    def run_step(self, tmp_path, monkeypatch, writes):
+        from src.agent.workflows import model_training
+
+        monkeypatch.chdir(tmp_path)
+        data = tmp_path / "data"
+        data.mkdir()
+        standard = data / "fp_training_data.jsonl"
+        standard.write_text('{"stale": 1}\n')
+        # a newer committed file the old glob would have picked
+        ref = data / "fp_training_data_v2_4_0_ref.jsonl"
+        ref.write_text('{"ref": 1}\n')
+        os.utime(ref, (time.time() + 60, time.time() + 60))
+        calls = []
+
+        def export(dataset, output_path):
+            calls.append((dataset, output_path))
+            if writes:
+                Path(output_path).write_text('{"fresh": 1}\n')
+            return SimpleNamespace(
+                success=True, exit_code=0, duration_seconds=0.0,
+                stdout="Exported 1 records to x\n", stderr="",
+            )
+
+        with patch.object(model_training, "run_export_training_data", side_effect=export):
+            out = model_training.export_training_data(None, {"classifiers": ["fp"]})
+        return out, calls, standard
+
+    def test_copies_the_file_it_named(self, tmp_path, monkeypatch):
+        out, calls, standard = self.run_step(tmp_path, monkeypatch, writes=True)
+        [(dataset, output_path)] = calls
+        assert dataset == "fp"
+        assert re.fullmatch(r"data/fp_\d{8}T\d{6}Z\.jsonl", output_path)
+        assert out["datasets"]["fp"]["export_file"] == output_path
+        assert standard.read_text() == '{"fresh": 1}\n'
+        assert out["export_success"] is True
+
+    def test_no_file_written_fails_and_keeps_the_standard_file(self, tmp_path, monkeypatch):
+        out, _, standard = self.run_step(tmp_path, monkeypatch, writes=False)
+        assert out["export_success"] is False
+        assert out["datasets"]["fp"]["success"] is False
+        assert "wrote no file" in out["datasets"]["fp"]["error"]
+        assert standard.read_text() == '{"stale": 1}\n'
 
     def test_written_file_matches_records(self, tmp_path, capsys):
         records, report = build_fp_dataset(mixed_candidates())
@@ -638,7 +637,6 @@ class TestArgs:
         assert not args.include_unjudged_skips
         assert not args.include_rule_labels
         assert not args.include_spot_check_strata
-        assert not args.include_not_sportswear_skips
         assert args.attested_before is None
 
     def test_attested_before_parses_to_date(self):
@@ -660,7 +658,6 @@ class TestArgs:
             ["--include-unjudged-skips"],
             ["--include-rule-labels"],
             ["--include-spot-check-strata"],
-            ["--include-not-sportswear-skips"],
             ["--attested-before", "2026-01-01"],
             ["--attested-before", ""],
         ],
@@ -696,7 +693,6 @@ class TestMainWiring:
             include_rule_labels=True,
             attested_before=date(2026, 2, 1),
             include_spot_check_strata=False,
-            include_not_sportswear_skips=False,
         )
         assert "Excluded classifier-only negatives" in capsys.readouterr().out
 
@@ -1050,8 +1046,5 @@ class TestExportQuery:
         assert "provenance test fm-member" not in by_title
         assert "provenance test fm-retried" not in by_title
         assert by_title["provenance test fm-ruled"]["label_source"] == HUMAN
-        for kept in ("fm-rejudged", "fm-later-pass", "fk-kept", "sk-kept", "other-tag"):
+        for kept in ("fm-rejudged", "fm-later-pass", "fk-hand-moved", "fk-kept", "sk-kept", "other-tag"):
             assert f"provenance test {kept}" in by_title
-        # not a stratum member, but its reply's not-sportswear reason on a skip leaves it out
-        assert "provenance test fk-hand-moved" not in by_title
-        assert report.excluded_not_sportswear_skips >= 1
