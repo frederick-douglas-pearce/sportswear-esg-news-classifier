@@ -324,13 +324,11 @@ def backfill_report(session, tag: str = RUN_TAG) -> dict:
     outcomes by arm, and the articles still unjudged or still failed, split by whether a later
     pass retries them."""
     runs = tagged_runs(session, tag)
-    prior: dict[str, list] = {}
+    # A retried article's first record is its status from before the backfill
+    prior = provenance.first_prior(run.config for run in runs)
     prior_types: dict[str, list[str]] = {}
     for run in runs:
         run_config = (run.config or {}).get("run_config") or {}
-        for article_id, values in (run_config.get("prior") or {}).items():
-            # A retried article's first record is its status from before the backfill
-            prior.setdefault(article_id, values)
         for article_id, types in (run_config.get("prior_content_types") or {}).items():
             prior_types.setdefault(article_id, types)
     report = {

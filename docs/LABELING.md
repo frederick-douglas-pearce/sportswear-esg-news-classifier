@@ -205,6 +205,7 @@ uv run python scripts/export_training_data.py --dataset fp -o data/fp_data.jsonl
 uv run python scripts/export_training_data.py --dataset fp --include-classifier-labels
 uv run python scripts/export_training_data.py --dataset fp --include-unjudged-skips
 uv run python scripts/export_training_data.py --dataset fp --include-rule-labels
+uv run python scripts/export_training_data.py --dataset fp --include-spot-check-strata
 
 # FP only: owner-attested tier (see below)
 uv run python scripts/export_training_data.py --dataset fp --attested-before YYYY-MM-DD
@@ -214,7 +215,7 @@ uv run python scripts/export_training_data.py --dataset fp --attested-before YYY
 
 | Dataset | Fields | Use Case |
 |---------|--------|----------|
-| `fp` | article_id, title, content, brands, source_name, category, is_sportswear, source, label_source (+ fp_reason on negatives, attested_cutoff on attested rows) | False positive brand classifier |
+| `fp` | article_id, title, content, brands, source_name, category, is_sportswear, source, label_source (+ fp_reason on negatives, attested_cutoff on attested rows, spot_check_stratum on rows kept with `--include-spot-check-strata`) | False positive brand classifier |
 | `esg-prefilter` | article_id, title, content, brands, has_esg | ESG content pre-filter |
 | `esg-labels` | article_id, title, content, brand, E/S/G/D flags + sentiment | Multi-label ESG classifier |
 
@@ -248,6 +249,18 @@ excluded (classifier-only negatives by the month of the FP skip, unjudged skips 
 both classes broken down by `label_source`. Unjudged skips are "no ESG" rows, so excluding them
 shrinks the "sportswear, no ESG" part of the positive class: read the composition, not only the
 class ratio, before retraining (#192 re-judges those rows).
+
+**Spot-checked relabel strata (#289).** The export also leaves out the unreviewed rows of a relabel
+stratum whose seeded spot-check measured an error rate in the exclude band (`EXCLUDED_STRATA` in
+`src/data_collection/provenance.py`). Today that is one stratum: the rows #248's targeted relabel
+moved from `false_positive` to `skipped` (4 of 25 sampled rows wrong; 152 unreviewed rows on
+2026-11-25). The stratum is the pass #289 measured, the `248-relabel` runs that started before
+2026-11-23, so a later invocation of the mode adds no row to it. A row is in it while it holds that
+pass's verdict: the pass recorded `false_positive` as its prior status, it is `skipped` now at the
+reason a judged reply writes, and all its `brand_judgments` rows come from the pass's runs. A status
+move, a hand move or a later relabel takes it out. Human rulings are kept. This is an exclusion beside
+`label_source`, not a source: the rows stay `llm`. The export prints the count per stratum;
+`--include-spot-check-strata` keeps the rows, each with `spot_check_stratum`.
 
 **Owner-attested tier.** `--attested-before YYYY-MM-DD` also keeps classifier-only negatives whose
 FP skip (UTC) predates the date, on the owner's attestation that articles before it were reviewed.
