@@ -2663,3 +2663,83 @@ class TestLabelingFailureReviewFindings:
         report = generate_report(MagicMock(name="w"), context)["report"]
         assert report["labeling"]["reason"] == "no_pending_articles"
         assert report["llm_analysis"]["reason"] == "labeling_skipped"
+
+
+class TestModelTrainingExportFile:
+    """model_training's export step moves the file the export wrote onto the standard file, and
+    fails when there is none (#294's reviews)."""
+
+    def run_step(self, tmp_path, monkeypatch, writes=True, success=True, leftover=False):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from src.agent.workflows import model_training
+
+        # the agent runs from elsewhere; the export runs from project_root
+        monkeypatch.chdir(tmp_path.parent)
+        monkeypatch.setattr(model_training.agent_settings, "project_root", tmp_path)
+        data = tmp_path / "data"
+        data.mkdir()
+        standard = data / "fp_training_data.jsonl"
+        standard.write_text('{"stale": 1}\n')
+        # a newer committed file the old "newest data/fp_*.jsonl" glob would have copied
+        ref = data / "fp_training_data_v2_4_0_ref.jsonl"
+        ref.write_text('{"ref": 1}\n')
+        if leftover:
+            # a partial file from an earlier, timed-out attempt
+            (data / ".fp_training_data.jsonl.export.tmp").write_text('{"partial"')
+        calls = []
+
+        def export(dataset, output_path):
+            calls.append((dataset, output_path))
+            if writes:
+                Path(output_path).write_text('{"fresh": 1}\n')
+            return SimpleNamespace(
+                success=success, exit_code=0 if success else 1, duration_seconds=0.0,
+                stdout="Exported 1 records to x\n", stderr="" if success else "boom",
+            )
+
+        with patch.object(model_training, "run_export_training_data", side_effect=export):
+            out = model_training.export_training_data(None, {"classifiers": ["fp"]})
+        return out, calls, data, standard
+
+    def test_moves_the_export_onto_the_standard_file(self, tmp_path, monkeypatch):
+        out, calls, data, standard = self.run_step(tmp_path, monkeypatch)
+        [(dataset, output_path)] = calls
+        assert dataset == "fp"
+        assert Path(output_path).is_absolute() and Path(output_path).parent == data
+        assert standard.read_text() == '{"fresh": 1}\n'
+        assert not Path(output_path).exists(), "moved, not copied: nothing left behind"
+        assert sorted(p.name for p in data.iterdir()) == [
+            "fp_training_data.jsonl", "fp_training_data_v2_4_0_ref.jsonl",
+        ]
+        assert out["export_success"] is True
+        assert out["datasets"]["fp"]["record_count"] == 1
+
+    def test_no_file_written_is_a_step_failure(self, tmp_path, monkeypatch):
+        out, _, _, standard = self.run_step(tmp_path, monkeypatch, writes=False)
+        assert isinstance(out, StepFailure)
+        assert "wrote no file" in out.error
+        assert out.context["export_success"] is False
+        assert standard.read_text() == '{"stale": 1}\n'
+
+    def test_an_earlier_attempts_partial_file_is_not_used(self, tmp_path, monkeypatch):
+        out, _, data, standard = self.run_step(tmp_path, monkeypatch, writes=False, leftover=True)
+        assert isinstance(out, StepFailure)
+        assert standard.read_text() == '{"stale": 1}\n'
+        assert not (data / ".fp_training_data.jsonl.export.tmp").exists()
+
+    def test_a_failed_export_is_a_step_failure(self, tmp_path, monkeypatch):
+        out, _, _, standard = self.run_step(tmp_path, monkeypatch, success=False)
+        assert isinstance(out, StepFailure)
+        assert "boom" in out.error
+        assert standard.read_text() == '{"stale": 1}\n'
+
+    def test_notify_and_pause_reports_nothing_after_a_failed_export(self, monkeypatch):
+        from src.agent.workflows import model_training
+
+        workflow = MagicMock()
+        out = model_training.notify_and_pause(workflow, {"export_success": False, "datasets": {}})
+        assert out == {"notify_skipped": True, "reason": "export_failed"}
+        workflow.state.pause_workflow.assert_not_called()
+

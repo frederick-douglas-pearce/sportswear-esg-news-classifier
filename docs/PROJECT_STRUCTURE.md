@@ -13,7 +13,8 @@ sportswear-esg-news-classifier/
 ├── .env                        # Local environment variables (not committed)
 ├── logs/                       # Application logs
 ├── data/                       # Training data exports (JSONL)
-│   ├── fp_training_data.jsonl        # FP classifier training data
+│   ├── fp_training_data.jsonl        # FP classifier training data (latest export; the path the notebooks read)
+│   ├── fp_training_data_v2_4_0_ref.jsonl  # What FP v2.4.0 (production) was trained on (docs/MLOPS.md)
 │   └── ep_training_data.jsonl        # EP classifier training data
 ├── migrations/                 # Database migration scripts
 │   └── 002_classifier_predictions.sql  # Classifier predictions table

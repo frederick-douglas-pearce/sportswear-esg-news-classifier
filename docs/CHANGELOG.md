@@ -4,6 +4,13 @@ This document tracks significant changes to the ESG News Classifier pipeline, in
 
 ## 2026
 
+### 2026-11-26: #154 PR2's training data
+
+- **The training data file.** `data/fp_training_data.jsonl`, the path the notebooks and scripts read, now holds #154 PR2's export: 4,933 records (3,579 positive, 1,354 negative). v2.4.0's training data is kept as `data/fp_training_data_v2_4_0_ref.jsonl` (with a `.gitignore` exception): 1,634 records from `51edccb`, the last version of the file before v2.4.0 was created. The file it replaced (2,318 records, `55c3b87`) trained no registered model. See `docs/MLOPS.md`.
+- **`model_training`'s export step moves the file it exported onto the standard file.** It used to copy the newest `data/<dataset>_*.jsonl`, a pattern the committed reference file, the standard file itself and the FP census files also match. It now exports to a temporary file in `<project_root>/data/` (absolute, so the agent's own working directory does not matter; removed first, so an earlier attempt's partial file cannot stand in) and moves it onto the standard file with `os.replace`, which is atomic and leaves no copy behind. A failed export, or one that exits 0 without writing a file (no records), returns `StepFailure`, so the run is `FAILED`; `notify_and_pause` then reports nothing as ready and does not pause for the notebooks.
+- **Skips with a not-sportswear reason stay in the export.** A rule leaving out `skipped` rows whose stored reason is a reply's not-sportswear judgment was withdrawn in review: `fix_label.py update --status skipped` without `--manual` keeps that reason, so the rule would drop human corrections. The 10 such rows, all moved by hand in 2026-02 and 2026-04, were ruled one by one on #154 under D046 and added to `HUMAN_RULINGS` (applied with `fix_label.py update --manual` after the backup `esg_news_20261126_022222`): 7 stay `skipped` (analysis that judges the brand, a product review), 3 move to `false_positive` (a price move with no reason, a data-only earnings preview, a dividend template).
+- The `unattributed` positives are kept. Relabeling the ~400 with no reason or the batch reclassification reason is #293.
+
 ### 2026-11-25: The FP export leaves out #289's FM stratum (#154 PR2)
 
 `scripts/export_training_data.py --dataset fp` now leaves out the unreviewed rows of a relabel stratum whose spot-check measured an error rate in the exclude band. One stratum is listed (`EXCLUDED_STRATA` in `src/data_collection/provenance.py`): the rows #248's targeted relabel moved from `false_positive` to `skipped` (#289: 4 of 25 sampled rows wrong). On 2026-11-25 that is 152 rows.

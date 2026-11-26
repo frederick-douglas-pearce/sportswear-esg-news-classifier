@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,7 @@ from scripts.export_training_data import (
     parse_args,
     print_fp_report,
     write_and_report,
+    write_jsonl,
 )
 from src.data_collection import models, provenance
 from src.data_collection.provenance import (
@@ -561,10 +563,15 @@ class TestStdoutContract:
 
         from src.agent.workflows import model_training
 
-        # run from an empty directory so the step finds no data/ files to copy
-        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(model_training.agent_settings, "project_root", tmp_path)
+        (tmp_path / "data").mkdir()
         result = SimpleNamespace(success=True, exit_code=0, duration_seconds=0.0, stdout=stdout, stderr="")
-        with patch.object(model_training, "run_export_training_data", return_value=result):
+
+        def export(dataset, output_path):
+            write_jsonl(records, Path(output_path))
+            return result
+
+        with patch.object(model_training, "run_export_training_data", side_effect=export):
             out = model_training.export_training_data(None, {"classifiers": ["fp"]})
         assert out["datasets"]["fp"]["record_count"] == len(records)
 
